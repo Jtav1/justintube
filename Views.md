@@ -122,6 +122,10 @@
   - Role assignment
 - Transcode profiles
 
+## API Docs
+
+- Scalar docs
+
 ---
 
 # Additional backend-only features
