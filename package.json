@@ -1,0 +1,28 @@
+{
+  "name": "justintube-api",
+  "version": "0.0.1",
+  "description": "Backend web API for Justintube. Nodejs/express becuase that's what I like",
+  "homepage": "https://github.com/Jtav1/justintube#readme",
+  "bugs": {
+    "url": "https://github.com/Jtav1/justintube/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jtav1/justintube.git"
+  },
+  "license": "ISC",
+  "author": "Justin Tavares (justin@jtav.me / GH @ jtav1)",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.3.0"
+  }
+}
