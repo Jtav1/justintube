@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createUploadRouter } from "./uploads.js";
 
 /**
  * Creates an Express middleware that responds with HTTP 501 for unimplemented routes.
@@ -48,7 +49,6 @@ export function registerStubRoutes(router) {
   r("post", "/videos", "createVideo");
   r("get", "/videos/featured", "listFeaturedVideos");
   r("get", "/videos/newest", "listNewestVideos");
-  r("post", "/videos/upload", "uploadVideo");
   r("post", "/videos/import", "importVideo");
   r("get", "/videos/:id", "getVideo");
   r("patch", "/videos/:id", "updateVideo");
@@ -132,6 +132,9 @@ export function registerStubRoutes(router) {
  */
 export function createApiRouter() {
   const router = Router();
+  // Real implementations are mounted before the stubs so they take precedence
+  // over the corresponding 501 placeholders.
+  router.use(createUploadRouter());
   registerStubRoutes(router);
   return router;
 }
