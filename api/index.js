@@ -1,11 +1,11 @@
-import 'dotenv/config';
-import cors from 'cors';
-import express from 'express';
-import rateLimit from 'express-rate-limit';
-import helmet from 'helmet';
-import { apiReference } from '@scalar/express-api-reference';
-import { loadOpenApiDocument } from './lib/loadOpenApi.js';
-import { createApiRouter } from './routes/stubs.js';
+import "dotenv/config";
+import cors from "cors";
+import express from "express";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
+import { apiReference } from "@scalar/express-api-reference";
+import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
+import { createApiRouter } from "./routes/stubs.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -24,7 +24,7 @@ export function createApp() {
     }),
   );
   app.use(cors());
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: "2mb" }));
   app.use(
     rateLimit({
       windowMs: 60_000,
@@ -41,27 +41,27 @@ export function createApp() {
    * @param {import('express').Response} res Express response.
    * @returns {void} Sends JSON health payload.
    */
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok' });
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok" });
   });
 
-  app.get('/openapi.json', (_req, res) => {
+  app.get("/openapi.json", (_req, res) => {
     res.json(openApiDocument);
   });
 
   app.use(
-    '/docs',
+    "/docs",
     apiReference({
-      url: '/openapi.json',
-      theme: 'default',
-      pageTitle: 'Justintube API',
+      url: "/openapi.json",
+      theme: "default",
+      pageTitle: "Justintube API",
     }),
   );
 
-  app.use('/api/v1', createApiRouter());
+  app.use("/api/v1", createApiRouter());
 
   app.use((_req, res) => {
-    res.status(404).json({ error: 'not_found', message: 'No route matched.' });
+    res.status(404).json({ error: "not_found", message: "No route matched." });
   });
 
   return app;

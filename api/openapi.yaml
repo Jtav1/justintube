@@ -55,16 +55,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RegisterRequest'
+              $ref: "#/components/schemas/RegisterRequest"
       responses:
-        '201':
+        "201":
           description: Account created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthSession'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/AuthSession"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/login:
     post:
@@ -77,16 +77,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: "#/components/schemas/LoginRequest"
       responses:
-        '200':
+        "200":
           description: Authenticated session
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthSession'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/AuthSession"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/logout:
     post:
@@ -94,10 +94,10 @@ paths:
       summary: End the current session
       operationId: authLogout
       responses:
-        '204':
+        "204":
           description: Logged out
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/me:
     get:
@@ -105,14 +105,14 @@ paths:
       summary: Current user and role for top-bar RBAC
       operationId: authMe
       responses:
-        '200':
+        "200":
           description: Current user
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/User"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/verify-email:
     post:
@@ -130,10 +130,10 @@ paths:
                 token:
                   type: string
       responses:
-        '200':
+        "200":
           description: Email verified
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/resend-verification:
     post:
@@ -141,10 +141,10 @@ paths:
       summary: Resend email verification
       operationId: authResendVerification
       responses:
-        '204':
+        "204":
           description: Verification email sent
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/password:
     post:
@@ -166,10 +166,10 @@ paths:
                   type: string
                   format: password
       responses:
-        '204':
+        "204":
           description: Password updated
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/sso/providers:
     get:
@@ -178,7 +178,7 @@ paths:
       security: []
       operationId: authSsoProviders
       responses:
-        '200':
+        "200":
           description: Available SSO providers
           content:
             application/json:
@@ -188,9 +188,9 @@ paths:
                   providers:
                     type: array
                     items:
-                      $ref: '#/components/schemas/SsoProvider'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                      $ref: "#/components/schemas/SsoProvider"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/sso/{provider}/start:
     get:
@@ -199,12 +199,12 @@ paths:
       security: []
       operationId: authSsoStart
       parameters:
-        - $ref: '#/components/parameters/SsoProvider'
+        - $ref: "#/components/parameters/SsoProvider"
       responses:
-        '302':
+        "302":
           description: Redirect to identity provider
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/sso/{provider}/callback:
     get:
@@ -213,7 +213,7 @@ paths:
       security: []
       operationId: authSsoCallback
       parameters:
-        - $ref: '#/components/parameters/SsoProvider'
+        - $ref: "#/components/parameters/SsoProvider"
         - name: code
           in: query
           schema:
@@ -223,10 +223,10 @@ paths:
           schema:
             type: string
       responses:
-        '302':
+        "302":
           description: Redirect into app with session
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/sso/link:
     post:
@@ -246,10 +246,10 @@ paths:
                 code:
                   type: string
       responses:
-        '200':
+        "200":
           description: SSO linked
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /auth/sso/link/{provider}:
     delete:
@@ -257,12 +257,12 @@ paths:
       summary: Unlink an SSO provider
       operationId: authSsoUnlink
       parameters:
-        - $ref: '#/components/parameters/SsoProvider'
+        - $ref: "#/components/parameters/SsoProvider"
       responses:
-        '204':
+        "204":
           description: SSO unlinked
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /search/suggest:
     get:
@@ -278,14 +278,14 @@ paths:
             type: string
             minLength: 1
       responses:
-        '200':
+        "200":
           description: Suggestion list
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SearchSuggestions'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/SearchSuggestions"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /search:
     get:
@@ -299,17 +299,17 @@ paths:
           required: true
           schema:
             type: string
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Search results
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos:
     get:
@@ -324,17 +324,17 @@ paths:
             type: string
             enum: [newest, recommended, liked]
             default: newest
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Paginated public videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     post:
       tags: [Videos]
       summary: Create a video record (metadata before or during upload)
@@ -344,16 +344,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VideoCreateRequest'
+              $ref: "#/components/schemas/VideoCreateRequest"
       responses:
-        '201':
+        "201":
           description: Video created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Video'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Video"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/featured:
     get:
@@ -362,14 +362,14 @@ paths:
       security: []
       operationId: listFeaturedVideos
       responses:
-        '200':
+        "200":
           description: Featured videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/newest:
     get:
@@ -378,17 +378,17 @@ paths:
       security: []
       operationId: listNewestVideos
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Newest videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/upload:
     post:
@@ -410,14 +410,14 @@ paths:
                   type: string
                   description: Existing video id when uploading after metadata create
       responses:
-        '201':
+        "201":
           description: Upload accepted; transcode enqueued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Video'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Video"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/import:
     post:
@@ -444,38 +444,38 @@ paths:
                   items:
                     type: string
                 visibility:
-                  $ref: '#/components/schemas/Visibility'
+                  $ref: "#/components/schemas/Visibility"
                 playlistIds:
                   type: array
                   items:
                     type: string
       responses:
-        '202':
+        "202":
           description: Import job accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Video'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Video"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}:
     parameters:
-      - $ref: '#/components/parameters/VideoId'
+      - $ref: "#/components/parameters/VideoId"
     get:
       tags: [Videos]
       summary: Video watch metadata
       security: []
       operationId: getVideo
       responses:
-        '200':
+        "200":
           description: Video details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Video'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Video"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     patch:
       tags: [Videos]
       summary: Edit video metadata, visibility, playlists; admin featured/force-transcode
@@ -485,25 +485,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VideoUpdateRequest'
+              $ref: "#/components/schemas/VideoUpdateRequest"
       responses:
-        '200':
+        "200":
           description: Updated video
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Video'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Video"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       tags: [Videos]
       summary: Delete video (owner or admin)
       operationId: deleteVideo
       responses:
-        '204':
+        "204":
           description: Deleted
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/stream:
     get:
@@ -512,16 +512,16 @@ paths:
       security: []
       operationId: getVideoStream
       parameters:
-        - $ref: '#/components/parameters/VideoId'
+        - $ref: "#/components/parameters/VideoId"
       responses:
-        '200':
+        "200":
           description: Stream manifests and quality URLs
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoStream'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoStream"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/delist:
     post:
@@ -529,26 +529,26 @@ paths:
       summary: Moderator de-list a video
       operationId: delistVideo
       parameters:
-        - $ref: '#/components/parameters/VideoId'
+        - $ref: "#/components/parameters/VideoId"
       responses:
-        '200':
+        "200":
           description: Video delisted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Video'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Video"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/access:
     parameters:
-      - $ref: '#/components/parameters/VideoId'
+      - $ref: "#/components/parameters/VideoId"
     get:
       tags: [Videos]
       summary: List private-access grants
       operationId: listVideoAccess
       responses:
-        '200':
+        "200":
           description: Granted usernames
           content:
             application/json:
@@ -559,8 +559,8 @@ paths:
                     type: array
                     items:
                       type: string
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     put:
       tags: [Videos]
       summary: Set private visibility grants by username
@@ -578,40 +578,40 @@ paths:
                   items:
                     type: string
       responses:
-        '200':
+        "200":
           description: Grants updated
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/transcode:
     parameters:
-      - $ref: '#/components/parameters/VideoId'
+      - $ref: "#/components/parameters/VideoId"
     get:
       tags: [Videos]
       summary: Transcode job status for owner
       operationId: getVideoTranscode
       responses:
-        '200':
+        "200":
           description: Transcode status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TranscodeJob'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/TranscodeJob"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     post:
       tags: [Videos]
       summary: Admin force re-transcode
       operationId: forceVideoTranscode
       responses:
-        '202':
+        "202":
           description: Transcode enqueued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TranscodeJob'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/TranscodeJob"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/view:
     post:
@@ -619,7 +619,7 @@ paths:
       summary: Record a view and optional watch history position
       operationId: recordVideoView
       parameters:
-        - $ref: '#/components/parameters/VideoId'
+        - $ref: "#/components/parameters/VideoId"
       requestBody:
         content:
           application/json:
@@ -630,10 +630,10 @@ paths:
                   type: number
                   minimum: 0
       responses:
-        '204':
+        "204":
           description: View recorded
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/like:
     post:
@@ -641,16 +641,16 @@ paths:
       summary: Like a video
       operationId: likeVideo
       parameters:
-        - $ref: '#/components/parameters/VideoId'
+        - $ref: "#/components/parameters/VideoId"
       responses:
-        '200':
+        "200":
           description: Like applied
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReactionState'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/ReactionState"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/dislike:
     post:
@@ -658,46 +658,46 @@ paths:
       summary: Dislike a video
       operationId: dislikeVideo
       parameters:
-        - $ref: '#/components/parameters/VideoId'
+        - $ref: "#/components/parameters/VideoId"
       responses:
-        '200':
+        "200":
           description: Dislike applied
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReactionState'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/ReactionState"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /videos/{id}/reaction:
     parameters:
-      - $ref: '#/components/parameters/VideoId'
+      - $ref: "#/components/parameters/VideoId"
     get:
       tags: [Engagement]
       summary: Current user reaction on a video
       operationId: getVideoReaction
       responses:
-        '200':
+        "200":
           description: Reaction state
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReactionState'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/ReactionState"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       tags: [Engagement]
       summary: Clear like or dislike
       operationId: clearVideoReaction
       responses:
-        '200':
+        "200":
           description: Reaction cleared
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReactionState'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/ReactionState"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /tags:
     get:
@@ -706,7 +706,7 @@ paths:
       security: []
       operationId: listTags
       responses:
-        '200':
+        "200":
           description: Tag list
           content:
             application/json:
@@ -716,9 +716,9 @@ paths:
                   tags:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Tag'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                      $ref: "#/components/schemas/Tag"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /tags/{tag}/videos:
     get:
@@ -732,17 +732,17 @@ paths:
           required: true
           schema:
             type: string
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Videos for tag
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /feed/subscriptions:
     get:
@@ -750,17 +750,17 @@ paths:
       summary: My subscriptions feed
       operationId: feedSubscriptions
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Subscription feed videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me:
     patch:
@@ -772,16 +772,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MeUpdateRequest'
+              $ref: "#/components/schemas/MeUpdateRequest"
       responses:
-        '200':
+        "200":
           description: Updated user
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/User"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/settings:
     get:
@@ -789,14 +789,14 @@ paths:
       summary: Settings payload (creation date, role, video count, SSO)
       operationId: getMeSettings
       responses:
-        '200':
+        "200":
           description: Account settings
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserSettings'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/UserSettings"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/videos:
     get:
@@ -804,17 +804,17 @@ paths:
       summary: My Media
       operationId: listMyVideos
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Current user videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/history:
     get:
@@ -822,26 +822,26 @@ paths:
       summary: Watch history
       operationId: listMyHistory
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: History items
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       tags: [Discovery]
       summary: Clear watch history
       operationId: clearMyHistory
       responses:
-        '204':
+        "204":
           description: History cleared
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/likes:
     get:
@@ -849,17 +849,17 @@ paths:
       summary: Liked videos library
       operationId: listMyLikes
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Liked videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/like-history:
     get:
@@ -867,17 +867,17 @@ paths:
       summary: My like history (settings)
       operationId: listMyLikeHistory
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Like history
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/videos/likes-received:
     get:
@@ -885,17 +885,17 @@ paths:
       summary: Others liking my videos
       operationId: listLikesReceived
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Incoming likes on owned videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LikeReceivedList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/LikeReceivedList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/subscriptions:
     get:
@@ -903,14 +903,14 @@ paths:
       summary: Channels I am subscribed to
       operationId: listMySubscriptions
       responses:
-        '200':
+        "200":
           description: Subscriptions
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/SubscriptionList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/subscribers:
     get:
@@ -918,14 +918,14 @@ paths:
       summary: My subscribers list and count
       operationId: listMySubscribers
       responses:
-        '200':
+        "200":
           description: Subscribers
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriberList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/SubscriberList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/playlists:
     get:
@@ -933,14 +933,14 @@ paths:
       summary: My playlists
       operationId: listMyPlaylists
       responses:
-        '200':
+        "200":
           description: Playlist list
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PlaylistList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/PlaylistList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /me/notification-preferences:
     get:
@@ -948,14 +948,14 @@ paths:
       summary: Notification preferences including email option
       operationId: getNotificationPreferences
       responses:
-        '200':
+        "200":
           description: Preferences
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationPreferences'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/NotificationPreferences"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     patch:
       tags: [Notifications]
       summary: Update notification preferences
@@ -965,16 +965,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/NotificationPreferences'
+              $ref: "#/components/schemas/NotificationPreferences"
       responses:
-        '200':
+        "200":
           description: Updated preferences
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationPreferences'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/NotificationPreferences"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /users/{username}:
     get:
@@ -983,16 +983,16 @@ paths:
       security: []
       operationId: getUserChannel
       parameters:
-        - $ref: '#/components/parameters/Username'
+        - $ref: "#/components/parameters/Username"
       responses:
-        '200':
+        "200":
           description: Channel profile
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserChannel'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/UserChannel"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /users/{username}/videos:
     get:
@@ -1001,7 +1001,7 @@ paths:
       security: []
       operationId: listUserVideos
       parameters:
-        - $ref: '#/components/parameters/Username'
+        - $ref: "#/components/parameters/Username"
         - name: sort
           in: query
           schema:
@@ -1014,47 +1014,47 @@ paths:
             type: string
             enum: [asc, desc]
             default: desc
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Channel videos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VideoList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/VideoList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /users/{id}/subscribe:
     parameters:
-      - $ref: '#/components/parameters/UserId'
+      - $ref: "#/components/parameters/UserId"
     post:
       tags: [Engagement]
       summary: Subscribe to a channel
       operationId: subscribeToUser
       responses:
-        '200':
+        "200":
           description: Subscribed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionState'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/SubscriptionState"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       tags: [Engagement]
       summary: Unsubscribe from a channel
       operationId: unsubscribeFromUser
       responses:
-        '200':
+        "200":
           description: Unsubscribed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionState'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/SubscriptionState"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /users/{id}/subscription:
     get:
@@ -1062,20 +1062,20 @@ paths:
       summary: Current subscription button state
       operationId: getSubscriptionState
       parameters:
-        - $ref: '#/components/parameters/UserId'
+        - $ref: "#/components/parameters/UserId"
       responses:
-        '200':
+        "200":
           description: Subscription state
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionState'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/SubscriptionState"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /users/{id}/ban:
     parameters:
-      - $ref: '#/components/parameters/UserId'
+      - $ref: "#/components/parameters/UserId"
     post:
       tags: [Users]
       summary: Ban a user (admin or moderator)
@@ -1089,19 +1089,19 @@ paths:
                 reason:
                   type: string
       responses:
-        '200':
+        "200":
           description: User banned
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       tags: [Users]
       summary: Unban a user
       operationId: unbanUser
       responses:
-        '200':
+        "200":
           description: User unbanned
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /playlists:
     post:
@@ -1113,33 +1113,33 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PlaylistCreateRequest'
+              $ref: "#/components/schemas/PlaylistCreateRequest"
       responses:
-        '201':
+        "201":
           description: Playlist created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Playlist'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Playlist"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /playlists/{id}:
     parameters:
-      - $ref: '#/components/parameters/PlaylistId'
+      - $ref: "#/components/parameters/PlaylistId"
     get:
       tags: [Playlists]
       summary: Playlist detail and items
       operationId: getPlaylist
       responses:
-        '200':
+        "200":
           description: Playlist
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Playlist'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Playlist"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     patch:
       tags: [Playlists]
       summary: Rename or reorder playlist
@@ -1149,25 +1149,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PlaylistUpdateRequest'
+              $ref: "#/components/schemas/PlaylistUpdateRequest"
       responses:
-        '200':
+        "200":
           description: Updated playlist
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Playlist'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Playlist"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       tags: [Playlists]
       summary: Delete playlist
       operationId: deletePlaylist
       responses:
-        '204':
+        "204":
           description: Deleted
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /playlists/{id}/items:
     post:
@@ -1175,7 +1175,7 @@ paths:
       summary: Add a video to a playlist
       operationId: addPlaylistItem
       parameters:
-        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: "#/components/parameters/PlaylistId"
       requestBody:
         required: true
         content:
@@ -1187,14 +1187,14 @@ paths:
                 videoId:
                   type: string
       responses:
-        '200':
+        "200":
           description: Item added
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Playlist'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Playlist"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /playlists/{id}/items/{videoId}:
     delete:
@@ -1202,21 +1202,21 @@ paths:
       summary: Remove a video from a playlist
       operationId: removePlaylistItem
       parameters:
-        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: "#/components/parameters/PlaylistId"
         - name: videoId
           in: path
           required: true
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Item removed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Playlist'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/Playlist"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast:
     post:
@@ -1236,14 +1236,14 @@ paths:
                   format: password
                   description: Optional join password; otherwise a join key is generated
       responses:
-        '201':
+        "201":
           description: Space created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CastSpace'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/CastSpace"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast/join:
     post:
@@ -1266,14 +1266,14 @@ paths:
                 - required: [key]
                 - required: [password]
       responses:
-        '200':
+        "200":
           description: Joined space
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CastSpace'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/CastSpace"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast/{id}:
     get:
@@ -1281,16 +1281,16 @@ paths:
       summary: Shared space playlist, members, and playback snapshot
       operationId: getCastSpace
       parameters:
-        - $ref: '#/components/parameters/CastId'
+        - $ref: "#/components/parameters/CastId"
       responses:
-        '200':
+        "200":
           description: Cast space state
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CastSpace'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/CastSpace"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast/{id}/playlist:
     post:
@@ -1298,7 +1298,7 @@ paths:
       summary: Add a video to the shared playlist
       operationId: addCastPlaylistItem
       parameters:
-        - $ref: '#/components/parameters/CastId'
+        - $ref: "#/components/parameters/CastId"
       requestBody:
         required: true
         content:
@@ -1310,14 +1310,14 @@ paths:
                 videoId:
                   type: string
       responses:
-        '200':
+        "200":
           description: Playlist updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CastSpace'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/CastSpace"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast/{id}/playlist/{videoId}:
     delete:
@@ -1325,21 +1325,21 @@ paths:
       summary: Remove a video from the shared playlist
       operationId: removeCastPlaylistItem
       parameters:
-        - $ref: '#/components/parameters/CastId'
+        - $ref: "#/components/parameters/CastId"
         - name: videoId
           in: path
           required: true
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Playlist updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CastSpace'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/CastSpace"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast/{id}/members:
     get:
@@ -1347,9 +1347,9 @@ paths:
       summary: List users in the shared space
       operationId: listCastMembers
       parameters:
-        - $ref: '#/components/parameters/CastId'
+        - $ref: "#/components/parameters/CastId"
       responses:
-        '200':
+        "200":
           description: Members
           content:
             application/json:
@@ -1359,9 +1359,9 @@ paths:
                   members:
                     type: array
                     items:
-                      $ref: '#/components/schemas/CastMember'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                      $ref: "#/components/schemas/CastMember"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast/{id}/display:
     get:
@@ -1369,16 +1369,16 @@ paths:
       summary: Cast-tab display page payload
       operationId: getCastDisplay
       parameters:
-        - $ref: '#/components/parameters/CastId'
+        - $ref: "#/components/parameters/CastId"
       responses:
-        '200':
+        "200":
           description: Minimal display payload for casting the tab
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CastDisplay'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/CastDisplay"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /cast/{id}/sync:
     get:
@@ -1389,12 +1389,12 @@ paths:
         scrub, forward/back, member join/leave, and playlist mutation events.
       operationId: castSyncWebSocket
       parameters:
-        - $ref: '#/components/parameters/CastId'
+        - $ref: "#/components/parameters/CastId"
       responses:
-        '101':
+        "101":
           description: Switching Protocols (WebSocket)
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /notifications:
     get:
@@ -1402,17 +1402,17 @@ paths:
       summary: Notification tray (video interactions and subscribed uploads)
       operationId: listNotifications
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Notifications
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/NotificationList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /notifications/read:
     post:
@@ -1432,10 +1432,10 @@ paths:
                 all:
                   type: boolean
       responses:
-        '204':
+        "204":
           description: Marked read
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /pages/about:
     get:
@@ -1444,14 +1444,14 @@ paths:
       security: []
       operationId: getAboutPage
       responses:
-        '200':
+        "200":
           description: Page content
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StaticPage'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/StaticPage"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /pages/rules:
     get:
@@ -1460,14 +1460,14 @@ paths:
       security: []
       operationId: getRulesPage
       responses:
-        '200':
+        "200":
           description: Page content
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StaticPage'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/StaticPage"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /admin/users:
     get:
@@ -1475,21 +1475,21 @@ paths:
       summary: List users with all attributes
       operationId: adminListUsers
       parameters:
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Cursor"
         - name: q
           in: query
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Users
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminUserList'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/AdminUserList"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /admin/users/{id}:
     patch:
@@ -1497,22 +1497,22 @@ paths:
       summary: Role assignment and attribute edits
       operationId: adminUpdateUser
       parameters:
-        - $ref: '#/components/parameters/UserId'
+        - $ref: "#/components/parameters/UserId"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AdminUserUpdateRequest'
+              $ref: "#/components/schemas/AdminUserUpdateRequest"
       responses:
-        '200':
+        "200":
           description: Updated user
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminUser'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/AdminUser"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /admin/transcode-profiles:
     get:
@@ -1520,7 +1520,7 @@ paths:
       summary: List transcode profiles
       operationId: adminListTranscodeProfiles
       responses:
-        '200':
+        "200":
           description: Profiles
           content:
             application/json:
@@ -1530,9 +1530,9 @@ paths:
                   profiles:
                     type: array
                     items:
-                      $ref: '#/components/schemas/TranscodeProfile'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                      $ref: "#/components/schemas/TranscodeProfile"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     post:
       tags: [Admin]
       summary: Create a transcode profile
@@ -1542,16 +1542,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TranscodeProfileInput'
+              $ref: "#/components/schemas/TranscodeProfileInput"
       responses:
-        '201':
+        "201":
           description: Profile created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TranscodeProfile'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/TranscodeProfile"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
   /admin/transcode-profiles/{id}:
     parameters:
@@ -1569,25 +1569,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TranscodeProfileInput'
+              $ref: "#/components/schemas/TranscodeProfileInput"
       responses:
-        '200':
+        "200":
           description: Updated profile
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TranscodeProfile'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+                $ref: "#/components/schemas/TranscodeProfile"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
     delete:
       tags: [Admin]
       summary: Delete a transcode profile
       operationId: adminDeleteTranscodeProfile
       responses:
-        '204':
+        "204":
           description: Deleted
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 
 components:
   securitySchemes:
@@ -1657,7 +1657,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
 
   schemas:
     Error:
@@ -1708,7 +1708,7 @@ components:
         token:
           type: string
         user:
-          $ref: '#/components/schemas/User'
+          $ref: "#/components/schemas/User"
 
     SsoProvider:
       type: object
@@ -1735,14 +1735,14 @@ components:
         emailVerified:
           type: boolean
         role:
-          $ref: '#/components/schemas/Role'
+          $ref: "#/components/schemas/Role"
         createdAt:
           type: string
           format: date-time
 
     UserChannel:
       allOf:
-        - $ref: '#/components/schemas/User'
+        - $ref: "#/components/schemas/User"
         - type: object
           properties:
             subscriberCount:
@@ -1754,7 +1754,7 @@ components:
 
     UserSettings:
       allOf:
-        - $ref: '#/components/schemas/User'
+        - $ref: "#/components/schemas/User"
         - type: object
           properties:
             videosUploaded:
@@ -1804,7 +1804,7 @@ components:
 
     Video:
       allOf:
-        - $ref: '#/components/schemas/VideoThumbnail'
+        - $ref: "#/components/schemas/VideoThumbnail"
         - type: object
           properties:
             description:
@@ -1814,7 +1814,7 @@ components:
               items:
                 type: string
             visibility:
-              $ref: '#/components/schemas/Visibility'
+              $ref: "#/components/schemas/Visibility"
             featured:
               type: boolean
             delisted:
@@ -1837,7 +1837,7 @@ components:
           items:
             type: string
         visibility:
-          $ref: '#/components/schemas/Visibility'
+          $ref: "#/components/schemas/Visibility"
         playlistIds:
           type: array
           items:
@@ -1861,7 +1861,7 @@ components:
           items:
             type: string
         visibility:
-          $ref: '#/components/schemas/Visibility'
+          $ref: "#/components/schemas/Visibility"
         playlistIds:
           type: array
           items:
@@ -1877,7 +1877,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/VideoThumbnail'
+            $ref: "#/components/schemas/VideoThumbnail"
         page:
           type: integer
         nextCursor:
@@ -1999,7 +1999,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/UserChannel'
+            $ref: "#/components/schemas/UserChannel"
 
     SubscriberList:
       type: object
@@ -2009,7 +2009,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/User'
+            $ref: "#/components/schemas/User"
 
     Playlist:
       type: object
@@ -2021,7 +2021,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/VideoThumbnail'
+            $ref: "#/components/schemas/VideoThumbnail"
 
     PlaylistList:
       type: object
@@ -2029,7 +2029,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Playlist'
+            $ref: "#/components/schemas/Playlist"
 
     PlaylistCreateRequest:
       type: object
@@ -2061,13 +2061,13 @@ components:
         playlist:
           type: array
           items:
-            $ref: '#/components/schemas/VideoThumbnail'
+            $ref: "#/components/schemas/VideoThumbnail"
         members:
           type: array
           items:
-            $ref: '#/components/schemas/CastMember'
+            $ref: "#/components/schemas/CastMember"
         playback:
-          $ref: '#/components/schemas/CastPlayback'
+          $ref: "#/components/schemas/CastPlayback"
 
     CastMember:
       type: object
@@ -2096,11 +2096,11 @@ components:
         spaceId:
           type: string
         currentVideo:
-          $ref: '#/components/schemas/VideoThumbnail'
+          $ref: "#/components/schemas/VideoThumbnail"
         playback:
-          $ref: '#/components/schemas/CastPlayback'
+          $ref: "#/components/schemas/CastPlayback"
         stream:
-          $ref: '#/components/schemas/VideoStream'
+          $ref: "#/components/schemas/VideoStream"
 
     Notification:
       type: object
@@ -2128,7 +2128,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Notification'
+            $ref: "#/components/schemas/Notification"
         unreadCount:
           type: integer
         nextCursor:
@@ -2160,7 +2160,7 @@ components:
 
     AdminUser:
       allOf:
-        - $ref: '#/components/schemas/User'
+        - $ref: "#/components/schemas/User"
         - type: object
           properties:
             banned:
@@ -2178,7 +2178,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/AdminUser'
+            $ref: "#/components/schemas/AdminUser"
         nextCursor:
           type: string
           nullable: true
@@ -2189,7 +2189,7 @@ components:
       type: object
       properties:
         role:
-          $ref: '#/components/schemas/Role'
+          $ref: "#/components/schemas/Role"
         displayName:
           type: string
         email:
@@ -2200,7 +2200,7 @@ components:
 
     TranscodeProfile:
       allOf:
-        - $ref: '#/components/schemas/TranscodeProfileInput'
+        - $ref: "#/components/schemas/TranscodeProfileInput"
         - type: object
           properties:
             id:
