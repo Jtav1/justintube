@@ -100,15 +100,15 @@ export function registerStubRoutes(router) {
   r('post', '/playlists/:id/items', 'addPlaylistItem');
   r('delete', '/playlists/:id/items/:videoId', 'removePlaylistItem');
 
-  // CAST
-  r('post', '/cast', 'createCastSpace');
-  r('post', '/cast/join', 'joinCastSpace');
-  r('get', '/cast/:id', 'getCastSpace');
-  r('post', '/cast/:id/playlist', 'addCastPlaylistItem');
-  r('delete', '/cast/:id/playlist/:videoId', 'removeCastPlaylistItem');
-  r('get', '/cast/:id/members', 'listCastMembers');
+  // CAST (playlist-backed shared watch sessions; realtime sync is Socket.IO — see api/cast/)
+  r('post', '/cast', 'createCastSession');
+  r('post', '/cast/join', 'joinCastSession');
+  r('get', '/cast/:id', 'getCastSession');
+  r('delete', '/cast/:id', 'endCastSession');
+  r('post', '/cast/:id/queue', 'addCastQueueItem');
+  r('delete', '/cast/:id/queue/:itemId', 'removeCastQueueItem');
   r('get', '/cast/:id/display', 'getCastDisplay');
-  r('get', '/cast/:id/sync', 'castSyncWebSocket');
+  r('get', '/cast/:id/sync', 'getCastSyncInfo');
 
   // Notifications & pages
   r('get', '/notifications', 'listNotifications');

@@ -1,9 +1,11 @@
 import 'dotenv/config';
+import http from 'node:http';
 import cors from 'cors';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { apiReference } from '@scalar/express-api-reference';
+import { createRealtime } from './cast/realtime.js';
 import { loadOpenApiDocument } from './lib/loadOpenApi.js';
 import { createApiRouter } from './routes/stubs.js';
 
@@ -68,9 +70,13 @@ export function createApp() {
 }
 
 const app = createApp();
+// Wrap in an http.Server so Socket.IO (CAST session sync) can attach to it.
+const server = http.createServer(app);
+createRealtime(server);
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Justintube API listening on http://localhost:${PORT}`);
   console.log(`Scalar docs: http://localhost:${PORT}/docs`);
   console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
+  console.log(`CAST sync:  socket.io namespace /cast`);
 });

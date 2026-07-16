@@ -28,15 +28,19 @@
   - My Subscriptions
   - My Media
   - My Playlists
-  - CAST Playlist
-    - Create or join shared space
-      - Creation of shared space provides key or password to join shared space
-    - Add videos to shared space playlist
-    - Play / pause / forward / backward controls and scrub bar
-    - List of users in the shared space
-    - Shared space playlist listing
-    - Browser cast option
-    - Separate page for just the shared space video display, for casting entire tab
+  - CAST Playlist (shared watch sessions built on playlists)
+    - Start a cast session from a playlist, a single video, or empty
+      - Session queue is a live copy seeded from the playlist — the source playlist is never mutated
+      - Creation provides a session code (plus optional password) others use to join
+    - Join a session by entering its session code
+    - Add / remove / reorder videos in the session queue (queue items have their own ids; same video can repeat)
+    - Play / pause / skip / previous / seek controls and scrub bar, synced live to all members
+    - Auto-advance to the next queue item when a video ends (broken videos are skipped)
+    - List of users in the session (presence with display names)
+    - Live activity feed ("X added…", "paused", "skipped…")
+    - Floating emoji reactions broadcast to all screens
+    - Player integrated into the app (not a standalone page); browser cast option
+    - In-app display view showing just the session video, for casting the entire tab
   - History
   - Liked
   - About / Contact
