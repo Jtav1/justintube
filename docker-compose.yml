@@ -8,7 +8,7 @@ services:
     environment:
       # Root credentials used only for container init / administration.
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      # Passed through to the init script (see db/init/01-init-justintube.sh).
+      # Passed through to the init script (see api/db/init/01-init-justintube.sh).
       JUSTINTUBE_DB: ${MYSQL_DATABASE:-justintube}
       JUSTINTUBE_USER: ${MYSQL_USER:-justintube}
       JUSTINTUBE_PASSWORD: ${MYSQL_PASSWORD:-password}
@@ -16,7 +16,7 @@ services:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - db-data:/var/lib/mysql
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./api/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
         [
