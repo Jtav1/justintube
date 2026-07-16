@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
+import { ensureSchema } from "./lib/schema.js";
 import { createApiRouter } from "./routes/stubs.js";
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -69,8 +70,24 @@ export function createApp() {
 
 const app = createApp();
 
-app.listen(PORT, () => {
-  console.log(`Justintube API listening on http://localhost:${PORT}`);
-  console.log(`Scalar docs: http://localhost:${PORT}/docs`);
-  console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
-});
+/**
+ * Ensures the database schema exists, then starts the HTTP server.
+ *
+ * @returns {Promise<void>} Resolves once the server is listening.
+ */
+async function start() {
+  try {
+    await ensureSchema();
+  } catch (err) {
+    console.error("Failed to ensure database schema:", err);
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Justintube API listening on http://localhost:${PORT}`);
+    console.log(`Scalar docs: http://localhost:${PORT}/docs`);
+    console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
+  });
+}
+
+start();
