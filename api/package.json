@@ -12,7 +12,18 @@
   },
   "license": "ISC",
   "author": "Justin Tavares (justin@jtav.me / GH @ jtav1)",
-  "type": "module",
+  "contributors": [
+    {
+      "name": "Justin Tavares",
+      "email": "justin@jtav.me",
+      "url": "https://github.com/Jtav1/j"
+    },
+    {
+      "name": "SpinnerMaster",
+      "email": "",
+      "url": "https://github.com/SpinnerMaster"
+    }
+  ],
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -27,6 +38,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.3.0",
+    "mysql2": "^3.23.0",
     "yaml": "^2.8.1"
   }
 }
