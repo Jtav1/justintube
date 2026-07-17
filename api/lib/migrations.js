@@ -191,7 +191,11 @@ async function foreignKeyExists({ table, column, refTable, constraint }) {
  * Rebuilds a SQLite table so it carries the desired foreign key, using the
  * standard rename/recreate/copy/drop sequence (SQLite cannot ALTER a table to
  * add a foreign key). Foreign key enforcement is toggled off around the swap so
- * existing rows are copied without transient violations.
+ * existing rows are copied without transient violations. `legacy_alter_table`
+ * is enabled for the swap so the interim `RENAME TO ${table}_old` does not
+ * rewrite views/triggers that reference the table to the temporary name (which
+ * would leave those objects with a dangling `${table}_old` reference once the
+ * temporary table is dropped).
  *
  * @param {string} table Table to rebuild.
  * @param {string} ddl CREATE TABLE DDL (with the foreign key) for the table.
@@ -203,6 +207,7 @@ async function rebuildSqliteTableWithForeignKey(table, ddl) {
     .join(", ");
 
   await exec("PRAGMA foreign_keys=OFF");
+  await exec("PRAGMA legacy_alter_table=ON");
   await exec("BEGIN");
   try {
     await exec(`ALTER TABLE ${table} RENAME TO ${table}_old`);
@@ -214,9 +219,11 @@ async function rebuildSqliteTableWithForeignKey(table, ddl) {
     await exec("COMMIT");
   } catch (error) {
     await exec("ROLLBACK");
+    await exec("PRAGMA legacy_alter_table=OFF");
     await exec("PRAGMA foreign_keys=ON");
     throw error;
   }
+  await exec("PRAGMA legacy_alter_table=OFF");
   await exec("PRAGMA foreign_keys=ON");
 }
 
