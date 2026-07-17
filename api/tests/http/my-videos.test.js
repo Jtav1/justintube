@@ -3,6 +3,7 @@ import {
   resetTables,
   seedMetadata,
   seedUpload,
+  seedUser,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -25,7 +26,11 @@ describe("GET /me/videos (USER_VIDEOS view)", () => {
   });
 
   test("returns 200 and lists uploads with metadata when present", async () => {
-    const upload = await seedUpload({ userId: 1, originalFilename: "mine.mp4" });
+    const user = await seedUser();
+    const upload = await seedUpload({
+      userId: user.id,
+      originalFilename: "mine.mp4",
+    });
     await seedMetadata(upload.id, { title: "My titled clip" });
 
     const res = await client.get("/api/v1/me/videos");
@@ -37,7 +42,8 @@ describe("GET /me/videos (USER_VIDEOS view)", () => {
   });
 
   test("returns 200 and still lists an upload that has no metadata yet", async () => {
-    await seedUpload({ userId: 1, originalFilename: "raw-only.mp4" });
+    const user = await seedUser();
+    await seedUpload({ userId: user.id, originalFilename: "raw-only.mp4" });
 
     const res = await client.get("/api/v1/me/videos");
 

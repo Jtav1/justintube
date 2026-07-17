@@ -6,9 +6,8 @@
 -- (dislike). The FK cascades on delete so removing an upload cleans up its
 -- likes.
 --
--- `user_id` references a future users table and is intentionally left nullable
--- and NOT FK-enforced for now (that table does not exist yet), mirroring the
--- ORIGINAL_UPLOADS.user_id treatment. The column is named `like_value` rather
+-- `user_id` is nullable but now references USERS(id) and cascades on delete, so
+-- removing a user removes their likes. The column is named `like_value` rather
 -- than `like` because LIKE is a reserved SQL keyword. The UNIQUE key on
 -- (user_id, original_upload_id) keeps one vote per user per video. `created_at`
 -- defaults to when the row was inserted. Runtime DDL lives in
@@ -25,8 +24,11 @@ CREATE TABLE IF NOT EXISTS VIDEO_LIKES (
   PRIMARY KEY (id),
   UNIQUE KEY uq_video_likes_user_upload (user_id, original_upload_id),
   KEY idx_video_likes_upload (original_upload_id),
+  KEY idx_video_likes_user (user_id),
   CONSTRAINT fk_video_likes_upload
     FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE,
+  CONSTRAINT fk_video_likes_user
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE,
   CONSTRAINT chk_video_likes_value
     CHECK (like_value IN (-1, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
