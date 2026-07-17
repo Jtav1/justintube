@@ -1,3 +1,13 @@
+-- ============================================================================
+-- MASTER SCHEMA REFERENCE
+--
+-- This file is the authoritative, human-readable reference design for the
+-- Justintube database. It describes every table in MySQL-compatible syntax.
+-- The runtime DDL executed by the API lives in `api/lib/schema.mysql.js`
+-- (MySQL) and `api/lib/schema.sqlite.js` (SQLite) and MUST be kept in sync
+-- with the definitions below.
+-- ============================================================================
+--
 -- ORIGINAL_UPLOADS
 --
 -- Stores one record per raw file uploaded to Justintube. The file is written to
