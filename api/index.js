@@ -56,6 +56,9 @@ export function createApp() {
       url: "/openapi.json",
       theme: "default",
       pageTitle: "Justintube API",
+      agent: {
+        disabled: true,
+      },
     }),
   );
 
