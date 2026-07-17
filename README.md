@@ -2,6 +2,8 @@
 
 A self-hosted video platform: YouTube-like frontend, self-hosted transcoding pipeline, and shared watch sessions (CAST). Built contract-first — the full API surface is specified in OpenAPI and development towards completing each documented endpoint is a work in progress.
 
+This software is a collaborative effort between myself (Justin) and a few friends who can choose to add themselves to this readme and other docs :)
+
 ## Why
 
 I (Justin) have been hosting a MediaCMS instance for a long time for myself and friends to use for fun, but I find it lacking in a few ways and I've always wanted to tackle developing one specifically tailored to our needs instead of maintained by someone else. Plus I'm tired of keeping it updated.
