@@ -34,6 +34,7 @@ export const USERS_DDL = `
     bio               TEXT,
     email_verified    INTEGER NOT NULL DEFAULT 0,
     email_verified_at TEXT,
+    uploader          INTEGER NOT NULL DEFAULT 0,
     role_id           INTEGER,
     created_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -36,6 +36,7 @@ export const USERS_DDL = `
     bio               VARCHAR(5000)   NULL,
     email_verified    TINYINT(1)      NOT NULL DEFAULT 0,
     email_verified_at TIMESTAMP       NULL,
+    uploader          TINYINT(1)      NOT NULL DEFAULT 0,
     role_id           BIGINT UNSIGNED NULL,
     created_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

@@ -2,9 +2,9 @@
 -- ROLES
 --
 -- The set of authorization roles a user account can hold (admin, moderator,
--- uploader, viewer, locked). Each row is a single role that USERS.role_id may
--- reference. The standard roles are seeded idempotently on startup by the
--- reference-data seeder (see `api/lib/schema.js`).
+-- uploader, viewer, locked, unverified). Each row is a single role that
+-- USERS.role_id may reference. The standard roles are seeded idempotently on
+-- startup by the reference-data seeder (see `api/lib/schema.js`).
 --
 -- The UNIQUE key on `name` keeps role names distinct so they can be looked up
 -- by name, `description` is a human-readable explanation, and `enabled` allows

@@ -1626,7 +1626,7 @@ components:
 
     Role:
       type: string
-      enum: [admin, moderator, uploader, viewer, locked]
+      enum: [admin, moderator, uploader, viewer, locked, unverified]
 
     Visibility:
       type: string

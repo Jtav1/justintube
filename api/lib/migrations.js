@@ -62,6 +62,12 @@ const COLUMN_ADDITIONS = [
     mysqlType: "TINYINT(1) NOT NULL DEFAULT 1",
     sqliteType: "INTEGER NOT NULL DEFAULT 1",
   },
+  {
+    table: "USERS",
+    column: "uploader",
+    mysqlType: "TINYINT(1) NOT NULL DEFAULT 0",
+    sqliteType: "INTEGER NOT NULL DEFAULT 0",
+  },
 ];
 
 /**
