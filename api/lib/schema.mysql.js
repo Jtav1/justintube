@@ -380,6 +380,26 @@ export const USER_NOTIFICATION_SETTINGS_DDL = `
 `;
 
 /**
+ * MySQL DDL for the STATIC_PAGES table. One row per block of pre-rendered,
+ * HTML-formatted content shown on static pages; `description` labels the block
+ * and `contents` (capped below 10,000 characters) holds the HTML markup. Kept
+ * in sync with `api/db/schema/static_pages.sql` and the SQLite variant in
+ * `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const STATIC_PAGES_DDL = `
+  CREATE TABLE IF NOT EXISTS STATIC_PAGES (
+    id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    description VARCHAR(255)    NOT NULL,
+    contents    VARCHAR(9999)   NOT NULL,
+    created_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
  * MySQL DDL for the USER_VIDEOS view. Lists each owning user_id alongside the
  * videos they own, joining screen-viewable metadata when present. Uses
  * CREATE OR REPLACE so the definition stays current across restarts.
@@ -426,6 +446,7 @@ export const SCHEMA_STATEMENTS = [
   SUBSCRIPTIONS_DDL,
   NOTIFICATIONS_DDL,
   USER_NOTIFICATION_SETTINGS_DDL,
+  STATIC_PAGES_DDL,
 ];
 
 /**

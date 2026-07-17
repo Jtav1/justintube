@@ -25,6 +25,7 @@ const TABLES_CHILD_FIRST = [
   "USER_IDENTITIES",
   "USERS",
   "SSO_PROVIDERS",
+  "STATIC_PAGES",
 ];
 
 /**
@@ -446,6 +447,31 @@ export async function seedUserNotificationSetting(userId, overrides = {}) {
        (user_id, notification_type, enabled)
      VALUES
        (:userId, :notificationType, :enabled)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a STATIC_PAGES row holding a block of HTML-formatted content,
+ * applying defaults for any omitted field.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.description] Short human-facing label for the block.
+ * @param {string} [overrides.contents] HTML markup (must be under 10,000 characters).
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded page's id and values.
+ */
+export async function seedStaticPage(overrides = {}) {
+  const record = {
+    description: "Sample static page",
+    contents: "<p>Sample static page content.</p>",
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO STATIC_PAGES (description, contents)
+     VALUES (:description, :contents)`,
     record,
   );
 
