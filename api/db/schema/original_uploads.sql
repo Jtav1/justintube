@@ -17,6 +17,12 @@
 -- The `user_id` column is intentionally left nullable for now; it will be
 -- populated once authentication is wired into the upload flow.
 
+-- The video_width / video_height / resolution columns capture the source
+-- file's pixel dimensions and a normalized resolution label. `resolution` is
+-- constrained to the shared set of allowed labels (see the OpenAPI `Resolution`
+-- enum). These columns are added in-place on existing databases by the column
+-- migration runner in `api/lib/migrations.js`.
+
 CREATE TABLE IF NOT EXISTS ORIGINAL_UPLOADS (
   id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   original_filename VARCHAR(255)    NOT NULL,
@@ -26,8 +32,13 @@ CREATE TABLE IF NOT EXISTS ORIGINAL_UPLOADS (
   file_size_bytes   BIGINT UNSIGNED NULL,
   storage_path      VARCHAR(512)    NOT NULL,
   status            VARCHAR(32)     NOT NULL DEFAULT 'uploaded',
+  video_width       INT UNSIGNED    NULL,
+  video_height      INT UNSIGNED    NULL,
+  resolution        VARCHAR(16)     NULL,
   user_id           BIGINT UNSIGNED NULL,
   uploaded_at       TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_uuid_name (uuid_name)
+  UNIQUE KEY uq_uuid_name (uuid_name),
+  CONSTRAINT chk_original_uploads_resolution
+    CHECK (resolution IN ('240p','360p','480p','720p','1080p','2kHD','4kHD'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
