@@ -56,6 +56,12 @@ const COLUMN_ADDITIONS = [
     mysqlType: `VARCHAR(16) NULL ${RESOLUTION_CHECK}`,
     sqliteType: `TEXT ${RESOLUTION_CHECK}`,
   },
+  {
+    table: "USER_NOTIFICATION_SETTINGS",
+    column: "enabled",
+    mysqlType: "TINYINT(1) NOT NULL DEFAULT 1",
+    sqliteType: "INTEGER NOT NULL DEFAULT 1",
+  },
 ];
 
 /**

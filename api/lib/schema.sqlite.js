@@ -253,6 +253,71 @@ export const FEATURED_VIDEOS_DDL = `
 `;
 
 /**
+ * SQLite DDL for the SUBSCRIPTIONS table. Records that one user (subscriber_id)
+ * has subscribed to another user's content (subscribed_to_id). Kept in sync with
+ * `api/db/schema/subscriptions.sql` and the MySQL definition in
+ * `api/lib/schema.mysql.js`.
+ *
+ * @type {string}
+ */
+export const SUBSCRIPTIONS_DDL = `
+  CREATE TABLE IF NOT EXISTS SUBSCRIPTIONS (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscriber_id    INTEGER NOT NULL,
+    subscribed_to_id INTEGER NOT NULL,
+    created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (subscriber_id, subscribed_to_id),
+    CHECK (subscriber_id <> subscribed_to_id),
+    FOREIGN KEY (subscriber_id) REFERENCES USERS (id) ON DELETE CASCADE,
+    FOREIGN KEY (subscribed_to_id) REFERENCES USERS (id) ON DELETE CASCADE
+  )
+`;
+
+/**
+ * SQLite DDL for the NOTIFICATIONS table. One row per notification delivered to a
+ * target user; `notification_type` is a free-form string reserved for future
+ * use and `read_at` is NULL until the notification is read. Kept in sync with
+ * `api/db/schema/notifications.sql` and the MySQL definition in
+ * `api/lib/schema.mysql.js`.
+ *
+ * @type {string}
+ */
+export const NOTIFICATIONS_DDL = `
+  CREATE TABLE IF NOT EXISTS NOTIFICATIONS (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           INTEGER NOT NULL,
+    notification_type TEXT,
+    title             TEXT    NOT NULL,
+    message           TEXT    NOT NULL,
+    created_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    read_at           TEXT,
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE
+  )
+`;
+
+/**
+ * SQLite DDL for the USER_NOTIFICATION_SETTINGS table. Stores a user's per-type
+ * notification preferences; `notification_type` is a free-form string reserved
+ * for future use. Kept in sync with
+ * `api/db/schema/user_notification_settings.sql` and the MySQL definition in
+ * `api/lib/schema.mysql.js`.
+ *
+ * @type {string}
+ */
+export const USER_NOTIFICATION_SETTINGS_DDL = `
+  CREATE TABLE IF NOT EXISTS USER_NOTIFICATION_SETTINGS (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           INTEGER NOT NULL,
+    notification_type TEXT,
+    enabled           INTEGER NOT NULL DEFAULT 1,
+    created_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, notification_type),
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE
+  )
+`;
+
+/**
  * SQLite DDL for the USER_VIDEOS view. Lists each owning user_id alongside the
  * videos they own, joining screen-viewable metadata when present. Uses
  * CREATE VIEW IF NOT EXISTS (SQLite has no CREATE OR REPLACE VIEW).
@@ -296,6 +361,9 @@ export const SCHEMA_STATEMENTS = [
   VIDEO_LIKES_DDL,
   CONTENT_TAGS_DDL,
   FEATURED_VIDEOS_DDL,
+  SUBSCRIPTIONS_DDL,
+  NOTIFICATIONS_DDL,
+  USER_NOTIFICATION_SETTINGS_DDL,
 ];
 
 /**
