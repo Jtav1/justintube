@@ -435,7 +435,7 @@ paths:
                 url:
                   type: string
                   format: uri
-                name:
+                title:
                   type: string
                 description:
                   type: string
@@ -1677,6 +1677,10 @@ components:
       type: string
       enum: [public, private, hidden, unlisted]
 
+    Resolution:
+      type: string
+      enum: [240p, 360p, 480p, 720p, 1080p, 2kHD, 4kHD]
+
     RegisterRequest:
       type: object
       required: [username, email, password]
@@ -1815,6 +1819,14 @@ components:
                 type: string
             visibility:
               $ref: "#/components/schemas/Visibility"
+            commentsEnabled:
+              type: boolean
+            width:
+              type: integer
+            height:
+              type: integer
+            resolution:
+              $ref: "#/components/schemas/Resolution"
             featured:
               type: boolean
             delisted:
@@ -1826,9 +1838,9 @@ components:
 
     VideoCreateRequest:
       type: object
-      required: [name]
+      required: [title]
       properties:
-        name:
+        title:
           type: string
         description:
           type: string
@@ -1838,6 +1850,8 @@ components:
             type: string
         visibility:
           $ref: "#/components/schemas/Visibility"
+        commentsEnabled:
+          type: boolean
         playlistIds:
           type: array
           items:
@@ -1852,7 +1866,7 @@ components:
     VideoUpdateRequest:
       type: object
       properties:
-        name:
+        title:
           type: string
         description:
           type: string
@@ -1862,6 +1876,8 @@ components:
             type: string
         visibility:
           $ref: "#/components/schemas/Visibility"
+        commentsEnabled:
+          type: boolean
         playlistIds:
           type: array
           items:
@@ -1895,8 +1911,7 @@ components:
             type: object
             properties:
               label:
-                type: string
-                example: 720p
+                $ref: "#/components/schemas/Resolution"
               url:
                 type: string
                 format: uri
@@ -1919,7 +1934,7 @@ components:
         variants:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/Resolution"
           example: [480p, 720p]
         failureReason:
           type: string
@@ -2018,6 +2033,19 @@ components:
           type: string
         name:
           type: string
+        description:
+          type: string
+        visibility:
+          $ref: "#/components/schemas/Visibility"
+        itemCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        lastAddedAt:
+          type: string
+          format: date-time
+          nullable: true
         items:
           type: array
           items:
@@ -2037,6 +2065,10 @@ components:
       properties:
         name:
           type: string
+        description:
+          type: string
+        visibility:
+          $ref: "#/components/schemas/Visibility"
 
     PlaylistUpdateRequest:
       type: object
@@ -2214,7 +2246,7 @@ components:
         resolutions:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/Resolution"
           example: [480p, 720p]
         hwAccel:
           type: string
