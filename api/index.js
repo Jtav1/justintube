@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { pathToFileURL } from "node:url";
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -93,4 +94,10 @@ async function start() {
   });
 }
 
-start();
+// Only boot the HTTP server (and touch the database) when this file is executed
+// directly. Importing it (e.g. from tests) exposes `createApp` without starting.
+const isMain =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  start();
+}
