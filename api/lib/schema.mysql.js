@@ -132,6 +132,69 @@ export const PLAYLIST_ITEMS_DDL = `
 `;
 
 /**
+ * MySQL DDL for the VIDEO_LIKES table. Records a single user's like (1) or
+ * dislike (-1) of an upload; `user_id` references a future users table and is
+ * not FK-enforced yet.
+ *
+ * @type {string}
+ */
+export const VIDEO_LIKES_DDL = `
+  CREATE TABLE IF NOT EXISTS VIDEO_LIKES (
+    id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id            BIGINT UNSIGNED NULL,
+    original_upload_id BIGINT UNSIGNED NOT NULL,
+    like_value         TINYINT         NOT NULL,
+    created_at         TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_video_likes_user_upload (user_id, original_upload_id),
+    KEY idx_video_likes_upload (original_upload_id),
+    CONSTRAINT fk_video_likes_upload
+      FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE,
+    CONSTRAINT chk_video_likes_value
+      CHECK (like_value IN (-1, 1))
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
+ * MySQL DDL for the CONTENT_TAGS table. Stores one row per tag applied to an
+ * upload; unique per (upload, tag) so a tag is not duplicated on a video.
+ *
+ * @type {string}
+ */
+export const CONTENT_TAGS_DDL = `
+  CREATE TABLE IF NOT EXISTS CONTENT_TAGS (
+    id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    original_upload_id BIGINT UNSIGNED NOT NULL,
+    tag                VARCHAR(255)    NOT NULL,
+    created_at         TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_content_tags_upload_tag (original_upload_id, tag),
+    KEY idx_content_tags_tag (tag),
+    CONSTRAINT fk_content_tags_upload
+      FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
+ * MySQL DDL for the FEATURED_VIDEOS table. The curated set of uploads promoted
+ * in the featured carousel, unique per upload so a video is featured at most
+ * once.
+ *
+ * @type {string}
+ */
+export const FEATURED_VIDEOS_DDL = `
+  CREATE TABLE IF NOT EXISTS FEATURED_VIDEOS (
+    id                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    original_upload_id BIGINT UNSIGNED NOT NULL,
+    created_at         TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_featured_videos_upload (original_upload_id),
+    CONSTRAINT fk_featured_videos_upload
+      FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
  * MySQL DDL for the USER_VIDEOS view. Lists each owning user_id alongside the
  * videos they own, joining screen-viewable metadata when present. Uses
  * CREATE OR REPLACE so the definition stays current across restarts.
@@ -168,6 +231,9 @@ export const SCHEMA_STATEMENTS = [
   FILE_VERSIONS_DDL,
   USER_PLAYLISTS_DDL,
   PLAYLIST_ITEMS_DDL,
+  VIDEO_LIKES_DDL,
+  CONTENT_TAGS_DDL,
+  FEATURED_VIDEOS_DDL,
 ];
 
 /**

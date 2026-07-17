@@ -12,6 +12,9 @@ const TABLES_CHILD_FIRST = [
   "PLAYLIST_ITEMS",
   "FILE_VERSIONS",
   "VIDEO_METADATA",
+  "VIDEO_LIKES",
+  "CONTENT_TAGS",
+  "FEATURED_VIDEOS",
   "USER_PLAYLISTS",
   "ORIGINAL_UPLOADS",
 ];
@@ -182,6 +185,78 @@ export async function seedFileVersion(originalUploadId, overrides = {}) {
   );
 
   return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a VIDEO_LIKES row (a user's like/dislike) for an existing upload,
+ * applying defaults for any omitted field.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {number|null} [overrides.userId] Voting user id (nullable for now).
+ * @param {number} [overrides.likeValue] 1 for a like, -1 for a dislike.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded like's id and values.
+ */
+export async function seedVideoLike(originalUploadId, overrides = {}) {
+  const record = {
+    originalUploadId,
+    userId: null,
+    likeValue: 1,
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO VIDEO_LIKES
+       (original_upload_id, user_id, like_value)
+     VALUES
+       (:originalUploadId, :userId, :likeValue)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a CONTENT_TAGS row (a single tag) for an existing upload, applying
+ * defaults for any omitted field.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.tag] Tag string applied to the video.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded tag's id and values.
+ */
+export async function seedContentTag(originalUploadId, overrides = {}) {
+  const record = {
+    originalUploadId,
+    tag: "sample-tag",
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO CONTENT_TAGS
+       (original_upload_id, tag)
+     VALUES
+       (:originalUploadId, :tag)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a FEATURED_VIDEOS row promoting an existing upload.
+ *
+ * @param {number} originalUploadId Id of the featured ORIGINAL_UPLOADS row.
+ * @returns {Promise<{id: number, originalUploadId: number}>} The seeded row's id and upload id.
+ */
+export async function seedFeaturedVideo(originalUploadId) {
+  const result = await execute(
+    `INSERT INTO FEATURED_VIDEOS (original_upload_id)
+     VALUES (:originalUploadId)`,
+    { originalUploadId },
+  );
+
+  return { id: result.insertId, originalUploadId };
 }
 
 /**

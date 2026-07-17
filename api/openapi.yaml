@@ -21,7 +21,7 @@ tags:
   - name: Discovery
     description: Home feeds, tags, subscriptions, library lists
   - name: Videos
-    description: Watch, upload, edit, visibility, and transcode
+    description: Watch, upload, edit, and visibility
   - name: Engagement
     description: Likes, dislikes, and channel subscriptions
   - name: Users
@@ -335,25 +335,6 @@ paths:
                 $ref: "#/components/schemas/VideoList"
         "501":
           $ref: "#/components/responses/NotImplemented"
-    post:
-      tags: [Videos]
-      summary: Create a video record (metadata before or during upload)
-      operationId: createVideo
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/VideoCreateRequest"
-      responses:
-        "201":
-          description: Video created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Video"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
 
   /videos/featured:
     get:
@@ -478,7 +459,7 @@ paths:
           $ref: "#/components/responses/NotImplemented"
     patch:
       tags: [Videos]
-      summary: Edit video metadata, visibility, playlists; admin featured/force-transcode
+      summary: Edit video metadata, visibility, playlists; admin featured
       operationId: updateVideo
       requestBody:
         required: true
@@ -580,36 +561,6 @@ paths:
       responses:
         "200":
           description: Grants updated
-        "501":
-          $ref: "#/components/responses/NotImplemented"
-
-  /videos/{id}/transcode:
-    parameters:
-      - $ref: "#/components/parameters/VideoId"
-    get:
-      tags: [Videos]
-      summary: Transcode job status for owner
-      operationId: getVideoTranscode
-      responses:
-        "200":
-          description: Transcode status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TranscodeJob"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
-    post:
-      tags: [Videos]
-      summary: Admin force re-transcode
-      operationId: forceVideoTranscode
-      responses:
-        "202":
-          description: Transcode enqueued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TranscodeJob"
         "501":
           $ref: "#/components/responses/NotImplemented"
 
@@ -1836,33 +1787,6 @@ components:
               items:
                 type: string
 
-    VideoCreateRequest:
-      type: object
-      required: [title]
-      properties:
-        title:
-          type: string
-        description:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-        visibility:
-          $ref: "#/components/schemas/Visibility"
-        commentsEnabled:
-          type: boolean
-        playlistIds:
-          type: array
-          items:
-            type: string
-        featured:
-          type: boolean
-          description: Admin only
-        forceTranscode:
-          type: boolean
-          description: Admin only
-
     VideoUpdateRequest:
       type: object
       properties:
@@ -1883,8 +1807,6 @@ components:
           items:
             type: string
         featured:
-          type: boolean
-        forceTranscode:
           type: boolean
 
     VideoList:
@@ -1918,27 +1840,6 @@ components:
         originalUrl:
           type: string
           format: uri
-
-    TranscodeJob:
-      type: object
-      properties:
-        videoId:
-          type: string
-        status:
-          type: string
-          enum: [queued, processing, success, failed]
-        progress:
-          type: number
-          minimum: 0
-          maximum: 1
-        variants:
-          type: array
-          items:
-            $ref: "#/components/schemas/Resolution"
-          example: [480p, 720p]
-        failureReason:
-          type: string
-          nullable: true
 
     ReactionState:
       type: object

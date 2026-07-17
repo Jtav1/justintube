@@ -26,38 +26,6 @@ describe("Video metadata endpoints (VIDEO_METADATA + ORIGINAL_UPLOADS)", () => {
     await resetTables();
   });
 
-  describe("POST /videos (createVideo)", () => {
-    test("creates a video record and returns 201 with the created Video", async () => {
-      const res = await client.post("/api/v1/videos").send({
-        title: "My first video",
-        description: "Hello world",
-        visibility: "public",
-        commentsEnabled: true,
-      });
-
-      expect(res.status).toBe(201);
-      expect(res.body).toMatchObject({
-        title: "My first video",
-        description: "Hello world",
-        visibility: "public",
-        commentsEnabled: true,
-      });
-      expect(res.body.id).toBeDefined();
-
-      const rows = await queryRows("SELECT * FROM VIDEO_METADATA");
-      expect(rows).toHaveLength(1);
-      expect(rows[0].title).toBe("My first video");
-    });
-
-    test("rejects a request missing the required title with 400", async () => {
-      const res = await client
-        .post("/api/v1/videos")
-        .send({ description: "no title here" });
-
-      expect(res.status).toBe(400);
-    });
-  });
-
   describe("GET /videos/{id} (getVideo)", () => {
     test("returns 200 with watch metadata for an existing video", async () => {
       const upload = await seedUpload();

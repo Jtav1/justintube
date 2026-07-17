@@ -2,10 +2,13 @@ import { execute } from "../../lib/db.js";
 import {
   queryRows,
   resetTables,
+  seedContentTag,
+  seedFeaturedVideo,
   seedFileVersion,
   seedMetadata,
   seedPlaylist,
   seedUpload,
+  seedVideoLike,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -24,12 +27,13 @@ describe("Video-upload schema (SQLite)", () => {
   });
 
   describe("object existence", () => {
-    test("creates all five tables and the USER_VIDEOS view", async () => {
+    test("creates all eight tables and the USER_VIDEOS view", async () => {
       const rows = await queryRows(
         `SELECT name, type FROM sqlite_master
           WHERE name IN (
             'ORIGINAL_UPLOADS','VIDEO_METADATA','FILE_VERSIONS',
-            'USER_PLAYLISTS','PLAYLIST_ITEMS','USER_VIDEOS'
+            'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES',
+            'CONTENT_TAGS','FEATURED_VIDEOS','USER_VIDEOS'
           )`,
       );
       const byName = Object.fromEntries(rows.map((r) => [r.name, r.type]));
@@ -39,6 +43,9 @@ describe("Video-upload schema (SQLite)", () => {
       expect(byName.FILE_VERSIONS).toBe("table");
       expect(byName.USER_PLAYLISTS).toBe("table");
       expect(byName.PLAYLIST_ITEMS).toBe("table");
+      expect(byName.VIDEO_LIKES).toBe("table");
+      expect(byName.CONTENT_TAGS).toBe("table");
+      expect(byName.FEATURED_VIDEOS).toBe("table");
       expect(byName.USER_VIDEOS).toBe("view");
     });
   });
@@ -72,6 +79,36 @@ describe("Video-upload schema (SQLite)", () => {
       expect(rows[0].view_count).toBe(0);
       expect(rows[0].comments_enabled).toBe(1);
     });
+
+    test("VIDEO_LIKES.created_at defaults to a timestamp", async () => {
+      const upload = await seedUpload();
+      const like = await seedVideoLike(upload.id, { userId: 3, likeValue: -1 });
+      const rows = await queryRows("SELECT * FROM VIDEO_LIKES WHERE id = :id", {
+        id: like.id,
+      });
+      expect(rows[0].like_value).toBe(-1);
+      expect(rows[0].created_at).toBeTruthy();
+    });
+
+    test("CONTENT_TAGS.created_at defaults to a timestamp", async () => {
+      const upload = await seedUpload();
+      const tag = await seedContentTag(upload.id, { tag: "music" });
+      const rows = await queryRows("SELECT * FROM CONTENT_TAGS WHERE id = :id", {
+        id: tag.id,
+      });
+      expect(rows[0].tag).toBe("music");
+      expect(rows[0].created_at).toBeTruthy();
+    });
+
+    test("FEATURED_VIDEOS.created_at defaults to a timestamp", async () => {
+      const upload = await seedUpload();
+      const featured = await seedFeaturedVideo(upload.id);
+      const rows = await queryRows(
+        "SELECT * FROM FEATURED_VIDEOS WHERE id = :id",
+        { id: featured.id },
+      );
+      expect(rows[0].created_at).toBeTruthy();
+    });
   });
 
   describe("CHECK constraints", () => {
@@ -98,6 +135,13 @@ describe("Video-upload schema (SQLite)", () => {
     test("rejects an invalid visibility on USER_PLAYLISTS", async () => {
       await expect(
         seedPlaylist({ visibility: "secret" }),
+      ).rejects.toThrow();
+    });
+
+    test("rejects a like_value other than 1 or -1 on VIDEO_LIKES", async () => {
+      const upload = await seedUpload();
+      await expect(
+        seedVideoLike(upload.id, { likeValue: 0 }),
       ).rejects.toThrow();
     });
   });
@@ -138,6 +182,28 @@ describe("Video-upload schema (SQLite)", () => {
         ),
       ).rejects.toThrow();
     });
+
+    test("VIDEO_LIKES is unique per (user, upload)", async () => {
+      const upload = await seedUpload();
+      await seedVideoLike(upload.id, { userId: 42 });
+      await expect(
+        seedVideoLike(upload.id, { userId: 42, likeValue: -1 }),
+      ).rejects.toThrow();
+    });
+
+    test("CONTENT_TAGS is unique per (upload, tag)", async () => {
+      const upload = await seedUpload();
+      await seedContentTag(upload.id, { tag: "gaming" });
+      await expect(
+        seedContentTag(upload.id, { tag: "gaming" }),
+      ).rejects.toThrow();
+    });
+
+    test("FEATURED_VIDEOS allows an upload to be featured only once", async () => {
+      const upload = await seedUpload();
+      await seedFeaturedVideo(upload.id);
+      await expect(seedFeaturedVideo(upload.id)).rejects.toThrow();
+    });
   });
 
   describe("cascade deletes", () => {
@@ -171,6 +237,36 @@ describe("Video-upload schema (SQLite)", () => {
       expect(
         await queryRows(
           "SELECT * FROM PLAYLIST_ITEMS WHERE original_upload_id = :id",
+          { id: upload.id },
+        ),
+      ).toHaveLength(0);
+    });
+
+    test("deleting an upload cascades to likes, tags and featured entries", async () => {
+      const upload = await seedUpload();
+      await seedVideoLike(upload.id, { userId: 8 });
+      await seedContentTag(upload.id, { tag: "cascade" });
+      await seedFeaturedVideo(upload.id);
+
+      await execute("DELETE FROM ORIGINAL_UPLOADS WHERE id = :id", {
+        id: upload.id,
+      });
+
+      expect(
+        await queryRows(
+          "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id",
+          { id: upload.id },
+        ),
+      ).toHaveLength(0);
+      expect(
+        await queryRows(
+          "SELECT * FROM CONTENT_TAGS WHERE original_upload_id = :id",
+          { id: upload.id },
+        ),
+      ).toHaveLength(0);
+      expect(
+        await queryRows(
+          "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
           { id: upload.id },
         ),
       ).toHaveLength(0);

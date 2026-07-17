@@ -112,6 +112,58 @@ export const PLAYLIST_ITEMS_DDL = `
 `;
 
 /**
+ * SQLite DDL for the VIDEO_LIKES table. Records a single user's like (1) or
+ * dislike (-1) of an upload; `user_id` references a future users table and is
+ * not FK-enforced yet.
+ *
+ * @type {string}
+ */
+export const VIDEO_LIKES_DDL = `
+  CREATE TABLE IF NOT EXISTS VIDEO_LIKES (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id            INTEGER,
+    original_upload_id INTEGER NOT NULL,
+    like_value         INTEGER NOT NULL CHECK (like_value IN (-1, 1)),
+    created_at         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, original_upload_id),
+    FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE
+  )
+`;
+
+/**
+ * SQLite DDL for the CONTENT_TAGS table. Stores one row per tag applied to an
+ * upload; unique per (upload, tag) so a tag is not duplicated on a video.
+ *
+ * @type {string}
+ */
+export const CONTENT_TAGS_DDL = `
+  CREATE TABLE IF NOT EXISTS CONTENT_TAGS (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    original_upload_id INTEGER NOT NULL,
+    tag                TEXT    NOT NULL,
+    created_at         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (original_upload_id, tag),
+    FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE
+  )
+`;
+
+/**
+ * SQLite DDL for the FEATURED_VIDEOS table. The curated set of uploads promoted
+ * in the featured carousel, unique per upload so a video is featured at most
+ * once.
+ *
+ * @type {string}
+ */
+export const FEATURED_VIDEOS_DDL = `
+  CREATE TABLE IF NOT EXISTS FEATURED_VIDEOS (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    original_upload_id INTEGER NOT NULL UNIQUE,
+    created_at         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE
+  )
+`;
+
+/**
  * SQLite DDL for the USER_VIDEOS view. Lists each owning user_id alongside the
  * videos they own, joining screen-viewable metadata when present. Uses
  * CREATE VIEW IF NOT EXISTS (SQLite has no CREATE OR REPLACE VIEW).
@@ -148,6 +200,9 @@ export const SCHEMA_STATEMENTS = [
   FILE_VERSIONS_DDL,
   USER_PLAYLISTS_DDL,
   PLAYLIST_ITEMS_DDL,
+  VIDEO_LIKES_DDL,
+  CONTENT_TAGS_DDL,
+  FEATURED_VIDEOS_DDL,
 ];
 
 /**

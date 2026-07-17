@@ -46,7 +46,6 @@ export function registerStubRoutes(router) {
   r("get", "/search/suggest", "searchSuggest");
   r("get", "/search", "searchVideos");
   r("get", "/videos", "listVideos");
-  r("post", "/videos", "createVideo");
   r("get", "/videos/featured", "listFeaturedVideos");
   r("get", "/videos/newest", "listNewestVideos");
   r("post", "/videos/import", "importVideo");
@@ -57,8 +56,6 @@ export function registerStubRoutes(router) {
   r("post", "/videos/:id/delist", "delistVideo");
   r("get", "/videos/:id/access", "listVideoAccess");
   r("put", "/videos/:id/access", "setVideoAccess");
-  r("get", "/videos/:id/transcode", "getVideoTranscode");
-  r("post", "/videos/:id/transcode", "forceVideoTranscode");
   r("post", "/videos/:id/view", "recordVideoView");
   r("post", "/videos/:id/like", "likeVideo");
   r("post", "/videos/:id/dislike", "dislikeVideo");

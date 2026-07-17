@@ -113,7 +113,6 @@
   - Unlisted (only shows up at direct link)
 - Admin-only options
   - Set featured
-  - Force transcode
 
 ## Admin functions
 
