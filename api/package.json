@@ -11,22 +11,45 @@
     "url": "git+https://github.com/Jtav1/justintube.git"
   },
   "license": "ISC",
-  "author": "Justin Tavares (justin@jtav.me / GH @ jtav1)",
   "type": "module",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "author": "Justin Tavares (justin@jtav.me / GH @ jtav1)",
+  "contributors": [
+    {
+      "name": "Justin Tavares",
+      "email": "justin@jtav.me",
+      "url": "https://github.com/Jtav1"
+    },
+    {
+      "name": "SpinnerMaster",
+      "email": "spinnermaster+dev@gmail.com",
+      "url": "https://github.com/SpinnerMaster"
+    }
+  ],
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev:compose": "node --watch index.js",
+    "dev": "node --env-file=.env --watch index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "dependencies": {
-    "@scalar/express-api-reference": "^0.10.9",
+    "@scalar/express-api-reference": "^0.10.11",
     "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.11.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.5.2",
+    "express-rate-limit": "^8.6.0",
     "helmet": "^8.3.0",
-    "yaml": "^2.8.1"
+    "multer": "^2.2.0",
+    "mysql2": "^3.23.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2"
   }
 }
