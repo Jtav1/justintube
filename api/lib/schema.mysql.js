@@ -302,6 +302,84 @@ export const FEATURED_VIDEOS_DDL = `
 `;
 
 /**
+ * MySQL DDL for the SUBSCRIPTIONS table. Records that one user (subscriber_id)
+ * has subscribed to another user's content (subscribed_to_id). Kept in sync with
+ * `api/db/schema/subscriptions.sql` and the SQLite variant in
+ * `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const SUBSCRIPTIONS_DDL = `
+  CREATE TABLE IF NOT EXISTS SUBSCRIPTIONS (
+    id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    subscriber_id    BIGINT UNSIGNED NOT NULL,
+    subscribed_to_id BIGINT UNSIGNED NOT NULL,
+    created_at       TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_subscriptions_pair (subscriber_id, subscribed_to_id),
+    KEY idx_subscriptions_subscriber (subscriber_id),
+    KEY idx_subscriptions_subscribed_to (subscribed_to_id),
+    CONSTRAINT fk_subscriptions_subscriber
+      FOREIGN KEY (subscriber_id) REFERENCES USERS (id) ON DELETE CASCADE,
+    CONSTRAINT fk_subscriptions_subscribed_to
+      FOREIGN KEY (subscribed_to_id) REFERENCES USERS (id) ON DELETE CASCADE,
+    CONSTRAINT chk_subscriptions_not_self
+      CHECK (subscriber_id <> subscribed_to_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
+ * MySQL DDL for the NOTIFICATIONS table. One row per notification delivered to a
+ * target user; `notification_type` is a free-form string reserved for future
+ * use and `read_at` is NULL until the notification is read. Kept in sync with
+ * `api/db/schema/notifications.sql` and the SQLite variant in
+ * `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const NOTIFICATIONS_DDL = `
+  CREATE TABLE IF NOT EXISTS NOTIFICATIONS (
+    id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id           BIGINT UNSIGNED NOT NULL,
+    notification_type VARCHAR(64)     NULL,
+    title             VARCHAR(255)    NOT NULL,
+    message           TEXT            NOT NULL,
+    created_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    read_at           TIMESTAMP       NULL,
+    PRIMARY KEY (id),
+    KEY idx_notifications_user (user_id),
+    KEY idx_notifications_user_read (user_id, read_at),
+    CONSTRAINT fk_notifications_user
+      FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
+ * MySQL DDL for the USER_NOTIFICATION_SETTINGS table. Stores a user's per-type
+ * notification preferences; `notification_type` is a free-form string reserved
+ * for future use. Kept in sync with
+ * `api/db/schema/user_notification_settings.sql` and the SQLite variant in
+ * `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const USER_NOTIFICATION_SETTINGS_DDL = `
+  CREATE TABLE IF NOT EXISTS USER_NOTIFICATION_SETTINGS (
+    id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id           BIGINT UNSIGNED NOT NULL,
+    notification_type VARCHAR(64)     NULL,
+    enabled           TINYINT(1)      NOT NULL DEFAULT 1,
+    created_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_user_notification_settings_user_type (user_id, notification_type),
+    KEY idx_user_notification_settings_user (user_id),
+    CONSTRAINT fk_user_notification_settings_user
+      FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
  * MySQL DDL for the USER_VIDEOS view. Lists each owning user_id alongside the
  * videos they own, joining screen-viewable metadata when present. Uses
  * CREATE OR REPLACE so the definition stays current across restarts.
@@ -345,6 +423,9 @@ export const SCHEMA_STATEMENTS = [
   VIDEO_LIKES_DDL,
   CONTENT_TAGS_DDL,
   FEATURED_VIDEOS_DDL,
+  SUBSCRIPTIONS_DDL,
+  NOTIFICATIONS_DDL,
+  USER_NOTIFICATION_SETTINGS_DDL,
 ];
 
 /**

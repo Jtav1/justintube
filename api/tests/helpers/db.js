@@ -19,6 +19,9 @@ const TABLES_CHILD_FIRST = [
   "FEATURED_VIDEOS",
   "USER_PLAYLISTS",
   "ORIGINAL_UPLOADS",
+  "SUBSCRIPTIONS",
+  "NOTIFICATIONS",
+  "USER_NOTIFICATION_SETTINGS",
   "USER_IDENTITIES",
   "USERS",
   "SSO_PROVIDERS",
@@ -364,6 +367,85 @@ export async function seedUserIdentity(userId, providerId, overrides = {}) {
        (user_id, provider_id, provider_user_id, email)
      VALUES
        (:userId, :providerId, :providerUserId, :email)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a SUBSCRIPTIONS row recording that one user subscribed to another.
+ *
+ * @param {number} subscriberId Id of the subscribing USERS row.
+ * @param {number} subscribedToId Id of the subscribed-to USERS row.
+ * @returns {Promise<{id: number, subscriberId: number, subscribedToId: number}>} The seeded subscription's id and user ids.
+ */
+export async function seedSubscription(subscriberId, subscribedToId) {
+  const result = await execute(
+    `INSERT INTO SUBSCRIPTIONS (subscriber_id, subscribed_to_id)
+     VALUES (:subscriberId, :subscribedToId)`,
+    { subscriberId, subscribedToId },
+  );
+
+  return { id: result.insertId, subscriberId, subscribedToId };
+}
+
+/**
+ * Inserts a NOTIFICATIONS row for a target user, applying defaults for any
+ * omitted field.
+ *
+ * @param {number} userId Id of the target USERS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string|null} [overrides.notificationType] Free-form type string (nullable).
+ * @param {string} [overrides.title] Notification title.
+ * @param {string} [overrides.message] Notification message body.
+ * @param {string|null} [overrides.readAt] Timestamp the notification was read (null when unread).
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded notification's id and values.
+ */
+export async function seedNotification(userId, overrides = {}) {
+  const record = {
+    userId,
+    notificationType: null,
+    title: "Sample notification",
+    message: "Sample notification message",
+    readAt: null,
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO NOTIFICATIONS
+       (user_id, notification_type, title, message, read_at)
+     VALUES
+       (:userId, :notificationType, :title, :message, :readAt)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a USER_NOTIFICATION_SETTINGS row for a user, applying defaults for any
+ * omitted field.
+ *
+ * @param {number} userId Id of the USERS row the preference belongs to.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string|null} [overrides.notificationType] Free-form type string (nullable).
+ * @param {number} [overrides.enabled] 1 when the notification type is enabled, else 0.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded setting's id and values.
+ */
+export async function seedUserNotificationSetting(userId, overrides = {}) {
+  const record = {
+    userId,
+    notificationType: null,
+    enabled: 1,
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO USER_NOTIFICATION_SETTINGS
+       (user_id, notification_type, enabled)
+     VALUES
+       (:userId, :notificationType, :enabled)`,
     record,
   );
 
