@@ -25,6 +25,7 @@ const TABLES_CHILD_FIRST = [
   "USER_IDENTITIES",
   "USERS",
   "SSO_PROVIDERS",
+  "STATIC_PAGES",
 ];
 
 /**
@@ -280,6 +281,7 @@ export async function seedFeaturedVideo(originalUploadId) {
  * @param {string|null} [overrides.bio] Free-form profile blurb.
  * @param {number} [overrides.emailVerified] 1 when the email is verified, else 0.
  * @param {string|null} [overrides.emailVerifiedAt] Timestamp of verification.
+ * @param {number} [overrides.uploader] 1 when the account may upload videos, else 0.
  * @param {number|null} [overrides.roleId] Role id (defaults to the seeded viewer role).
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded user's id and values.
  */
@@ -293,6 +295,7 @@ export async function seedUser(overrides = {}) {
     bio: null,
     emailVerified: 0,
     emailVerifiedAt: null,
+    uploader: 0,
     roleId: undefined,
     ...overrides,
   };
@@ -306,9 +309,9 @@ export async function seedUser(overrides = {}) {
 
   const result = await execute(
     `INSERT INTO USERS
-       (username, email, display_name, password_hash, bio, email_verified, email_verified_at, role_id)
+       (username, email, display_name, password_hash, bio, email_verified, email_verified_at, uploader, role_id)
      VALUES
-       (:username, :email, :displayName, :passwordHash, :bio, :emailVerified, :emailVerifiedAt, :roleId)`,
+       (:username, :email, :displayName, :passwordHash, :bio, :emailVerified, :emailVerifiedAt, :uploader, :roleId)`,
     record,
   );
 
@@ -446,6 +449,31 @@ export async function seedUserNotificationSetting(userId, overrides = {}) {
        (user_id, notification_type, enabled)
      VALUES
        (:userId, :notificationType, :enabled)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a STATIC_PAGES row holding a block of HTML-formatted content,
+ * applying defaults for any omitted field.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.description] Short human-facing label for the block.
+ * @param {string} [overrides.contents] HTML markup (must be under 10,000 characters).
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded page's id and values.
+ */
+export async function seedStaticPage(overrides = {}) {
+  const record = {
+    description: "Sample static page",
+    contents: "<p>Sample static page content.</p>",
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO STATIC_PAGES (description, contents)
+     VALUES (:description, :contents)`,
     record,
   );
 
