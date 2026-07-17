@@ -1,4 +1,103 @@
 /**
+ * MySQL DDL for the ROLES table. Holds the authorization roles a user account
+ * can hold; the standard roles are seeded on startup. Kept in sync with
+ * `api/db/schema/roles.sql` and the SQLite variant in `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const ROLES_DDL = `
+  CREATE TABLE IF NOT EXISTS ROLES (
+    id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    name        VARCHAR(64)     NOT NULL,
+    description VARCHAR(255)    NULL,
+    enabled     TINYINT(1)      NOT NULL DEFAULT 1,
+    created_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_roles_name (name)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
+ * MySQL DDL for the USERS table. One row per account; local accounts store a
+ * bcrypt hash in `password_hash` (nullable for SSO-only accounts). Kept in sync
+ * with `api/db/schema/users.sql` and the SQLite variant in
+ * `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const USERS_DDL = `
+  CREATE TABLE IF NOT EXISTS USERS (
+    id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    username          VARCHAR(255)    NOT NULL,
+    email             VARCHAR(255)    NOT NULL,
+    display_name      VARCHAR(255)    NULL,
+    password_hash     VARCHAR(255)    NULL,
+    bio               VARCHAR(5000)   NULL,
+    email_verified    TINYINT(1)      NOT NULL DEFAULT 0,
+    email_verified_at TIMESTAMP       NULL,
+    role_id           BIGINT UNSIGNED NULL,
+    created_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_users_username (username),
+    UNIQUE KEY uq_users_email (email),
+    KEY idx_users_role (role_id),
+    CONSTRAINT fk_users_role
+      FOREIGN KEY (role_id) REFERENCES ROLES (id) ON DELETE SET NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
+ * MySQL DDL for the SSO_PROVIDERS table. Catalog of single sign-on providers
+ * that users can link an external identity to. Kept in sync with
+ * `api/db/schema/sso_providers.sql` and the SQLite variant in
+ * `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const SSO_PROVIDERS_DDL = `
+  CREATE TABLE IF NOT EXISTS SSO_PROVIDERS (
+    id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    provider_key VARCHAR(64)     NOT NULL,
+    name         VARCHAR(255)    NOT NULL,
+    enabled      TINYINT(1)      NOT NULL DEFAULT 1,
+    created_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_sso_providers_key (provider_key)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
+ * MySQL DDL for the USER_IDENTITIES table. Links an internal USERS account to an
+ * external identity at an SSO provider. Kept in sync with
+ * `api/db/schema/user_identities.sql` and the SQLite variant in
+ * `api/lib/schema.sqlite.js`.
+ *
+ * @type {string}
+ */
+export const USER_IDENTITIES_DDL = `
+  CREATE TABLE IF NOT EXISTS USER_IDENTITIES (
+    id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id          BIGINT UNSIGNED NOT NULL,
+    provider_id      BIGINT UNSIGNED NOT NULL,
+    provider_user_id VARCHAR(255)    NOT NULL,
+    email            VARCHAR(255)    NULL,
+    created_at       TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_user_identities_provider_subject (provider_id, provider_user_id),
+    UNIQUE KEY uq_user_identities_user_provider (user_id, provider_id),
+    KEY idx_user_identities_user (user_id),
+    CONSTRAINT fk_user_identities_user
+      FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_identities_provider
+      FOREIGN KEY (provider_id) REFERENCES SSO_PROVIDERS (id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+/**
  * MySQL DDL for the ORIGINAL_UPLOADS table. Kept in sync with the master schema
  * reference in `api/db/schema/original_uploads.sql` and the SQLite variant in
  * `api/lib/schema.sqlite.js`.
@@ -22,6 +121,9 @@ export const ORIGINAL_UPLOADS_DDL = `
     uploaded_at       TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uq_uuid_name (uuid_name),
+    KEY idx_original_uploads_user (user_id),
+    CONSTRAINT fk_original_uploads_user
+      FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE SET NULL,
     CONSTRAINT chk_original_uploads_resolution
       CHECK (resolution IN ('240p','360p','480p','720p','1080p','2kHD','4kHD'))
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -103,6 +205,8 @@ export const USER_PLAYLISTS_DDL = `
     updated_at    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_user_playlists_user (user_id),
+    CONSTRAINT fk_user_playlists_user
+      FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE,
     CONSTRAINT chk_user_playlists_visibility
       CHECK (visibility IN ('public','private','unlisted','hidden'))
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -148,8 +252,11 @@ export const VIDEO_LIKES_DDL = `
     PRIMARY KEY (id),
     UNIQUE KEY uq_video_likes_user_upload (user_id, original_upload_id),
     KEY idx_video_likes_upload (original_upload_id),
+    KEY idx_video_likes_user (user_id),
     CONSTRAINT fk_video_likes_upload
       FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE,
+    CONSTRAINT fk_video_likes_user
+      FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE,
     CONSTRAINT chk_video_likes_value
       CHECK (like_value IN (-1, 1))
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -226,6 +333,10 @@ export const USER_VIDEOS_VIEW_DDL = `
  * @type {string[]}
  */
 export const SCHEMA_STATEMENTS = [
+  ROLES_DDL,
+  USERS_DDL,
+  SSO_PROVIDERS_DDL,
+  USER_IDENTITIES_DDL,
   ORIGINAL_UPLOADS_DDL,
   VIDEO_METADATA_DDL,
   FILE_VERSIONS_DDL,

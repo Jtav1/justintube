@@ -248,6 +248,10 @@ paths:
       responses:
         "200":
           description: SSO linked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserIdentity"
         "501":
           $ref: "#/components/responses/NotImplemented"
 
@@ -1646,6 +1650,9 @@ components:
           format: password
         displayName:
           type: string
+        bio:
+          type: string
+          maxLength: 5000
 
     LoginRequest:
       type: object
@@ -1670,10 +1677,30 @@ components:
       properties:
         id:
           type: string
+        key:
+          type: string
+          description: Stable machine slug for the provider (e.g. "google").
         name:
           type: string
         enabled:
           type: boolean
+
+    UserIdentity:
+      type: object
+      description: An external SSO identity linked to an internal user account.
+      properties:
+        provider:
+          type: string
+          description: Provider slug the identity belongs to (e.g. "google").
+        providerUserId:
+          type: string
+          description: The provider's stable subject/sub for the account.
+        email:
+          type: string
+          format: email
+        linkedAt:
+          type: string
+          format: date-time
 
     User:
       type: object
@@ -1689,9 +1716,18 @@ components:
           format: email
         emailVerified:
           type: boolean
+        emailVerifiedAt:
+          type: string
+          format: date-time
+        bio:
+          type: string
+          maxLength: 5000
         role:
           $ref: "#/components/schemas/Role"
         createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 

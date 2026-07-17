@@ -100,14 +100,45 @@ const backend =
         })();
 
 /**
+ * Normalizes a database driver error so it is an `Error` instance in this
+ * module's realm while preserving the original message and driver `code`. In
+ * production this is a no-op (driver errors are already `Error` instances). It
+ * matters under the Jest ESM loader, where the native driver is loaded once per
+ * process in the first test file's realm, so its error class fails `instanceof
+ * Error` checks (and thus `expect(...).rejects.toThrow()`) in later test files.
+ *
+ * @param {unknown} error Error thrown by the underlying database driver.
+ * @returns {Error} An `Error` instance carrying the original message and code.
+ */
+function normalizeError(error) {
+  if (error instanceof Error) {
+    return error;
+  }
+  const message =
+    error && typeof error === "object" && "message" in error
+      ? String(error.message)
+      : String(error);
+  const wrapped = new Error(message);
+  if (error && typeof error === "object" && "code" in error) {
+    wrapped.code = error.code;
+  }
+  wrapped.cause = error;
+  return wrapped;
+}
+
+/**
  * Executes a parameterized read query and returns the resulting rows.
  *
  * @param {string} sql SQL statement, optionally containing `:named` placeholders.
  * @param {object} [params] Values bound to the query placeholders.
  * @returns {Promise<Array<object>>} Resolves to the selected rows.
  */
-export function query(sql, params) {
-  return backend.query(sql, params);
+export async function query(sql, params) {
+  try {
+    return await backend.query(sql, params);
+  } catch (error) {
+    throw normalizeError(error);
+  }
 }
 
 /**
@@ -117,8 +148,12 @@ export function query(sql, params) {
  * @param {object} [params] Values bound to the query placeholders.
  * @returns {Promise<{insertId: number, affectedRows: number}>} Insert id and affected row count.
  */
-export function execute(sql, params) {
-  return backend.execute(sql, params);
+export async function execute(sql, params) {
+  try {
+    return await backend.execute(sql, params);
+  } catch (error) {
+    throw normalizeError(error);
+  }
 }
 
 /**
@@ -127,6 +162,10 @@ export function execute(sql, params) {
  * @param {string} sql Raw SQL to run.
  * @returns {Promise<void>} Resolves once the statement(s) complete.
  */
-export function exec(sql) {
-  return backend.exec(sql);
+export async function exec(sql) {
+  try {
+    return await backend.exec(sql);
+  } catch (error) {
+    throw normalizeError(error);
+  }
 }

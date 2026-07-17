@@ -14,8 +14,9 @@
 -- disk under MEDIA_STORAGE_DIRECTORY using `uuid_name` (+ extension) as its name,
 -- so the UUID is the single source of truth linking the filesystem and this table.
 --
--- The `user_id` column is intentionally left nullable for now; it will be
--- populated once authentication is wired into the upload flow.
+-- The `user_id` column is nullable (uploads may predate an owner) and now
+-- references USERS(id); it is set to NULL when the owning user is deleted so
+-- their uploads are preserved.
 
 -- The video_width / video_height / resolution columns capture the source
 -- file's pixel dimensions and a normalized resolution label. `resolution` is
@@ -39,6 +40,9 @@ CREATE TABLE IF NOT EXISTS ORIGINAL_UPLOADS (
   uploaded_at       TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_uuid_name (uuid_name),
+  KEY idx_original_uploads_user (user_id),
+  CONSTRAINT fk_original_uploads_user
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE SET NULL,
   CONSTRAINT chk_original_uploads_resolution
     CHECK (resolution IN ('240p','360p','480p','720p','1080p','2kHD','4kHD'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

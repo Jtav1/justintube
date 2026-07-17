@@ -1,4 +1,90 @@
 /**
+ * SQLite DDL for the ROLES table. Holds the authorization roles a user account
+ * can hold; the standard roles are seeded on startup. Kept in sync with
+ * `api/db/schema/roles.sql` and the MySQL definition in `api/lib/schema.mysql.js`.
+ *
+ * @type {string}
+ */
+export const ROLES_DDL = `
+  CREATE TABLE IF NOT EXISTS ROLES (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL UNIQUE,
+    description TEXT,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`;
+
+/**
+ * SQLite DDL for the USERS table. One row per account; local accounts store a
+ * bcrypt hash in `password_hash` (nullable for SSO-only accounts). Kept in sync
+ * with `api/db/schema/users.sql` and the MySQL definition in
+ * `api/lib/schema.mysql.js`.
+ *
+ * @type {string}
+ */
+export const USERS_DDL = `
+  CREATE TABLE IF NOT EXISTS USERS (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    username          TEXT    NOT NULL UNIQUE,
+    email             TEXT    NOT NULL UNIQUE,
+    display_name      TEXT,
+    password_hash     TEXT,
+    bio               TEXT,
+    email_verified    INTEGER NOT NULL DEFAULT 0,
+    email_verified_at TEXT,
+    role_id           INTEGER,
+    created_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (role_id) REFERENCES ROLES (id) ON DELETE SET NULL
+  )
+`;
+
+/**
+ * SQLite DDL for the SSO_PROVIDERS table. Catalog of single sign-on providers
+ * that users can link an external identity to. Kept in sync with
+ * `api/db/schema/sso_providers.sql` and the MySQL definition in
+ * `api/lib/schema.mysql.js`.
+ *
+ * @type {string}
+ */
+export const SSO_PROVIDERS_DDL = `
+  CREATE TABLE IF NOT EXISTS SSO_PROVIDERS (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_key TEXT    NOT NULL UNIQUE,
+    name         TEXT    NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`;
+
+/**
+ * SQLite DDL for the USER_IDENTITIES table. Links an internal USERS account to
+ * an external identity at an SSO provider. Kept in sync with
+ * `api/db/schema/user_identities.sql` and the MySQL definition in
+ * `api/lib/schema.mysql.js`.
+ *
+ * @type {string}
+ */
+export const USER_IDENTITIES_DDL = `
+  CREATE TABLE IF NOT EXISTS USER_IDENTITIES (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL,
+    provider_id      INTEGER NOT NULL,
+    provider_user_id TEXT    NOT NULL,
+    email            TEXT,
+    created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (provider_id, provider_user_id),
+    UNIQUE (user_id, provider_id),
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE,
+    FOREIGN KEY (provider_id) REFERENCES SSO_PROVIDERS (id) ON DELETE CASCADE
+  )
+`;
+
+/**
  * SQLite DDL for the ORIGINAL_UPLOADS table (local dev). Kept in sync with the
  * master schema reference in `api/db/schema/original_uploads.sql` and mirrors
  * the MySQL definition in `api/lib/schema.mysql.js` using SQLite-compatible
@@ -20,7 +106,8 @@ export const ORIGINAL_UPLOADS_DDL = `
     video_height      INTEGER,
     resolution        TEXT    CHECK (resolution IN ('240p','360p','480p','720p','1080p','2kHD','4kHD')),
     user_id           INTEGER,
-    uploaded_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    uploaded_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE SET NULL
   )
 `;
 
@@ -88,7 +175,8 @@ export const USER_PLAYLISTS_DDL = `
       CHECK (visibility IN ('public','private','unlisted','hidden')),
     created_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_added_at TEXT,
-    updated_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE
   )
 `;
 
@@ -126,7 +214,8 @@ export const VIDEO_LIKES_DDL = `
     like_value         INTEGER NOT NULL CHECK (like_value IN (-1, 1)),
     created_at         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, original_upload_id),
-    FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE
+    FOREIGN KEY (original_upload_id) REFERENCES ORIGINAL_UPLOADS (id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE
   )
 `;
 
@@ -195,6 +284,10 @@ export const USER_VIDEOS_VIEW_DDL = `
  * @type {string[]}
  */
 export const SCHEMA_STATEMENTS = [
+  ROLES_DDL,
+  USERS_DDL,
+  SSO_PROVIDERS_DDL,
+  USER_IDENTITIES_DDL,
   ORIGINAL_UPLOADS_DDL,
   VIDEO_METADATA_DDL,
   FILE_VERSIONS_DDL,

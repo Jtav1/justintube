@@ -7,7 +7,10 @@ import {
   seedFileVersion,
   seedMetadata,
   seedPlaylist,
+  seedSsoProvider,
   seedUpload,
+  seedUser,
+  seedUserIdentity,
   seedVideoLike,
   setupSchema,
 } from "../helpers/db.js";
@@ -27,10 +30,11 @@ describe("Video-upload schema (SQLite)", () => {
   });
 
   describe("object existence", () => {
-    test("creates all eight tables and the USER_VIDEOS view", async () => {
+    test("creates all auth and video tables plus the USER_VIDEOS view", async () => {
       const rows = await queryRows(
         `SELECT name, type FROM sqlite_master
           WHERE name IN (
+            'ROLES','USERS','SSO_PROVIDERS','USER_IDENTITIES',
             'ORIGINAL_UPLOADS','VIDEO_METADATA','FILE_VERSIONS',
             'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES',
             'CONTENT_TAGS','FEATURED_VIDEOS','USER_VIDEOS'
@@ -38,6 +42,10 @@ describe("Video-upload schema (SQLite)", () => {
       );
       const byName = Object.fromEntries(rows.map((r) => [r.name, r.type]));
 
+      expect(byName.ROLES).toBe("table");
+      expect(byName.USERS).toBe("table");
+      expect(byName.SSO_PROVIDERS).toBe("table");
+      expect(byName.USER_IDENTITIES).toBe("table");
       expect(byName.ORIGINAL_UPLOADS).toBe("table");
       expect(byName.VIDEO_METADATA).toBe("table");
       expect(byName.FILE_VERSIONS).toBe("table");
@@ -82,7 +90,11 @@ describe("Video-upload schema (SQLite)", () => {
 
     test("VIDEO_LIKES.created_at defaults to a timestamp", async () => {
       const upload = await seedUpload();
-      const like = await seedVideoLike(upload.id, { userId: 3, likeValue: -1 });
+      const user = await seedUser();
+      const like = await seedVideoLike(upload.id, {
+        userId: user.id,
+        likeValue: -1,
+      });
       const rows = await queryRows("SELECT * FROM VIDEO_LIKES WHERE id = :id", {
         id: like.id,
       });
@@ -185,9 +197,10 @@ describe("Video-upload schema (SQLite)", () => {
 
     test("VIDEO_LIKES is unique per (user, upload)", async () => {
       const upload = await seedUpload();
-      await seedVideoLike(upload.id, { userId: 42 });
+      const user = await seedUser();
+      await seedVideoLike(upload.id, { userId: user.id });
       await expect(
-        seedVideoLike(upload.id, { userId: 42, likeValue: -1 }),
+        seedVideoLike(upload.id, { userId: user.id, likeValue: -1 }),
       ).rejects.toThrow();
     });
 
@@ -244,7 +257,8 @@ describe("Video-upload schema (SQLite)", () => {
 
     test("deleting an upload cascades to likes, tags and featured entries", async () => {
       const upload = await seedUpload();
-      await seedVideoLike(upload.id, { userId: 8 });
+      const user = await seedUser();
+      await seedVideoLike(upload.id, { userId: user.id });
       await seedContentTag(upload.id, { tag: "cascade" });
       await seedFeaturedVideo(upload.id);
 
@@ -296,7 +310,8 @@ describe("Video-upload schema (SQLite)", () => {
 
   describe("USER_VIDEOS view", () => {
     test("surfaces an upload even when it has no metadata (LEFT JOIN)", async () => {
-      const upload = await seedUpload({ userId: 5 });
+      const user = await seedUser();
+      const upload = await seedUpload({ userId: user.id });
 
       const rows = await queryRows(
         "SELECT * FROM USER_VIDEOS WHERE video_id = :id",
@@ -305,11 +320,12 @@ describe("Video-upload schema (SQLite)", () => {
 
       expect(rows).toHaveLength(1);
       expect(rows[0].title).toBeNull();
-      expect(rows[0].user_id).toBe(5);
+      expect(rows[0].user_id).toBe(user.id);
     });
 
     test("includes metadata columns when present", async () => {
-      const upload = await seedUpload({ userId: 5 });
+      const user = await seedUser();
+      const upload = await seedUpload({ userId: user.id });
       await seedMetadata(upload.id, {
         title: "Joined title",
         visibility: "public",
@@ -324,6 +340,218 @@ describe("Video-upload schema (SQLite)", () => {
       expect(rows[0].title).toBe("Joined title");
       expect(rows[0].visibility).toBe("public");
       expect(rows[0].view_count).toBe(12);
+    });
+  });
+
+  describe("ROLES seeding and constraints", () => {
+    test("seeds the standard roles on schema creation", async () => {
+      const rows = await queryRows(
+        "SELECT name FROM ROLES ORDER BY name",
+      );
+      const names = rows.map((r) => r.name);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "admin",
+          "moderator",
+          "uploader",
+          "viewer",
+          "locked",
+        ]),
+      );
+    });
+
+    test("seeded roles are enabled by default", async () => {
+      const rows = await queryRows(
+        "SELECT enabled FROM ROLES WHERE name = :name",
+        { name: "viewer" },
+      );
+      expect(rows[0].enabled).toBe(1);
+    });
+
+    test("ROLES.name is unique", async () => {
+      await expect(
+        execute("INSERT INTO ROLES (name) VALUES ('viewer')"),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe("USERS constraints and defaults", () => {
+    test("USERS.email_verified defaults to 0 and created_at is set", async () => {
+      const user = await seedUser();
+      const rows = await queryRows("SELECT * FROM USERS WHERE id = :id", {
+        id: user.id,
+      });
+      expect(rows[0].email_verified).toBe(0);
+      expect(rows[0].created_at).toBeTruthy();
+    });
+
+    test("new users default to the seeded viewer role", async () => {
+      const user = await seedUser();
+      const rows = await queryRows(
+        `SELECT r.name AS role_name
+           FROM USERS u JOIN ROLES r ON r.id = u.role_id
+          WHERE u.id = :id`,
+        { id: user.id },
+      );
+      expect(rows[0].role_name).toBe("viewer");
+    });
+
+    test("USERS.username is unique", async () => {
+      await seedUser({ username: "dupe_user" });
+      await expect(seedUser({ username: "dupe_user" })).rejects.toThrow();
+    });
+
+    test("USERS.email is unique", async () => {
+      await seedUser({ email: "dupe@example.com" });
+      await expect(seedUser({ email: "dupe@example.com" })).rejects.toThrow();
+    });
+
+    test("rejects a role_id that does not reference a role", async () => {
+      await expect(seedUser({ roleId: 999999 })).rejects.toThrow();
+    });
+
+    test("deleting a role sets referencing users' role_id to NULL", async () => {
+      const role = await execute(
+        "INSERT INTO ROLES (name) VALUES ('temp-role')",
+      );
+      const user = await seedUser({ roleId: role.insertId });
+
+      await execute("DELETE FROM ROLES WHERE id = :id", { id: role.insertId });
+
+      const rows = await queryRows(
+        "SELECT role_id FROM USERS WHERE id = :id",
+        { id: user.id },
+      );
+      expect(rows[0].role_id).toBeNull();
+    });
+  });
+
+  describe("SSO_PROVIDERS constraints and defaults", () => {
+    test("SSO_PROVIDERS.enabled defaults to 1", async () => {
+      const provider = await seedSsoProvider();
+      const rows = await queryRows(
+        "SELECT enabled FROM SSO_PROVIDERS WHERE id = :id",
+        { id: provider.id },
+      );
+      expect(rows[0].enabled).toBe(1);
+    });
+
+    test("SSO_PROVIDERS.provider_key is unique", async () => {
+      await seedSsoProvider({ providerKey: "google" });
+      await expect(
+        seedSsoProvider({ providerKey: "google" }),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe("USER_IDENTITIES constraints and cascades", () => {
+    test("is unique per (provider, provider_user_id)", async () => {
+      const provider = await seedSsoProvider();
+      const userA = await seedUser();
+      const userB = await seedUser();
+      await seedUserIdentity(userA.id, provider.id, { providerUserId: "sub-1" });
+      await expect(
+        seedUserIdentity(userB.id, provider.id, { providerUserId: "sub-1" }),
+      ).rejects.toThrow();
+    });
+
+    test("is unique per (user, provider)", async () => {
+      const provider = await seedSsoProvider();
+      const user = await seedUser();
+      await seedUserIdentity(user.id, provider.id);
+      await expect(
+        seedUserIdentity(user.id, provider.id),
+      ).rejects.toThrow();
+    });
+
+    test("rejects an identity for a non-existent user", async () => {
+      const provider = await seedSsoProvider();
+      await expect(
+        seedUserIdentity(999999, provider.id),
+      ).rejects.toThrow();
+    });
+
+    test("deleting a user cascades to their identities", async () => {
+      const provider = await seedSsoProvider();
+      const user = await seedUser();
+      await seedUserIdentity(user.id, provider.id);
+
+      await execute("DELETE FROM USERS WHERE id = :id", { id: user.id });
+
+      expect(
+        await queryRows(
+          "SELECT * FROM USER_IDENTITIES WHERE user_id = :id",
+          { id: user.id },
+        ),
+      ).toHaveLength(0);
+    });
+
+    test("deleting a provider cascades to its identities", async () => {
+      const provider = await seedSsoProvider();
+      const user = await seedUser();
+      await seedUserIdentity(user.id, provider.id);
+
+      await execute("DELETE FROM SSO_PROVIDERS WHERE id = :id", {
+        id: provider.id,
+      });
+
+      expect(
+        await queryRows(
+          "SELECT * FROM USER_IDENTITIES WHERE provider_id = :id",
+          { id: provider.id },
+        ),
+      ).toHaveLength(0);
+    });
+  });
+
+  describe("user foreign keys on content tables", () => {
+    test("rejects an upload with a non-existent user_id", async () => {
+      await expect(seedUpload({ userId: 999999 })).rejects.toThrow();
+    });
+
+    test("rejects a playlist with a non-existent user_id", async () => {
+      await expect(seedPlaylist({ userId: 999999 })).rejects.toThrow();
+    });
+
+    test("rejects a like with a non-existent user_id", async () => {
+      const upload = await seedUpload();
+      await expect(
+        seedVideoLike(upload.id, { userId: 999999 }),
+      ).rejects.toThrow();
+    });
+
+    test("deleting a user sets their uploads' user_id to NULL", async () => {
+      const user = await seedUser();
+      const upload = await seedUpload({ userId: user.id });
+
+      await execute("DELETE FROM USERS WHERE id = :id", { id: user.id });
+
+      const rows = await queryRows(
+        "SELECT user_id FROM ORIGINAL_UPLOADS WHERE id = :id",
+        { id: upload.id },
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].user_id).toBeNull();
+    });
+
+    test("deleting a user cascades to their playlists and likes", async () => {
+      const user = await seedUser();
+      const playlist = await seedPlaylist({ userId: user.id });
+      const upload = await seedUpload();
+      await seedVideoLike(upload.id, { userId: user.id });
+
+      await execute("DELETE FROM USERS WHERE id = :id", { id: user.id });
+
+      expect(
+        await queryRows("SELECT * FROM USER_PLAYLISTS WHERE id = :id", {
+          id: playlist.id,
+        }),
+      ).toHaveLength(0);
+      expect(
+        await queryRows("SELECT * FROM VIDEO_LIKES WHERE user_id = :id", {
+          id: user.id,
+        }),
+      ).toHaveLength(0);
     });
   });
 });

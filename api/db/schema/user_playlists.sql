@@ -1,9 +1,8 @@
 -- ============================================================================
 -- USER_PLAYLISTS
 --
--- A playlist owned by a user. `user_id` references a future users table and is
--- intentionally left nullable and NOT FK-enforced for now (that table does not
--- exist yet), mirroring the ORIGINAL_UPLOADS.user_id treatment.
+-- A playlist owned by a user. `user_id` is nullable but now references
+-- USERS(id) and cascades on delete, so removing a user removes their playlists.
 --
 -- `created_at` records when the playlist was created and `last_added_at` tracks
 -- when an item was most recently added (nullable until the first item is
@@ -24,6 +23,8 @@ CREATE TABLE IF NOT EXISTS USER_PLAYLISTS (
   updated_at    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_user_playlists_user (user_id),
+  CONSTRAINT fk_user_playlists_user
+    FOREIGN KEY (user_id) REFERENCES USERS (id) ON DELETE CASCADE,
   CONSTRAINT chk_user_playlists_visibility
     CHECK (visibility IN ('public','private','unlisted','hidden'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -1,5 +1,9 @@
 import { DB_CLIENT, exec } from "./db.js";
-import { applyColumnMigrations } from "./migrations.js";
+import {
+  applyColumnMigrations,
+  applyForeignKeyMigrations,
+} from "./migrations.js";
+import { seedReferenceData } from "./seed.js";
 import {
   SCHEMA_STATEMENTS as MYSQL_SCHEMA_STATEMENTS,
   VIEW_STATEMENTS as MYSQL_VIEW_STATEMENTS,
@@ -37,10 +41,11 @@ function schemaStatementsFor(dbClient) {
 /**
  * Ensures all application tables, columns, and views exist, creating them if
  * necessary. Safe to run on every startup: tables use CREATE TABLE IF NOT
- * EXISTS, missing columns are added in-place, and views are (re)created. The
- * DDL dialect is chosen based on the active DB_CLIENT. Runs in three phases so
- * foreign keys and view column references resolve: tables, then column
- * migrations, then views.
+ * EXISTS, missing columns/foreign keys are added in-place, reference data is
+ * seeded, and views are (re)created. The DDL dialect is chosen based on the
+ * active DB_CLIENT. Runs in phases so foreign keys, seed data, and view column
+ * references resolve: tables, then column migrations, then foreign-key
+ * migrations, then reference-data seeding, then views.
  *
  * @returns {Promise<void>} Resolves once schema creation has completed.
  */
@@ -52,6 +57,8 @@ export async function ensureSchema() {
   }
 
   await applyColumnMigrations();
+  await applyForeignKeyMigrations();
+  await seedReferenceData();
 
   for (const statement of views) {
     await exec(statement);

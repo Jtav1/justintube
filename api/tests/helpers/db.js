@@ -3,8 +3,10 @@ import { execute, query } from "../../lib/db.js";
 import { ensureSchema } from "../../lib/schema.js";
 
 /**
- * Tables that hold video-upload data, ordered so that children are deleted
- * before their parents (satisfying foreign-key constraints during a reset).
+ * Tables that hold per-test data, ordered so that children are deleted before
+ * their parents (satisfying foreign-key constraints during a reset). ROLES is
+ * intentionally omitted so the reference roles seeded by `ensureSchema` survive
+ * across resets and remain available for `seedUser`.
  *
  * @type {string[]}
  */
@@ -17,6 +19,9 @@ const TABLES_CHILD_FIRST = [
   "FEATURED_VIDEOS",
   "USER_PLAYLISTS",
   "ORIGINAL_UPLOADS",
+  "USER_IDENTITIES",
+  "USERS",
+  "SSO_PROVIDERS",
 ];
 
 /**
@@ -257,6 +262,112 @@ export async function seedFeaturedVideo(originalUploadId) {
   );
 
   return { id: result.insertId, originalUploadId };
+}
+
+/**
+ * Inserts a USERS row, filling sensible unique defaults for any field the caller
+ * omits. When `roleId` is not provided it resolves to the seeded `viewer` role
+ * so the ROLES foreign key is satisfied.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.username] Unique account username.
+ * @param {string} [overrides.email] Unique account email.
+ * @param {string|null} [overrides.displayName] Human-facing display name.
+ * @param {string|null} [overrides.passwordHash] Bcrypt password hash (nullable for SSO-only).
+ * @param {string|null} [overrides.bio] Free-form profile blurb.
+ * @param {number} [overrides.emailVerified] 1 when the email is verified, else 0.
+ * @param {string|null} [overrides.emailVerifiedAt] Timestamp of verification.
+ * @param {number|null} [overrides.roleId] Role id (defaults to the seeded viewer role).
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded user's id and values.
+ */
+export async function seedUser(overrides = {}) {
+  const suffix = randomUUID().slice(0, 8);
+  const record = {
+    username: `user_${suffix}`,
+    email: `${suffix}@example.com`,
+    displayName: null,
+    passwordHash: null,
+    bio: null,
+    emailVerified: 0,
+    emailVerifiedAt: null,
+    roleId: undefined,
+    ...overrides,
+  };
+
+  if (record.roleId === undefined) {
+    const roles = await query("SELECT id FROM ROLES WHERE name = :name", {
+      name: "viewer",
+    });
+    record.roleId = roles.length > 0 ? roles[0].id : null;
+  }
+
+  const result = await execute(
+    `INSERT INTO USERS
+       (username, email, display_name, password_hash, bio, email_verified, email_verified_at, role_id)
+     VALUES
+       (:username, :email, :displayName, :passwordHash, :bio, :emailVerified, :emailVerifiedAt, :roleId)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts an SSO_PROVIDERS row, filling unique defaults for any omitted field.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.providerKey] Stable machine slug (unique).
+ * @param {string} [overrides.name] Human-facing provider label.
+ * @param {number} [overrides.enabled] 1 when the provider is enabled, else 0.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded provider's id and values.
+ */
+export async function seedSsoProvider(overrides = {}) {
+  const suffix = randomUUID().slice(0, 8);
+  const record = {
+    providerKey: `provider_${suffix}`,
+    name: "Sample Provider",
+    enabled: 1,
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO SSO_PROVIDERS (provider_key, name, enabled)
+     VALUES (:providerKey, :name, :enabled)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
+}
+
+/**
+ * Inserts a USER_IDENTITIES row linking a user to an SSO provider, applying
+ * defaults for any omitted field.
+ *
+ * @param {number} userId Id of the linked USERS row.
+ * @param {number} providerId Id of the linked SSO_PROVIDERS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.providerUserId] Provider subject/sub (defaults to a fresh UUID).
+ * @param {string|null} [overrides.email] Email reported by the provider.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded identity's id and values.
+ */
+export async function seedUserIdentity(userId, providerId, overrides = {}) {
+  const record = {
+    userId,
+    providerId,
+    providerUserId: randomUUID(),
+    email: null,
+    ...overrides,
+  };
+
+  const result = await execute(
+    `INSERT INTO USER_IDENTITIES
+       (user_id, provider_id, provider_user_id, email)
+     VALUES
+       (:userId, :providerId, :providerUserId, :email)`,
+    record,
+  );
+
+  return { id: result.insertId, ...record };
 }
 
 /**
