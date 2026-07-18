@@ -4,7 +4,8 @@ info:
   version: 0.0.1
   description: |
     REST API surface derived from Views.md. Endpoints return `501 Not Implemented`
-    until handlers are built. CAST playback sync uses WebSocket at `/api/v1/cast/{id}/sync`.
+    until handlers are built. CAST realtime sync uses Socket.IO (namespace `/cast`,
+    one room per session); `GET /api/v1/cast/{id}/sync` returns connection details.
   contact:
     name: Justin Tavares
     url: https://github.com/Jtav1/justintube
@@ -29,7 +30,7 @@ tags:
   - name: Playlists
     description: Personal playlists
   - name: Cast
-    description: Shared CAST playlist spaces
+    description: Shared CAST watch sessions built on playlists (join by session code)
   - name: Notifications
     description: In-app tray and email preferences
   - name: Admin
@@ -1176,82 +1177,82 @@ paths:
   /cast:
     post:
       tags: [Cast]
-      summary: Create a shared CAST space (returns join key or password)
-      operationId: createCastSpace
+      summary: Create a CAST session, optionally seeded from a playlist or video
+      description: |
+        Starts a shared watch session. The session queue is a live copy seeded
+        from `playlistId` or `videoId` (or starts empty); session activity never
+        mutates the source playlist. The response includes the `sessionCode`
+        other users enter to join.
+      operationId: createCastSession
       requestBody:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                name:
-                  type: string
-                password:
-                  type: string
-                  format: password
-                  description: Optional join password; otherwise a join key is generated
+              $ref: '#/components/schemas/CastSessionCreateRequest'
       responses:
-        "201":
-          description: Space created
+        '201':
+          description: Session created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CastSpace"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+                $ref: '#/components/schemas/CastSession'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
 
   /cast/join:
     post:
       tags: [Cast]
-      summary: Join a shared space with key or password
-      operationId: joinCastSpace
+      summary: Join a CAST session by session code
+      operationId: joinCastSession
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                key:
-                  type: string
-                password:
-                  type: string
-                  format: password
-              anyOf:
-                - required: [key]
-                - required: [password]
+              $ref: '#/components/schemas/CastJoinRequest'
       responses:
-        "200":
-          description: Joined space
+        '200':
+          description: Joined session
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CastSpace"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+                $ref: '#/components/schemas/CastSession'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
 
   /cast/{id}:
     get:
       tags: [Cast]
-      summary: Shared space playlist, members, and playback snapshot
-      operationId: getCastSpace
+      summary: Session snapshot (queue, members, now playing, playback)
+      operationId: getCastSession
       parameters:
         - $ref: "#/components/parameters/CastId"
       responses:
-        "200":
-          description: Cast space state
+        '200':
+          description: Cast session state
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CastSpace"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+                $ref: '#/components/schemas/CastSession'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+    delete:
+      tags: [Cast]
+      summary: End the session (host only)
+      operationId: endCastSession
+      parameters:
+        - $ref: '#/components/parameters/CastId'
+      responses:
+        '204':
+          description: Session ended
+        '501':
+          $ref: '#/components/responses/NotImplemented'
 
-  /cast/{id}/playlist:
+  /cast/{id}/queue:
     post:
       tags: [Cast]
-      summary: Add a video to the shared playlist
-      operationId: addCastPlaylistItem
+      summary: Add a video to the session queue
+      operationId: addCastQueueItem
       parameters:
         - $ref: "#/components/parameters/CastId"
       requestBody:
@@ -1265,63 +1266,44 @@ paths:
                 videoId:
                   type: string
       responses:
-        "200":
-          description: Playlist updated
+        '200':
+          description: Queue updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CastSpace"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+                $ref: '#/components/schemas/CastSession'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
 
-  /cast/{id}/playlist/{videoId}:
+  /cast/{id}/queue/{itemId}:
     delete:
       tags: [Cast]
-      summary: Remove a video from the shared playlist
-      operationId: removeCastPlaylistItem
+      summary: Remove an item from the session queue
+      description: |
+        Keyed by queue `itemId` (not `videoId`) — the same video may appear in
+        the queue more than once.
+      operationId: removeCastQueueItem
       parameters:
-        - $ref: "#/components/parameters/CastId"
-        - name: videoId
+        - $ref: '#/components/parameters/CastId'
+        - name: itemId
           in: path
           required: true
           schema:
             type: string
       responses:
-        "200":
-          description: Playlist updated
+        '200':
+          description: Queue updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CastSpace"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
-
-  /cast/{id}/members:
-    get:
-      tags: [Cast]
-      summary: List users in the shared space
-      operationId: listCastMembers
-      parameters:
-        - $ref: "#/components/parameters/CastId"
-      responses:
-        "200":
-          description: Members
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  members:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/CastMember"
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+                $ref: '#/components/schemas/CastSession'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
 
   /cast/{id}/display:
     get:
       tags: [Cast]
-      summary: Cast-tab display page payload
+      summary: Payload for the in-app display view (cast the tab)
       operationId: getCastDisplay
       parameters:
         - $ref: "#/components/parameters/CastId"
@@ -1338,18 +1320,39 @@ paths:
   /cast/{id}/sync:
     get:
       tags: [Cast]
-      summary: WebSocket upgrade for playback sync
+      summary: Socket.IO connection details for realtime session sync
       description: |
-        Upgrade this connection to WebSocket. Clients exchange play, pause, seek,
-        scrub, forward/back, member join/leave, and playlist mutation events.
-      operationId: castSyncWebSocket
+        Realtime sync uses Socket.IO (namespace `/cast`, one room per session),
+        not a plain WebSocket upgrade on this path. This endpoint returns the
+        connection details a client needs. Event names are defined in
+        `api/cast/events.js` and must stay in sync with this catalog.
+
+        Client → server events:
+        - `session:hello { sessionId, displayName? }` — join the session room; server replies with a `state` snapshot
+        - `presence:setName { name }`
+        - `queue:add { videoId }` (ack), `queue:remove { itemId }`, `queue:move { itemId, toIndex }`
+        - `player:play`, `player:pause`, `player:skip`, `player:previous`, `player:seek { seconds }`
+        - `react { emoji }`
+        - Display client: `player:register`, `player:status { status, currentTime }`, `player:ended`
+
+        Server → client events:
+        - `state` (full CastSession snapshot)
+        - `player:tick { currentTime, status }`
+        - `activity { name, text, at }`
+        - `react { emoji, name }`
+        - Display-only: `player:load { item }`, `player:play`, `player:pause`, `player:seek { seconds }`
+      operationId: getCastSyncInfo
       parameters:
         - $ref: "#/components/parameters/CastId"
       responses:
-        "101":
-          description: Switching Protocols (WebSocket)
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        '200':
+          description: Socket.IO connection info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CastSyncInfo'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
 
   /notifications:
     get:
@@ -2018,25 +2021,61 @@ components:
             type: string
           description: Video ids in desired order
 
-    CastSpace:
+    CastSession:
       type: object
       properties:
         id:
           type: string
         name:
           type: string
-        joinKey:
+        sessionCode:
           type: string
-        playlist:
-          type: array
-          items:
-            $ref: "#/components/schemas/VideoThumbnail"
+          description: Code other users enter to join the session
+        sourcePlaylistId:
+          type: string
+          nullable: true
+          description: Playlist the queue was seeded from, if any (never mutated by the session)
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
         members:
           type: array
           items:
-            $ref: "#/components/schemas/CastMember"
+            $ref: '#/components/schemas/CastMember'
+        queue:
+          type: array
+          items:
+            $ref: '#/components/schemas/CastQueueItem'
+        history:
+          type: array
+          description: Recently played items (most recent first, capped at 10)
+          items:
+            $ref: '#/components/schemas/CastQueueItem'
+        nowPlaying:
+          oneOf:
+            - $ref: '#/components/schemas/CastQueueItem'
+            - type: 'null'
         playback:
-          $ref: "#/components/schemas/CastPlayback"
+          $ref: '#/components/schemas/CastPlayback'
+        displayConnected:
+          type: boolean
+          description: Whether a display client is currently registered
+
+    CastQueueItem:
+      allOf:
+        - $ref: '#/components/schemas/VideoThumbnail'
+        - type: object
+          properties:
+            itemId:
+              type: string
+              description: Unique per queue entry; the same video may appear more than once
+            addedBy:
+              type: string
+            addedAt:
+              type: string
+              format: date-time
 
     CastMember:
       type: object
@@ -2047,27 +2086,81 @@ components:
           type: string
         displayName:
           type: string
+        role:
+          type: string
+          enum: [host, guest, display]
+        joinedAt:
+          type: string
+          format: date-time
 
     CastPlayback:
       type: object
       properties:
-        videoId:
+        status:
           type: string
-          nullable: true
-        playing:
-          type: boolean
+          enum: [idle, playing, paused]
         positionSeconds:
           type: number
+        updatedAt:
+          type: string
+          format: date-time
 
     CastDisplay:
       type: object
       properties:
-        spaceId:
+        sessionId:
           type: string
         currentVideo:
-          $ref: "#/components/schemas/VideoThumbnail"
+          $ref: '#/components/schemas/CastQueueItem'
         playback:
-          $ref: "#/components/schemas/CastPlayback"
+          $ref: '#/components/schemas/CastPlayback'
+
+    CastSessionCreateRequest:
+      type: object
+      description: Seed the session queue from `playlistId` or `videoId` (provide at most one), or start empty.
+      properties:
+        name:
+          type: string
+        playlistId:
+          type: string
+          description: Seed the queue with a copy of this playlist's items
+        videoId:
+          type: string
+          description: Seed the queue with this single video
+        password:
+          type: string
+          format: password
+          description: Optional extra join password on top of the session code
+
+    CastJoinRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: Session code from the session creator
+        password:
+          type: string
+          format: password
+        displayName:
+          type: string
+
+    CastSyncInfo:
+      type: object
+      properties:
+        protocol:
+          type: string
+          const: socket.io
+        path:
+          type: string
+          description: Socket.IO handshake path
+          examples: ['/socket.io']
+        namespace:
+          type: string
+          examples: ['/cast']
+        room:
+          type: string
+          description: Session room to join via `session:hello`
         stream:
           $ref: "#/components/schemas/VideoStream"
 
