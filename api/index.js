@@ -1,5 +1,6 @@
 import "dotenv/config";
 import http from "node:http";
+import { pathToFileURL } from "node:url";
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -7,6 +8,7 @@ import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { createRealtime } from "./cast/realtime.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
+import { ensureSchema } from "./lib/schema.js";
 import { createApiRouter } from "./routes/stubs.js";
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -72,28 +74,39 @@ export function createApp() {
   return app;
 }
 
-const app = createApp();
-// Wrap in an http.Server so Socket.IO (CAST session sync) can attach to it.
-const server = http.createServer(app);
-createRealtime(server);
+/**
+ * Boots the database schema, HTTP server, and CAST realtime layer.
+ * Only called when this module is the process entrypoint.
+ *
+ * @returns {Promise<void>} Resolves once the server is listening.
+ */
+async function start() {
+  await ensureSchema();
 
-server.listen(PORT, () => {
-  console.log(`Justintube API listening on http://localhost:${PORT}`);
-  console.log(`Scalar docs: http://localhost:${PORT}/docs`);
-  console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
-  console.log(`CAST sync:  socket.io namespace /cast`);
-});
+  const app = createApp();
+  // Wrap in an http.Server so Socket.IO (CAST session sync) can attach to it.
+  const server = http.createServer(app);
+  createRealtime(server);
 
-app.listen(PORT, () => {
-  console.log(`Justintube API listening on http://localhost:${PORT}`);
-  console.log(`Scalar docs: http://localhost:${PORT}/docs`);
-  console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
-});
+  await new Promise((resolve, reject) => {
+    server.listen(PORT, () => {
+      console.log(`Justintube API listening on http://localhost:${PORT}`);
+      console.log(`Scalar docs: http://localhost:${PORT}/docs`);
+      console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
+      console.log(`CAST sync:  socket.io namespace /cast`);
+      resolve();
+    });
+    server.on("error", reject);
+  });
+}
 
 // Only boot the HTTP server (and touch the database) when this file is executed
 // directly. Importing it (e.g. from tests) exposes `createApp` without starting.
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
-  start();
+  start().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
 }

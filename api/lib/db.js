@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { QueryTypes, Sequelize } from "sequelize";
 
 /**
  * Selected database client, taken from the DB_CLIENT env var.
@@ -10,94 +11,68 @@ import { dirname, isAbsolute, resolve } from "node:path";
 export const DB_CLIENT = (process.env.DB_CLIENT || "sqlite").toLowerCase();
 
 /**
- * @typedef {object} DbBackend
- * @property {(sql: string, params?: object) => Promise<Array<object>>} query Runs a read query, resolving to rows.
- * @property {(sql: string, params?: object) => Promise<{insertId: number, affectedRows: number}>} execute Runs a write query.
- * @property {(sql: string) => Promise<void>} exec Runs one or more raw statements (e.g. DDL) without parameters.
- */
-
-/**
- * Builds the MySQL-backed database backend from the MYSQL_* env vars.
+ * Builds a Sequelize instance for the active DB_CLIENT dialect.
  *
- * @returns {Promise<DbBackend>} Backend whose methods proxy a mysql2 pool.
+ * @returns {Promise<import('sequelize').Sequelize>} Configured Sequelize instance.
  */
-async function createMysqlBackend() {
-  const { default: mysql } = await import("mysql2/promise");
-  const pool = mysql.createPool({
-    host: process.env.MYSQL_HOST || "localhost",
-    port: Number(process.env.MYSQL_PORT) || 3306,
-    database: process.env.MYSQL_DATABASE,
-    user: process.env.MYSQL_USER,
-    password: process.env.MYSQL_PASSWORD,
-    connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT) || 10,
-    waitForConnections: true,
-    namedPlaceholders: true,
-  });
+async function createSequelize() {
+  if (DB_CLIENT === "mysql") {
+    return new Sequelize(
+      process.env.MYSQL_DATABASE,
+      process.env.MYSQL_USER,
+      process.env.MYSQL_PASSWORD,
+      {
+        dialect: "mysql",
+        host: process.env.MYSQL_HOST || "localhost",
+        port: Number(process.env.MYSQL_PORT) || 3306,
+        logging: false,
+        define: {
+          freezeTableName: true,
+          underscored: true,
+        },
+        pool: {
+          max: Number(process.env.MYSQL_CONNECTION_LIMIT) || 10,
+        },
+        dialectOptions: {
+          charset: "utf8mb4",
+        },
+      },
+    );
+  }
 
-  return {
-    async query(sql, params) {
-      const [rows] = await pool.execute(sql, params);
-      return rows;
-    },
-    async execute(sql, params) {
-      const [result] = await pool.execute(sql, params);
-      return { insertId: result.insertId, affectedRows: result.affectedRows };
-    },
-    async exec(sql) {
-      await pool.query(sql);
-    },
-  };
+  if (DB_CLIENT === "sqlite") {
+    const sqlite3 = (await import("sqlite3")).default;
+    const configured = process.env.SQLITE_FILE || "db/data/justintube.sqlite";
+    const storage = isAbsolute(configured)
+      ? configured
+      : resolve(process.cwd(), configured);
+    mkdirSync(dirname(storage), { recursive: true });
+
+    // Sequelize 6's sqlite dialect requires the node-sqlite3 callback API
+    // (not better-sqlite3). Pass the module explicitly for reliable ESM loading.
+    return new Sequelize({
+      dialect: "sqlite",
+      storage,
+      dialectModule: sqlite3,
+      logging: false,
+      define: {
+        freezeTableName: true,
+        underscored: true,
+      },
+    });
+  }
+
+  throw new Error(
+    `Unsupported DB_CLIENT "${DB_CLIENT}". Use "sqlite" or "mysql".`,
+  );
 }
 
 /**
- * Builds the SQLite-backed database backend, creating the database file (and its
- * parent directory) if needed. The file location comes from SQLITE_FILE and
- * defaults to "db/data/justintube.sqlite" relative to the working directory.
+ * Shared Sequelize instance for the active dialect.
  *
- * @returns {Promise<DbBackend>} Backend whose methods proxy a better-sqlite3 handle.
+ * @type {import('sequelize').Sequelize}
  */
-async function createSqliteBackend() {
-  const { default: Database } = await import("better-sqlite3");
-  const configured = process.env.SQLITE_FILE || "db/data/justintube.sqlite";
-  const file = isAbsolute(configured)
-    ? configured
-    : resolve(process.cwd(), configured);
-  mkdirSync(dirname(file), { recursive: true });
-
-  const db = new Database(file);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-
-  return {
-    async query(sql, params) {
-      const stmt = db.prepare(sql);
-      return params === undefined ? stmt.all() : stmt.all(params);
-    },
-    async execute(sql, params) {
-      const stmt = db.prepare(sql);
-      const info = params === undefined ? stmt.run() : stmt.run(params);
-      return {
-        insertId: Number(info.lastInsertRowid),
-        affectedRows: info.changes,
-      };
-    },
-    async exec(sql) {
-      db.exec(sql);
-    },
-  };
-}
-
-/** @type {DbBackend} */
-const backend =
-  DB_CLIENT === "mysql"
-    ? await createMysqlBackend()
-    : DB_CLIENT === "sqlite"
-      ? await createSqliteBackend()
-      : (() => {
-          throw new Error(
-            `Unsupported DB_CLIENT "${DB_CLIENT}". Use "sqlite" or "mysql".`,
-          );
-        })();
+export const sequelize = await createSequelize();
 
 /**
  * Normalizes a database driver error so it is an `Error` instance in this
@@ -112,6 +87,22 @@ const backend =
  */
 function normalizeError(error) {
   if (error instanceof Error) {
+    const parentMessage =
+      (error.parent && error.parent.message) ||
+      (error.original && error.original.message);
+    if (
+      parentMessage &&
+      (!error.message || error.message === "Validation error")
+    ) {
+      const wrapped = new Error(parentMessage);
+      if ("code" in error && error.code !== undefined) {
+        wrapped.code = error.code;
+      } else if (error.parent && "code" in error.parent) {
+        wrapped.code = error.parent.code;
+      }
+      wrapped.cause = error;
+      return wrapped;
+    }
     return error;
   }
   const message =
@@ -135,7 +126,10 @@ function normalizeError(error) {
  */
 export async function query(sql, params) {
   try {
-    return await backend.query(sql, params);
+    return await sequelize.query(sql, {
+      ...(params === undefined ? {} : { replacements: params }),
+      type: QueryTypes.SELECT,
+    });
   } catch (error) {
     throw normalizeError(error);
   }
@@ -150,7 +144,34 @@ export async function query(sql, params) {
  */
 export async function execute(sql, params) {
   try {
-    return await backend.execute(sql, params);
+    const queryOptions =
+      params === undefined ? {} : { replacements: params };
+    const trimmed = sql.trimStart().toUpperCase();
+    if (trimmed.startsWith("INSERT")) {
+      const [insertId, metadata] = await sequelize.query(sql, {
+        ...queryOptions,
+        type: QueryTypes.INSERT,
+      });
+      return {
+        insertId: Number(insertId) || 0,
+        affectedRows: Number(
+          metadata && typeof metadata === "object" && "affectedRows" in metadata
+            ? metadata.affectedRows
+            : 1,
+        ),
+      };
+    }
+
+    const [, metadata] = await sequelize.query(sql, queryOptions);
+    let affectedRows = 0;
+    if (typeof metadata === "number") {
+      affectedRows = metadata;
+    } else if (metadata && typeof metadata === "object") {
+      affectedRows = Number(
+        metadata.affectedRows ?? metadata.rowCount ?? 0,
+      );
+    }
+    return { insertId: 0, affectedRows };
   } catch (error) {
     throw normalizeError(error);
   }
@@ -164,7 +185,7 @@ export async function execute(sql, params) {
  */
 export async function exec(sql) {
   try {
-    return await backend.exec(sql);
+    await sequelize.query(sql);
   } catch (error) {
     throw normalizeError(error);
   }

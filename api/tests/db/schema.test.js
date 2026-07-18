@@ -18,7 +18,7 @@ import {
 /**
  * Lower-level database tests exercising the SQLite schema directly (no HTTP).
  * These are GREEN: they assert the schema created by `ensureSchema` behaves as
- * documented (existence, defaults, CHECK/UNIQUE constraints, cascades, view).
+ * documented (existence, defaults, CHECK/UNIQUE constraints, cascades).
  */
 describe("Video-upload schema (SQLite)", () => {
   beforeAll(async () => {
@@ -30,14 +30,14 @@ describe("Video-upload schema (SQLite)", () => {
   });
 
   describe("object existence", () => {
-    test("creates all auth and video tables plus the USER_VIDEOS view", async () => {
+    test("creates all auth and video tables", async () => {
       const rows = await queryRows(
         `SELECT name, type FROM sqlite_master
           WHERE name IN (
             'ROLES','USERS','SSO_PROVIDERS','USER_IDENTITIES',
             'ORIGINAL_UPLOADS','VIDEO_METADATA','FILE_VERSIONS',
             'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES',
-            'CONTENT_TAGS','FEATURED_VIDEOS','USER_VIDEOS'
+            'CONTENT_TAGS','FEATURED_VIDEOS'
           )`,
       );
       const byName = Object.fromEntries(rows.map((r) => [r.name, r.type]));
@@ -54,7 +54,6 @@ describe("Video-upload schema (SQLite)", () => {
       expect(byName.VIDEO_LIKES).toBe("table");
       expect(byName.CONTENT_TAGS).toBe("table");
       expect(byName.FEATURED_VIDEOS).toBe("table");
-      expect(byName.USER_VIDEOS).toBe("view");
     });
   });
 
@@ -305,41 +304,6 @@ describe("Video-upload schema (SQLite)", () => {
           { id: playlist.id },
         ),
       ).toHaveLength(0);
-    });
-  });
-
-  describe("USER_VIDEOS view", () => {
-    test("surfaces an upload even when it has no metadata (LEFT JOIN)", async () => {
-      const user = await seedUser();
-      const upload = await seedUpload({ userId: user.id });
-
-      const rows = await queryRows(
-        "SELECT * FROM USER_VIDEOS WHERE video_id = :id",
-        { id: upload.id },
-      );
-
-      expect(rows).toHaveLength(1);
-      expect(rows[0].title).toBeNull();
-      expect(rows[0].user_id).toBe(user.id);
-    });
-
-    test("includes metadata columns when present", async () => {
-      const user = await seedUser();
-      const upload = await seedUpload({ userId: user.id });
-      await seedMetadata(upload.id, {
-        title: "Joined title",
-        visibility: "public",
-        viewCount: 12,
-      });
-
-      const rows = await queryRows(
-        "SELECT * FROM USER_VIDEOS WHERE video_id = :id",
-        { id: upload.id },
-      );
-
-      expect(rows[0].title).toBe("Joined title");
-      expect(rows[0].visibility).toBe("public");
-      expect(rows[0].view_count).toBe(12);
     });
   });
 

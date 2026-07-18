@@ -1,0 +1,46 @@
+import { DataTypes } from "sequelize";
+import { sequelize } from "../db.js";
+import { constrainedString, timestampColumn } from "./attribute-helpers.js";
+import { VISIBILITY_VALUES } from "./constants.js";
+
+/**
+ * USER_PLAYLISTS table model. Stores playlists owned by a user.
+ *
+ * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
+ */
+export const UserPlaylist = sequelize.define(
+  "UserPlaylist",
+  {
+    id: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    userId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+    title: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    visibility: constrainedString(VISIBILITY_VALUES, {
+      allowNull: false,
+      defaultValue: "private",
+    }),
+    lastAddedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    createdAt: timestampColumn("created_at"),
+    updatedAt: timestampColumn("updated_at"),
+  },
+  {
+    tableName: "USER_PLAYLISTS",
+    timestamps: true,
+  },
+);
