@@ -179,6 +179,17 @@ function registerAssociations() {
     foreignKey: "userId",
     onDelete: "CASCADE",
   });
+
+  User.hasMany(StaticPage, {
+    as: "UpdatedStaticPages",
+    foreignKey: "updatedBy",
+    onDelete: "SET NULL",
+  });
+  StaticPage.belongsTo(User, {
+    as: "UpdatedByUser",
+    foreignKey: "updatedBy",
+    onDelete: "SET NULL",
+  });
 }
 
 registerAssociations();

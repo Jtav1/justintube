@@ -4,7 +4,7 @@ import { timestampColumn } from "./attribute-helpers.js";
 
 /**
  * FEATURED_VIDEOS table model. The curated set of uploads promoted in the
- * featured carousel; unique per upload so a video is featured at most once.
+ * featured carousel; unique per upload so a video is featured at most once. Delete on id.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
