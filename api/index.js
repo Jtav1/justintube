@@ -1,13 +1,13 @@
-import 'dotenv/config';
-import http from 'node:http';
-import cors from 'cors';
-import express from 'express';
-import rateLimit from 'express-rate-limit';
-import helmet from 'helmet';
-import { apiReference } from '@scalar/express-api-reference';
-import { createRealtime } from './cast/realtime.js';
-import { loadOpenApiDocument } from './lib/loadOpenApi.js';
-import { createApiRouter } from './routes/stubs.js';
+import "dotenv/config";
+import http from "node:http";
+import cors from "cors";
+import express from "express";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
+import { apiReference } from "@scalar/express-api-reference";
+import { createRealtime } from "./cast/realtime.js";
+import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
+import { createApiRouter } from "./routes/stubs.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -84,12 +84,11 @@ server.listen(PORT, () => {
   console.log(`CAST sync:  socket.io namespace /cast`);
 });
 
-  app.listen(PORT, () => {
-    console.log(`Justintube API listening on http://localhost:${PORT}`);
-    console.log(`Scalar docs: http://localhost:${PORT}/docs`);
-    console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
-  });
-}
+app.listen(PORT, () => {
+  console.log(`Justintube API listening on http://localhost:${PORT}`);
+  console.log(`Scalar docs: http://localhost:${PORT}/docs`);
+  console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
+});
 
 // Only boot the HTTP server (and touch the database) when this file is executed
 // directly. Importing it (e.g. from tests) exposes `createApp` without starting.
