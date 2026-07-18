@@ -9,10 +9,10 @@ import {
 
 /**
  * HTTP contract tests for `GET /me/videos`, which lists the current user's
- * uploads via the USER_VIDEOS view (ORIGINAL_UPLOADS LEFT JOIN VIDEO_METADATA).
- * These are RED / TDD specs: the route is currently a 501 stub.
+ * uploads (ORIGINAL_UPLOADS LEFT JOIN VIDEO_METADATA). These are RED / TDD
+ * specs: the route is currently a 501 stub.
  */
-describe("GET /me/videos (USER_VIDEOS view)", () => {
+describe("GET /me/videos", () => {
   /** @type {ReturnType<typeof createTestClient>} */
   let client;
 

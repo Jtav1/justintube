@@ -4,7 +4,7 @@ import { unlink } from "node:fs/promises";
 import { extname, isAbsolute, join, resolve } from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { execute } from "../lib/db.js";
+import { OriginalUpload } from "../lib/models/index.js";
 
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
@@ -116,32 +116,26 @@ async function uploadVideo(req, res) {
   const fileExtension = normalizedExtension(file.originalname);
 
   try {
-    const result = await execute(
-      `INSERT INTO ORIGINAL_UPLOADS
-         (original_filename, uuid_name, file_extension, mime_type, file_size_bytes, storage_path, user_id)
-       VALUES
-         (:originalFilename, :uuidName, :fileExtension, :mimeType, :fileSizeBytes, :storagePath, :userId)`,
-      {
-        originalFilename: file.originalname,
-        uuidName,
-        fileExtension,
-        mimeType: file.mimetype || null,
-        fileSizeBytes: file.size ?? null,
-        storagePath: file.filename,
-        userId: null,
-      },
-    );
-
-    res.status(201).json({
-      id: result.insertId,
+    const upload = await OriginalUpload.create({
       originalFilename: file.originalname,
       uuidName,
       fileExtension,
       mimeType: file.mimetype || null,
       fileSizeBytes: file.size ?? null,
       storagePath: file.filename,
-      status: "uploaded",
       userId: null,
+    });
+
+    res.status(201).json({
+      id: upload.id,
+      originalFilename: upload.originalFilename,
+      uuidName: upload.uuidName,
+      fileExtension: upload.fileExtension,
+      mimeType: upload.mimeType,
+      fileSizeBytes: upload.fileSizeBytes,
+      storagePath: upload.storagePath,
+      status: upload.status,
+      userId: upload.userId,
     });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.

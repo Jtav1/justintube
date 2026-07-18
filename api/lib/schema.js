@@ -1,66 +1,17 @@
-import { DB_CLIENT, exec } from "./db.js";
-import {
-  applyColumnMigrations,
-  applyForeignKeyMigrations,
-} from "./migrations.js";
+import { DB_CLIENT, sequelize } from "./db.js";
+import "./models/index.js";
 import { seedReferenceData } from "./seed.js";
-import {
-  SCHEMA_STATEMENTS as MYSQL_SCHEMA_STATEMENTS,
-  VIEW_STATEMENTS as MYSQL_VIEW_STATEMENTS,
-} from "./schema.mysql.js";
-import {
-  SCHEMA_STATEMENTS as SQLITE_SCHEMA_STATEMENTS,
-  VIEW_STATEMENTS as SQLITE_VIEW_STATEMENTS,
-} from "./schema.sqlite.js";
 
 /**
- * Returns the DDL statements for the active database dialect, chosen from the
- * DB_CLIENT env var, split into table statements and view statements.
+ * Ensures all application tables and columns exist via Sequelize model sync,
+ * then seeds reference data. Safe to run on every startup: `sync({ alter: true })`
+ * creates missing tables/columns and `seedReferenceData` is idempotent. The
+ * dialect is chosen from DB_CLIENT when the Sequelize instance is constructed.
  *
- * @param {string} dbClient Active database client ("mysql" or "sqlite").
- * @returns {{tables: string[], views: string[]}} Ordered DDL for the dialect.
- */
-function schemaStatementsFor(dbClient) {
-  switch (dbClient) {
-    case "mysql":
-      console.log("[api]: initializing mysql database");
-      return { tables: MYSQL_SCHEMA_STATEMENTS, views: MYSQL_VIEW_STATEMENTS };
-    case "sqlite":
-      console.log("[api]: initializing sqlite database");
-      return {
-        tables: SQLITE_SCHEMA_STATEMENTS,
-        views: SQLITE_VIEW_STATEMENTS,
-      };
-    default:
-      throw new Error(
-        `Unsupported DB_CLIENT "${dbClient}". Use "sqlite" or "mysql".`,
-      );
-  }
-}
-
-/**
- * Ensures all application tables, columns, and views exist, creating them if
- * necessary. Safe to run on every startup: tables use CREATE TABLE IF NOT
- * EXISTS, missing columns/foreign keys are added in-place, reference data is
- * seeded, and views are (re)created. The DDL dialect is chosen based on the
- * active DB_CLIENT. Runs in phases so foreign keys, seed data, and view column
- * references resolve: tables, then column migrations, then foreign-key
- * migrations, then reference-data seeding, then views.
- *
- * @returns {Promise<void>} Resolves once schema creation has completed.
+ * @returns {Promise<void>} Resolves once schema sync and seeding have completed.
  */
 export async function ensureSchema() {
-  const { tables, views } = schemaStatementsFor(DB_CLIENT);
-
-  for (const statement of tables) {
-    await exec(statement);
-  }
-
-  await applyColumnMigrations();
-  await applyForeignKeyMigrations();
+  console.log(`[api]: initializing ${DB_CLIENT} database`);
+  await sequelize.sync({ alter: true });
   await seedReferenceData();
-
-  for (const statement of views) {
-    await exec(statement);
-  }
 }
