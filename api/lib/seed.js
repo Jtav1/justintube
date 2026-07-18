@@ -1,4 +1,4 @@
-import { DB_CLIENT, execute } from "./db.js";
+import { Role } from "./models/index.js";
 
 /**
  * The standard authorization roles seeded into the ROLES table. Names are kept
@@ -29,20 +29,16 @@ const DEFAULT_ROLES = [
 
 /**
  * Inserts the standard authorization roles into the ROLES table if they are not
- * already present. Uses a dialect-appropriate insert-ignore so it is idempotent
- * and safe to run on every startup.
+ * already present. Uses findOrCreate so it is idempotent and safe to run on
+ * every startup.
  *
  * @returns {Promise<void>} Resolves once the default roles have been seeded.
  */
 export async function seedReferenceData() {
-  const insertIgnore =
-    DB_CLIENT === "mysql" ? "INSERT IGNORE INTO" : "INSERT OR IGNORE INTO";
-
   for (const { name, description } of DEFAULT_ROLES) {
-    await execute(
-      `${insertIgnore} ROLES (name, description, enabled)
-       VALUES (:name, :description, 1)`,
-      { name, description },
-    );
+    await Role.findOrCreate({
+      where: { name },
+      defaults: { description, enabled: true },
+    });
   }
 }

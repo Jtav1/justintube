@@ -1,0 +1,66 @@
+import { DataTypes } from "sequelize";
+import { sequelize } from "../db.js";
+import { timestampColumn } from "./attribute-helpers.js";
+
+/**
+ * USERS table model. One row per account; local accounts store a bcrypt hash in
+ * `passwordHash` (nullable for SSO-only accounts).
+ *
+ * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
+ */
+export const User = sequelize.define(
+  "User",
+  {
+    id: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    username: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      unique: "uq_users_username",
+    },
+    email: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      unique: "uq_users_email",
+    },
+    displayName: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    passwordHash: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    bio: {
+      type: DataTypes.STRING(5000),
+      allowNull: true,
+    },
+    emailVerified: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    emailVerifiedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    uploader: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    roleId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+    createdAt: timestampColumn("created_at"),
+    updatedAt: timestampColumn("updated_at"),
+  },
+  {
+    tableName: "USERS",
+    timestamps: true,
+  },
+);

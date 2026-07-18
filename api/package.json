@@ -38,7 +38,6 @@
   "dependencies": {
     "@scalar/express-api-reference": "^0.10.11",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.11.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -47,6 +46,7 @@
     "multer": "^2.2.0",
     "mysql2": "^3.23.0",
     "sequelize": "^6.37.8",
+    "sqlite3": "^5.1.7",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

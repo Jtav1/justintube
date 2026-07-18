@@ -1,36 +1,54 @@
 import { randomUUID } from "node:crypto";
-import { execute, query } from "../../lib/db.js";
+import { query } from "../../lib/db.js";
+import {
+  ContentTag,
+  FeaturedVideo,
+  FileVersion,
+  Notification,
+  OriginalUpload,
+  PlaylistItem,
+  Role,
+  SsoProvider,
+  StaticPage,
+  Subscription,
+  User,
+  UserIdentity,
+  UserNotificationSetting,
+  UserPlaylist,
+  VideoLike,
+  VideoMetadata,
+} from "../../lib/models/index.js";
 import { ensureSchema } from "../../lib/schema.js";
 
 /**
- * Tables that hold per-test data, ordered so that children are deleted before
- * their parents (satisfying foreign-key constraints during a reset). ROLES is
+ * Models that hold per-test data, ordered so that children are deleted before
+ * their parents (satisfying foreign-key constraints during a reset). Role is
  * intentionally omitted so the reference roles seeded by `ensureSchema` survive
  * across resets and remain available for `seedUser`.
  *
- * @type {string[]}
+ * @type {import('sequelize').ModelStatic<import('sequelize').Model>[]}
  */
-const TABLES_CHILD_FIRST = [
-  "PLAYLIST_ITEMS",
-  "FILE_VERSIONS",
-  "VIDEO_METADATA",
-  "VIDEO_LIKES",
-  "CONTENT_TAGS",
-  "FEATURED_VIDEOS",
-  "USER_PLAYLISTS",
-  "ORIGINAL_UPLOADS",
-  "SUBSCRIPTIONS",
-  "NOTIFICATIONS",
-  "USER_NOTIFICATION_SETTINGS",
-  "USER_IDENTITIES",
-  "USERS",
-  "SSO_PROVIDERS",
-  "STATIC_PAGES",
+const RESET_MODELS = [
+  PlaylistItem,
+  FileVersion,
+  VideoMetadata,
+  VideoLike,
+  ContentTag,
+  FeaturedVideo,
+  UserPlaylist,
+  OriginalUpload,
+  Subscription,
+  Notification,
+  UserNotificationSetting,
+  UserIdentity,
+  User,
+  SsoProvider,
+  StaticPage,
 ];
 
 /**
- * Creates all application tables, columns, and views for the active (SQLite)
- * test database. Idempotent, so it is safe to call in every suite's `beforeAll`.
+ * Creates all application tables and columns for the active (SQLite) test
+ * database. Idempotent, so it is safe to call in every suite's `beforeAll`.
  *
  * @returns {Promise<void>} Resolves once the schema exists.
  */
@@ -39,15 +57,27 @@ export async function setupSchema() {
 }
 
 /**
- * Empties every video-upload table so each test starts from a clean slate.
- * Deletes children before parents to respect foreign keys.
+ * Empties every mutable table so each test starts from a clean slate. Deletes
+ * children before parents to respect foreign keys. Does not wipe ROLES.
  *
  * @returns {Promise<void>} Resolves once all rows have been removed.
  */
 export async function resetTables() {
-  for (const table of TABLES_CHILD_FIRST) {
-    await execute(`DELETE FROM ${table}`);
+  for (const model of RESET_MODELS) {
+    await model.destroy({ where: {}, force: true });
   }
+}
+
+/**
+ * Converts a Sequelize model instance into a plain object with camelCase keys
+ * matching the seed helper return shape (id plus input fields).
+ *
+ * @param {import('sequelize').Model} instance Created model instance.
+ * @param {object} record Input values merged into the return payload.
+ * @returns {{id: number} & Record<string, unknown>} Plain seeded record.
+ */
+function asSeedResult(instance, record) {
+  return { id: instance.id, ...record };
 }
 
 /**
@@ -80,15 +110,8 @@ export async function seedUpload(overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO ORIGINAL_UPLOADS
-       (original_filename, uuid_name, file_extension, mime_type, file_size_bytes, storage_path, status, resolution, user_id)
-     VALUES
-       (:originalFilename, :uuidName, :fileExtension, :mimeType, :fileSizeBytes, :storagePath, :status, :resolution, :userId)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await OriginalUpload.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -101,7 +124,7 @@ export async function seedUpload(overrides = {}) {
  * @param {string|null} [overrides.description] Long-form description.
  * @param {number} [overrides.viewCount] Lifetime view count.
  * @param {string} [overrides.visibility] Visibility label.
- * @param {number} [overrides.commentsEnabled] 1 when comments are enabled, else 0.
+ * @param {number|boolean} [overrides.commentsEnabled] Whether comments are enabled.
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded metadata's id and values.
  */
 export async function seedMetadata(originalUploadId, overrides = {}) {
@@ -111,19 +134,12 @@ export async function seedMetadata(originalUploadId, overrides = {}) {
     description: null,
     viewCount: 0,
     visibility: "public",
-    commentsEnabled: 1,
+    commentsEnabled: true,
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO VIDEO_METADATA
-       (original_upload_id, title, description, view_count, visibility, comments_enabled)
-     VALUES
-       (:originalUploadId, :title, :description, :viewCount, :visibility, :commentsEnabled)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await VideoMetadata.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -145,15 +161,8 @@ export async function seedPlaylist(overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO USER_PLAYLISTS
-       (user_id, title, description, visibility)
-     VALUES
-       (:userId, :title, :description, :visibility)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await UserPlaylist.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -185,15 +194,8 @@ export async function seedFileVersion(originalUploadId, overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO FILE_VERSIONS
-       (original_upload_id, uuid_name, file_extension, mime_type, file_size_bytes, storage_path, status, resolution, transcode_profile_id)
-     VALUES
-       (:originalUploadId, :uuidName, :fileExtension, :mimeType, :fileSizeBytes, :storagePath, :status, :resolution, :transcodeProfileId)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await FileVersion.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -214,15 +216,8 @@ export async function seedVideoLike(originalUploadId, overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO VIDEO_LIKES
-       (original_upload_id, user_id, like_value)
-     VALUES
-       (:originalUploadId, :userId, :likeValue)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await VideoLike.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -241,15 +236,8 @@ export async function seedContentTag(originalUploadId, overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO CONTENT_TAGS
-       (original_upload_id, tag)
-     VALUES
-       (:originalUploadId, :tag)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await ContentTag.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -259,13 +247,8 @@ export async function seedContentTag(originalUploadId, overrides = {}) {
  * @returns {Promise<{id: number, originalUploadId: number}>} The seeded row's id and upload id.
  */
 export async function seedFeaturedVideo(originalUploadId) {
-  const result = await execute(
-    `INSERT INTO FEATURED_VIDEOS (original_upload_id)
-     VALUES (:originalUploadId)`,
-    { originalUploadId },
-  );
-
-  return { id: result.insertId, originalUploadId };
+  const row = await FeaturedVideo.create({ originalUploadId });
+  return { id: row.id, originalUploadId };
 }
 
 /**
@@ -279,9 +262,9 @@ export async function seedFeaturedVideo(originalUploadId) {
  * @param {string|null} [overrides.displayName] Human-facing display name.
  * @param {string|null} [overrides.passwordHash] Bcrypt password hash (nullable for SSO-only).
  * @param {string|null} [overrides.bio] Free-form profile blurb.
- * @param {number} [overrides.emailVerified] 1 when the email is verified, else 0.
+ * @param {number|boolean} [overrides.emailVerified] Whether the email is verified.
  * @param {string|null} [overrides.emailVerifiedAt] Timestamp of verification.
- * @param {number} [overrides.uploader] 1 when the account may upload videos, else 0.
+ * @param {number|boolean} [overrides.uploader] Whether the account may upload videos.
  * @param {number|null} [overrides.roleId] Role id (defaults to the seeded viewer role).
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded user's id and values.
  */
@@ -293,29 +276,20 @@ export async function seedUser(overrides = {}) {
     displayName: null,
     passwordHash: null,
     bio: null,
-    emailVerified: 0,
+    emailVerified: false,
     emailVerifiedAt: null,
-    uploader: 0,
+    uploader: false,
     roleId: undefined,
     ...overrides,
   };
 
   if (record.roleId === undefined) {
-    const roles = await query("SELECT id FROM ROLES WHERE name = :name", {
-      name: "viewer",
-    });
-    record.roleId = roles.length > 0 ? roles[0].id : null;
+    const viewer = await Role.findOne({ where: { name: "viewer" } });
+    record.roleId = viewer ? viewer.id : null;
   }
 
-  const result = await execute(
-    `INSERT INTO USERS
-       (username, email, display_name, password_hash, bio, email_verified, email_verified_at, uploader, role_id)
-     VALUES
-       (:username, :email, :displayName, :passwordHash, :bio, :emailVerified, :emailVerifiedAt, :uploader, :roleId)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await User.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -324,7 +298,7 @@ export async function seedUser(overrides = {}) {
  * @param {object} [overrides] Partial column values to override the defaults.
  * @param {string} [overrides.providerKey] Stable machine slug (unique).
  * @param {string} [overrides.name] Human-facing provider label.
- * @param {number} [overrides.enabled] 1 when the provider is enabled, else 0.
+ * @param {number|boolean} [overrides.enabled] Whether the provider is enabled.
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded provider's id and values.
  */
 export async function seedSsoProvider(overrides = {}) {
@@ -332,17 +306,12 @@ export async function seedSsoProvider(overrides = {}) {
   const record = {
     providerKey: `provider_${suffix}`,
     name: "Sample Provider",
-    enabled: 1,
+    enabled: true,
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO SSO_PROVIDERS (provider_key, name, enabled)
-     VALUES (:providerKey, :name, :enabled)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await SsoProvider.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -365,15 +334,8 @@ export async function seedUserIdentity(userId, providerId, overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO USER_IDENTITIES
-       (user_id, provider_id, provider_user_id, email)
-     VALUES
-       (:userId, :providerId, :providerUserId, :email)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await UserIdentity.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -384,13 +346,8 @@ export async function seedUserIdentity(userId, providerId, overrides = {}) {
  * @returns {Promise<{id: number, subscriberId: number, subscribedToId: number}>} The seeded subscription's id and user ids.
  */
 export async function seedSubscription(subscriberId, subscribedToId) {
-  const result = await execute(
-    `INSERT INTO SUBSCRIPTIONS (subscriber_id, subscribed_to_id)
-     VALUES (:subscriberId, :subscribedToId)`,
-    { subscriberId, subscribedToId },
-  );
-
-  return { id: result.insertId, subscriberId, subscribedToId };
+  const row = await Subscription.create({ subscriberId, subscribedToId });
+  return { id: row.id, subscriberId, subscribedToId };
 }
 
 /**
@@ -415,15 +372,8 @@ export async function seedNotification(userId, overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO NOTIFICATIONS
-       (user_id, notification_type, title, message, read_at)
-     VALUES
-       (:userId, :notificationType, :title, :message, :readAt)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await Notification.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -433,26 +383,19 @@ export async function seedNotification(userId, overrides = {}) {
  * @param {number} userId Id of the USERS row the preference belongs to.
  * @param {object} [overrides] Partial column values to override the defaults.
  * @param {string|null} [overrides.notificationType] Free-form type string (nullable).
- * @param {number} [overrides.enabled] 1 when the notification type is enabled, else 0.
+ * @param {number|boolean} [overrides.enabled] Whether the notification type is enabled.
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded setting's id and values.
  */
 export async function seedUserNotificationSetting(userId, overrides = {}) {
   const record = {
     userId,
     notificationType: null,
-    enabled: 1,
+    enabled: true,
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO USER_NOTIFICATION_SETTINGS
-       (user_id, notification_type, enabled)
-     VALUES
-       (:userId, :notificationType, :enabled)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await UserNotificationSetting.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
@@ -471,13 +414,8 @@ export async function seedStaticPage(overrides = {}) {
     ...overrides,
   };
 
-  const result = await execute(
-    `INSERT INTO STATIC_PAGES (description, contents)
-     VALUES (:description, :contents)`,
-    record,
-  );
-
-  return { id: result.insertId, ...record };
+  const row = await StaticPage.create(record);
+  return asSeedResult(row, record);
 }
 
 /**
