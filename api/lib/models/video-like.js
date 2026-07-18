@@ -36,9 +36,8 @@ export const VideoLike = sequelize.define(
   },
   {
     tableName: "VIDEO_LIKES",
-    timestamps: true,
-    createdAt: "createdAt",
-    updatedAt: false,
+    // Only `created_at` exists on this table; do not manage `updatedAt`.
+    timestamps: false,
     indexes: [
       {
         unique: true,
