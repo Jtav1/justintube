@@ -4,8 +4,8 @@ import { timestampColumn } from "./attribute-helpers.js";
 import { LIKE_VALUES } from "./constants.js";
 
 /**
- * VIDEO_LIKES table model. Records a single user's like (1) or dislike (-1) of
- * an upload.
+ * VIDEO_LIKES table model. Records a single user's like (1) on an upload. Delete likes
+ * on "un liking" instead of storing a negative value to make sqlite happy.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -36,7 +36,6 @@ export const VideoLike = sequelize.define(
   },
   {
     tableName: "VIDEO_LIKES",
-    // Only `created_at` exists on this table; do not manage `updatedAt`.
     timestamps: false,
     indexes: [
       {
