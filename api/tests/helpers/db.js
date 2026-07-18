@@ -11,12 +11,16 @@ import {
   SsoProvider,
   StaticPage,
   Subscription,
+  TranscodeProfile,
   User,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
   VideoLike,
   VideoMetadata,
+  VideoThumbnail,
+  VideoTransferHistory,
+  VideoTransferMapping,
 } from "../../lib/models/index.js";
 import { ensureSchema } from "../../lib/schema.js";
 
@@ -32,11 +36,15 @@ const RESET_MODELS = [
   PlaylistItem,
   FileVersion,
   VideoMetadata,
+  VideoThumbnail,
   VideoLike,
   ContentTag,
   FeaturedVideo,
   UserPlaylist,
   OriginalUpload,
+  TranscodeProfile,
+  VideoTransferHistory,
+  VideoTransferMapping,
   Subscription,
   Notification,
   UserNotificationSetting,
@@ -190,11 +198,58 @@ export async function seedFileVersion(originalUploadId, overrides = {}) {
     storagePath: `${randomUUID()}.mp4`,
     status: "success",
     resolution: "720p",
-    transcodeProfileId: 1,
+    transcodeProfileId: null,
     ...overrides,
   };
 
   const row = await FileVersion.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a VIDEO_THUMBNAIL row for an existing upload, applying defaults for
+ * any omitted field.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.thumbnailFilename] On-disk thumbnail filename.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded thumbnail's id and values.
+ */
+export async function seedVideoThumbnail(originalUploadId, overrides = {}) {
+  const record = {
+    originalUploadId,
+    thumbnailFilename: `${randomUUID()}.jpg`,
+    ...overrides,
+  };
+
+  const row = await VideoThumbnail.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a TRANSCODE_PROFILES row, applying defaults for any omitted field.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {number} [overrides.outputHeight] Output frame height in pixels.
+ * @param {number} [overrides.outputWidth] Output frame width in pixels.
+ * @param {string} [overrides.outputContainer] Container format (e.g. mp4).
+ * @param {string} [overrides.videoCodec] Video codec name (e.g. h264).
+ * @param {string} [overrides.audioCodec] Audio codec name (e.g. aac).
+ * @param {number|null} [overrides.creatorUserId] Creating user's id (nullable).
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded profile's id and values.
+ */
+export async function seedTranscodeProfile(overrides = {}) {
+  const record = {
+    outputHeight: 720,
+    outputWidth: 1280,
+    outputContainer: "mp4",
+    videoCodec: "h264",
+    audioCodec: "aac",
+    creatorUserId: null,
+    ...overrides,
+  };
+
+  const row = await TranscodeProfile.create(record);
   return asSeedResult(row, record);
 }
 

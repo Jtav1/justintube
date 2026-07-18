@@ -9,12 +9,16 @@ import { Role } from "./role.js";
 import { SsoProvider } from "./sso-provider.js";
 import { StaticPage } from "./static-page.js";
 import { Subscription } from "./subscription.js";
+import { TranscodeProfile } from "./transcode-profile.js";
 import { User } from "./user.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
 import { VideoLike } from "./video-like.js";
 import { VideoMetadata } from "./video-metadata.js";
+import { VideoThumbnail } from "./video-thumbnail.js";
+import { VideoTransferHistory } from "./video-transfer-history.js";
+import { VideoTransferMapping } from "./video-transfer-mapping.js";
 
 /**
  * Registers associations between models so foreign keys and cascades match the
@@ -75,6 +79,35 @@ function registerAssociations() {
   FileVersion.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasOne(VideoThumbnail, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  VideoThumbnail.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(TranscodeProfile, {
+    as: "CreatedTranscodeProfiles",
+    foreignKey: "creatorUserId",
+    onDelete: "SET NULL",
+  });
+  TranscodeProfile.belongsTo(User, {
+    as: "Creator",
+    foreignKey: "creatorUserId",
+    onDelete: "SET NULL",
+  });
+
+  TranscodeProfile.hasMany(FileVersion, {
+    foreignKey: "transcodeProfileId",
+    onDelete: "SET NULL",
+  });
+  FileVersion.belongsTo(TranscodeProfile, {
+    foreignKey: "transcodeProfileId",
+    onDelete: "SET NULL",
   });
 
   User.hasMany(UserPlaylist, {
@@ -190,6 +223,26 @@ function registerAssociations() {
     foreignKey: "updatedBy",
     onDelete: "SET NULL",
   });
+
+  User.hasMany(VideoTransferMapping, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  VideoTransferMapping.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  VideoTransferMapping.hasMany(VideoTransferHistory, {
+    foreignKey: "mediacmsUserId",
+    sourceKey: "mediacmsUserId",
+    onDelete: "CASCADE",
+  });
+  VideoTransferHistory.belongsTo(VideoTransferMapping, {
+    foreignKey: "mediacmsUserId",
+    targetKey: "mediacmsUserId",
+    onDelete: "CASCADE",
+  });
 }
 
 registerAssociations();
@@ -206,6 +259,8 @@ export const models = {
   UserIdentity,
   OriginalUpload,
   VideoMetadata,
+  VideoThumbnail,
+  TranscodeProfile,
   FileVersion,
   UserPlaylist,
   PlaylistItem,
@@ -216,6 +271,8 @@ export const models = {
   Notification,
   UserNotificationSetting,
   StaticPage,
+  VideoTransferMapping,
+  VideoTransferHistory,
 };
 
 export {
@@ -229,12 +286,16 @@ export {
   SsoProvider,
   StaticPage,
   Subscription,
+  TranscodeProfile,
   User,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
   VideoLike,
   VideoMetadata,
+  VideoThumbnail,
+  VideoTransferHistory,
+  VideoTransferMapping,
 };
 
 export { sequelize };
