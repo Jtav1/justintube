@@ -19,8 +19,11 @@ EXPOSE 3000
 COPY --from=builder /app/node_modules ./node_modules
 COPY . .
 
-# Run as non-root
-RUN addgroup -g 1001 -S app && adduser -u 1001 -S app -G app
+# Run as non-root; shared volume mount points for media + yt-dlp handoff
+RUN addgroup -g 1001 -S app \
+  && adduser -u 1001 -S app -G app \
+  && mkdir -p /media /data/shared \
+  && chown -R app:app /app /media /data/shared
 USER app
 
 CMD ["node", "index.js"]
