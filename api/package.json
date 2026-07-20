@@ -10,7 +10,7 @@
     "type": "git",
     "url": "git+https://github.com/Jtav1/justintube.git"
   },
-  "license": "ISC",
+  "license": "See LICENSE.md",
   "type": "module",
   "engines": {
     "node": ">=20.6.0"

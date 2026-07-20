@@ -49,8 +49,26 @@ services:
       MYSQL_USER: ${MYSQL_USER:-justintube}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
       MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
+      MEDIA_STORAGE_DIRECTORY: /media
     ports:
       - "${PORT:-3000}:3000"
+    volumes:
+      - media-data:/media
+
+  ytdlp:
+    build:
+      context: ./yt-dlp
+    container_name: justintube-ytdlp
+    restart: unless-stopped
+    environment:
+      PORT: ${YTDLP_PORT:-3001}
+      MEDIA_STORAGE_DIRECTORY: /app/media
+    ports:
+      - "${YTDLP_PORT:-3001}:3001"
+    volumes:
+      - ytdlp-media:/app/media
 
 volumes:
   db-data:
+  media-data:
+  ytdlp-media:
