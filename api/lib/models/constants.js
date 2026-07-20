@@ -21,8 +21,20 @@ export const RESOLUTION_VALUES = [
 export const VISIBILITY_VALUES = ["public", "private", "unlisted", "hidden"];
 
 /**
- * Allowed like_value integers on VIDEO_LIKES (1 = like, -1 = dislike).
+ * Allowed like_value integers on VIDEO_LIKES (1 = like, delete on video id + user id for dislike).
  *
  * @type {number[]}
  */
-export const LIKE_VALUES = [-1, 1];
+export const LIKE_VALUES = [1];
+
+/**
+ * Allowed notification types
+ *
+ * @type {string[]}
+ */
+export const NOTIFICATION_TYPES = [
+  "subscription",
+  "like",
+  "comment",
+  "subscriber",
+];

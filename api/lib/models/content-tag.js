@@ -4,7 +4,7 @@ import { timestampColumn } from "./attribute-helpers.js";
 
 /**
  * CONTENT_TAGS table model. Stores one row per tag applied to an upload; unique
- * per (upload, tag) so a tag is not duplicated on a video.
+ * per (upload, tag) so a tag is not duplicated on a video. Delete on id.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
