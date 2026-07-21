@@ -1,0 +1,27 @@
+{
+  "name": "justintube-processing",
+  "version": "0.0.1",
+  "description": "Processing container providing yt-dlp downloads and ffmpeg transcoding for Justintube",
+  "license": "See LICENSE.md",
+  "author": "Justin Tavares",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "main": "index.js",
+  "scripts": {
+    "serve": "node index.js",
+    "start": "docker compose -f ../docker-compose.yml up processing",
+    "dev": "docker build -t justintube-processing . && docker run --rm --env-file=.env -p 3001:3001 -e MEDIA_STORAGE_DIRECTORY=/media -e REDIS_HOST=host.docker.internal -e REDIS_PORT=6379 -v \"%cd%/media:/media\" --name justintube-processing justintube-processing",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  },
+  "dependencies": {
+    "bullmq": "^5.80.9",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2"
+  }
+}

@@ -9,8 +9,8 @@ import { OriginalUpload } from "../lib/models/index.js";
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
 /**
- * Absolute path to the directory where uploaded media is stored. Relative env
- * values are resolved against the process working directory.
+ * Absolute path to the media root. Relative env values are resolved against
+ * the process working directory.
  *
  * @type {string}
  */
@@ -18,8 +18,16 @@ const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
   ? MEDIA_STORAGE_DIRECTORY
   : resolve(process.cwd(), MEDIA_STORAGE_DIRECTORY);
 
-// Ensure the media directory exists before any upload is attempted.
-mkdirSync(mediaDir, { recursive: true });
+/**
+ * Absolute path to the directory where original uploads are stored
+ * (`MEDIA_STORAGE_DIRECTORY/original`).
+ *
+ * @type {string}
+ */
+const originalDir = join(mediaDir, "original");
+
+// Ensure the original-uploads directory exists before any upload is attempted.
+mkdirSync(originalDir, { recursive: true });
 
 /**
  * Set of allowed lowercase file extensions (without a leading dot), parsed from
@@ -54,11 +62,12 @@ function normalizedExtension(filename) {
 }
 
 /**
- * Multer storage engine that writes uploads to the media directory using a
- * freshly generated UUID as the filename (preserving the original extension).
+ * Multer storage engine that writes uploads to `original/` under the media
+ * root using a freshly generated UUID as the filename (preserving the
+ * original extension).
  */
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, mediaDir),
+  destination: (_req, _file, cb) => cb(null, originalDir),
   filename: (_req, file, cb) => {
     const ext = normalizedExtension(file.originalname);
     const uuid = randomUUID();
@@ -114,6 +123,8 @@ async function uploadVideo(req, res) {
 
   const uuidName = file.generatedUuid;
   const fileExtension = normalizedExtension(file.originalname);
+  // Relative storage path uses forward slashes for cross-platform DB consistency.
+  const storagePath = `original/${file.filename}`;
 
   try {
     const upload = await OriginalUpload.create({
@@ -122,7 +133,7 @@ async function uploadVideo(req, res) {
       fileExtension,
       mimeType: file.mimetype || null,
       fileSizeBytes: file.size ?? null,
-      storagePath: file.filename,
+      storagePath,
       userId: null,
     });
 
@@ -139,7 +150,7 @@ async function uploadVideo(req, res) {
     });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.
-    await unlink(join(mediaDir, file.filename)).catch(() => {});
+    await unlink(join(originalDir, file.filename)).catch(() => {});
     res.status(500).json({
       error: "upload_persist_failed",
       message: "The file was received but could not be recorded.",

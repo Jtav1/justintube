@@ -31,6 +31,20 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: justintube-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: ./api
@@ -55,20 +69,27 @@ services:
     volumes:
       - media-data:/media
 
-  ytdlp:
+  processing:
     build:
-      context: ./yt-dlp
-    container_name: justintube-ytdlp
+      context: ./processing
+    container_name: justintube-processing
     restart: unless-stopped
+    env_file:
+      - ./processing/.env
+    depends_on:
+      redis:
+        condition: service_healthy
     environment:
-      PORT: ${YTDLP_PORT:-3001}
-      MEDIA_STORAGE_DIRECTORY: /app/media
+      PORT: ${PROCESSING_PORT:-3001}
+      MEDIA_STORAGE_DIRECTORY: /media
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
-      - "${YTDLP_PORT:-3001}:3001"
+      - "${PROCESSING_PORT:-3001}:3001"
     volumes:
-      - ytdlp-media:/app/media
+      - media-data:/media
 
 volumes:
   db-data:
   media-data:
-  ytdlp-media:
+  redis-data:

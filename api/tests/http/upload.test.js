@@ -34,7 +34,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     });
     expect(typeof res.body.uuidName).toBe("string");
     expect(res.body.uuidName).toHaveLength(36);
-    expect(res.body.storagePath).toContain(res.body.uuidName);
+    expect(res.body.storagePath).toBe(`original/${res.body.uuidName}.mp4`);
 
     const rows = await queryRows(
       "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",

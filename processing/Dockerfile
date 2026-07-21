@@ -19,7 +19,7 @@ COPY . .
 # Non-root user matching api image (uid/gid 1001); shared volume mount points
 RUN addgroup -g 1001 -S app \
   && adduser -u 1001 -S app -G app \
-  && mkdir -p /data/shared /media \
+  && mkdir -p /data/shared /media/original /media/transcoded \
   && chown -R app:app /app /data/shared /media
 
 USER app
