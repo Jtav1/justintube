@@ -50,7 +50,7 @@ async function createSequelize() {
 
     // Sequelize 6's sqlite dialect requires the node-sqlite3 callback API
     // (not better-sqlite3). Pass the module explicitly for reliable ESM loading.
-    return new Sequelize({
+    const instance = new Sequelize({
       dialect: "sqlite",
       storage,
       dialectModule: sqlite3,
@@ -60,11 +60,40 @@ async function createSequelize() {
         underscored: true,
       },
     });
+    patchSqliteDateParsing(instance);
+    return instance;
   }
 
   throw new Error(
     `Unsupported DB_CLIENT "${DB_CLIENT}". Use "sqlite" or "mysql".`,
   );
+}
+
+/**
+ * Wraps Sequelize's SQLite DATE parser so non-string values (for example integer
+ * `0` from manual INSERTs) do not throw when `.includes()` is invoked.
+ *
+ * @param {import('sequelize').Sequelize} sequelizeInstance Active SQLite instance.
+ * @returns {void}
+ */
+function patchSqliteDateParsing(sequelizeInstance) {
+  const SqliteDate = sequelizeInstance.dialect.DataTypes.DATE;
+  const baseParse = SqliteDate.parse.bind(SqliteDate);
+  SqliteDate.parse = function parseSqliteDate(value, options) {
+    if (value == null) {
+      return null;
+    }
+    if (value instanceof Date) {
+      return value;
+    }
+    if (typeof value === "number") {
+      return new Date(value);
+    }
+    if (typeof value !== "string") {
+      return new Date(String(value));
+    }
+    return baseParse(value, options);
+  };
 }
 
 /**
