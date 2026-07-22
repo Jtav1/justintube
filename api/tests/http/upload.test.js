@@ -1,26 +1,42 @@
 import { Buffer } from "node:buffer";
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { createTestClient } from "../helpers/app.js";
-import { queryRows, resetTables, setupSchema } from "../helpers/db.js";
+import {
+  queryRows,
+  resetTables,
+  seedTranscodeProfile,
+  setupSchema,
+} from "../helpers/db.js";
 
 /**
  * HTTP contract tests for the implemented raw upload endpoint
  * (`POST /videos/upload`). These are GREEN: the route exists in
- * `routes/uploads.js` and persists to ORIGINAL_UPLOADS.
+ * `routes/uploads.js` and persists to ORIGINAL_UPLOADS / FILE_VERSIONS.
  */
 describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
   /** @type {ReturnType<typeof createTestClient>} */
   let client;
+  /** @type {typeof fetch | undefined} */
+  let originalFetch;
 
   beforeAll(async () => {
     await setupSchema();
     client = createTestClient();
   });
 
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
   afterEach(async () => {
+    globalThis.fetch = originalFetch;
     await resetTables();
   });
 
   test("accepts a valid video file and persists an ORIGINAL_UPLOADS row", async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
     const res = await client
       .post("/api/v1/videos/upload")
       .attach("file", Buffer.from("tiny"), "clip.mp4");
@@ -35,6 +51,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(typeof res.body.uuidName).toBe("string");
     expect(res.body.uuidName).toHaveLength(36);
     expect(res.body.storagePath).toBe(`original/${res.body.uuidName}.mp4`);
+    expect(res.body.fileVersions).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
 
     const rows = await queryRows(
       "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
@@ -44,6 +62,143 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(rows[0].original_filename).toBe("clip.mp4");
     expect(rows[0].file_extension).toBe("mp4");
     expect(rows[0].status).toBe("uploaded");
+  });
+
+  test("does not call processing when no transcode profiles exist", async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
+    const profileA = await seedTranscodeProfile({
+      outputHeight: 720,
+      outputWidth: 1280,
+      outputContainer: "mp4",
+      videoCodec: "h264",
+      audioCodec: "aac",
+    });
+    const profileB = await seedTranscodeProfile({
+      outputHeight: 1080,
+      outputWidth: 1920,
+      outputContainer: "mp4",
+      videoCodec: "h264",
+      audioCodec: "aac",
+    });
+
+    const fetchMock = jest.fn(async (_url, options) => {
+      const body = JSON.parse(String(options.body));
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          success: true,
+          jobs: body.jobs.map((job) => ({
+            jobId: job.jobId,
+            outputFilename: job.outputFilename,
+            profileId: job.profile.id,
+          })),
+        }),
+      };
+    });
+    globalThis.fetch = fetchMock;
+
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe("processing");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://processing.test:3001/transcode",
+    );
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(payload.filename).toBe(`${res.body.uuidName}.mp4`);
+    expect(payload.jobs).toHaveLength(2);
+    expect(payload.jobs.map((j) => j.profile.id).sort()).toEqual(
+      [profileA.id, profileB.id].sort(),
+    );
+
+    expect(res.body.fileVersions).toHaveLength(2);
+    for (const fv of res.body.fileVersions) {
+      expect(fv.status).toBe("processing");
+      expect(fv.jobId).toBe(fv.uuidName);
+      expect(fv.storagePath).toBe(`transcoded/${fv.uuidName}.mp4`);
+    }
+
+    const versionRows = await queryRows(
+      "SELECT * FROM FILE_VERSIONS WHERE original_upload_id = :id",
+      { id: res.body.id },
+    );
+    expect(versionRows).toHaveLength(2);
+    expect(
+      versionRows.every((row) =>
+        String(row.storage_path).startsWith("transcoded/"),
+      ),
+    ).toBe(true);
+  });
+
+  test("returns 201 with failures when processing rejects enqueue", async () => {
+    await seedTranscodeProfile();
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    globalThis.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ success: false, error: "queue unavailable" }),
+    }));
+
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toEqual(expect.any(Number));
+    expect(res.body.failures).toEqual([
+      { profileId: null, message: "queue unavailable" },
+    ]);
+    expect(res.body.fileVersions).toHaveLength(1);
+    expect(res.body.fileVersions[0].status).toBe("failed");
+    expect(errorSpy).toHaveBeenCalled();
+
+    const rows = await queryRows(
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE id = :id",
+      { id: res.body.id },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("failed");
+
+    errorSpy.mockRestore();
+  });
+
+  test("returns 201 with failures when processing is unreachable", async () => {
+    await seedTranscodeProfile();
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    globalThis.fetch = jest.fn(async () => {
+      throw new Error("fetch failed");
+    });
+
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    expect(res.body.failures).toEqual([
+      { profileId: null, message: "fetch failed" },
+    ]);
+    expect(res.body.fileVersions[0].status).toBe("failed");
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
   });
 
   test("returns 400 missing_file when no file field is sent", async () => {

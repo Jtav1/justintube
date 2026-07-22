@@ -20,5 +20,8 @@ process.env.DB_CLIENT = "sqlite";
 process.env.SQLITE_FILE = join(scratchDir, "test.sqlite");
 process.env.MEDIA_STORAGE_DIRECTORY = join(scratchDir, "media");
 process.env.FILETYPES_ALLOWED = "mp4,webm,mkv";
+process.env.PROCESSING_API_URL = "http://processing.test:3001";
+process.env.INTERNAL_SERVICE_TOKEN = "test-internal-token";
+process.env.TRANSCODE_RECONCILE_ENABLED = "false";
 // Small cap so the "file too large" (413) path is exercisable with tiny fixtures.
 process.env.MAX_UPLOAD_SIZE_BYTES = String(1024);

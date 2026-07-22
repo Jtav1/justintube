@@ -7,6 +7,7 @@ import {
   createRedisConnection,
   createTranscodeQueue,
   createTranscodeWorker,
+  notifyTranscodeJobFailed,
 } from "./lib/queue.js";
 
 const PORT = Number(process.env.PORT) || 3001;
@@ -65,6 +66,7 @@ async function main() {
       `transcode job ${job?.id ?? "unknown"} failed:`,
       err?.message || err,
     );
+    void notifyTranscodeJobFailed(job, err);
   });
 
   const app = createApp({ transcodeQueue: queue });

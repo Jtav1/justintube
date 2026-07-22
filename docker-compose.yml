@@ -53,6 +53,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      processing:
+        condition: service_started
     environment:
       PORT: ${PORT:-3000}
       # The composed stack always uses the bundled MySQL service.
@@ -64,6 +66,10 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
       MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
       MEDIA_STORAGE_DIRECTORY: /media
+      PROCESSING_API_URL: http://processing:3001
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
+      TRANSCODE_RECONCILE_CRON: ${TRANSCODE_RECONCILE_CRON:-*/5 * * * *}
+      TRANSCODE_RECONCILE_STALE_MINUTES: ${TRANSCODE_RECONCILE_STALE_MINUTES:-15}
     ports:
       - "${PORT:-3000}:3000"
     volumes:
@@ -84,6 +90,8 @@ services:
       MEDIA_STORAGE_DIRECTORY: /media
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      API_BASE_URL: http://api:3000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
     ports:
       - "${PROCESSING_PORT:-3001}:3001"
     volumes:

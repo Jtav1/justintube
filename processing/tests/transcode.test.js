@@ -10,6 +10,7 @@ import {
   resolveAudioEncoder,
   resolveHardwareAccelerator,
   resolveVideoEncoder,
+  validateTranscodeBatchRequest,
   validateTranscodeProfile,
   validateTranscodeRequest,
 } from "../lib/transcode.js";
@@ -68,6 +69,31 @@ describe("validateTranscodeProfile / validateTranscodeRequest", () => {
         videoCodec: "h264; rm -rf /",
       }),
     ).toThrow(TranscodeValidationError);
+  });
+
+  test("normalizes a batch jobs payload", () => {
+    const jobId = "11111111-1111-1111-1111-111111111111";
+    expect(
+      validateTranscodeBatchRequest({
+        filename: "clip.mp4",
+        jobs: [
+          {
+            jobId,
+            outputFilename: `${jobId}.mp4`,
+            profile: validProfile,
+          },
+        ],
+      }),
+    ).toEqual({
+      filename: "clip.mp4",
+      jobs: [
+        {
+          jobId,
+          outputFilename: `${jobId}.mp4`,
+          profile: { ...validProfile, outputContainer: "mp4" },
+        },
+      ],
+    });
   });
 });
 

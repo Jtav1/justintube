@@ -1,8 +1,10 @@
 import { Queue, Worker } from "bullmq";
+import { notifyFileVersionComplete, notifyFileVersionFailed } from "./api-client.js";
 import {
   resolveOriginalInputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
+import { collectOutputMetadata } from "./probe.js";
 import { buildFfmpegArgs, runFfmpeg } from "./transcode.js";
 
 /**
@@ -49,16 +51,26 @@ export function createTranscodeQueue(connection) {
 }
 
 /**
- * Processes a single transcode job: resolve paths, run ffmpeg, return result.
+ * Processes a single transcode job: resolve paths, run ffmpeg, collect
+ * metadata, notify the API, and return the result payload.
  *
  * @param {import('bullmq').Job} job BullMQ job whose data includes
  *   `inputFilename`, `outputFilename`, and `profile`.
- * @returns {Promise<{ outputFilename: string, profileId: number }>}
- *   Result payload stored on the completed job.
+ * @returns {Promise<{
+ *   outputFilename: string,
+ *   profileId: number,
+ *   fileSizeBytes: number,
+ *   videoWidth: number|null,
+ *   videoHeight: number|null,
+ *   resolution: string|null,
+ *   storagePath: string,
+ *   mimeType: string|null
+ * }>} Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails.
  */
 export async function processTranscodeJob(job) {
   const { inputFilename, outputFilename, profile } = job.data;
+  const jobId = String(job.id);
 
   await job.updateProgress(10);
 
@@ -68,11 +80,33 @@ export async function processTranscodeJob(job) {
 
   await job.updateProgress(40);
   await runFfmpeg(args);
+  await job.updateProgress(80);
+
+  const metadata = await collectOutputMetadata({
+    outputPath,
+    outputFilename,
+    outputContainer: profile.outputContainer,
+  });
+
+  const notify = await notifyFileVersionComplete(jobId, metadata);
+  if (!notify.ok) {
+    console.error(
+      `failed to notify API of completed transcode ${jobId}:`,
+      notify.error,
+    );
+  }
+
   await job.updateProgress(100);
 
   return {
     outputFilename,
     profileId: profile.id,
+    fileSizeBytes: metadata.fileSizeBytes,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+    resolution: metadata.resolution,
+    storagePath: metadata.storagePath,
+    mimeType: metadata.mimeType,
   };
 }
 
@@ -119,6 +153,32 @@ export async function enqueueTranscodeJob(queue, options) {
 }
 
 /**
+ * Enqueues multiple transcode jobs for the same input file.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {string} inputFilename Basename under `/media/original`.
+ * @param {Array<{
+ *   jobId: string,
+ *   outputFilename: string,
+ *   profile: import('./transcode.js').TranscodeProfilePayload
+ * }>} jobs Validated job descriptors.
+ * @returns {Promise<import('bullmq').Job[]>} Created BullMQ jobs.
+ */
+export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
+  return queue.addBulk(
+    jobs.map((job) => ({
+      name: "ffmpeg-transcode",
+      data: {
+        inputFilename,
+        outputFilename: job.outputFilename,
+        profile: job.profile,
+      },
+      opts: { jobId: job.jobId },
+    })),
+  );
+}
+
+/**
  * Loads a transcode job by id and maps it to a status payload for the API.
  *
  * @param {import('bullmq').Queue} queue Transcode queue instance.
@@ -144,6 +204,49 @@ export async function getTranscodeJobStatus(queue, jobId) {
     failedReason: job.failedReason || null,
     returnvalue: job.returnvalue ?? null,
   };
+}
+
+/**
+ * Removes a transcode job from Redis by id (any state).
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {string} jobId Job identifier to remove.
+ * @returns {Promise<boolean>} `true` when a job was found and removed.
+ */
+export async function removeTranscodeJob(queue, jobId) {
+  const job = await queue.getJob(jobId);
+  if (!job) {
+    return false;
+  }
+  await job.remove();
+  return true;
+}
+
+/**
+ * Notifies the API that a BullMQ job failed (best-effort).
+ *
+ * @param {import('bullmq').Job | undefined} job Failed job, when available.
+ * @param {Error | undefined} err Failure reason.
+ * @returns {Promise<void>} Resolves after the callback attempt finishes.
+ */
+export async function notifyTranscodeJobFailed(job, err) {
+  const jobId = job?.id != null ? String(job.id) : "";
+  if (!jobId) {
+    return;
+  }
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof job?.failedReason === "string" && job.failedReason
+        ? job.failedReason
+        : "transcode failed";
+  const notify = await notifyFileVersionFailed(jobId, message);
+  if (!notify.ok) {
+    console.error(
+      `failed to notify API of failed transcode ${jobId}:`,
+      notify.error,
+    );
+  }
 }
 
 /**

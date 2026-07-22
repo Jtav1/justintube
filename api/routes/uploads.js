@@ -4,7 +4,14 @@ import { unlink } from "node:fs/promises";
 import { extname, isAbsolute, join, resolve } from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { OriginalUpload } from "../lib/models/index.js";
+import {
+  heightToResolution,
+  mimeTypeForContainer,
+  plannedTranscodedStoragePath,
+} from "../lib/media-meta.js";
+import { markUploadFileVersionsFailed } from "../lib/file-versions.js";
+import { FileVersion, OriginalUpload, TranscodeProfile } from "../lib/models/index.js";
+import { requestTranscodeBatch } from "../lib/processing-client.js";
 
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
@@ -104,8 +111,66 @@ const upload = multer({
 });
 
 /**
+ * Builds the standard JSON payload for a newly created ORIGINAL_UPLOADS row.
+ *
+ * @param {import('sequelize').Model} upload Persisted upload instance.
+ * @returns {object} Upload fields suitable for an HTTP response body.
+ */
+function uploadResponseBody(upload) {
+  return {
+    id: upload.id,
+    originalFilename: upload.originalFilename,
+    uuidName: upload.uuidName,
+    fileExtension: upload.fileExtension,
+    mimeType: upload.mimeType,
+    fileSizeBytes: upload.fileSizeBytes,
+    storagePath: upload.storagePath,
+    status: upload.status,
+    userId: upload.userId,
+  };
+}
+
+/**
+ * Maps a Sequelize TranscodeProfile row to the processing API profile payload.
+ *
+ * @param {import('sequelize').Model} row Transcode profile model instance.
+ * @returns {import('../lib/processing-client.js').TranscodeProfilePayload} Profile body.
+ */
+function toTranscodeProfilePayload(row) {
+  return {
+    id: row.id,
+    outputHeight: row.outputHeight,
+    outputWidth: row.outputWidth,
+    outputContainer: row.outputContainer,
+    videoCodec: row.videoCodec,
+    audioCodec: row.audioCodec,
+  };
+}
+
+/**
+ * Maps a FileVersion row to the upload response shape.
+ *
+ * @param {import('sequelize').Model} version Persisted file version.
+ * @returns {object} Public file-version fields.
+ */
+function fileVersionResponseBody(version) {
+  return {
+    id: version.id,
+    uuidName: version.uuidName,
+    jobId: version.uuidName,
+    storagePath: version.storagePath,
+    status: version.status,
+    transcodeProfileId: version.transcodeProfileId,
+    videoWidth: version.videoWidth,
+    videoHeight: version.videoHeight,
+    resolution: version.resolution,
+  };
+}
+
+/**
  * Express handler for `POST /videos/upload`. Persists the already-stored file's
- * metadata to ORIGINAL_UPLOADS and returns the created record.
+ * metadata to ORIGINAL_UPLOADS, creates pending FILE_VERSIONS for each
+ * transcode profile, then batch-enqueues processing jobs.
  *
  * @param {import('express').Request} req Request whose `file` was populated by multer.
  * @param {import('express').Response} res Express response.
@@ -126,8 +191,9 @@ async function uploadVideo(req, res) {
   // Relative storage path uses forward slashes for cross-platform DB consistency.
   const storagePath = `original/${file.filename}`;
 
+  let upload;
   try {
-    const upload = await OriginalUpload.create({
+    upload = await OriginalUpload.create({
       originalFilename: file.originalname,
       uuidName,
       fileExtension,
@@ -136,18 +202,6 @@ async function uploadVideo(req, res) {
       storagePath,
       userId: null,
     });
-
-    res.status(201).json({
-      id: upload.id,
-      originalFilename: upload.originalFilename,
-      uuidName: upload.uuidName,
-      fileExtension: upload.fileExtension,
-      mimeType: upload.mimeType,
-      fileSizeBytes: upload.fileSizeBytes,
-      storagePath: upload.storagePath,
-      status: upload.status,
-      userId: upload.userId,
-    });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.
     await unlink(join(originalDir, file.filename)).catch(() => {});
@@ -155,7 +209,102 @@ async function uploadVideo(req, res) {
       error: "upload_persist_failed",
       message: "The file was received but could not be recorded.",
     });
+    return;
   }
+
+  const profiles = await TranscodeProfile.findAll();
+  if (profiles.length === 0) {
+    res.status(201).json(uploadResponseBody(upload));
+    return;
+  }
+
+  /** @type {import('sequelize').Model[]} */
+  const versions = [];
+  try {
+    for (const row of profiles) {
+      const versionUuid = randomUUID();
+      const ext = String(row.outputContainer || "mp4")
+        .trim()
+        .toLowerCase()
+        .replace(/^\./, "");
+      const version = await FileVersion.create({
+        originalUploadId: upload.id,
+        uuidName: versionUuid,
+        fileExtension: ext,
+        mimeType: mimeTypeForContainer(ext),
+        fileSizeBytes: null,
+        storagePath: plannedTranscodedStoragePath(versionUuid, ext),
+        status: "pending",
+        videoWidth: row.outputWidth,
+        videoHeight: row.outputHeight,
+        resolution: heightToResolution(row.outputHeight),
+        transcodeProfileId: row.id,
+      });
+      versions.push(version);
+    }
+  } catch (err) {
+    console.error("[upload] failed to create FILE_VERSIONS:", err);
+    await markUploadFileVersionsFailed(upload.id);
+    res.status(201).json({
+      ...uploadResponseBody(upload),
+      fileVersions: [],
+      failures: [
+        {
+          profileId: null,
+          message:
+            err instanceof Error
+              ? err.message
+              : "failed to create file version rows",
+        },
+      ],
+    });
+    return;
+  }
+
+  const jobs = versions.map((version, index) => ({
+    jobId: version.uuidName,
+    outputFilename: `${version.uuidName}.${version.fileExtension}`,
+    profile: toTranscodeProfilePayload(profiles[index]),
+  }));
+
+  const enqueue = await requestTranscodeBatch({
+    filename: file.filename,
+    jobs,
+  });
+
+  if (!enqueue.ok) {
+    console.error("[upload] transcode batch enqueue failed:", enqueue.error);
+    await markUploadFileVersionsFailed(upload.id);
+    await upload.reload();
+    for (const version of versions) {
+      await version.reload();
+    }
+    res.status(201).json({
+      ...uploadResponseBody(upload),
+      fileVersions: versions.map((v) => fileVersionResponseBody(v)),
+      failures: [
+        {
+          profileId: null,
+          message: enqueue.error || "transcode enqueue failed",
+        },
+      ],
+    });
+    return;
+  }
+
+  for (const version of versions) {
+    await version.update({ status: "processing" });
+  }
+  await upload.update({ status: "processing" });
+  await upload.reload();
+  for (const version of versions) {
+    await version.reload();
+  }
+
+  res.status(201).json({
+    ...uploadResponseBody(upload),
+    fileVersions: versions.map((v) => fileVersionResponseBody(v)),
+  });
 }
 
 /**

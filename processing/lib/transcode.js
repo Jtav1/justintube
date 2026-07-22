@@ -66,6 +66,19 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  */
 
 /**
+ * @typedef {object} ValidatedTranscodeJob
+ * @property {string} jobId Stable BullMQ job id (file version UUID).
+ * @property {string} outputFilename Basename under `/media/transcoded`.
+ * @property {TranscodeProfilePayload} profile Validated profile fields.
+ */
+
+/**
+ * @typedef {object} ValidatedTranscodeBatchRequest
+ * @property {string} filename Basename under `/media/original`.
+ * @property {ValidatedTranscodeJob[]} jobs One or more transcode jobs.
+ */
+
+/**
  * Asserts that `value` is a finite positive integer.
  *
  * @param {unknown} value Candidate number.
@@ -260,7 +273,33 @@ export function validateTranscodeProfile(profile) {
 }
 
 /**
- * Validates a POST `/transcode` JSON body (`filename` + nested `profile`).
+ * Validates a single entry in a batch `jobs` array.
+ *
+ * @param {unknown} job Raw job object.
+ * @param {number} index Zero-based index for error messages.
+ * @returns {ValidatedTranscodeJob} Validated job fields.
+ * @throws {TranscodeValidationError} When any required field is invalid.
+ */
+export function validateTranscodeJob(job, index) {
+  if (job === null || typeof job !== "object" || Array.isArray(job)) {
+    throw new TranscodeValidationError(
+      `jobs[${index}] is required and must be an object`,
+    );
+  }
+
+  const body = /** @type {Record<string, unknown>} */ (job);
+  const jobId = requireSafeToken(body.jobId, `jobs[${index}].jobId`);
+  const outputFilename = requireSafeToken(
+    body.outputFilename,
+    `jobs[${index}].outputFilename`,
+  );
+  const profile = validateTranscodeProfile(body.profile);
+
+  return { jobId, outputFilename, profile };
+}
+
+/**
+ * Validates a legacy POST `/transcode` JSON body (`filename` + nested `profile`).
  *
  * @param {unknown} body Raw request body.
  * @returns {ValidatedTranscodeRequest} Validated filename and profile.
@@ -281,6 +320,65 @@ export function validateTranscodeRequest(body) {
   return {
     filename: payload.filename.trim(),
     profile: validateTranscodeProfile(payload.profile),
+  };
+}
+
+/**
+ * Validates a POST `/transcode` body that is either a legacy single-profile
+ * request or a batch `{ filename, jobs }` request. Legacy bodies are normalized
+ * into a one-element `jobs` array with a generated job id.
+ *
+ * @param {unknown} body Raw request body.
+ * @param {{ generateJobId?: () => string }} [options] Optional id factory for
+ *   legacy single-profile requests (defaults to crypto.randomUUID when omitted
+ *   by the caller via pre-generated ids).
+ * @returns {ValidatedTranscodeBatchRequest} Normalized batch payload.
+ * @throws {TranscodeValidationError} When the body shape or fields are invalid.
+ */
+export function validateTranscodeBatchRequest(body, options = {}) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new TranscodeValidationError("request body must be a JSON object");
+  }
+
+  const payload = /** @type {Record<string, unknown>} */ (body);
+  if (typeof payload.filename !== "string") {
+    throw new TranscodeValidationError(
+      "filename is required and must be a string",
+    );
+  }
+
+  const filename = payload.filename.trim();
+
+  if (Array.isArray(payload.jobs)) {
+    if (payload.jobs.length === 0) {
+      throw new TranscodeValidationError("jobs must be a non-empty array");
+    }
+    return {
+      filename,
+      jobs: payload.jobs.map((job, index) => validateTranscodeJob(job, index)),
+    };
+  }
+
+  // Legacy single-profile shape → one job with a caller-supplied id factory.
+  const profile = validateTranscodeProfile(payload.profile);
+  const generateJobId =
+    typeof options.generateJobId === "function"
+      ? options.generateJobId
+      : () => {
+          throw new TranscodeValidationError(
+            "generateJobId is required for legacy single-profile requests",
+          );
+        };
+  const jobId = generateJobId();
+  return {
+    filename,
+    jobs: [
+      {
+        jobId,
+        outputFilename: buildOutputFilename(jobId, profile.outputContainer),
+        profile,
+      },
+    ],
   };
 }
 

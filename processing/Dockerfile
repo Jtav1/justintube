@@ -11,8 +11,8 @@ RUN apk add --no-cache \
 
 ENV NODE_ENV=production
 
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+COPY package.json ./
+RUN npm install
 
 COPY . .
 
