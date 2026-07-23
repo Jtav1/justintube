@@ -5,8 +5,8 @@ WORKDIR /app
 # Build deps for native optionalDependencies (e.g. better-sqlite3)
 RUN apk add --no-cache python3 make g++
 
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+COPY package.json ./
+RUN npm install
 
 # Production stage
 FROM node:24-alpine

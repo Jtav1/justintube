@@ -1,4 +1,4 @@
-name: Justintube yt-dlp
+name: Justintube processing
 
 # This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
@@ -19,7 +19,7 @@ env:
   # Use docker.io for Docker Hub if empty
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
-  IMAGE_NAME: ${{ github.repository_owner }}/justintube-ytdlp
+  IMAGE_NAME: ${{ github.repository_owner }}/justintube-processing
 
 jobs:
   build:
@@ -72,13 +72,13 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@v6.19.2
         with:
-          context: ./yt-dlp
-          file: ./yt-dlp/Dockerfile
+          context: ./processing
+          file: ./processing/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=ytdlp-${{ hashFiles('yt-dlp/package-lock.json') }}
-          cache-to: type=gha,mode=max,scope=ytdlp-${{ hashFiles('yt-dlp/package-lock.json') }}
+          cache-from: type=gha,scope=processing-${{ hashFiles('processing/package-lock.json') }}
+          cache-to: type=gha,mode=max,scope=processing-${{ hashFiles('processing/package-lock.json') }}
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker

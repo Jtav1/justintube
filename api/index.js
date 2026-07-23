@@ -7,7 +7,9 @@ import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
 import { ensureSchema } from "./lib/schema.js";
+import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
 import { createApiRouter } from "./routes/stubs.js";
+import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -63,6 +65,7 @@ export function createApp() {
     }),
   );
 
+  app.use("/internal", createInternalFileVersionsRouter());
   app.use("/api/v1", createApiRouter());
 
   app.use((_req, res) => {
@@ -92,6 +95,15 @@ async function start() {
     console.log(`Scalar docs: http://localhost:${PORT}/docs`);
     console.log(`OpenAPI:    http://localhost:${PORT}/openapi.json`);
   });
+
+  try {
+    await startTranscodeReconcileCron();
+  } catch (err) {
+    console.error(
+      "Failed to start transcode reconcile cron:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 // Only boot the HTTP server (and touch the database) when this file is executed
