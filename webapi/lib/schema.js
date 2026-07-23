@@ -1,7 +1,8 @@
 import { QueryTypes } from "sequelize";
 import { DB_CLIENT, sequelize } from "./db.js";
 import { models } from "./models/index.js";
-import { seedReferenceData } from "./seed.js";
+import { seedReferenceData, seedAdminUser } from "./seed.js";
+import { syncSessionStore } from "./auth/session.js";
 
 /**
  * SQLite views that are no longer part of the application schema and should be
@@ -257,4 +258,6 @@ export async function ensureSchema() {
   }
 
   await seedReferenceData();
+  await seedAdminUser();
+  await syncSessionStore();
 }

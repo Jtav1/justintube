@@ -36,7 +36,7 @@ describe("Video-upload schema (SQLite)", () => {
       const rows = await queryRows(
         `SELECT name, type FROM sqlite_master
           WHERE name IN (
-            'ROLES','USERS','SSO_PROVIDERS','USER_IDENTITIES',
+            'ROLES','USERS','USER_API_KEYS','SSO_PROVIDERS','USER_IDENTITIES',
             'ORIGINAL_UPLOADS','VIDEO_METADATA','VIDEO_THUMBNAIL',
             'TRANSCODE_PROFILES','FILE_VERSIONS',
             'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES',
@@ -47,6 +47,7 @@ describe("Video-upload schema (SQLite)", () => {
 
       expect(byName.ROLES).toBe("table");
       expect(byName.USERS).toBe("table");
+      expect(byName.USER_API_KEYS).toBe("table");
       expect(byName.SSO_PROVIDERS).toBe("table");
       expect(byName.USER_IDENTITIES).toBe("table");
       expect(byName.ORIGINAL_UPLOADS).toBe("table");

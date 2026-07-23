@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hashApiKey, apiKeyPrefix } from "../../lib/auth/api-key.js";
 import { query } from "../../lib/db.js";
 import {
   ContentTag,
@@ -13,6 +14,7 @@ import {
   Subscription,
   TranscodeProfile,
   User,
+  UserApiKey,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
@@ -49,6 +51,7 @@ const RESET_MODELS = [
   Notification,
   UserNotificationSetting,
   UserIdentity,
+  UserApiKey,
   User,
   SsoProvider,
   StaticPage,
@@ -345,6 +348,36 @@ export async function seedUser(overrides = {}) {
 
   const row = await User.create(record);
   return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a USER_API_KEYS row for an existing user. Hashes `rawKey` with
+ * SHA-256; defaults to a far-future expiry and a null `revokedAt`.
+ *
+ * @param {number} userId Owning USERS id.
+ * @param {string} rawKey Plaintext API key used by tests in Authorization headers.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.name] Human-facing key label.
+ * @param {string|null} [overrides.description] Optional description.
+ * @param {Date|string} [overrides.expiresAt] Expiry timestamp.
+ * @param {Date|string|null} [overrides.revokedAt] Revocation timestamp (null = active).
+ * @returns {Promise<{id: number, rawKey: string} & Record<string, unknown>>} Seeded key metadata plus rawKey.
+ */
+export async function seedUserApiKey(userId, rawKey, overrides = {}) {
+  const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  const record = {
+    userId,
+    name: "test-key",
+    description: null,
+    keyHash: hashApiKey(rawKey),
+    keyPrefix: apiKeyPrefix(rawKey),
+    expiresAt: farFuture,
+    revokedAt: null,
+    ...overrides,
+  };
+
+  const row = await UserApiKey.create(record);
+  return { ...asSeedResult(row, record), rawKey };
 }
 
 /**

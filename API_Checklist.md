@@ -2,7 +2,7 @@
 
 Manual tracking of API route implementation progress across the two backend services.
 
-- **Web API** (`api/`) — public application API, base path `/api/v1` unless noted.
+- **Web API** (`api/`) — public application API, base path `/api/v1` unless noted. Service-to-service callbacks use `/internal`.
 - **Processing API** (`processing/`) — internal yt-dlp download + ffmpeg transcode service.
 
 ---
@@ -15,15 +15,26 @@ Manual tracking of API route implementation progress across the two backend serv
 - [x] `GET /openapi.json` — OpenAPI document
 - [x] `GET /docs` — Scalar API reference UI
 
+### Internal (processing callbacks)
+
+Bearer `INTERNAL_SERVICE_TOKEN` required.
+
+- [x] `POST /internal/file-versions/:uuid/complete` — fileVersionComplete
+- [x] `POST /internal/file-versions/:uuid/fail` — fileVersionFail
+
 ### Auth
 
-- [ ] `POST /api/v1/auth/register` — authRegister
-- [ ] `POST /api/v1/auth/login` — authLogin
-- [ ] `POST /api/v1/auth/logout` — authLogout
-- [ ] `GET /api/v1/auth/me` — authMe
+- [x] `POST /api/v1/auth/register` — authRegister
+- [x] `POST /api/v1/auth/login` — authLogin
+- [x] `POST /api/v1/auth/logout` — authLogout
+- [x] `GET /api/v1/auth/me` — authMe
+- [x] `GET /api/v1/auth/csrf` — authCsrf
 - [ ] `POST /api/v1/auth/verify-email` — authVerifyEmail
 - [ ] `POST /api/v1/auth/resend-verification` — authResendVerification
 - [ ] `POST /api/v1/auth/password` — authChangePassword
+
+Future/wont do now
+
 - [ ] `GET /api/v1/auth/sso/providers` — authSsoProviders
 - [ ] `GET /api/v1/auth/sso/:provider/start` — authSsoStart
 - [ ] `GET /api/v1/auth/sso/:provider/callback` — authSsoCallback
@@ -56,7 +67,7 @@ Manual tracking of API route implementation progress across the two backend serv
 
 ### Uploads
 
-- [ ] `POST /api/v1/videos/upload` — uploadVideo (multipart)
+- [x] `POST /api/v1/videos/upload` — uploadVideo (multipart)
 
 ### Me / library / settings
 
@@ -73,6 +84,10 @@ Manual tracking of API route implementation progress across the two backend serv
 - [ ] `GET /api/v1/me/playlists` — listMyPlaylists
 - [ ] `GET /api/v1/me/notification-preferences` — getNotificationPreferences
 - [ ] `PATCH /api/v1/me/notification-preferences` — updateNotificationPreferences
+- [ ] `GET /api/v1/me/api-keys` — listMyApiKeys
+- [ ] `POST /api/v1/me/api-keys` — createMyApiKey
+- [ ] `PATCH /api/v1/me/api-keys/:id` — updateMyApiKey
+- [ ] `DELETE /api/v1/me/api-keys/:id` — revokeMyApiKey
 
 ### Users / channels / engagement
 
@@ -134,5 +149,6 @@ Manual tracking of API route implementation progress across the two backend serv
 
 ### Transcode
 
-- [ ] `POST /transcode` — queue an ffmpeg transcode job
-- [ ] `GET /transcode/:jobId` — get transcode job status
+- [x] `POST /transcode` — queue an ffmpeg transcode job (legacy single or batch)
+- [x] `GET /transcode/:jobId` — get transcode job status
+- [x] `DELETE /transcode/:jobId` — remove transcode job from Redis

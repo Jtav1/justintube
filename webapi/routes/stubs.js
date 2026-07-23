@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createAuthRouter } from "./auth.js";
 import { createUploadRouter } from "./uploads.js";
 
 /**
@@ -28,11 +29,7 @@ export function registerStubRoutes(router) {
     router[method](path, notImplemented(operationId));
   };
 
-  // Auth
-  r("post", "/auth/register", "authRegister");
-  r("post", "/auth/login", "authLogin");
-  r("post", "/auth/logout", "authLogout");
-  r("get", "/auth/me", "authMe");
+  // Auth (unimplemented)
   r("post", "/auth/verify-email", "authVerifyEmail");
   r("post", "/auth/resend-verification", "authResendVerification");
   r("post", "/auth/password", "authChangePassword");
@@ -79,6 +76,10 @@ export function registerStubRoutes(router) {
   r("get", "/me/playlists", "listMyPlaylists");
   r("get", "/me/notification-preferences", "getNotificationPreferences");
   r("patch", "/me/notification-preferences", "updateNotificationPreferences");
+  r("get", "/me/api-keys", "listMyApiKeys");
+  r("post", "/me/api-keys", "createMyApiKey");
+  r("patch", "/me/api-keys/:id", "updateMyApiKey");
+  r("delete", "/me/api-keys/:id", "revokeMyApiKey");
 
   // Users / channels / engagement
   r("get", "/users/:username", "getUserChannel");
@@ -123,7 +124,7 @@ export function registerStubRoutes(router) {
 }
 
 /**
- * Builds the `/api/v1` router with all stub endpoints registered.
+ * Builds the `/api/v1` router with real implementations mounted before stubs.
  *
  * @returns {import('express').Router} Configured API router.
  */
@@ -131,6 +132,7 @@ export function createApiRouter() {
   const router = Router();
   // Real implementations are mounted before the stubs so they take precedence
   // over the corresponding 501 placeholders.
+  router.use(createAuthRouter());
   router.use(createUploadRouter());
   registerStubRoutes(router);
   return router;

@@ -5,6 +5,8 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
+import { createCorsOptions } from "./lib/auth/cors.js";
+import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
 import { ensureSchema } from "./lib/schema.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
@@ -27,8 +29,9 @@ export function createApp() {
       contentSecurityPolicy: false,
     }),
   );
-  app.use(cors());
+  app.use(cors(createCorsOptions()));
   app.use(express.json({ limit: "2mb" }));
+  app.use(createSessionMiddleware());
   app.use(
     rateLimit({
       windowMs: 60_000,

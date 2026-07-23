@@ -11,6 +11,7 @@ import { StaticPage } from "./static-page.js";
 import { Subscription } from "./subscription.js";
 import { TranscodeProfile } from "./transcode-profile.js";
 import { User } from "./user.js";
+import { UserApiKey } from "./user-api-key.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
@@ -34,6 +35,15 @@ function registerAssociations() {
   User.belongsTo(Role, {
     foreignKey: "roleId",
     onDelete: "SET NULL",
+  });
+
+  User.hasMany(UserApiKey, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  UserApiKey.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
   });
 
   User.hasMany(UserIdentity, {
@@ -255,6 +265,7 @@ registerAssociations();
 export const models = {
   Role,
   User,
+  UserApiKey,
   SsoProvider,
   UserIdentity,
   OriginalUpload,
@@ -288,6 +299,7 @@ export {
   Subscription,
   TranscodeProfile,
   User,
+  UserApiKey,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
