@@ -8,10 +8,11 @@ import {
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
  *
+ * @private
  * @param {import('express').Request} req Incoming request.
  * @param {import('express').Response} res Express response.
  * @param {import('express').NextFunction} next Continues when authorized.
- * @returns {void} Sends 401 when the token is missing or mismatched.
+ * @returns {void} Sends 401/503 when the token is missing, mismatched, or unconfigured.
  */
 function requireInternalToken(req, res, next) {
   const expected = process.env.INTERNAL_SERVICE_TOKEN || "";
@@ -48,10 +49,44 @@ export function createInternalFileVersionsRouter() {
 
   /**
    * Marks a file version complete and stores output metadata from processing.
+   * POST /internal/file-versions/:uuid/complete with
+   * { fileSizeBytes?, videoWidth?, videoHeight?, resolution?, storagePath?, mimeType? }.
+   * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
    *
-   * @param {import('express').Request} req Request with `uuid` param + body fields.
+   * @openapi
+   * /internal/file-versions/{uuid}/complete:
+   *   post:
+   *     tags: [Internal]
+   *     summary: Mark file version complete
+   *     operationId: fileVersionComplete
+   *     security:
+   *       - internalServiceToken: []
+   *     parameters:
+   *       - name: uuid
+   *         in: path
+   *         required: true
+   *         schema: { type: string }
+   *     requestBody:
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               fileSizeBytes: { type: number }
+   *               videoWidth: { type: number, nullable: true }
+   *               videoHeight: { type: number, nullable: true }
+   *               resolution: { type: string, nullable: true }
+   *               storagePath: { type: string }
+   *               mimeType: { type: string, nullable: true }
+   *     responses:
+   *       200:
+   *         description: File version marked complete
+   *       404:
+   *         description: File version not found
+   *
+   * @param {import('express').Request} req Request with `uuid` param + optional body fields.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 200 JSON, 404, or error.
+   * @returns {Promise<void>} Sends 200 `{ success, uuidName, status }`, 400, 404, or error.
    */
   router.post("/file-versions/:uuid/complete", async (req, res) => {
     const uuid = String(req.params.uuid || "").trim();
@@ -105,10 +140,38 @@ export function createInternalFileVersionsRouter() {
 
   /**
    * Marks a file version failed after a processing error.
+   * POST /internal/file-versions/:uuid/fail with { error? }.
+   * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
    *
-   * @param {import('express').Request} req Request with `uuid` param + optional error.
+   * @openapi
+   * /internal/file-versions/{uuid}/fail:
+   *   post:
+   *     tags: [Internal]
+   *     summary: Mark file version failed
+   *     operationId: fileVersionFail
+   *     security:
+   *       - internalServiceToken: []
+   *     parameters:
+   *       - name: uuid
+   *         in: path
+   *         required: true
+   *         schema: { type: string }
+   *     requestBody:
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               error: { type: string }
+   *     responses:
+   *       200:
+   *         description: File version marked failed
+   *       404:
+   *         description: File version not found
+   *
+   * @param {import('express').Request} req Request with `uuid` param + optional `error` string.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 200 JSON, 404, or error.
+   * @returns {Promise<void>} Sends 200 `{ success, uuidName, status }`, 400, 404, or error.
    */
   router.post("/file-versions/:uuid/fail", async (req, res) => {
     const uuid = String(req.params.uuid || "").trim();

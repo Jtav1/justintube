@@ -91,3 +91,6 @@ typings/
 db/data/
 media/
 .env.prod
+# Generated OpenAPI artifacts
+openapi.generated.json
+

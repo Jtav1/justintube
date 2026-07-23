@@ -61,6 +61,7 @@ const maxUploadSizeBytes =
 /**
  * Normalizes a file's extension to a lowercase value without the leading dot.
  *
+ * @private
  * @param {string} filename Original client-provided filename.
  * @returns {string} Lowercase extension without a dot (empty string if none).
  */
@@ -88,6 +89,7 @@ const storage = multer.diskStorage({
  * Multer file filter that rejects any file whose extension is not present in
  * FILETYPES_ALLOWED.
  *
+ * @private
  * @param {import('express').Request} _req Incoming request (unused).
  * @param {Express.Multer.File} file File metadata provided by multer.
  * @param {multer.FileFilterCallback} cb Callback signaling acceptance/rejection.
@@ -113,6 +115,7 @@ const upload = multer({
 /**
  * Builds the standard JSON payload for a newly created ORIGINAL_UPLOADS row.
  *
+ * @private
  * @param {import('sequelize').Model} upload Persisted upload instance.
  * @returns {object} Upload fields suitable for an HTTP response body.
  */
@@ -136,6 +139,7 @@ function uploadResponseBody(upload) {
 /**
  * Maps a Sequelize TranscodeProfile row to the processing API profile payload.
  *
+ * @private
  * @param {import('sequelize').Model} row Transcode profile model instance.
  * @returns {import('../lib/processing-client.js').TranscodeProfilePayload} Profile body.
  */
@@ -153,6 +157,7 @@ function toTranscodeProfilePayload(row) {
 /**
  * Maps a FileVersion row to the upload response shape.
  *
+ * @private
  * @param {import('sequelize').Model} version Persisted file version.
  * @returns {object} Public file-version fields.
  */
@@ -171,13 +176,17 @@ function fileVersionResponseBody(version) {
 }
 
 /**
- * Express handler for `POST /videos/upload`. Persists the already-stored file's
- * metadata to ORIGINAL_UPLOADS, creates pending FILE_VERSIONS for each
- * transcode profile, then batch-enqueues processing jobs.
+ * Express handler for raw video upload.
+ * POST /api/v1/videos/upload — multipart form field `file` (single).
+ * Auth: none (userId stored as null until session/API-key auth is wired to uploads).
  *
+ * Persists the already-stored file's metadata to ORIGINAL_UPLOADS, creates pending
+ * FILE_VERSIONS for each transcode profile, then batch-enqueues processing jobs.
+ *
+ * @private
  * @param {import('express').Request} req Request whose `file` was populated by multer.
  * @param {import('express').Response} res Express response.
- * @returns {Promise<void>} Sends a 201 JSON response, or an error status on failure.
+ * @returns {Promise<void>} Sends 201 upload JSON, or an error status on failure.
  */
 async function uploadVideo(req, res) {
   const file = req.file;
@@ -373,6 +382,7 @@ async function uploadVideo(req, res) {
  * Express error handler for multer/upload failures, mapping known error codes to
  * appropriate HTTP responses.
  *
+ * @private
  * @param {Error} err Error thrown by multer or the file filter.
  * @param {import('express').Request} _req Incoming request (unused).
  * @param {import('express').Response} res Express response.
@@ -402,10 +412,37 @@ function uploadErrorHandler(err, _req, res, next) {
 /**
  * Builds a router exposing the real media upload endpoint.
  *
- * @returns {import('express').Router} Router handling `POST /videos/upload`.
+ * @returns {import('express').Router} Router handling POST /api/v1/videos/upload.
  */
 export function createUploadRouter() {
   const router = Router();
+  /**
+   * POST /api/v1/videos/upload — multipart `file`. Auth: none.
+   * Handler: {@link uploadVideo}.
+   *
+   * @openapi
+   * /api/v1/videos/upload:
+   *   post:
+   *     tags: [Uploads]
+   *     summary: Upload a video file
+   *     operationId: uploadVideo
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         multipart/form-data:
+   *           schema:
+   *             type: object
+   *             required: [file]
+   *             properties:
+   *               file:
+   *                 type: string
+   *                 format: binary
+   *     responses:
+   *       201:
+   *         description: Upload recorded
+   *       400:
+   *         description: Missing or invalid file
+   */
   router.post("/videos/upload", upload.single("file"), uploadVideo);
   router.use(uploadErrorHandler);
   return router;

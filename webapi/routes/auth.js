@@ -38,6 +38,7 @@ const authCredentialLimiter = rateLimit({
 /**
  * Returns whether public account registration is enabled.
  *
+ * @private
  * @returns {boolean} True when ENABLE_ACCOUNT_REGISTRATION is the string "true".
  */
 function registrationEnabled() {
@@ -50,6 +51,7 @@ function registrationEnabled() {
 /**
  * Returns whether new accounts require email verification before full access.
  *
+ * @private
  * @returns {boolean} True when REQUIRE_EMAIL_VERIFICATION is the string "true".
  */
 function requireEmailVerification() {
@@ -63,6 +65,7 @@ function requireEmailVerification() {
  * Establishes an authenticated session for a user after regenerating the
  * session id (session-fixation mitigation) and rotating the CSRF token.
  *
+ * @private
  * @param {import('express').Request} req Incoming request.
  * @param {number} userId Authenticated user's id.
  * @returns {Promise<string>} Fresh CSRF token for the new session.
@@ -78,6 +81,7 @@ async function establishSession(req, userId) {
 /**
  * Loads a user with their Role by username.
  *
+ * @private
  * @param {string} username Account username.
  * @returns {Promise<import('sequelize').Model|null>} User instance or null.
  */
@@ -100,7 +104,26 @@ export function createAuthRouter() {
 
   /**
    * Issues (or returns) a CSRF token for the current session.
-   * GET /api/v1/auth/csrf — no auth required.
+   * GET /api/v1/auth/csrf — no body.
+   * Auth: none (creates/touches an anonymous session cookie).
+   *
+   * @openapi
+   * /api/v1/auth/csrf:
+   *   get:
+   *     tags: [Auth]
+   *     summary: Issue CSRF token
+   *     operationId: authCsrf
+   *     responses:
+   *       200:
+   *         description: CSRF token for subsequent mutating cookie requests
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               required: [csrfToken]
+   *               properties:
+   *                 csrfToken:
+   *                   type: string
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -124,7 +147,35 @@ export function createAuthRouter() {
   /**
    * Registers a new local account when registration is enabled.
    * POST /api/v1/auth/register with { username, email, password, displayName? }.
-   * Requires X-CSRF-Token. Returns 201 `{ user, csrfToken }`.
+   * Auth: X-CSRF-Token required. Returns 201 `{ user, csrfToken }`.
+   *
+   * @openapi
+   * /api/v1/auth/register:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Register a local account
+   *     operationId: authRegister
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [username, email, password]
+   *             properties:
+   *               username: { type: string }
+   *               email: { type: string, format: email }
+   *               password: { type: string, minLength: 8 }
+   *               displayName: { type: string, nullable: true }
+   *     responses:
+   *       201:
+   *         description: Account created and session established
+   *       403:
+   *         description: Registration disabled
+   *       409:
+   *         description: Username or email already registered
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -214,7 +265,32 @@ export function createAuthRouter() {
 
   /**
    * Authenticates with username and password, establishing a cookie session.
-   * POST /api/v1/auth/login with { username, password }. Requires X-CSRF-Token.
+   * POST /api/v1/auth/login with { username, password }.
+   * Auth: X-CSRF-Token required. Returns `{ user, csrfToken }`.
+   *
+   * @openapi
+   * /api/v1/auth/login:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Log in with username and password
+   *     operationId: authLogin
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [username, password]
+   *             properties:
+   *               username: { type: string }
+   *               password: { type: string }
+   *     responses:
+   *       200:
+   *         description: Session established
+   *       401:
+   *         description: Invalid credentials
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -270,8 +346,21 @@ export function createAuthRouter() {
   });
 
   /**
-   * Destroys the current session cookie. POST /api/v1/auth/logout.
-   * Requires X-CSRF-Token when a session cookie is present.
+   * Destroys the current session cookie.
+   * POST /api/v1/auth/logout — no body.
+   * Auth: X-CSRF-Token required (session cookie clients); Bearer API keys skip CSRF.
+   *
+   * @openapi
+   * /api/v1/auth/logout:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Log out and clear session cookie
+   *     operationId: authLogout
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     responses:
+   *       204:
+   *         description: Session destroyed
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -293,9 +382,25 @@ export function createAuthRouter() {
 
   /**
    * Returns the authenticated user's public profile.
-   * GET /api/v1/auth/me — session cookie or Bearer API key.
+   * GET /api/v1/auth/me — no body.
+   * Auth: session cookie or Authorization Bearer API key (`requireAuth`).
    *
-   * @param {import('express').Request} req Incoming request (req.user set).
+   * @openapi
+   * /api/v1/auth/me:
+   *   get:
+   *     tags: [Auth]
+   *     summary: Current authenticated user
+   *     operationId: authMe
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: Public user profile
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request (`req.user` / `req.authRole` set).
    * @param {import('express').Response} res Express response.
    * @returns {void} Sends the public user object.
    */

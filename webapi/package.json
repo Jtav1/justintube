@@ -33,7 +33,10 @@
     "start": "node index.js",
     "dev:compose": "node --watch index.js",
     "dev": "node --env-file=.env --watch index.js",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "docs:generate": "node scripts/write-openapi.js",
+    "docs:preview": "npm run docs:generate && scalar document serve openapi.generated.json --watch",
+    "docs:build": "npm run docs:generate && scalar document validate openapi.generated.json"
   },
   "dependencies": {
     "@scalar/express-api-reference": "^0.10.11",
@@ -51,9 +54,11 @@
     "node-cron": "^4.6.0",
     "sequelize": "^6.37.8",
     "sqlite3": "^5.1.7",
+    "swagger-jsdoc": "^6.3.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@scalar/cli": "^2.0.1",
     "@types/express-session": "^1.19.0",
     "jest": "^30.4.2",
     "supertest": "^7.2.2"

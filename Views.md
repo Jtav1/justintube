@@ -123,7 +123,7 @@
 
 ## API Docs
 
-- Scalar docs
+- docs page
 
 ---
 

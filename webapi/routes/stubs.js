@@ -19,12 +19,24 @@ export function notImplemented(operationId) {
 }
 
 /**
- * Registers stub handlers for every Views.md-derived API path.
+ * Registers stub handlers for every Views.md-derived API path that is not yet
+ * implemented. Each stub responds with HTTP 501 and
+ * `{ error: "not_implemented", message, operationId }`. Auth is not enforced on
+ * stubs (real routers own auth when they replace these placeholders).
  *
  * @param {import('express').Router} router Router mounted at `/api/v1`.
  * @returns {void} No return value; mutates `router` in place.
  */
 export function registerStubRoutes(router) {
+  /**
+   * Binds a 501 stub for one METHOD + path.
+   *
+   * @private
+   * @param {"get"|"post"|"put"|"patch"|"delete"} method HTTP method name on the router.
+   * @param {string} path Path relative to `/api/v1`.
+   * @param {string} operationId OpenAPI operationId for the stub body.
+   * @returns {void}
+   */
   const r = (method, path, operationId) => {
     router[method](path, notImplemented(operationId));
   };
