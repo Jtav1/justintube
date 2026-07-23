@@ -10,12 +10,13 @@ import { createTranscodeRouter } from "../routes/transcode.js";
  * Builds a minimal Express app with a mocked queue for route contract tests.
  *
  * @param {object} queue Mock BullMQ queue surface used by the router.
+ * @param {object} [routerOptions] Extra options passed to createTranscodeRouter.
  * @returns {import('express').Express} App mounted at `/transcode`.
  */
-function createTestApp(queue) {
+function createTestApp(queue, routerOptions = {}) {
   const app = express();
   app.use(express.json());
-  app.use("/transcode", createTranscodeRouter({ queue }));
+  app.use("/transcode", createTranscodeRouter({ queue, ...routerOptions }));
   return app;
 }
 
@@ -229,5 +230,79 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
       success: false,
       error: "job not found",
     });
+  });
+
+  test("skips profiles larger than the probed source resolution", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: 1280,
+      videoHeight: 720,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const job720 = {
+      jobId: "11111111-1111-1111-1111-111111111111",
+      outputFilename: "11111111-1111-1111-1111-111111111111.mp4",
+      profile,
+    };
+    const job1080 = {
+      jobId: "22222222-2222-2222-2222-222222222222",
+      outputFilename: "22222222-2222-2222-2222-222222222222.mp4",
+      profile: { ...profile, id: 2, outputHeight: 1080, outputWidth: 1920 },
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [job720, job1080] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.jobs).toEqual([
+      {
+        jobId: job720.jobId,
+        outputFilename: job720.outputFilename,
+        profileId: 1,
+      },
+    ]);
+    expect(res.body.skipped).toEqual([
+      {
+        jobId: job1080.jobId,
+        profileId: 2,
+        reason: "profile_exceeds_source_resolution",
+      },
+    ]);
+    expect(res.body.source).toEqual({ videoWidth: 1280, videoHeight: 720 });
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
+  test("does not enqueue when every profile exceeds the source", async () => {
+    const queue = {
+      addBulk: jest.fn(),
+      getJob: jest.fn(),
+    };
+    const app = createTestApp(queue, {
+      probeInput: async () => ({ videoWidth: 640, videoHeight: 360 }),
+    });
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({
+        filename: fixtureName,
+        jobs: [
+          {
+            jobId: "33333333-3333-3333-3333-333333333333",
+            outputFilename: "33333333-3333-3333-3333-333333333333.mp4",
+            profile,
+          },
+        ],
+      });
+
+    expect(res.status).toBe(202);
+    expect(res.body.jobs).toEqual([]);
+    expect(res.body.skipped).toHaveLength(1);
+    expect(queue.addBulk).not.toHaveBeenCalled();
   });
 });

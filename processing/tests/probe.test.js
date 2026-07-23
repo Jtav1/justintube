@@ -2,6 +2,7 @@ import { describe, expect, test } from "@jest/globals";
 import {
   heightToResolution,
   mimeTypeForContainer,
+  shouldSkipProfileForSource,
 } from "../lib/probe.js";
 
 describe("heightToResolution", () => {
@@ -25,5 +26,48 @@ describe("mimeTypeForContainer", () => {
 
   test("returns null for unknown containers", () => {
     expect(mimeTypeForContainer("xyz")).toBeNull();
+  });
+});
+
+describe("shouldSkipProfileForSource", () => {
+  test("skips profiles that would upscale either axis", () => {
+    const source = { videoWidth: 1280, videoHeight: 720 };
+    expect(
+      shouldSkipProfileForSource(
+        { outputWidth: 1920, outputHeight: 1080 },
+        source,
+      ),
+    ).toBe(true);
+    expect(
+      shouldSkipProfileForSource(
+        { outputWidth: 1280, outputHeight: 1080 },
+        source,
+      ),
+    ).toBe(true);
+  });
+
+  test("keeps profiles at or below source resolution", () => {
+    const source = { videoWidth: 1920, videoHeight: 1080 };
+    expect(
+      shouldSkipProfileForSource(
+        { outputWidth: 1280, outputHeight: 720 },
+        source,
+      ),
+    ).toBe(false);
+    expect(
+      shouldSkipProfileForSource(
+        { outputWidth: 1920, outputHeight: 1080 },
+        source,
+      ),
+    ).toBe(false);
+  });
+
+  test("does not skip when source dimensions are unknown", () => {
+    expect(
+      shouldSkipProfileForSource(
+        { outputWidth: 1920, outputHeight: 1080 },
+        { videoWidth: null, videoHeight: null },
+      ),
+    ).toBe(false);
   });
 });

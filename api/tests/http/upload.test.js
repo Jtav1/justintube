@@ -146,6 +146,75 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     ).toBe(true);
   });
 
+  test("drops FILE_VERSIONS for profiles skipped as larger than source", async () => {
+    const profileA = await seedTranscodeProfile({
+      outputHeight: 720,
+      outputWidth: 1280,
+      outputContainer: "mp4",
+      videoCodec: "h264",
+      audioCodec: "aac",
+    });
+    const profileB = await seedTranscodeProfile({
+      outputHeight: 1080,
+      outputWidth: 1920,
+      outputContainer: "mp4",
+      videoCodec: "h264",
+      audioCodec: "aac",
+    });
+
+    const fetchMock = jest.fn(async (_url, options) => {
+      const body = JSON.parse(String(options.body));
+      const accepted = body.jobs.filter((job) => job.profile.id === profileA.id);
+      const skipped = body.jobs
+        .filter((job) => job.profile.id === profileB.id)
+        .map((job) => ({
+          jobId: job.jobId,
+          profileId: job.profile.id,
+          reason: "profile_exceeds_source_resolution",
+        }));
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          success: true,
+          jobs: accepted.map((job) => ({
+            jobId: job.jobId,
+            outputFilename: job.outputFilename,
+            profileId: job.profile.id,
+          })),
+          skipped,
+          source: { videoWidth: 1280, videoHeight: 720 },
+        }),
+      };
+    });
+    globalThis.fetch = fetchMock;
+
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe("processing");
+    expect(res.body.fileVersions).toHaveLength(1);
+    expect(res.body.fileVersions[0].transcodeProfileId).toBe(profileA.id);
+    expect(res.body.skippedProfiles).toEqual([
+      {
+        profileId: profileB.id,
+        jobId: expect.any(String),
+        reason: "profile_exceeds_source_resolution",
+      },
+    ]);
+    expect(res.body.videoWidth).toBe(1280);
+    expect(res.body.videoHeight).toBe(720);
+
+    const versionRows = await queryRows(
+      "SELECT * FROM FILE_VERSIONS WHERE original_upload_id = :id",
+      { id: res.body.id },
+    );
+    expect(versionRows).toHaveLength(1);
+    expect(Number(versionRows[0].transcode_profile_id)).toBe(profileA.id);
+  });
+
   test("returns 201 with failures when processing rejects enqueue", async () => {
     await seedTranscodeProfile();
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});

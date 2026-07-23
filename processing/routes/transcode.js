@@ -10,6 +10,10 @@ import {
   getTranscodeJobStatus,
   removeTranscodeJob,
 } from "../lib/queue.js";
+import {
+  probeVideoDimensions,
+  shouldSkipProfileForSource,
+} from "../lib/probe.js";
 import { validateTranscodeBatchRequest } from "../lib/transcode.js";
 
 /**
@@ -18,15 +22,20 @@ import { validateTranscodeBatchRequest } from "../lib/transcode.js";
  *
  * @param {object} options Router dependencies.
  * @param {import('bullmq').Queue} options.queue BullMQ transcode queue.
+ * @param {(inputPath: string) => Promise<{ videoWidth: number|null, videoHeight: number|null }>}
+ *   [options.probeInput] Optional probe override (defaults to ffprobe).
  * @returns {import('express').Router} Router handling queue and status requests.
  */
-export function createTranscodeRouter({ queue }) {
+export function createTranscodeRouter({ queue, probeInput = probeVideoDimensions }) {
   const router = Router();
 
   /**
    * Queues one or more ffmpeg transcode jobs for a file under `/media/original`.
    * Accepts a legacy `{ filename, profile }` body or a batch
    * `{ filename, jobs: [...] }` body.
+   *
+   * Profiles that would upscale the source (output width/height greater than
+   * the probed source) are skipped; remaining jobs are enqueued normally.
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -39,31 +48,67 @@ export function createTranscodeRouter({ queue }) {
         { generateJobId: () => randomUUID() },
       );
       const filename = validateInputFilename(rawFilename);
-      resolveOriginalInputPath(filename);
+      const inputPath = resolveOriginalInputPath(filename);
 
-      await enqueueTranscodeJobs(queue, filename, jobs);
+      /** @type {{ videoWidth: number|null, videoHeight: number|null }} */
+      let source = { videoWidth: null, videoHeight: null };
+      try {
+        source = await probeInput(inputPath);
+      } catch (err) {
+        console.error(
+          "ffprobe failed for transcode input; enqueueing all profiles:",
+          err instanceof Error ? err.message : err,
+        );
+      }
 
-      const jobSummaries = jobs.map((job) => ({
+      /** @type {typeof jobs} */
+      const accepted = [];
+      /** @type {Array<{ jobId: string, profileId: number, reason: string }>} */
+      const skipped = [];
+
+      for (const job of jobs) {
+        if (shouldSkipProfileForSource(job.profile, source)) {
+          skipped.push({
+            jobId: job.jobId,
+            profileId: job.profile.id,
+            reason: "profile_exceeds_source_resolution",
+          });
+          continue;
+        }
+        accepted.push(job);
+      }
+
+      if (accepted.length > 0) {
+        await enqueueTranscodeJobs(queue, filename, accepted);
+      }
+
+      const jobSummaries = accepted.map((job) => ({
         jobId: job.jobId,
         outputFilename: job.outputFilename,
         profileId: job.profile.id,
       }));
 
-      // Preserve legacy single-job response fields when only one job was queued.
-      if (jobSummaries.length === 1) {
+      const payload = {
+        success: true,
+        jobs: jobSummaries,
+        skipped,
+        source: {
+          videoWidth: source.videoWidth,
+          videoHeight: source.videoHeight,
+        },
+      };
+
+      // Preserve legacy single-job response fields when exactly one job queued.
+      if (jobSummaries.length === 1 && skipped.length === 0) {
         res.status(202).json({
-          success: true,
+          ...payload,
           jobId: jobSummaries[0].jobId,
           outputFilename: jobSummaries[0].outputFilename,
-          jobs: jobSummaries,
         });
         return;
       }
 
-      res.status(202).json({
-        success: true,
-        jobs: jobSummaries,
-      });
+      res.status(202).json(payload);
     } catch (err) {
       if (err instanceof TranscodeValidationError) {
         res.status(400).json({ success: false, error: err.message });

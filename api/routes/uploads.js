@@ -127,6 +127,9 @@ function uploadResponseBody(upload) {
     storagePath: upload.storagePath,
     status: upload.status,
     userId: upload.userId,
+    videoWidth: upload.videoWidth,
+    videoHeight: upload.videoHeight,
+    resolution: upload.resolution,
   };
 }
 
@@ -292,18 +295,77 @@ async function uploadVideo(req, res) {
     return;
   }
 
-  for (const version of versions) {
-    await version.update({ status: "processing" });
+  const body = enqueue.body && typeof enqueue.body === "object" ? enqueue.body : {};
+  const source =
+    body.source && typeof body.source === "object" ? body.source : null;
+  if (
+    source &&
+    (typeof source.videoWidth === "number" ||
+      typeof source.videoHeight === "number")
+  ) {
+    const sourceWidth =
+      typeof source.videoWidth === "number" ? source.videoWidth : null;
+    const sourceHeight =
+      typeof source.videoHeight === "number" ? source.videoHeight : null;
+    await upload.update({
+      videoWidth: sourceWidth,
+      videoHeight: sourceHeight,
+      resolution: heightToResolution(sourceHeight ?? 0),
+    });
   }
-  await upload.update({ status: "processing" });
-  await upload.reload();
+
+  /** @type {Set<string>} */
+  const skippedJobIds = new Set(
+    Array.isArray(body.skipped)
+      ? body.skipped
+          .map((row) =>
+            row && typeof row.jobId === "string" ? row.jobId : null,
+          )
+          .filter(Boolean)
+      : [],
+  );
+
+  /** @type {import('sequelize').Model[]} */
+  const activeVersions = [];
+  /** @type {Array<{ profileId: number|null, jobId: string, reason: string }>} */
+  const skippedProfiles = [];
+
   for (const version of versions) {
+    if (skippedJobIds.has(version.uuidName)) {
+      const skipMeta = Array.isArray(body.skipped)
+        ? body.skipped.find((row) => row?.jobId === version.uuidName)
+        : null;
+      skippedProfiles.push({
+        profileId: version.transcodeProfileId ?? null,
+        jobId: version.uuidName,
+        reason:
+          typeof skipMeta?.reason === "string"
+            ? skipMeta.reason
+            : "profile_exceeds_source_resolution",
+      });
+      await version.destroy();
+      continue;
+    }
+    await version.update({ status: "processing" });
+    activeVersions.push(version);
+  }
+
+  if (activeVersions.length > 0) {
+    await upload.update({ status: "processing" });
+  } else {
+    // All profiles were above source resolution (or none accepted).
+    await upload.update({ status: "uploaded" });
+  }
+
+  await upload.reload();
+  for (const version of activeVersions) {
     await version.reload();
   }
 
   res.status(201).json({
     ...uploadResponseBody(upload),
-    fileVersions: versions.map((v) => fileVersionResponseBody(v)),
+    fileVersions: activeVersions.map((v) => fileVersionResponseBody(v)),
+    ...(skippedProfiles.length > 0 ? { skippedProfiles } : {}),
   });
 }
 

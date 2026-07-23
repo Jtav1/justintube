@@ -135,6 +135,11 @@ Success (`202`) for a batch:
 }
 ```
 
+When a batch includes profiles larger than the source video (width or height),
+those jobs are listed under `skipped` with reason
+`profile_exceeds_source_resolution` and are **not** queued. Remaining profiles
+are processed normally. The response also includes probed `source` dimensions.
+
 When a job finishes, the worker runs `stat` + `ffprobe`, then POSTs metadata to
 `{API_BASE_URL}/internal/file-versions/:jobId/complete` (Bearer
 `INTERNAL_SERVICE_TOKEN`). Failures POST to `/fail`.

@@ -105,6 +105,34 @@ export async function probeVideoDimensions(filePath) {
 }
 
 /**
+ * Returns true when applying `profile` would upscale the source (profile
+ * height or width exceeds the source). Profiles at or below the source size
+ * are eligible for downscale / same-size re-encode.
+ *
+ * @param {{ outputWidth: number, outputHeight: number }} profile Target profile dims.
+ * @param {{ videoWidth: number|null, videoHeight: number|null }} source
+ *   Probed source stream dimensions.
+ * @returns {boolean} `true` when this profile should be skipped.
+ */
+export function shouldSkipProfileForSource(profile, source) {
+  const sourceWidth = source?.videoWidth;
+  const sourceHeight = source?.videoHeight;
+  if (
+    !Number.isInteger(sourceWidth) ||
+    sourceWidth <= 0 ||
+    !Number.isInteger(sourceHeight) ||
+    sourceHeight <= 0
+  ) {
+    // Cannot compare — do not skip (fail open).
+    return false;
+  }
+
+  return (
+    profile.outputWidth > sourceWidth || profile.outputHeight > sourceHeight
+  );
+}
+
+/**
  * Collects on-disk size and probed dimensions for a completed transcode output.
  *
  * @param {object} options Probe inputs.
