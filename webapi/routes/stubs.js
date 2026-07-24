@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createAuthRouter } from "./auth.js";
+import { createSystemConfigRouter } from "./system-config.js";
 import { createUploadRouter } from "./uploads.js";
 
 /**
@@ -143,6 +144,7 @@ export function createApiRouter() {
   // over the corresponding 501 placeholders.
   router.use(createAuthRouter());
   router.use(createUploadRouter());
+  router.use(createSystemConfigRouter());
   registerStubRoutes(router);
   return router;
 }
