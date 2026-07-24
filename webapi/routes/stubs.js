@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createSystemConfigRouter } from "./system-config.js";
 import { createUploadRouter } from "./uploads.js";
 
 /**
@@ -141,6 +142,7 @@ export function createApiRouter() {
   router.use(createAuthRouter());
   router.use(createUploadRouter());
   router.use(createApiKeysRouter());
+  router.use(createSystemConfigRouter());
   registerStubRoutes(router);
   return router;
 }

@@ -139,6 +139,10 @@ Future/wont do now
 - [ ] `POST /api/v1/admin/transcode-profiles` — adminCreateTranscodeProfile
 - [ ] `PATCH /api/v1/admin/transcode-profiles/:id` — adminUpdateTranscodeProfile
 - [ ] `DELETE /api/v1/admin/transcode-profiles/:id` — adminDeleteTranscodeProfile
+- [x] `GET /api/v1/admin/config` — adminListSystemConfig
+- [x] `GET /api/v1/admin/config/:name` — adminGetSystemConfig
+- [x] `PUT /api/v1/admin/config/:name` — adminUpsertSystemConfig
+- [x] `DELETE /api/v1/admin/config/:name` — adminDeleteSystemConfig
 
 ---
 
