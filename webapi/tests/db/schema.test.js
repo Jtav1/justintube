@@ -175,6 +175,12 @@ describe("Video-upload schema (SQLite)", () => {
       ).rejects.toThrow();
     });
 
+    test("rejects an invalid resolution_name on TRANSCODE_PROFILES", async () => {
+      await expect(
+        seedTranscodeProfile({ resolutionName: "9001p" }),
+      ).rejects.toThrow();
+    });
+
     test("rejects an invalid visibility on VIDEO_METADATA", async () => {
       const upload = await seedUpload();
       await expect(

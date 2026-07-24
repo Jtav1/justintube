@@ -133,12 +133,13 @@ Future/wont do now
 
 - [x] `GET /api/v1/admin/api-keys` — adminListApiKeys
 - [x] `DELETE /api/v1/admin/api-keys/:id` — adminRevokeApiKey
-- [ ] `GET /api/v1/admin/users` — adminListUsers
-- [ ] `PATCH /api/v1/admin/users/:id` — adminUpdateUser
-- [ ] `GET /api/v1/admin/transcode-profiles` — adminListTranscodeProfiles
-- [ ] `POST /api/v1/admin/transcode-profiles` — adminCreateTranscodeProfile
-- [ ] `PATCH /api/v1/admin/transcode-profiles/:id` — adminUpdateTranscodeProfile
-- [ ] `DELETE /api/v1/admin/transcode-profiles/:id` — adminDeleteTranscodeProfile
+- [x] `GET /api/v1/admin/users` — adminListUsers
+- [x] `PATCH /api/v1/admin/users/:id` — adminUpdateUser
+- [x] `POST /api/v1/admin/users/:id/password` — adminResetUserPassword
+- [x] `GET /api/v1/admin/transcode-profiles` — adminListTranscodeProfiles
+- [x] `POST /api/v1/admin/transcode-profiles` — adminCreateTranscodeProfile
+- [x] `PATCH /api/v1/admin/transcode-profiles/:id` — adminUpdateTranscodeProfile
+- [x] `DELETE /api/v1/admin/transcode-profiles/:id` — adminDeleteTranscodeProfile
 - [x] `GET /api/v1/admin/config` — adminListSystemConfig
 - [x] `GET /api/v1/admin/config/:name` — adminGetSystemConfig
 - [x] `PUT /api/v1/admin/config/:name` — adminUpsertSystemConfig

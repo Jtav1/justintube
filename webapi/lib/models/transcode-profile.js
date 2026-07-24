@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../db.js";
-import { timestampColumn } from "./attribute-helpers.js";
+import { constrainedString, timestampColumn } from "./attribute-helpers.js";
+import { RESOLUTION_VALUES } from "./constants.js";
 
 /**
  * TRANSCODE_PROFILES table model. Defines how uploaded videos should be
@@ -16,6 +17,14 @@ export const TranscodeProfile = sequelize.define(
       autoIncrement: true,
       primaryKey: true,
     },
+    description: {
+      type: DataTypes.STRING(250),
+      allowNull: true,
+    },
+    resolutionName: constrainedString(RESOLUTION_VALUES, {
+      type: DataTypes.STRING(10),
+      allowNull: false,
+    }),
     outputHeight: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,

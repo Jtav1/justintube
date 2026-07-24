@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
 import { createSystemConfigRouter } from "./system-config.js";
+import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
 import { createUploadRouter } from "./uploads.js";
 
 /**
@@ -120,14 +122,6 @@ export function registerStubRoutes(router) {
   r("post", "/notifications/read", "markNotificationsRead");
   r("get", "/pages/about", "getAboutPage");
   r("get", "/pages/rules", "getRulesPage");
-
-  // Admin
-  r("get", "/admin/users", "adminListUsers");
-  r("patch", "/admin/users/:id", "adminUpdateUser");
-  r("get", "/admin/transcode-profiles", "adminListTranscodeProfiles");
-  r("post", "/admin/transcode-profiles", "adminCreateTranscodeProfile");
-  r("patch", "/admin/transcode-profiles/:id", "adminUpdateTranscodeProfile");
-  r("delete", "/admin/transcode-profiles/:id", "adminDeleteTranscodeProfile");
 }
 
 /**
@@ -143,6 +137,8 @@ export function createApiRouter() {
   router.use(createUploadRouter());
   router.use(createApiKeysRouter());
   router.use(createSystemConfigRouter());
+  router.use(createAdminUsersRouter());
+  router.use(createTranscodeProfilesRouter());
   registerStubRoutes(router);
   return router;
 }
