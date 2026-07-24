@@ -8,6 +8,7 @@ import {
   seedMetadata,
   seedPlaylist,
   seedSsoProvider,
+  seedSystemConfig,
   seedTranscodeProfile,
   seedUpload,
   seedUser,
@@ -41,7 +42,7 @@ describe("Video-upload schema (SQLite)", () => {
             'ORIGINAL_UPLOADS','VIDEO_METADATA','VIDEO_THUMBNAIL',
             'TRANSCODE_PROFILES','FILE_VERSIONS',
             'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES',
-            'CONTENT_TAGS','FEATURED_VIDEOS'
+            'CONTENT_TAGS','FEATURED_VIDEOS','SYSTEM_CONFIG'
           )`,
       );
       const byName = Object.fromEntries(rows.map((r) => [r.name, r.type]));
@@ -62,6 +63,7 @@ describe("Video-upload schema (SQLite)", () => {
       expect(byName.VIDEO_LIKES).toBe("table");
       expect(byName.CONTENT_TAGS).toBe("table");
       expect(byName.FEATURED_VIDEOS).toBe("table");
+      expect(byName.SYSTEM_CONFIG).toBe("table");
     });
   });
 
@@ -567,6 +569,28 @@ describe("Video-upload schema (SQLite)", () => {
           id: user.id,
         }),
       ).toHaveLength(0);
+    });
+  });
+
+  describe("SYSTEM_CONFIG constraints", () => {
+    test("SYSTEM_CONFIG.name is unique", async () => {
+      await seedSystemConfig({ name: "site_title", value: "one" });
+      await expect(
+        seedSystemConfig({ name: "site_title", value: "two" }),
+      ).rejects.toThrow();
+    });
+
+    test("SYSTEM_CONFIG stores name and value", async () => {
+      const config = await seedSystemConfig({
+        name: "max_upload_mb",
+        value: "512",
+      });
+      const rows = await queryRows(
+        "SELECT name, value FROM SYSTEM_CONFIG WHERE id = :id",
+        { id: config.id },
+      );
+      expect(rows[0].name).toBe("max_upload_mb");
+      expect(rows[0].value).toBe("512");
     });
   });
 });

@@ -14,6 +14,7 @@ import {
   SsoProvider,
   StaticPage,
   Subscription,
+  SystemConfig,
   TranscodeProfile,
   User,
   UserApiKey,
@@ -58,6 +59,7 @@ const RESET_MODELS = [
   User,
   SsoProvider,
   StaticPage,
+  SystemConfig,
 ];
 
 /**
@@ -531,6 +533,26 @@ export async function seedStaticPage(overrides = {}) {
   };
 
   const row = await StaticPage.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a SYSTEM_CONFIG name/value row, applying defaults for any omitted field.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.name] Unique configuration variable name.
+ * @param {string} [overrides.value] Configuration value string.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded config's id and values.
+ */
+export async function seedSystemConfig(overrides = {}) {
+  const suffix = randomUUID().slice(0, 8);
+  const record = {
+    name: `config_${suffix}`,
+    value: "sample-value",
+    ...overrides,
+  };
+
+  const row = await SystemConfig.create(record);
   return asSeedResult(row, record);
 }
 

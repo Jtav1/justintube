@@ -10,6 +10,7 @@ import { Role } from "./role.js";
 import { SsoProvider } from "./sso-provider.js";
 import { StaticPage } from "./static-page.js";
 import { Subscription } from "./subscription.js";
+import { SystemConfig } from "./system-config.js";
 import { TranscodeProfile } from "./transcode-profile.js";
 import { User } from "./user.js";
 import { UserApiKey } from "./user-api-key.js";
@@ -293,6 +294,7 @@ export const models = {
   Notification,
   UserNotificationSetting,
   StaticPage,
+  SystemConfig,
   VideoTransferMapping,
   VideoTransferHistory,
 };
@@ -309,6 +311,7 @@ export {
   SsoProvider,
   StaticPage,
   Subscription,
+  SystemConfig,
   TranscodeProfile,
   User,
   UserApiKey,
