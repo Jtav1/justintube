@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
 import { createUploadRouter } from "./uploads.js";
 
@@ -85,10 +86,6 @@ export function registerStubRoutes(router) {
   r("get", "/me/playlists", "listMyPlaylists");
   r("get", "/me/notification-preferences", "getNotificationPreferences");
   r("patch", "/me/notification-preferences", "updateNotificationPreferences");
-  r("get", "/me/api-keys", "listMyApiKeys");
-  r("post", "/me/api-keys", "createMyApiKey");
-  r("patch", "/me/api-keys/:id", "updateMyApiKey");
-  r("delete", "/me/api-keys/:id", "revokeMyApiKey");
 
   // Users / channels / engagement
   r("get", "/users/:username", "getUserChannel");
@@ -143,6 +140,7 @@ export function createApiRouter() {
   // over the corresponding 501 placeholders.
   router.use(createAuthRouter());
   router.use(createUploadRouter());
+  router.use(createApiKeysRouter());
   registerStubRoutes(router);
   return router;
 }

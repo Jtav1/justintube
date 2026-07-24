@@ -1,6 +1,13 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Op } from "sequelize";
 import { Role, User, UserApiKey } from "../models/index.js";
+
+/**
+ * Number of trailing asterisks appended after the stored key prefix in list UIs.
+ *
+ * @type {number}
+ */
+const KEY_DISPLAY_MASK_LENGTH = 24;
 
 /**
  * Computes the SHA-256 hex digest of a raw API key for storage and lookup.
@@ -21,6 +28,33 @@ export function hashApiKey(rawKey) {
  */
 export function apiKeyPrefix(rawKey, length = 8) {
   return String(rawKey).slice(0, length);
+}
+
+/**
+ * Generates a new API key and its storage fields. The plaintext is returned
+ * once for the create response; only hash + prefix should be persisted.
+ *
+ * @returns {{ rawKey: string, keyHash: string, keyPrefix: string }} Fresh key
+ *   material ready for insertion into USER_API_KEYS.
+ */
+export function generateApiKey() {
+  const rawKey = `jt_${randomBytes(32).toString("hex")}`;
+  return {
+    rawKey,
+    keyHash: hashApiKey(rawKey),
+    keyPrefix: apiKeyPrefix(rawKey),
+  };
+}
+
+/**
+ * Builds a masked display string from a stored non-secret key prefix for list
+ * and admin UIs. Never reconstructs or reveals the full key.
+ *
+ * @param {string} keyPrefix Leading characters stored on the API key row.
+ * @returns {string} Prefix followed by a fixed run of asterisks.
+ */
+export function maskApiKeyPrefix(keyPrefix) {
+  return `${String(keyPrefix || "")}${"*".repeat(KEY_DISPLAY_MASK_LENGTH)}`;
 }
 
 /**

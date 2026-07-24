@@ -69,7 +69,7 @@ Future/wont do now
 
 - [x] `POST /api/v1/videos/upload` — uploadVideo (multipart)
 
-### Me / library / settings
+### Me / library
 
 - [ ] `PATCH /api/v1/me` — updateMe
 - [ ] `GET /api/v1/me/settings` — getMeSettings
@@ -84,10 +84,13 @@ Future/wont do now
 - [ ] `GET /api/v1/me/playlists` — listMyPlaylists
 - [ ] `GET /api/v1/me/notification-preferences` — getNotificationPreferences
 - [ ] `PATCH /api/v1/me/notification-preferences` — updateNotificationPreferences
-- [ ] `GET /api/v1/me/api-keys` — listMyApiKeys
-- [ ] `POST /api/v1/me/api-keys` — createMyApiKey
-- [ ] `PATCH /api/v1/me/api-keys/:id` — updateMyApiKey
-- [ ] `DELETE /api/v1/me/api-keys/:id` — revokeMyApiKey
+
+### Me / API Keys
+
+- [x] `GET /api/v1/me/api-keys` — listMyApiKeys
+- [x] `POST /api/v1/me/api-keys` — createMyApiKey
+- [x] `PATCH /api/v1/me/api-keys/:id` — updateMyApiKey
+- [x] `DELETE /api/v1/me/api-keys/:id` — revokeMyApiKey
 
 ### Users / channels / engagement
 
@@ -128,6 +131,8 @@ Future/wont do now
 
 ### Admin
 
+- [x] `GET /api/v1/admin/api-keys` — adminListApiKeys
+- [x] `DELETE /api/v1/admin/api-keys/:id` — adminRevokeApiKey
 - [ ] `GET /api/v1/admin/users` — adminListUsers
 - [ ] `PATCH /api/v1/admin/users/:id` — adminUpdateUser
 - [ ] `GET /api/v1/admin/transcode-profiles` — adminListTranscodeProfiles
