@@ -1,16 +1,20 @@
-# justintube-processing
+# Justintube processing (`processing/`)
 
 Express API that:
 
 1. Downloads videos with [yt-dlp](https://github.com/yt-dlp/yt-dlp) into `MEDIA_STORAGE_DIRECTORY`
 2. Queues ffmpeg transcodes with [BullMQ](https://docs.bullmq.io/) + Redis
 
-Shared media layout (same volume as the API service in compose):
+This service is called by the [Web API](../webapi/) after uploads (and for URL import later). When a transcode finishes or fails, it callbacks to the Web API under `/internal/file-versions/...`.
+
+Shared media layout (same volume as the Web API in compose):
 
 | Path | Purpose |
 | ---- | ------- |
-| `$MEDIA_STORAGE_DIRECTORY/original` | Source uploads (API writes here) |
+| `$MEDIA_STORAGE_DIRECTORY/original` | Source uploads (Web API writes here) |
 | `$MEDIA_STORAGE_DIRECTORY/transcoded` | FFmpeg outputs |
+
+Default listen port: `PORT` (3001).
 
 ## Setup
 
@@ -21,10 +25,10 @@ npm install
 
 Requires Docker for `dev` / `start`, and a reachable Redis for transcode routes.
 
-Callbacks to the web API require:
+Callbacks to the Web API require:
 
-- `API_BASE_URL` — base URL of the Justintube API (compose: `http://api:3000`)
-- `INTERNAL_SERVICE_TOKEN` — shared bearer token (must match the API)
+- `API_BASE_URL` — base URL of the Justintube Web API (compose: `http://api:3000`; local: `http://localhost:3000`)
+- `INTERNAL_SERVICE_TOKEN` — shared bearer token (must match the Web API)
 
 Transcoding is controlled through `.env`:
 
@@ -37,14 +41,14 @@ Transcoding is controlled through `.env`:
 
 ## Run
 
-| Script        | What it does                                         |
-| ------------- | ---------------------------------------------------- |
-| `npm run serve` | Start the Node process (`node index.js`)           |
-| `npm run dev` | Build image and run container on port 3001           |
-| `npm start`   | Start via root `docker-compose` `processing` service |
-| `npm test`    | Run unit / route contract tests                      |
+| Script | What it does |
+| ------ | ------------ |
+| `npm run serve` | Start the Node process (`node index.js`) |
+| `npm run dev` | Build image and run container on port 3001 |
+| `npm start` | Start via root `docker-compose` `processing` service |
+| `npm test` | Run unit / route contract tests |
 
-Compose services: `redis` + `processing` (shared `media-data` volume at `/media`).
+Compose services: `redis` + `processing` (shared `media-data` volume at `/media`). See the root [README](../README.md) and [docker-compose.yml](../docker-compose.yml).
 
 ## API
 
@@ -85,7 +89,7 @@ Legacy single-profile body:
 }
 ```
 
-Batch body (preferred; used by the web API after upload):
+Batch body (preferred; used by the Web API after upload):
 
 ```json
 {
@@ -178,7 +182,7 @@ Unknown id: `{ "success": false, "error": "job not found" }` (`404`)
 
 ### `DELETE /transcode/:jobId`
 
-Removes a job from Redis (used by API reconciliation after failures).
+Removes a job from Redis (used by Web API reconciliation after failures).
 
 Success (`200`): `{ "success": true, "jobId": "<uuid>", "removed": true }`  
 Unknown id: `{ "success": false, "error": "job not found" }` (`404`)

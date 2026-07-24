@@ -1,6 +1,6 @@
 # Justintube
 
-A self-hosted video platform: YouTube-like frontend, self-hosted transcoding pipeline, and shared watch sessions (CAST). Built contract-first — the full API surface is specified in OpenAPI and development towards completing each documented endpoint is a work in progress.
+A self-hosted video platform: YouTube-like frontend, self-hosted transcoding pipeline, and shared watch sessions (CAST). Built contract-first — the API surface is specified in OpenAPI, and work tracks toward completing each documented endpoint.
 
 This software is a collaborative effort between myself (Justin) and a few friends who can choose to add themselves to this readme and other docs :)
 
@@ -15,56 +15,71 @@ Quick shout out to them though, https://mediacms.io/ https://github.com/mediacms
 - **Video platform basics** — upload (including yt-dlp URL import as a bonus/stretch goal feature), FFmpeg transcoding to multiple resolutions with configurable hardware acceleration (also a bonus feature), tagging, search with typeahead suggestions, subscriptions, likes, playlists, watch history, and notifications.
 - **Access control** — email-verified accounts with optional SSO linking (another bonus feature), RBAC roles (Admin / Moderator / Uploader / Viewer / Locked), and per-video visibility (public, private with grants, hidden, unlisted).
 - **CAST shared watch sessions** — start a session from a playlist or a single video, share a session code, and watch together: a live session queue (a copy seeded from the playlist — the source is never mutated), synced play/pause/skip/seek for everyone, presence, an activity feed, emoji reactions, and an in-app display view for casting to a TV. Realtime sync runs over Socket.IO (namespace `/cast`, one room per session). Ported from the dixtube-live prototype.
-- **Admin tools** — user/role management, transcode profiles, featured videos, moderation (de-listing, bans).
+- **Admin tools** — user/role management, API keys, system config, transcode profiles, featured videos, moderation (de-listing, bans).
 
-See `Views.md` for the targeted product spec, and the `openapi.yaml` for planned API spec.
+See [docs/Planned Views.md](docs/Planned%20Views.md) for the product UI sketch, [webapi/openapi.yaml](webapi/openapi.yaml) for the OpenAPI base document, and [docs/API_Checklist.md](docs/API_Checklist.md) for implementation progress.
 
 ## Getting started
 
-Requires Node.js 18+ (developed against Node 24 which is therefore recommended).
-Can be run with its own MYSQL instance or with an SQLITE db - I use SQLITE for development.
+Requires **Node.js 20+** (developed against Node 24; recommended). The Web API can use **SQLite** (local default) or **MySQL**.
 
 ### Running the entire project
-
-Production:
 
 ```bash
 docker compose up -d
 ```
 
-That should work if it didn't then I have lost my way
+That should work; if it didn't then I have lost my way.
 
-### (DEV) Running the API by itself
+Compose brings up Redis, the processing service, and the API (shared media volume). See [processing/README.md](processing/README.md) for download/transcode details.
+
+### (DEV) Running the Web API by itself
 
 ```bash
-cd api
+cd webapi
+cp .env.example .env   # edit as needed
 npm install
-
-# Development commands:
-npm run dev           # Start with .env, auto-reload via node --watch
-npm run dev:compose   # Start, auto-reload, without reading .env
+npm run dev            # loads .env, auto-reload via node --watch
+# npm run dev:compose  # auto-reload without reading .env
+npm test
 ```
+
+Default listen port is `PORT` (3000). Useful URLs:
+
+| URL             | What                                      |
+| --------------- | ----------------------------------------- |
+| `/health`       | Liveness probe                            |
+| `/docs`         | Scalar API reference                      |
+| `/openapi.json` | OpenAPI document (YAML + route `@openapi`) |
+| `/api/v1/...`   | Public application API (WIP)              |
+| `/internal/...` | Service-to-service callbacks              |
+
+More detail: [webapi/README.md](webapi/README.md).
+
+### (DEV) Running the processing service
+
+```bash
+cd processing
+cp .env.example .env
+npm install
+npm run serve          # Node process on PORT (default 3001)
+# or: npm run dev / npm start — see processing/README.md
+```
+
+Needs Redis for transcode queue routes. Callbacks to the Web API use `API_BASE_URL` + `INTERNAL_SERVICE_TOKEN`.
 
 ### (DEV) Running the web view
 
 tbd
 
-### (DEV) Running just the optional other containers
-
-tbd
-
-The server listens on `PORT` (default 3000):
-
-| URL             | What                     |
-| --------------- | ------------------------ |
-| `/health`       | Liveness probe           |
-| `/docs`         | Scalar API reference     |
-| `/openapi.json` | The OpenAPI document (swagger-jsdoc) |
-| `/api/v1/...`   | All API routes (WIP)     |
-
 ## Project layout
 
-WIP
+| Path | Role |
+| ---- | ---- |
+| [`webapi/`](webapi/) | Public Web API (Express, Sequelize, sessions / API keys) |
+| [`processing/`](processing/) | yt-dlp downloads + BullMQ/ffmpeg transcodes |
+| [`docs/`](docs/) | Product notes, API checklist, [code standards](docs/code-standards.md) |
+| [`docker-compose.yml`](docker-compose.yml) | Redis + API + processing stack |
 
 ## License
 
