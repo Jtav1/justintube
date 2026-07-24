@@ -1,0 +1,67 @@
+{
+  "name": "justintube-api",
+  "version": "0.0.1",
+  "description": "Backend web API for Justintube. Nodejs/express becuase that's what I like",
+  "homepage": "https://github.com/Jtav1/justintube#readme",
+  "bugs": {
+    "url": "https://github.com/Jtav1/justintube/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jtav1/justintube.git"
+  },
+  "license": "See LICENSE.md",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "author": "Justin Tavares (justin@jtav.me / GH @ jtav1)",
+  "contributors": [
+    {
+      "name": "Justin Tavares",
+      "email": "justin@jtav.me",
+      "url": "https://github.com/Jtav1"
+    },
+    {
+      "name": "SpinnerMaster",
+      "email": "spinnermaster+dev@gmail.com",
+      "url": "https://github.com/SpinnerMaster"
+    }
+  ],
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev:compose": "node --watch index.js",
+    "dev": "node --env-file=.env --watch index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "docs:generate": "node scripts/write-openapi.js",
+    "docs:preview": "npm run docs:generate && scalar document serve openapi.generated.json --watch",
+    "docs:build": "npm run docs:generate && scalar document validate openapi.generated.json"
+  },
+  "dependencies": {
+    "@scalar/express-api-reference": "^0.10.11",
+    "bcryptjs": "^3.0.3",
+    "chrono-node": "^2.10.1",
+    "connect-session-sequelize": "^8.0.6",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.0",
+    "express-session": "^1.19.0",
+    "helmet": "^8.3.0",
+    "multer": "^2.2.0",
+    "mysql2": "^3.23.0",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^9.0.3",
+    "sequelize": "^6.37.8",
+    "sqlite3": "^5.1.7",
+    "swagger-jsdoc": "^6.3.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@scalar/cli": "^2.0.1",
+    "@types/express-session": "^1.19.0",
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2"
+  }
+}

@@ -1,0 +1,48 @@
+openapi: 3.0.3
+info:
+  title: Justintube API
+  version: 0.0.1
+  description: |
+    Backend web API for Justintube. Path operations are generated from
+    `@openapi` JSDoc annotations in route modules via swagger-jsdoc.
+servers:
+  - url: /
+    description: Current host
+tags:
+  - name: Service
+    description: Liveness and documentation
+  - name: Auth
+    description: Session cookie and API-key authentication
+  - name: Uploads
+    description: Media upload
+  - name: Internal
+    description: Processing-service callbacks (INTERNAL_SERVICE_TOKEN)
+components:
+  parameters:
+    CsrfTokenHeader:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Synchronizer CSRF token from GET /api/v1/auth/csrf
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: justintube.sid
+      description: HTTP-only session cookie established by login/register
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Synchronizer CSRF token from GET /api/v1/auth/csrf
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: Per-user static API key
+    internalServiceToken:
+      type: http
+      scheme: bearer
+      description: Shared INTERNAL_SERVICE_TOKEN for processing callbacks
+paths: {}

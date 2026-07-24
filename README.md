@@ -55,12 +55,12 @@ tbd
 
 The server listens on `PORT` (default 3000):
 
-| URL             | What                               |
-| --------------- | ---------------------------------- |
-| `/health`       | Liveness probe                     |
-| `/docs`         | Interactive API reference (Scalar) |
-| `/openapi.json` | The OpenAPI 3.1 document           |
-| `/api/v1/...`   | All API routes (WIP)               |
+| URL             | What                     |
+| --------------- | ------------------------ |
+| `/health`       | Liveness probe           |
+| `/docs`         | Scalar API reference     |
+| `/openapi.json` | The OpenAPI document (swagger-jsdoc) |
+| `/api/v1/...`   | All API routes (WIP)     |
 
 ## Project layout
 
