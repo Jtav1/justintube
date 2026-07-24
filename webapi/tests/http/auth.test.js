@@ -8,9 +8,12 @@ import {
 } from "@jest/globals";
 import { hashPassword } from "../../lib/auth/password.js";
 import { createCorsOptions } from "../../lib/auth/cors.js";
+import { resetMailerForTests } from "../../lib/email/mailer.js";
+import { Role, User } from "../../lib/models/index.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
   resetTables,
+  seedEmailVerificationToken,
   seedUser,
   seedUserApiKey,
   setupSchema,
@@ -237,6 +240,283 @@ describe("auth routes", () => {
       .get("/api/v1/auth/me")
       .set("Authorization", "Bearer totally-invalid-key");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("auth verify-email", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  test("verifies email with a valid token and upgrades role to viewer", async () => {
+    const unverifiedRole = await Role.findOne({ where: { name: "unverified" } });
+    const user = await seedUser({
+      emailVerified: false,
+      roleId: unverifiedRole?.id ?? null,
+    });
+    const { rawToken } = await seedEmailVerificationToken(user.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/verify-email")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({
+      id: user.id,
+      emailVerified: true,
+      role: "viewer",
+    });
+  });
+
+  test("rejects invalid verification token", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/verify-email")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: "not-a-real-token" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_token");
+  });
+
+  test("rejects expired verification token", async () => {
+    const user = await seedUser({ emailVerified: false });
+    const { rawToken } = await seedEmailVerificationToken(user.id, {
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/verify-email")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken });
+
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe("token_expired");
+  });
+
+  test("returns 409 when email is already verified", async () => {
+    const user = await seedUser({ emailVerified: true });
+    const { rawToken } = await seedEmailVerificationToken(user.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/verify-email")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("already_verified");
+  });
+});
+
+describe("auth resend-verification", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.MAIL_FROM_ADDRESS;
+    resetMailerForTests();
+    await resetTables();
+  });
+
+  test("returns 503 when email is disabled", async () => {
+    const seeded = await seedUser({ emailVerified: false });
+    const passwordHash = await hashPassword("password123");
+    await User.update({ passwordHash }, { where: { id: seeded.id } });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: seeded.username, password: "password123" });
+
+    const loginCsrf = (await agent.get("/api/v1/auth/csrf")).body.csrfToken;
+    const res = await agent
+      .post("/api/v1/auth/resend-verification")
+      .set("X-CSRF-Token", loginCsrf);
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("email_disabled");
+  });
+
+  test("returns 403 when email is already verified", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    const passwordHash = await hashPassword("password123");
+    const user = await seedUser({
+      emailVerified: true,
+      passwordHash,
+    });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: user.username, password: "password123" });
+
+    const loginCsrf = (await agent.get("/api/v1/auth/csrf")).body.csrfToken;
+    const res = await agent
+      .post("/api/v1/auth/resend-verification")
+      .set("X-CSRF-Token", loginCsrf);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("already_verified");
+  });
+
+  test("sends verification email when configured", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    resetMailerForTests();
+
+    const passwordHash = await hashPassword("password123");
+    const user = await seedUser({
+      emailVerified: false,
+      passwordHash,
+    });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: user.username, password: "password123" });
+
+    const loginCsrf = (await agent.get("/api/v1/auth/csrf")).body.csrfToken;
+    const res = await agent
+      .post("/api/v1/auth/resend-verification")
+      .set("X-CSRF-Token", loginCsrf);
+
+    expect(res.status).toBe(204);
+  });
+});
+
+describe("auth change password", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  test("changes password for session-authenticated user", async () => {
+    const passwordHash = await hashPassword("password123");
+    const user = await seedUser({ passwordHash, emailVerified: true });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const login = await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: user.username, password: "password123" });
+    expect(login.status).toBe(200);
+
+    const change = await agent
+      .post("/api/v1/auth/password")
+      .set("X-CSRF-Token", login.body.csrfToken)
+      .send({
+        currentPassword: "password123",
+        newPassword: "newpassword456",
+      });
+    expect(change.status).toBe(204);
+
+    await agent.post("/api/v1/auth/logout").set("X-CSRF-Token", login.body.csrfToken);
+
+    const csrf2 = await fetchCsrf(agent);
+    const relogin = await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf2)
+      .send({ username: user.username, password: "newpassword456" });
+    expect(relogin.status).toBe(200);
+  });
+
+  test("rejects wrong current password", async () => {
+    const passwordHash = await hashPassword("password123");
+    const user = await seedUser({ passwordHash, emailVerified: true });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const login = await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: user.username, password: "password123" });
+
+    const res = await agent
+      .post("/api/v1/auth/password")
+      .set("X-CSRF-Token", login.body.csrfToken)
+      .send({
+        currentPassword: "wrong-password",
+        newPassword: "newpassword456",
+      });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("invalid_credentials");
+  });
+
+  test("rejects API key authentication", async () => {
+    const client = createTestClient();
+    const user = await seedUser({
+      passwordHash: await hashPassword("password123"),
+      emailVerified: true,
+    });
+    const rawKey = "jt_test_api_key_password_change";
+    await seedUserApiKey(user.id, rawKey);
+
+    const res = await client
+      .post("/api/v1/auth/password")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({
+        currentPassword: "password123",
+        newPassword: "newpassword456",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("session_required");
+  });
+
+  test("rejects SSO-only accounts without a password hash", async () => {
+    const passwordHash = await hashPassword("password123");
+    const seeded = await seedUser({
+      passwordHash,
+      emailVerified: true,
+    });
+    const user = await User.findByPk(seeded.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const login = await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: seeded.username, password: "password123" });
+    expect(login.status).toBe(200);
+
+    await user.update({ passwordHash: null });
+
+    const res = await agent
+      .post("/api/v1/auth/password")
+      .set("X-CSRF-Token", login.body.csrfToken)
+      .send({
+        currentPassword: "password123",
+        newPassword: "newpassword456",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("password_not_set");
   });
 });
 

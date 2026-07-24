@@ -3,6 +3,15 @@ import rateLimit from "express-rate-limit";
 import { Router } from "express";
 import { hashPassword, verifyPassword } from "../lib/auth/password.js";
 import {
+  createVerificationToken,
+  EmailVerificationError,
+  verifyEmailToken,
+} from "../lib/auth/email-verification.js";
+import {
+  emailEnabled,
+  sendVerificationEmail,
+} from "../lib/email/mailer.js";
+import {
   csrfProtection,
   ensureCsrfToken,
   rotateCsrfToken,
@@ -31,6 +40,18 @@ const MIN_PASSWORD_LENGTH = 8;
 const authCredentialLimiter = rateLimit({
   windowMs: 60_000,
   max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Stricter rate limiter for resend-verification to reduce email abuse.
+ *
+ * @type {import('express').RequestHandler}
+ */
+const resendVerificationLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 3,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -90,6 +111,26 @@ async function findUserByUsername(username) {
     where: { username },
     include: [{ model: Role, required: false }],
   });
+}
+
+/**
+ * Sends a verification email when email is configured; logs and swallows errors.
+ *
+ * @private
+ * @param {import('sequelize').Model} user User with `id` and `email`.
+ * @returns {Promise<void>} Resolves when send completes or fails gracefully.
+ */
+async function sendUserVerificationEmail(user) {
+  if (!emailEnabled()) {
+    return;
+  }
+
+  try {
+    const token = await createVerificationToken(user.id);
+    await sendVerificationEmail({ to: user.email, token });
+  } catch (err) {
+    console.error("Failed to send verification email:", err);
+  }
 }
 
 /**
@@ -249,6 +290,10 @@ export function createAuthRouter() {
         user.Role = role;
       }
 
+      if (needsVerify) {
+        await sendUserVerificationEmail(user);
+      }
+
       const csrfToken = await establishSession(req, user.id);
       res.status(201).json({
         user: serializeUser(user, role),
@@ -406,6 +451,239 @@ export function createAuthRouter() {
    */
   auth.get("/me", requireAuth, (req, res) => {
     res.json(serializeUser(req.user, req.authRole));
+  });
+
+  /**
+   * Confirms a user's email address using a one-time verification token.
+   * POST /api/v1/auth/verify-email with { token }.
+   * Auth: none (token is proof); X-CSRF-Token required for cookie clients.
+   *
+   * @openapi
+   * /api/v1/auth/verify-email:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Verify email with a one-time token
+   *     operationId: authVerifyEmail
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [token]
+   *             properties:
+   *               token: { type: string }
+   *     responses:
+   *       200:
+   *         description: Email verified; returns updated user profile
+   *       400:
+   *         description: Missing or invalid token
+   *       409:
+   *         description: Email already verified
+   *       410:
+   *         description: Token expired
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ user }` or an error response.
+   */
+  auth.post("/verify-email", async (req, res) => {
+    try {
+      const token = String(req.body?.token || "").trim();
+      if (!token) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "token is required.",
+        });
+        return;
+      }
+
+      const user = await verifyEmailToken(token);
+      const role = user.Role || null;
+      res.json({ user: serializeUser(user, role) });
+    } catch (err) {
+      if (err instanceof EmailVerificationError) {
+        const statusByCode = {
+          invalid_body: 400,
+          invalid_token: 400,
+          token_expired: 410,
+          already_verified: 409,
+        };
+        const status = statusByCode[err.code] || 400;
+        res.status(status).json({
+          error: err.code,
+          message: err.message,
+        });
+        return;
+      }
+      console.error("authVerifyEmail failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Email verification failed.",
+      });
+    }
+  });
+
+  /**
+   * Sends a fresh verification email to the authenticated user.
+   * POST /api/v1/auth/resend-verification — no body.
+   * Auth: session cookie or API key (`requireAuth`); X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/auth/resend-verification:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Resend email verification message
+   *     operationId: authResendVerification
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       204:
+   *         description: Verification email sent
+   *       403:
+   *         description: Email already verified
+   *       503:
+   *         description: Email capability disabled
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 or an error response.
+   */
+  auth.post(
+    "/resend-verification",
+    resendVerificationLimiter,
+    requireAuth,
+    async (req, res) => {
+      try {
+        if (req.user.emailVerified) {
+          res.status(403).json({
+            error: "already_verified",
+            message: "Email is already verified.",
+          });
+          return;
+        }
+
+        if (!emailEnabled()) {
+          res.status(503).json({
+            error: "email_disabled",
+            message: "Email is not configured.",
+          });
+          return;
+        }
+
+        await sendUserVerificationEmail(req.user);
+        res.status(204).end();
+      } catch (err) {
+        console.error("authResendVerification failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to resend verification email.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Changes the authenticated user's password (session cookie only).
+   * POST /api/v1/auth/password with { currentPassword, newPassword }.
+   * Auth: session cookie; X-CSRF-Token required.
+   *
+   * @openapi
+   * /api/v1/auth/password:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Change account password
+   *     operationId: authChangePassword
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [currentPassword, newPassword]
+   *             properties:
+   *               currentPassword: { type: string }
+   *               newPassword: { type: string, minLength: 8 }
+   *     responses:
+   *       204:
+   *         description: Password updated
+   *       401:
+   *         description: Current password incorrect
+   *       403:
+   *         description: Password not set or API key auth not allowed
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 or an error response.
+   */
+  auth.post("/password", requireAuth, async (req, res) => {
+    try {
+      if (req.authMethod !== "session") {
+        res.status(403).json({
+          error: "session_required",
+          message: "Password change requires a session cookie.",
+        });
+        return;
+      }
+
+      const currentPassword = String(req.body?.currentPassword || "");
+      const newPassword = String(req.body?.newPassword || "");
+
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "currentPassword and newPassword are required.",
+        });
+        return;
+      }
+
+      if (!req.user.passwordHash) {
+        res.status(403).json({
+          error: "password_not_set",
+          message: "This account does not have a local password.",
+        });
+        return;
+      }
+
+      if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        res.status(400).json({
+          error: "invalid_password",
+          message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        });
+        return;
+      }
+
+      const currentOk = await verifyPassword(
+        currentPassword,
+        req.user.passwordHash,
+      );
+      if (!currentOk) {
+        res.status(401).json({
+          error: "invalid_credentials",
+          message: "Current password is incorrect.",
+        });
+        return;
+      }
+
+      const passwordHash = await hashPassword(newPassword);
+      await req.user.update({ passwordHash });
+      res.status(204).end();
+    } catch (err) {
+      console.error("authChangePassword failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Password change failed.",
+      });
+    }
   });
 
   // Mount under /auth so CSRF middleware does not apply to other /api/v1 routes.

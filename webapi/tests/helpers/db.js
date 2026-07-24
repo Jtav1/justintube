@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey, apiKeyPrefix } from "../../lib/auth/api-key.js";
+import { hashVerificationToken } from "../../lib/auth/email-verification.js";
 import { query } from "../../lib/db.js";
 import {
   ContentTag,
   FeaturedVideo,
+  EmailVerificationToken,
   FileVersion,
   Notification,
   OriginalUpload,
@@ -52,6 +54,7 @@ const RESET_MODELS = [
   UserNotificationSetting,
   UserIdentity,
   UserApiKey,
+  EmailVerificationToken,
   User,
   SsoProvider,
   StaticPage,
@@ -378,6 +381,31 @@ export async function seedUserApiKey(userId, rawKey, overrides = {}) {
 
   const row = await UserApiKey.create(record);
   return { ...asSeedResult(row, record), rawKey };
+}
+
+/**
+ * Inserts an EMAIL_VERIFICATION_TOKENS row for an existing user. Hashes `rawToken`
+ * with SHA-256; defaults to a 24-hour expiry.
+ *
+ * @param {number} userId Owning USERS id.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.rawToken] Plaintext token (defaults to a random value).
+ * @param {Date|string} [overrides.expiresAt] Expiry timestamp.
+ * @returns {Promise<{id: number, rawToken: string} & Record<string, unknown>>} Seeded token metadata plus rawToken.
+ */
+export async function seedEmailVerificationToken(userId, overrides = {}) {
+  const rawToken =
+    overrides.rawToken || randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+  const { rawToken: _ignored, ...rest } = overrides;
+  const record = {
+    userId,
+    tokenHash: hashVerificationToken(rawToken),
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    ...rest,
+  };
+
+  const row = await EmailVerificationToken.create(record);
+  return { ...asSeedResult(row, record), rawToken };
 }
 
 /**

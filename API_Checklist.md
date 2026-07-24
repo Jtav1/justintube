@@ -29,9 +29,9 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `POST /api/v1/auth/logout` — authLogout
 - [x] `GET /api/v1/auth/me` — authMe
 - [x] `GET /api/v1/auth/csrf` — authCsrf
-- [ ] `POST /api/v1/auth/verify-email` — authVerifyEmail
-- [ ] `POST /api/v1/auth/resend-verification` — authResendVerification
-- [ ] `POST /api/v1/auth/password` — authChangePassword
+- [x] `POST /api/v1/auth/verify-email` — authVerifyEmail
+- [x] `POST /api/v1/auth/resend-verification` — authResendVerification
+- [x] `POST /api/v1/auth/password` — authChangePassword
 
 Future/wont do now
 

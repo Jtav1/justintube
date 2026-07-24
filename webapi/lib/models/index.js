@@ -1,5 +1,6 @@
 import { sequelize } from "../db.js";
 import { ContentTag } from "./content-tag.js";
+import { EmailVerificationToken } from "./email-verification-token.js";
 import { FeaturedVideo } from "./featured-video.js";
 import { FileVersion } from "./file-version.js";
 import { Notification } from "./notification.js";
@@ -42,6 +43,15 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
   UserApiKey.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(EmailVerificationToken, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  EmailVerificationToken.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "CASCADE",
   });
@@ -265,6 +275,7 @@ registerAssociations();
 export const models = {
   Role,
   User,
+  EmailVerificationToken,
   UserApiKey,
   SsoProvider,
   UserIdentity,
@@ -288,6 +299,7 @@ export const models = {
 
 export {
   ContentTag,
+  EmailVerificationToken,
   FeaturedVideo,
   FileVersion,
   Notification,

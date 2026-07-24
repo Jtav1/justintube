@@ -42,9 +42,6 @@ export function registerStubRoutes(router) {
   };
 
   // Auth (unimplemented)
-  r("post", "/auth/verify-email", "authVerifyEmail");
-  r("post", "/auth/resend-verification", "authResendVerification");
-  r("post", "/auth/password", "authChangePassword");
   r("get", "/auth/sso/providers", "authSsoProviders");
   r("get", "/auth/sso/:provider/start", "authSsoStart");
   r("get", "/auth/sso/:provider/callback", "authSsoCallback");
