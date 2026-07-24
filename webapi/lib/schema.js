@@ -178,6 +178,48 @@ async function getMissingSqliteTableNames() {
 }
 
 /**
+ * Adds known missing columns to existing SQLite tables. Sequelize's SQLite
+ * `alter` path is unreliable, so additive column changes are applied here with
+ * plain `ALTER TABLE ... ADD COLUMN` when PRAGMA shows they are absent.
+ *
+ * @returns {Promise<void>} Resolves once any missing columns have been added.
+ */
+async function ensureSqliteMissingColumns() {
+  /** @type {{ table: string, column: string, ddl: string }[]} */
+  const additions = [
+    {
+      table: "USERS",
+      column: "password_expired",
+      ddl: "`password_expired` TINYINT(1) NOT NULL DEFAULT 0",
+    },
+    {
+      table: "TRANSCODE_PROFILES",
+      column: "description",
+      ddl: "`description` VARCHAR(250)",
+    },
+    {
+      table: "TRANSCODE_PROFILES",
+      column: "resolution_name",
+      ddl: "`resolution_name` VARCHAR(10) NOT NULL DEFAULT '720p'",
+    },
+  ];
+
+  for (const { table, column, ddl } of additions) {
+    const columns = await sequelize.query(`PRAGMA table_info(\`${table}\`)`, {
+      type: QueryTypes.SELECT,
+    });
+    if (columns.length === 0) {
+      continue;
+    }
+    if (columns.some((col) => col.name === column)) {
+      continue;
+    }
+    await sequelize.query(`ALTER TABLE \`${table}\` ADD COLUMN ${ddl}`);
+    console.log(`[api]: added SQLite column ${table}.${column}`);
+  }
+}
+
+/**
  * Ensures all application tables exist on SQLite. Sequelize's SQLite `alter`
  * path is unreliable (it can leave `_old` tables behind and fail on partial
  * schemas), so missing tables are created with a plain `sync()` instead.
@@ -191,6 +233,7 @@ async function ensureSqliteSchema() {
 
   const missing = await getMissingSqliteTableNames();
   if (missing.length === 0) {
+    await ensureSqliteMissingColumns();
     return;
   }
 
@@ -198,6 +241,7 @@ async function ensureSqliteSchema() {
     `[api]: creating missing SQLite tables: ${missing.join(", ")}`,
   );
   await sequelize.sync();
+  await ensureSqliteMissingColumns();
 }
 
 /**
@@ -241,7 +285,8 @@ async function repairInvalidSqliteTimestamps() {
  * Ensures all application tables and columns exist via Sequelize model sync,
  * then seeds reference data. Safe to run on every startup: MySQL uses
  * `sync({ alter: true })` for missing tables/columns; SQLite creates only
- * missing tables (alter is skipped because it is unreliable there).
+ * missing tables and applies known additive columns via `ALTER TABLE`
+ * (full Sequelize alter is skipped because it is unreliable there).
  * `seedReferenceData` is idempotent. The dialect is chosen from DB_CLIENT when
  * the Sequelize instance is constructed.
  *

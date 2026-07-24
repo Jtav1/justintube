@@ -4,7 +4,8 @@ import { timestampColumn } from "./attribute-helpers.js";
 
 /**
  * USERS table model. One row per account; local accounts store a bcrypt hash in
- * `passwordHash` (nullable for SSO-only accounts).
+ * `passwordHash` (nullable for SSO-only accounts). When `passwordExpired` is
+ * true, the account must change its password (e.g. after an admin reset).
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -33,6 +34,11 @@ export const User = sequelize.define(
     passwordHash: {
       type: DataTypes.STRING(255),
       allowNull: true,
+    },
+    passwordExpired: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     bio: {
       type: DataTypes.STRING(5000),

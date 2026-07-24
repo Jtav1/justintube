@@ -238,6 +238,8 @@ export async function seedVideoThumbnail(originalUploadId, overrides = {}) {
  * Inserts a TRANSCODE_PROFILES row, applying defaults for any omitted field.
  *
  * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string|null} [overrides.description] Optional human-readable profile note.
+ * @param {string} [overrides.resolutionName] Resolution label from RESOLUTION_VALUES.
  * @param {number} [overrides.outputHeight] Output frame height in pixels.
  * @param {number} [overrides.outputWidth] Output frame width in pixels.
  * @param {string} [overrides.outputContainer] Container format (e.g. mp4).
@@ -248,6 +250,8 @@ export async function seedVideoThumbnail(originalUploadId, overrides = {}) {
  */
 export async function seedTranscodeProfile(overrides = {}) {
   const record = {
+    description: null,
+    resolutionName: "720p",
     outputHeight: 720,
     outputWidth: 1280,
     outputContainer: "mp4",
@@ -324,6 +328,7 @@ export async function seedFeaturedVideo(originalUploadId) {
  * @param {string} [overrides.email] Unique account email.
  * @param {string|null} [overrides.displayName] Human-facing display name.
  * @param {string|null} [overrides.passwordHash] Bcrypt password hash (nullable for SSO-only).
+ * @param {number|boolean} [overrides.passwordExpired] Whether the password must be changed.
  * @param {string|null} [overrides.bio] Free-form profile blurb.
  * @param {number|boolean} [overrides.emailVerified] Whether the email is verified.
  * @param {string|null} [overrides.emailVerifiedAt] Timestamp of verification.
@@ -338,6 +343,7 @@ export async function seedUser(overrides = {}) {
     email: `${suffix}@example.com`,
     displayName: null,
     passwordHash: null,
+    passwordExpired: false,
     bio: null,
     emailVerified: false,
     emailVerifiedAt: null,

@@ -333,13 +333,15 @@ export function createAuthRouter() {
    *               password: { type: string }
    *     responses:
    *       200:
-   *         description: Session established
+   *         description: Session established; `user.passwordExpired` indicates
+   *           whether the client should force a password change
    *       401:
    *         description: Invalid credentials
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends `{ user, csrfToken }` or an error response.
+   * @returns {Promise<void>} Sends `{ user, csrfToken }` (including
+   *   `user.passwordExpired`) or an error response.
    */
   auth.post("/login", authCredentialLimiter, async (req, res) => {
     try {
@@ -675,7 +677,10 @@ export function createAuthRouter() {
       }
 
       const passwordHash = await hashPassword(newPassword);
-      await req.user.update({ passwordHash });
+      await req.user.update({
+        passwordHash,
+        passwordExpired: false,
+      });
       res.status(204).end();
     } catch (err) {
       console.error("authChangePassword failed:", err);
