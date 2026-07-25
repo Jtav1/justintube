@@ -19,6 +19,7 @@ import {
   canViewVideo,
   isOwnerOrAdmin,
 } from "../lib/video-access.js";
+import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 
 /**
  * Maximum length for video title.
@@ -614,6 +615,7 @@ export function createVideosRouter() {
       });
 
       await metadata.reload();
+      syncVideoIndex(upload.id);
       res.status(200).json(serializeVideo(upload, metadata));
     } catch (err) {
       console.error("updateVideo failed:", err);
@@ -674,6 +676,7 @@ export function createVideosRouter() {
       }
 
       await upload.destroy();
+      removeVideoDocument(id);
       res.status(204).end();
     } catch (err) {
       console.error("deleteVideo failed:", err);
@@ -731,6 +734,7 @@ export function createVideosRouter() {
 
         const { upload, metadata } = loaded;
         await metadata.update({ visibility: "hidden" });
+        syncVideoIndex(upload.id);
         res.status(200).json(serializeVideo(upload, metadata));
       } catch (err) {
         console.error("delistVideo failed:", err);

@@ -45,6 +45,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional advanced search backend. Only needed when ENABLE_ADVANCED_SEARCH=true
+  # on the api service below; otherwise this whole block can be commented out.
+  search:
+    image: getmeili/meilisearch:v1.10
+    container_name: justintube-search
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-meili-master-key}
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_ENV: ${MEILI_ENV:-development}
+    ports:
+      - "${MEILI_PORT:-7700}:7700"
+    volumes:
+      - search-data:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: ./api
@@ -70,6 +90,12 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
       TRANSCODE_RECONCILE_CRON: ${TRANSCODE_RECONCILE_CRON:-*/5 * * * *}
       TRANSCODE_RECONCILE_STALE_MINUTES: ${TRANSCODE_RECONCILE_STALE_MINUTES:-15}
+      # Advanced search (Meilisearch) is optional. Leave ENABLE_ADVANCED_SEARCH
+      # unset/false to run without the search service.
+      ENABLE_ADVANCED_SEARCH: ${ENABLE_ADVANCED_SEARCH:-false}
+      MEILI_HOST: http://search:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-meili-master-key}
+      MEILI_INDEX_NAME: ${MEILI_INDEX_NAME:-videos}
     ports:
       - "${PORT:-3000}:3000"
     volumes:
@@ -102,3 +128,4 @@ volumes:
   # db-data:
   media-data:
   redis-data:
+  search-data:

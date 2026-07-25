@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
 import { createUploadRouter } from "./uploads.js";
@@ -54,8 +55,6 @@ export function registerStubRoutes(router) {
   r("delete", "/auth/sso/link/:provider", "authSsoUnlink");
 
   // Search & discovery (unimplemented remainders)
-  r("get", "/search/suggest", "searchSuggest");
-  r("get", "/search", "searchVideos");
   r("post", "/videos/import", "importVideo");
   r("get", "/videos/:id/stream", "getVideoStream");
   r("get", "/videos/:id/reaction", "getVideoReaction");
@@ -126,6 +125,7 @@ export function createApiRouter() {
   router.use(createAdminUsersRouter());
   router.use(createTranscodeProfilesRouter());
   router.use(createVideosRouter());
+  router.use(createSearchRouter());
   registerStubRoutes(router);
   return router;
 }
