@@ -17,6 +17,7 @@ import { UserApiKey } from "./user-api-key.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
+import { VideoAccess } from "./video-access.js";
 import { VideoLike } from "./video-like.js";
 import { VideoMetadata } from "./video-metadata.js";
 import { VideoThumbnail } from "./video-thumbnail.js";
@@ -85,6 +86,7 @@ function registerAssociations() {
   });
 
   OriginalUpload.hasOne(VideoMetadata, {
+    as: "VideoMetadata",
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
@@ -172,6 +174,24 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
   VideoLike.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(VideoAccess, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  VideoAccess.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasMany(VideoAccess, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  VideoAccess.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
@@ -288,6 +308,7 @@ export const models = {
   UserPlaylist,
   PlaylistItem,
   VideoLike,
+  VideoAccess,
   ContentTag,
   FeaturedVideo,
   Subscription,
@@ -318,6 +339,7 @@ export {
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
+  VideoAccess,
   VideoLike,
   VideoMetadata,
   VideoThumbnail,
