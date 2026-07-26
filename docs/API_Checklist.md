@@ -43,8 +43,8 @@ Future/wont do now
 
 ### Search & discovery
 
-- [ ] `GET /api/v1/search/suggest` — searchSuggest
-- [ ] `GET /api/v1/search` — searchVideos
+- [x] `GET /api/v1/search/suggest` — searchSuggest
+- [x] `GET /api/v1/search` — searchVideos
 - [x] `GET /api/v1/videos` — listVideos
 - [x] `GET /api/v1/videos/featured` — listFeaturedVideos
 - [x] `GET /api/v1/videos/newest` — listNewestVideos
