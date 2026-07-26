@@ -4,7 +4,9 @@ import { timestampColumn } from "./attribute-helpers.js";
 
 /**
  * USER_NOTIFICATION_SETTINGS table model. Stores a user's per-type notification
- * preferences; `notificationType` is a free-form string reserved for future use.
+ * preferences; `notificationTypeId` references NOTIFICATION_TYPES and is
+ * nullable (no row for a type defaults to enabled, see the routes that read
+ * this table).
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -20,8 +22,8 @@ export const UserNotificationSetting = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
     },
-    notificationType: {
-      type: DataTypes.STRING(64),
+    notificationTypeId: {
+      type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
     },
     enabled: {
@@ -38,8 +40,8 @@ export const UserNotificationSetting = sequelize.define(
     indexes: [
       {
         unique: true,
-        fields: ["user_id", "notification_type"],
-        name: "uq_user_notification_settings_user_type",
+        fields: ["user_id", "notification_type_id"],
+        name: "uq_user_notification_settings_user_type_id",
       },
     ],
   },

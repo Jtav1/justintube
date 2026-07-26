@@ -4,6 +4,7 @@ import { EmailVerificationToken } from "./email-verification-token.js";
 import { FeaturedVideo } from "./featured-video.js";
 import { FileVersion } from "./file-version.js";
 import { Notification } from "./notification.js";
+import { NotificationType } from "./notification-type.js";
 import { OriginalUpload } from "./original-upload.js";
 import { PlaylistItem } from "./playlist-item.js";
 import { Role } from "./role.js";
@@ -254,6 +255,22 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
+  NotificationType.hasMany(UserNotificationSetting, {
+    foreignKey: "notificationTypeId",
+    onDelete: "SET NULL",
+  });
+  UserNotificationSetting.belongsTo(NotificationType, {
+    foreignKey: "notificationTypeId",
+    onDelete: "SET NULL",
+  });
+
+  NotificationType.hasMany(Notification, {
+    foreignKey: "notificationTypeId",
+  });
+  Notification.belongsTo(NotificationType, {
+    foreignKey: "notificationTypeId",
+  });
+
   User.hasMany(StaticPage, {
     as: "UpdatedStaticPages",
     foreignKey: "updatedBy",
@@ -313,6 +330,7 @@ export const models = {
   FeaturedVideo,
   Subscription,
   Notification,
+  NotificationType,
   UserNotificationSetting,
   StaticPage,
   SystemConfig,
@@ -326,6 +344,7 @@ export {
   FeaturedVideo,
   FileVersion,
   Notification,
+  NotificationType,
   OriginalUpload,
   PlaylistItem,
   Role,
