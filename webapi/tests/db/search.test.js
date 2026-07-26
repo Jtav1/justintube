@@ -75,8 +75,8 @@ describe("Search indexing (lib/search.js)", () => {
       searchLib = await import("../../lib/search.js");
     });
 
-    test("searchEnabled() is false", () => {
-      expect(searchLib.searchEnabled()).toBe(false);
+    test("advancedSearchEnabled() is false", () => {
+      expect(searchLib.advancedSearchEnabled()).toBe(false);
     });
 
     test("syncVideoIndex resolves without contacting Meilisearch", async () => {
@@ -106,8 +106,8 @@ describe("Search indexing (lib/search.js)", () => {
       delete process.env.MEILI_HOST;
     });
 
-    test("searchEnabled() is true", () => {
-      expect(searchLib.searchEnabled()).toBe(true);
+    test("advancedSearchEnabled() is true", () => {
+      expect(searchLib.advancedSearchEnabled()).toBe(true);
     });
 
     test("syncVideoIndex upserts a ready + public video", async () => {

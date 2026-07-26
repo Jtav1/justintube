@@ -322,6 +322,8 @@ describe("auth verify-email", () => {
 
 describe("auth resend-verification", () => {
   beforeAll(async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.MAIL_FROM_ADDRESS;
     await setupSchema();
   });
 

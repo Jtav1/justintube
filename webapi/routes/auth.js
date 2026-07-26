@@ -562,18 +562,18 @@ export function createAuthRouter() {
     requireAuth,
     async (req, res) => {
       try {
-        if (req.user.emailVerified) {
-          res.status(403).json({
-            error: "already_verified",
-            message: "Email is already verified.",
-          });
-          return;
-        }
-
         if (!emailEnabled()) {
           res.status(503).json({
             error: "email_disabled",
             message: "Email is not configured.",
+          });
+          return;
+        }
+
+        if (req.user.emailVerified) {
+          res.status(403).json({
+            error: "already_verified",
+            message: "Email is already verified.",
           });
           return;
         }

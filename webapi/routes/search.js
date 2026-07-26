@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { optionalAuth } from "../lib/auth/require-auth.js";
-import { searchEnabled, searchVideos, suggestVideos } from "../lib/search.js";
+import { advancedSearchEnabled, searchVideos, suggestVideos } from "../lib/search.js";
 
 /**
  * Maximum page size for GET /search.
@@ -37,21 +37,9 @@ const SORT_OPTIONS = {
 };
 
 /**
- * Sends the shared "advanced search is disabled on this server" response.
- * Mirrors `registration_disabled` in `routes/auth.js`.
- *
- * @param {import('express').Response} res Express response.
- * @returns {void} No return value; sends the response.
- */
-function sendSearchDisabled(res) {
-  res.status(403).json({
-    error: "search_disabled",
-    message: "Advanced search is disabled on this server.",
-  });
-}
-
-/**
- * Sends the shared "search backend is unreachable" response.
+ * Sends the shared "search backend is unreachable" response. Only reachable
+ * when advanced search is explicitly enabled and Meilisearch is down — the
+ * basic (default) backend has no external dependency to be unreachable.
  *
  * @param {import('express').Response} res Express response.
  * @returns {void} No return value; sends the response.
@@ -61,6 +49,42 @@ function sendSearchUnavailable(res) {
     error: "search_unavailable",
     message: "Search is temporarily unavailable.",
   });
+}
+
+/**
+ * Sends the shared unexpected-failure response for the basic backend's own
+ * errors (e.g. a database failure) — a different failure mode than an
+ * external Meilisearch outage, so it gets the generic shape used elsewhere in
+ * this codebase rather than `search_unavailable`.
+ *
+ * @param {import('express').Response} res Express response.
+ * @returns {void} No return value; sends the response.
+ */
+function sendSearchFailed(res) {
+  res.status(500).json({
+    error: "internal_error",
+    message: "Search failed unexpectedly.",
+  });
+}
+
+/**
+ * Logs and responds to a search failure with the error shape appropriate to
+ * the active backend: `503 search_unavailable` when advanced search is
+ * enabled (a Meilisearch outage), `500 internal_error` otherwise (the basic
+ * backend has no external dependency, so its errors are more fundamental).
+ *
+ * @param {import('express').Response} res Express response.
+ * @param {unknown} err The caught error, for logging.
+ * @param {string} label Log label identifying which handler failed.
+ * @returns {void} No return value; sends the response.
+ */
+function handleSearchError(res, err, label) {
+  console.error(`${label} failed:`, err);
+  if (advancedSearchEnabled()) {
+    sendSearchUnavailable(res);
+  } else {
+    sendSearchFailed(res);
+  }
 }
 
 /**
@@ -160,8 +184,9 @@ export function createSearchRouter() {
   /**
    * GET /search — searchVideos
    * Auth: optional. Full-text search across title/description/tags/username.
-   * Returns 403 when advanced search is disabled on this server, 503 when it's
-   * enabled but the search backend is unreachable.
+   * Always available: uses the built-in basic backend by default, or
+   * Meilisearch when ENABLE_ADVANCED_SEARCH=true. Returns 503 only when
+   * advanced search is enabled and Meilisearch is unreachable.
    *
    * @openapi
    * /api/v1/search:
@@ -213,17 +238,12 @@ export function createSearchRouter() {
    *         description: Paginated search results
    *       400:
    *         description: Invalid query
-   *       403:
-   *         description: Advanced search is disabled on this server
+   *       500:
+   *         description: Search failed unexpectedly
    *       503:
-   *         description: Search backend unreachable
+   *         description: Search backend unreachable (advanced search enabled but Meilisearch is down)
    */
   router.get("/search", optionalAuth, async (req, res) => {
-    if (!searchEnabled()) {
-      sendSearchDisabled(res);
-      return;
-    }
-
     const parsed = parseSearchQuery(req.query);
     if (!parsed.ok) {
       res.status(400).json({ error: "invalid_query", message: parsed.message });
@@ -240,14 +260,14 @@ export function createSearchRouter() {
         totalPages: result.totalPages ?? 0,
       });
     } catch (err) {
-      console.error("searchVideos failed:", err);
-      sendSearchUnavailable(res);
+      handleSearchError(res, err, "searchVideos");
     }
   });
 
   /**
    * GET /search/suggest — searchSuggest
    * Auth: optional. Lightweight typeahead: a handful of title/username matches.
+   * Always available (see GET /search for backend selection details).
    *
    * @openapi
    * /api/v1/search/suggest:
@@ -264,17 +284,12 @@ export function createSearchRouter() {
    *     responses:
    *       200:
    *         description: Suggested matches
-   *       403:
-   *         description: Advanced search is disabled on this server
+   *       500:
+   *         description: Search failed unexpectedly
    *       503:
-   *         description: Search backend unreachable
+   *         description: Search backend unreachable (advanced search enabled but Meilisearch is down)
    */
   router.get("/search/suggest", optionalAuth, async (req, res) => {
-    if (!searchEnabled()) {
-      sendSearchDisabled(res);
-      return;
-    }
-
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
 
     try {
@@ -287,8 +302,7 @@ export function createSearchRouter() {
         })),
       });
     } catch (err) {
-      console.error("searchSuggest failed:", err);
-      sendSearchUnavailable(res);
+      handleSearchError(res, err, "searchSuggest");
     }
   });
 

@@ -1,9 +1,11 @@
 import { OriginalUpload, VideoMetadata } from "../lib/models/index.js";
-import { searchEnabled, syncVideoIndex } from "../lib/search.js";
+import { advancedSearchEnabled, syncVideoIndex } from "../lib/search.js";
 
 /**
  * Bulk-(re)indexes every eligible (ready + public) video into Meilisearch.
- * Used for initial rollout (the index starts empty) and disaster recovery
+ * Meilisearch-only: the default basic backend has no persistent index to go
+ * stale, it rebuilds automatically from the database. Used for initial
+ * rollout (the Meilisearch index starts empty) and disaster recovery
  * (rebuilding after the Meilisearch volume is wiped). Run with
  * `npm run reindex-search` (add `--env-file=.env` if env vars aren't already
  * exported in the shell).
@@ -11,7 +13,7 @@ import { searchEnabled, syncVideoIndex } from "../lib/search.js";
  * @returns {Promise<void>} Resolves once every eligible video has been synced.
  */
 async function main() {
-  if (!searchEnabled()) {
+  if (!advancedSearchEnabled()) {
     console.error(
       "ENABLE_ADVANCED_SEARCH is not set to true; nothing to do.",
     );
