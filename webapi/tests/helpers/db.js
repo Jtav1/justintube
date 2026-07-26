@@ -21,6 +21,7 @@ import {
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
+  VideoAccess,
   VideoLike,
   VideoMetadata,
   VideoThumbnail,
@@ -43,6 +44,7 @@ const RESET_MODELS = [
   VideoMetadata,
   VideoThumbnail,
   VideoLike,
+  VideoAccess,
   ContentTag,
   FeaturedVideo,
   UserPlaylist,
@@ -316,6 +318,19 @@ export async function seedContentTag(originalUploadId, overrides = {}) {
 export async function seedFeaturedVideo(originalUploadId) {
   const row = await FeaturedVideo.create({ originalUploadId });
   return { id: row.id, originalUploadId };
+}
+
+/**
+ * Inserts a VIDEO_ACCESS row granting a user permission to view a private upload.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {number} userId Id of the USERS row receiving access.
+ * @returns {Promise<{id: number, originalUploadId: number, userId: number}>}
+ *   The seeded grant's id and foreign keys.
+ */
+export async function seedVideoAccess(originalUploadId, userId) {
+  const row = await VideoAccess.create({ originalUploadId, userId });
+  return { id: row.id, originalUploadId, userId };
 }
 
 /**

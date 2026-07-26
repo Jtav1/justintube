@@ -5,7 +5,8 @@ import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { serializeUser } from "../lib/auth/serialize-user.js";
-import { Role, User } from "../lib/models/index.js";
+import { OriginalUpload, Role, User } from "../lib/models/index.js";
+import { syncVideoIndex } from "../lib/search.js";
 
 /**
  * Minimum accepted password length for admin password resets.
@@ -90,6 +91,25 @@ function serializeAdminUser(user) {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
+}
+
+/**
+ * Re-syncs search documents for all of a user's videos after a
+ * username/displayName change, since eligible documents embed those fields.
+ * Fire-and-forget: `syncVideoIndex` never throws, so callers don't need to
+ * await or catch this.
+ *
+ * @param {number} userId Owning USERS id whose videos need re-indexing.
+ * @returns {Promise<void>} Resolves once every video has been (re)synced.
+ */
+async function resyncUserVideoIndex(userId) {
+  const uploads = await OriginalUpload.findAll({
+    where: { userId },
+    attributes: ["id"],
+  });
+  for (const upload of uploads) {
+    syncVideoIndex(upload.id);
+  }
 }
 
 /**
@@ -481,6 +501,13 @@ export function createAdminUsersRouter() {
         }
 
         await user.update(parsed.patch);
+
+        if (
+          Object.prototype.hasOwnProperty.call(parsed.patch, "username") ||
+          Object.prototype.hasOwnProperty.call(parsed.patch, "displayName")
+        ) {
+          resyncUserVideoIndex(userId);
+        }
 
         if (parsed.role) {
           user.Role = parsed.role;

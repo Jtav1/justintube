@@ -55,6 +55,10 @@ export const OriginalUpload = sequelize.define(
       allowNull: true,
     },
     resolution: constrainedString(RESOLUTION_VALUES, { allowNull: true }),
+    durationSeconds: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
     userId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,

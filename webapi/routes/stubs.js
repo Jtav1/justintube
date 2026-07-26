@@ -2,9 +2,11 @@ import { Router } from "express";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
 import { createUploadRouter } from "./uploads.js";
+import { createVideosRouter } from "./videos.js";
 
 /**
  * Creates an Express middleware that responds with HTTP 501 for unimplemented routes.
@@ -52,28 +54,9 @@ export function registerStubRoutes(router) {
   r("post", "/auth/sso/link", "authSsoLink");
   r("delete", "/auth/sso/link/:provider", "authSsoUnlink");
 
-  // Search & discovery
-  r("get", "/search/suggest", "searchSuggest");
-  r("get", "/search", "searchVideos");
-  r("get", "/videos", "listVideos");
-  r("get", "/videos/featured", "listFeaturedVideos");
-  r("get", "/videos/newest", "listNewestVideos");
-  r("post", "/videos/import", "importVideo");
-  r("get", "/videos/:id", "getVideo");
-  r("patch", "/videos/:id", "updateVideo");
-  r("delete", "/videos/:id", "deleteVideo");
-  r("get", "/videos/:id/stream", "getVideoStream");
-  r("post", "/videos/:id/delist", "delistVideo");
-  r("get", "/videos/:id/access", "listVideoAccess");
-  r("put", "/videos/:id/access", "setVideoAccess");
-  r("post", "/videos/:id/view", "recordVideoView");
-  r("post", "/videos/:id/like", "likeVideo");
-  r("post", "/videos/:id/dislike", "dislikeVideo");
+  // Search & discovery (unimplemented remainders)
   r("get", "/videos/:id/reaction", "getVideoReaction");
   r("delete", "/videos/:id/reaction", "clearVideoReaction");
-  r("get", "/tags", "listTags");
-  r("get", "/tags/:tag/videos", "listTagVideos");
-  r("get", "/feed/subscriptions", "feedSubscriptions");
 
   // Me / library / settings
   r("patch", "/me", "updateMe");
@@ -139,6 +122,8 @@ export function createApiRouter() {
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
   router.use(createTranscodeProfilesRouter());
+  router.use(createVideosRouter());
+  router.use(createSearchRouter());
   registerStubRoutes(router);
   return router;
 }

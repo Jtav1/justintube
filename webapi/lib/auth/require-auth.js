@@ -41,6 +41,68 @@ async function loadSessionUser(userId) {
 }
 
 /**
+ * Resolves the authenticated user from a Bearer API key or session cookie.
+ *
+ * @private
+ * @param {import('express').Request} req Incoming request.
+ * @returns {Promise<{
+ *   user: import('sequelize').Model,
+ *   role: import('sequelize').Model|null,
+ *   authMethod: "session"|"api_key"
+ * }|null>} Auth context, or null when unauthenticated / locked.
+ */
+async function resolveAuth(req) {
+  const token = bearerToken(req);
+  if (token) {
+    const result = await findUserByApiKey(token);
+    if (!result) {
+      return null;
+    }
+    return {
+      user: result.user,
+      role: result.role,
+      authMethod: "api_key",
+    };
+  }
+
+  const sessionUserId = req.session?.userId;
+  const result = await loadSessionUser(sessionUserId);
+  if (!result) {
+    return null;
+  }
+
+  return {
+    user: result.user,
+    role: result.role,
+    authMethod: "session",
+  };
+}
+
+/**
+ * Attaches auth context to `req` when credentials are present and valid.
+ * Never rejects; leaves `req.user` unset when anonymous or invalid.
+ *
+ * @param {import('express').Request} req Incoming request.
+ * @param {import('express').Response} _res Express response (unused).
+ * @param {import('express').NextFunction} next Continues after optional attach.
+ * @returns {Promise<void>} Always calls `next` unless an unexpected error occurs.
+ */
+export async function optionalAuth(req, _res, next) {
+  try {
+    const result = await resolveAuth(req);
+    if (result) {
+      req.user = result.user;
+      req.authRole = result.role;
+      req.authMethod = result.authMethod;
+    }
+    next();
+  } catch (err) {
+    console.error("optionalAuth failed:", err);
+    next();
+  }
+}
+
+/**
  * Express middleware that requires a valid session cookie or user API key.
  * Sets `req.user`, `req.authRole`, and `req.authMethod` (`"session"` | `"api_key"`).
  *
@@ -51,25 +113,7 @@ async function loadSessionUser(userId) {
  */
 export async function requireAuth(req, res, next) {
   try {
-    const token = bearerToken(req);
-    if (token) {
-      const result = await findUserByApiKey(token);
-      if (!result) {
-        res.status(401).json({
-          error: "unauthorized",
-          message: "Valid authentication required.",
-        });
-        return;
-      }
-      req.user = result.user;
-      req.authRole = result.role;
-      req.authMethod = "api_key";
-      next();
-      return;
-    }
-
-    const sessionUserId = req.session?.userId;
-    const result = await loadSessionUser(sessionUserId);
+    const result = await resolveAuth(req);
     if (!result) {
       res.status(401).json({
         error: "unauthorized",
@@ -80,7 +124,7 @@ export async function requireAuth(req, res, next) {
 
     req.user = result.user;
     req.authRole = result.role;
-    req.authMethod = "session";
+    req.authMethod = result.authMethod;
     next();
   } catch (err) {
     console.error("requireAuth failed:", err);

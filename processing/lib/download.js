@@ -1,23 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, readdirSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { originalDir } from "./media-paths.js";
 
 const execFileAsync = promisify(execFile);
-
-const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
-
-/**
- * Absolute path to the media storage directory. Relative env values are
- * resolved against the process working directory.
- *
- * @type {string}
- */
-export const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
-  ? MEDIA_STORAGE_DIRECTORY
-  : resolve(process.cwd(), MEDIA_STORAGE_DIRECTORY);
-
-mkdirSync(mediaDir, { recursive: true });
 
 /**
  * Format selector: best video+audio at 1080p or lower, with fallbacks.
@@ -68,9 +55,9 @@ export function validateDownloadUrl(url) {
 }
 
 /**
- * Returns true if any file in mediaDir uses the given stem (stem.ext).
+ * Returns true if any file in originalDir uses the given stem (stem.ext).
  *
- * @param {string[]} names Directory entries in mediaDir.
+ * @param {string[]} names Directory entries in originalDir.
  * @param {string} stem Filename stem without extension.
  * @returns {boolean} Whether a file for this stem already exists.
  */
@@ -88,7 +75,7 @@ function stemExists(names, stem) {
  * @throws {Error} When all a–z suffixes are already taken for this epoch.
  */
 function nextEpochStem(epoch) {
-  const names = readdirSync(mediaDir);
+  const names = readdirSync(originalDir);
 
   if (!stemExists(names, epoch)) {
     return epoch;
@@ -107,20 +94,20 @@ function nextEpochStem(epoch) {
 }
 
 /**
- * Finds the basename written for a given stem prefix in the media directory.
+ * Finds the basename written for a given stem prefix in `originalDir`.
  *
  * @param {string} stem Filename stem used in the yt-dlp output template.
  * @returns {string | undefined} Matching basename, or undefined if none.
  */
 function findStemFile(stem) {
   const prefix = `${stem}.`;
-  return readdirSync(mediaDir).find((name) => name.startsWith(prefix));
+  return readdirSync(originalDir).find((name) => name.startsWith(prefix));
 }
 
 /**
- * Downloads a single URL with yt-dlp (≤1080p) into MEDIA_STORAGE_DIRECTORY
- * using a unix-epoch basename (with a–z suffix on collision) and
- * `--js-runtimes node`.
+ * Downloads a single URL with yt-dlp (≤1080p) into `MEDIA_STORAGE_DIRECTORY/original`
+ * (same directory `/transcode` reads its input from) using a unix-epoch
+ * basename (with a–z suffix on collision) and `--js-runtimes node`.
  *
  * @param {string} url Absolute http(s) URL to download.
  * @returns {Promise<string>} Basename of the saved file (name + extension).
@@ -131,7 +118,7 @@ export async function downloadUrl(url) {
   const validatedUrl = validateDownloadUrl(url);
   const epoch = String(Math.floor(Date.now() / 1000));
   const stem = nextEpochStem(epoch);
-  const outputTemplate = join(mediaDir, `${stem}.%(ext)s`);
+  const outputTemplate = join(originalDir, `${stem}.%(ext)s`);
 
   const args = [
     "--js-runtimes",

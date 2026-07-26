@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { mkdirSync, statSync } from "node:fs";
+import { rename, unlink } from "node:fs/promises";
 import { extname, isAbsolute, join, resolve } from "node:path";
 import { Router } from "express";
 import multer from "multer";
@@ -11,7 +11,7 @@ import {
 } from "../lib/media-meta.js";
 import { markUploadFileVersionsFailed } from "../lib/file-versions.js";
 import { FileVersion, OriginalUpload, TranscodeProfile } from "../lib/models/index.js";
-import { requestTranscodeBatch } from "../lib/processing-client.js";
+import { requestDownload, requestTranscodeBatch } from "../lib/processing-client.js";
 
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
@@ -27,11 +27,12 @@ const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
 
 /**
  * Absolute path to the directory where original uploads are stored
- * (`MEDIA_STORAGE_DIRECTORY/original`).
+ * (`MEDIA_STORAGE_DIRECTORY/original`). Also where the processing service
+ * writes files downloaded via `POST /download` (shared media volume).
  *
  * @type {string}
  */
-const originalDir = join(mediaDir, "original");
+export const originalDir = join(mediaDir, "original");
 
 // Ensure the original-uploads directory exists before any upload is attempted.
 mkdirSync(originalDir, { recursive: true });
@@ -133,6 +134,7 @@ function uploadResponseBody(upload) {
     videoWidth: upload.videoWidth,
     videoHeight: upload.videoHeight,
     resolution: upload.resolution,
+    durationSeconds: upload.durationSeconds,
   };
 }
 
@@ -176,58 +178,20 @@ function fileVersionResponseBody(version) {
 }
 
 /**
- * Express handler for raw video upload.
- * POST /api/v1/videos/upload — multipart form field `file` (single).
- * Auth: none (userId stored as null until session/API-key auth is wired to uploads).
- *
- * Persists the already-stored file's metadata to ORIGINAL_UPLOADS, creates pending
- * FILE_VERSIONS for each transcode profile, then batch-enqueues processing jobs.
+ * Creates pending FILE_VERSIONS for each transcode profile and batch-enqueues
+ * processing jobs against an already-persisted ORIGINAL_UPLOADS row. Shared
+ * by both `uploadVideo` (multipart) and `importVideo` (URL download) once
+ * each has stored its source file under `original/` and created `upload`.
  *
  * @private
- * @param {import('express').Request} req Request whose `file` was populated by multer.
- * @param {import('express').Response} res Express response.
- * @returns {Promise<void>} Sends 201 upload JSON, or an error status on failure.
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} storedFilename Basename of the source file under `original/`.
+ * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
  */
-async function uploadVideo(req, res) {
-  const file = req.file;
-  if (!file) {
-    res.status(400).json({
-      error: "missing_file",
-      message: 'A multipart "file" field is required.',
-    });
-    return;
-  }
-
-  const uuidName = file.generatedUuid;
-  const fileExtension = normalizedExtension(file.originalname);
-  // Relative storage path uses forward slashes for cross-platform DB consistency.
-  const storagePath = `original/${file.filename}`;
-
-  let upload;
-  try {
-    upload = await OriginalUpload.create({
-      originalFilename: file.originalname,
-      uuidName,
-      fileExtension,
-      mimeType: file.mimetype || null,
-      fileSizeBytes: file.size ?? null,
-      storagePath,
-      userId: null,
-    });
-  } catch (err) {
-    // Roll back the stored file so we don't leave orphaned media behind.
-    await unlink(join(originalDir, file.filename)).catch(() => {});
-    res.status(500).json({
-      error: "upload_persist_failed",
-      message: "The file was received but could not be recorded.",
-    });
-    return;
-  }
-
+async function finalizeUploadTranscodes(upload, storedFilename) {
   const profiles = await TranscodeProfile.findAll();
   if (profiles.length === 0) {
-    res.status(201).json(uploadResponseBody(upload));
-    return;
+    return { status: 201, body: uploadResponseBody(upload) };
   }
 
   /** @type {import('sequelize').Model[]} */
@@ -257,20 +221,22 @@ async function uploadVideo(req, res) {
   } catch (err) {
     console.error("[upload] failed to create FILE_VERSIONS:", err);
     await markUploadFileVersionsFailed(upload.id);
-    res.status(201).json({
-      ...uploadResponseBody(upload),
-      fileVersions: [],
-      failures: [
-        {
-          profileId: null,
-          message:
-            err instanceof Error
-              ? err.message
-              : "failed to create file version rows",
-        },
-      ],
-    });
-    return;
+    return {
+      status: 201,
+      body: {
+        ...uploadResponseBody(upload),
+        fileVersions: [],
+        failures: [
+          {
+            profileId: null,
+            message:
+              err instanceof Error
+                ? err.message
+                : "failed to create file version rows",
+          },
+        ],
+      },
+    };
   }
 
   const jobs = versions.map((version, index) => ({
@@ -280,7 +246,7 @@ async function uploadVideo(req, res) {
   }));
 
   const enqueue = await requestTranscodeBatch({
-    filename: file.filename,
+    filename: storedFilename,
     jobs,
   });
 
@@ -291,17 +257,19 @@ async function uploadVideo(req, res) {
     for (const version of versions) {
       await version.reload();
     }
-    res.status(201).json({
-      ...uploadResponseBody(upload),
-      fileVersions: versions.map((v) => fileVersionResponseBody(v)),
-      failures: [
-        {
-          profileId: null,
-          message: enqueue.error || "transcode enqueue failed",
-        },
-      ],
-    });
-    return;
+    return {
+      status: 201,
+      body: {
+        ...uploadResponseBody(upload),
+        fileVersions: versions.map((v) => fileVersionResponseBody(v)),
+        failures: [
+          {
+            profileId: null,
+            message: enqueue.error || "transcode enqueue failed",
+          },
+        ],
+      },
+    };
   }
 
   const body = enqueue.body && typeof enqueue.body === "object" ? enqueue.body : {};
@@ -310,17 +278,22 @@ async function uploadVideo(req, res) {
   if (
     source &&
     (typeof source.videoWidth === "number" ||
-      typeof source.videoHeight === "number")
+      typeof source.videoHeight === "number" ||
+      typeof source.durationSeconds === "number")
   ) {
     const sourceWidth =
       typeof source.videoWidth === "number" ? source.videoWidth : null;
     const sourceHeight =
       typeof source.videoHeight === "number" ? source.videoHeight : null;
-    await upload.update({
+    const updates = {
       videoWidth: sourceWidth,
       videoHeight: sourceHeight,
       resolution: heightToResolution(sourceHeight ?? 0),
-    });
+    };
+    if (typeof source.durationSeconds === "number") {
+      updates.durationSeconds = source.durationSeconds;
+    }
+    await upload.update(updates);
   }
 
   /** @type {Set<string>} */
@@ -371,11 +344,206 @@ async function uploadVideo(req, res) {
     await version.reload();
   }
 
-  res.status(201).json({
-    ...uploadResponseBody(upload),
-    fileVersions: activeVersions.map((v) => fileVersionResponseBody(v)),
-    ...(skippedProfiles.length > 0 ? { skippedProfiles } : {}),
-  });
+  return {
+    status: 201,
+    body: {
+      ...uploadResponseBody(upload),
+      fileVersions: activeVersions.map((v) => fileVersionResponseBody(v)),
+      ...(skippedProfiles.length > 0 ? { skippedProfiles } : {}),
+    },
+  };
+}
+
+/**
+ * Express handler for raw video upload.
+ * POST /api/v1/videos/upload — multipart form field `file` (single).
+ * Auth: none (userId stored as null until session/API-key auth is wired to uploads).
+ *
+ * Persists the already-stored file's metadata to ORIGINAL_UPLOADS, then delegates
+ * to {@link finalizeUploadTranscodes} for FILE_VERSIONS + processing enqueue.
+ *
+ * @private
+ * @param {import('express').Request} req Request whose `file` was populated by multer.
+ * @param {import('express').Response} res Express response.
+ * @returns {Promise<void>} Sends 201 upload JSON, or an error status on failure.
+ */
+async function uploadVideo(req, res) {
+  const file = req.file;
+  if (!file) {
+    res.status(400).json({
+      error: "missing_file",
+      message: 'A multipart "file" field is required.',
+    });
+    return;
+  }
+
+  const uuidName = file.generatedUuid;
+  const fileExtension = normalizedExtension(file.originalname);
+  // Relative storage path uses forward slashes for cross-platform DB consistency.
+  const storagePath = `original/${file.filename}`;
+
+  let upload;
+  try {
+    upload = await OriginalUpload.create({
+      originalFilename: file.originalname,
+      uuidName,
+      fileExtension,
+      mimeType: file.mimetype || null,
+      fileSizeBytes: file.size ?? null,
+      storagePath,
+      userId: null,
+    });
+  } catch (err) {
+    // Roll back the stored file so we don't leave orphaned media behind.
+    await unlink(join(originalDir, file.filename)).catch(() => {});
+    res.status(500).json({
+      error: "upload_persist_failed",
+      message: "The file was received but could not be recorded.",
+    });
+    return;
+  }
+
+  const result = await finalizeUploadTranscodes(upload, file.filename);
+  res.status(result.status).json(result.body);
+}
+
+/**
+ * Validates that `url` is a non-empty absolute http(s) URL string.
+ *
+ * @private
+ * @param {unknown} url Value from the request body.
+ * @returns {string} Trimmed URL string.
+ * @throws {Error} When the URL is missing or malformed (message is user-facing).
+ */
+function validateImportUrl(url) {
+  if (typeof url !== "string" || !url.trim()) {
+    throw new Error("url is required and must be a string");
+  }
+
+  const trimmed = url.trim();
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("url must be a valid absolute URL");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("url must use http or https");
+  }
+
+  return trimmed;
+}
+
+/**
+ * Express handler for importing a video from a remote URL.
+ * POST /api/v1/videos/import — JSON body `{ url }`.
+ * Auth: none (matches uploadVideo; userId stored as null until session/API-key
+ * auth is wired to uploads).
+ *
+ * Asks the processing service to download `url` via yt-dlp into the shared
+ * `original/` media directory, renames the result to a fresh UUID basename
+ * (matching the multipart upload convention), persists ORIGINAL_UPLOADS, then
+ * delegates to {@link finalizeUploadTranscodes} exactly like `uploadVideo`.
+ *
+ * @private
+ * @param {import('express').Request} req Request with JSON body `{ url }`.
+ * @param {import('express').Response} res Express response.
+ * @returns {Promise<void>} Sends 201 upload JSON, or an error status on failure.
+ */
+async function importVideo(req, res) {
+  let url;
+  try {
+    url = validateImportUrl(req.body?.url);
+  } catch (err) {
+    res.status(400).json({
+      error: "invalid_body",
+      message: err instanceof Error ? err.message : "url is invalid",
+    });
+    return;
+  }
+
+  const download = await requestDownload(url);
+  if (!download.ok) {
+    if (download.status === 400) {
+      res.status(400).json({
+        error: "invalid_body",
+        message: download.error || "The processing service rejected the URL.",
+      });
+      return;
+    }
+    if (download.status === 0) {
+      res.status(503).json({
+        error: "processing_unavailable",
+        message: download.error || "The processing service is unreachable.",
+      });
+      return;
+    }
+    res.status(502).json({
+      error: "import_download_failed",
+      message: download.error || "Failed to download the video from the provided URL.",
+    });
+    return;
+  }
+
+  const downloadedFilename = download.body?.filename;
+  if (typeof downloadedFilename !== "string" || !downloadedFilename) {
+    res.status(502).json({
+      error: "import_download_failed",
+      message: "The processing service did not return a downloaded filename.",
+    });
+    return;
+  }
+
+  const fileExtension = normalizedExtension(downloadedFilename);
+  const uuidName = randomUUID();
+  const storedFilename = fileExtension ? `${uuidName}.${fileExtension}` : uuidName;
+  // Relative storage path uses forward slashes for cross-platform DB consistency.
+  const storagePath = `original/${storedFilename}`;
+
+  try {
+    await rename(
+      join(originalDir, downloadedFilename),
+      join(originalDir, storedFilename),
+    );
+  } catch (err) {
+    res.status(500).json({
+      error: "import_persist_failed",
+      message: "The video was downloaded but could not be stored.",
+    });
+    return;
+  }
+
+  let fileSizeBytes = null;
+  try {
+    fileSizeBytes = statSync(join(originalDir, storedFilename)).size;
+  } catch {
+    // Leave fileSizeBytes null if the stat somehow fails right after rename.
+  }
+
+  let upload;
+  try {
+    upload = await OriginalUpload.create({
+      originalFilename: downloadedFilename,
+      uuidName,
+      fileExtension,
+      mimeType: mimeTypeForContainer(fileExtension),
+      fileSizeBytes,
+      storagePath,
+      userId: null,
+    });
+  } catch (err) {
+    // Roll back the stored file so we don't leave orphaned media behind.
+    await unlink(join(originalDir, storedFilename)).catch(() => {});
+    res.status(500).json({
+      error: "upload_persist_failed",
+      message: "The video was downloaded but could not be recorded.",
+    });
+    return;
+  }
+
+  const result = await finalizeUploadTranscodes(upload, storedFilename);
+  res.status(result.status).json(result.body);
 }
 
 /**
@@ -445,5 +613,39 @@ export function createUploadRouter() {
    */
   router.post("/videos/upload", upload.single("file"), uploadVideo);
   router.use(uploadErrorHandler);
+
+  /**
+   * POST /api/v1/videos/import — JSON `{ url }`. Auth: none.
+   * Handler: {@link importVideo}.
+   *
+   * @openapi
+   * /api/v1/videos/import:
+   *   post:
+   *     tags: [Uploads]
+   *     summary: Import a video from a remote URL
+   *     operationId: importVideo
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [url]
+   *             properties:
+   *               url:
+   *                 type: string
+   *                 format: uri
+   *     responses:
+   *       201:
+   *         description: Video downloaded and recorded
+   *       400:
+   *         description: Missing or invalid url
+   *       502:
+   *         description: Processing service failed to download the URL
+   *       503:
+   *         description: Processing service unreachable
+   */
+  router.post("/videos/import", importVideo);
+
   return router;
 }

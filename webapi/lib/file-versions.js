@@ -1,4 +1,5 @@
 import { FileVersion, OriginalUpload, TranscodeProfile } from "./models/index.js";
+import { syncVideoIndex } from "./search.js";
 
 /**
  * Terminal FILE_VERSIONS status values (no further work expected).
@@ -130,6 +131,7 @@ export async function rollupOriginalUploadStatus(originalUploadId) {
 
   if (upload.status !== nextStatus) {
     await upload.update({ status: nextStatus });
+    await syncVideoIndex(originalUploadId);
   }
 }
 

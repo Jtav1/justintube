@@ -273,7 +273,11 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
         reason: "profile_exceeds_source_resolution",
       },
     ]);
-    expect(res.body.source).toEqual({ videoWidth: 1280, videoHeight: 720 });
+    expect(res.body.source).toEqual({
+      videoWidth: 1280,
+      videoHeight: 720,
+      durationSeconds: null,
+    });
     expect(queue.addBulk).toHaveBeenCalledTimes(1);
     expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
   });

@@ -133,6 +133,35 @@ export function shouldSkipProfileForSource(profile, source) {
 }
 
 /**
+ * Probes a media file with ffprobe and returns its duration in whole seconds.
+ *
+ * @param {string} filePath Absolute path to the media file.
+ * @returns {Promise<number|null>} Duration rounded to the nearest second, or
+ *   null when ffprobe didn't report a usable duration.
+ * @throws {Error} When ffprobe exits non-zero or cannot be spawned.
+ */
+export async function probeVideoDuration(filePath) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "format=duration", "-of", "json", filePath],
+    { maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+
+  const seconds = Number(parsed?.format?.duration);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  return Math.round(seconds);
+}
+
+/**
  * Collects on-disk size and probed dimensions for a completed transcode output.
  *
  * @param {object} options Probe inputs.

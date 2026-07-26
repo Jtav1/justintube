@@ -183,7 +183,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
             profileId: job.profile.id,
           })),
           skipped,
-          source: { videoWidth: 1280, videoHeight: 720 },
+          source: { videoWidth: 1280, videoHeight: 720, durationSeconds: 42 },
         }),
       };
     });
@@ -206,6 +206,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     ]);
     expect(res.body.videoWidth).toBe(1280);
     expect(res.body.videoHeight).toBe(720);
+    expect(res.body.durationSeconds).toBe(42);
 
     const versionRows = await queryRows(
       "SELECT * FROM FILE_VERSIONS WHERE original_upload_id = :id",

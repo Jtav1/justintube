@@ -43,27 +43,28 @@ Future/wont do now
 
 ### Search & discovery
 
-- [ ] `GET /api/v1/search/suggest` — searchSuggest
-- [ ] `GET /api/v1/search` — searchVideos
-- [ ] `GET /api/v1/videos` — listVideos
-- [ ] `GET /api/v1/videos/featured` — listFeaturedVideos
-- [ ] `GET /api/v1/videos/newest` — listNewestVideos
-- [ ] `POST /api/v1/videos/import` — importVideo
-- [ ] `GET /api/v1/videos/:id` — getVideo
-- [ ] `PATCH /api/v1/videos/:id` — updateVideo
-- [ ] `DELETE /api/v1/videos/:id` — deleteVideo
-- [ ] `GET /api/v1/videos/:id/stream` — getVideoStream
-- [ ] `POST /api/v1/videos/:id/delist` — delistVideo
-- [ ] `GET /api/v1/videos/:id/access` — listVideoAccess
-- [ ] `PUT /api/v1/videos/:id/access` — setVideoAccess
-- [ ] `POST /api/v1/videos/:id/view` — recordVideoView
-- [ ] `POST /api/v1/videos/:id/like` — likeVideo
-- [ ] `POST /api/v1/videos/:id/dislike` — dislikeVideo
+- [x] `GET /api/v1/search/suggest` — searchSuggest
+- [x] `GET /api/v1/search` — searchVideos
+- [x] `GET /api/v1/videos` — listVideos
+- [x] `GET /api/v1/videos/featured` — listFeaturedVideos
+- [x] `GET /api/v1/videos/newest` — listNewestVideos
+- [x] `POST /api/v1/videos/import` — importVideo
+- [x] `GET /api/v1/videos/:id` — getVideo
+- [x] `PATCH /api/v1/videos/:id` — updateVideo
+- [x] `DELETE /api/v1/videos/:id` — deleteVideo
+- [x] `GET /api/v1/videos/:id/stream` — getVideoStream
+- [x] `GET /api/v1/videos/:id/thumbnail` — getVideoThumbnail
+- [x] `POST /api/v1/videos/:id/delist` — delistVideo
+- [x] `GET /api/v1/videos/:id/access` — listVideoAccess
+- [x] `PUT /api/v1/videos/:id/access` — setVideoAccess
+- [x] `POST /api/v1/videos/:id/view` — recordVideoView
+- [x] `POST /api/v1/videos/:id/like` — likeVideo
+- [x] `POST /api/v1/videos/:id/dislike` — dislikeVideo
 - [ ] `GET /api/v1/videos/:id/reaction` — getVideoReaction
 - [ ] `DELETE /api/v1/videos/:id/reaction` — clearVideoReaction
-- [ ] `GET /api/v1/tags` — listTags
-- [ ] `GET /api/v1/tags/:tag/videos` — listTagVideos
-- [ ] `GET /api/v1/feed/subscriptions` — feedSubscriptions
+- [x] `GET /api/v1/tags` — listTags
+- [x] `GET /api/v1/tags/:tag/videos` — listTagVideos
+- [x] `GET /api/v1/feed/subscriptions` — feedSubscriptions
 
 ### Uploads
 

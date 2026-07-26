@@ -13,6 +13,7 @@ import {
   seedUpload,
   seedUser,
   seedUserIdentity,
+  seedVideoAccess,
   seedVideoLike,
   seedVideoThumbnail,
   setupSchema,
@@ -41,7 +42,7 @@ describe("Video-upload schema (SQLite)", () => {
             'SSO_PROVIDERS','USER_IDENTITIES',
             'ORIGINAL_UPLOADS','VIDEO_METADATA','VIDEO_THUMBNAIL',
             'TRANSCODE_PROFILES','FILE_VERSIONS',
-            'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES',
+            'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES','VIDEO_ACCESS',
             'CONTENT_TAGS','FEATURED_VIDEOS','SYSTEM_CONFIG'
           )`,
       );
@@ -61,6 +62,7 @@ describe("Video-upload schema (SQLite)", () => {
       expect(byName.USER_PLAYLISTS).toBe("table");
       expect(byName.PLAYLIST_ITEMS).toBe("table");
       expect(byName.VIDEO_LIKES).toBe("table");
+      expect(byName.VIDEO_ACCESS).toBe("table");
       expect(byName.CONTENT_TAGS).toBe("table");
       expect(byName.FEATURED_VIDEOS).toBe("table");
       expect(byName.SYSTEM_CONFIG).toBe("table");
@@ -263,6 +265,13 @@ describe("Video-upload schema (SQLite)", () => {
       await expect(seedFeaturedVideo(upload.id)).rejects.toThrow();
     });
 
+    test("VIDEO_ACCESS is unique per (upload, user)", async () => {
+      const upload = await seedUpload();
+      const user = await seedUser();
+      await seedVideoAccess(upload.id, user.id);
+      await expect(seedVideoAccess(upload.id, user.id)).rejects.toThrow();
+    });
+
     test("VIDEO_THUMBNAIL allows only one row per upload", async () => {
       const upload = await seedUpload();
       await seedVideoThumbnail(upload.id);
@@ -306,10 +315,11 @@ describe("Video-upload schema (SQLite)", () => {
       ).toHaveLength(0);
     });
 
-    test("deleting an upload cascades to likes, tags and featured entries", async () => {
+    test("deleting an upload cascades to likes, tags, featured entries and access", async () => {
       const upload = await seedUpload();
       const user = await seedUser();
       await seedVideoLike(upload.id, { userId: user.id });
+      await seedVideoAccess(upload.id, user.id);
       await seedContentTag(upload.id, { tag: "cascade" });
       await seedFeaturedVideo(upload.id);
       await seedVideoThumbnail(upload.id);
@@ -321,6 +331,12 @@ describe("Video-upload schema (SQLite)", () => {
       expect(
         await queryRows(
           "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id",
+          { id: upload.id },
+        ),
+      ).toHaveLength(0);
+      expect(
+        await queryRows(
+          "SELECT * FROM VIDEO_ACCESS WHERE original_upload_id = :id",
           { id: upload.id },
         ),
       ).toHaveLength(0);

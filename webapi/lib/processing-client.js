@@ -57,6 +57,16 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 
 /**
+ * Result of a `POST /download` call to the processing service.
+ *
+ * @typedef {object} DownloadRequestResult
+ * @property {boolean} ok Whether the response status was in the 2xx range.
+ * @property {number} status HTTP status code (0 when the request failed before a response).
+ * @property {object|null} body Parsed JSON body (`{ success, filename }` on success).
+ * @property {string|null} error Human-readable error message when `ok` is false.
+ */
+
+/**
  * Posts JSON to the processing service and returns a normalized outcome.
  *
  * @param {string} path Absolute path beginning with `/`.
@@ -131,6 +141,20 @@ export async function requestTranscodeBatch({ filename, jobs }) {
   return processingFetch("/transcode", {
     method: "POST",
     body: { filename, jobs },
+  });
+}
+
+/**
+ * Asks the processing service to download a remote video via yt-dlp into the
+ * shared `original/` media directory.
+ *
+ * @param {string} url Absolute http(s) URL to download.
+ * @returns {Promise<DownloadRequestResult>} Outcome of the processing call.
+ */
+export async function requestDownload(url) {
+  return processingFetch("/download", {
+    method: "POST",
+    body: { url },
   });
 }
 
