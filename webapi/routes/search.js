@@ -168,6 +168,8 @@ function serializeHit(hit) {
     username: hit.username ?? null,
     displayName: hit.displayName ?? null,
     tags: Array.isArray(hit.tags) ? hit.tags : [],
+    durationSeconds: hit.durationSeconds ?? null,
+    thumbnailUrl: hit.thumbnailUrl ?? null,
     createdAt: hit.createdAt,
     updatedAt: hit.updatedAt,
   };

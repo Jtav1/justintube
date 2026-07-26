@@ -55,7 +55,6 @@ export function registerStubRoutes(router) {
   r("delete", "/auth/sso/link/:provider", "authSsoUnlink");
 
   // Search & discovery (unimplemented remainders)
-  r("get", "/videos/:id/stream", "getVideoStream");
   r("get", "/videos/:id/reaction", "getVideoReaction");
   r("delete", "/videos/:id/reaction", "clearVideoReaction");
 

@@ -30,6 +30,8 @@ const STORE_FIELDS = [
   "visibility",
   "commentsEnabled",
   "viewCount",
+  "durationSeconds",
+  "thumbnailUrl",
   "createdAt",
   "updatedAt",
 ];

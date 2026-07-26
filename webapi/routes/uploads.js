@@ -134,6 +134,7 @@ function uploadResponseBody(upload) {
     videoWidth: upload.videoWidth,
     videoHeight: upload.videoHeight,
     resolution: upload.resolution,
+    durationSeconds: upload.durationSeconds,
   };
 }
 
@@ -277,17 +278,22 @@ async function finalizeUploadTranscodes(upload, storedFilename) {
   if (
     source &&
     (typeof source.videoWidth === "number" ||
-      typeof source.videoHeight === "number")
+      typeof source.videoHeight === "number" ||
+      typeof source.durationSeconds === "number")
   ) {
     const sourceWidth =
       typeof source.videoWidth === "number" ? source.videoWidth : null;
     const sourceHeight =
       typeof source.videoHeight === "number" ? source.videoHeight : null;
-    await upload.update({
+    const updates = {
       videoWidth: sourceWidth,
       videoHeight: sourceHeight,
       resolution: heightToResolution(sourceHeight ?? 0),
-    });
+    };
+    if (typeof source.durationSeconds === "number") {
+      updates.durationSeconds = source.durationSeconds;
+    }
+    await upload.update(updates);
   }
 
   /** @type {Set<string>} */

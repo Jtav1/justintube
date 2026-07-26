@@ -12,6 +12,7 @@ import {
 } from "../lib/queue.js";
 import {
   probeVideoDimensions,
+  probeVideoDuration,
   shouldSkipProfileForSource,
 } from "../lib/probe.js";
 import { validateTranscodeBatchRequest } from "../lib/transcode.js";
@@ -61,6 +62,19 @@ export function createTranscodeRouter({ queue, probeInput = probeVideoDimensions
         );
       }
 
+      // Duration is a source-level fact (not per-rendition), probed separately
+      // from `probeInput` since that hook's contract (and its test override)
+      // is scoped to the resolution-skip decision above.
+      let durationSeconds = null;
+      try {
+        durationSeconds = await probeVideoDuration(inputPath);
+      } catch (err) {
+        console.error(
+          "ffprobe failed to read duration for transcode input:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+
       /** @type {typeof jobs} */
       const accepted = [];
       /** @type {Array<{ jobId: string, profileId: number, reason: string }>} */
@@ -95,6 +109,7 @@ export function createTranscodeRouter({ queue, probeInput = probeVideoDimensions
         source: {
           videoWidth: source.videoWidth,
           videoHeight: source.videoHeight,
+          durationSeconds,
         },
       };
 

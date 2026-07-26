@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   afterEach,
   beforeAll,
@@ -5,6 +7,7 @@ import {
   expect,
   test,
 } from "@jest/globals";
+import { mediaDir } from "../../lib/media-meta.js";
 import { Role } from "../../lib/models/index.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
@@ -12,14 +15,31 @@ import {
   resetTables,
   seedContentTag,
   seedFeaturedVideo,
+  seedFileVersion,
   seedMetadata,
   seedSubscription,
   seedUpload,
   seedUser,
   seedUserApiKey,
   seedVideoAccess,
+  seedVideoThumbnail,
   setupSchema,
 } from "../helpers/db.js";
+
+/**
+ * Writes a fixture file under the test media root at a given relative storage
+ * path (e.g. "transcoded/foo.mp4"), creating parent directories as needed.
+ *
+ * @param {string} relativeStoragePath Path relative to `mediaDir`.
+ * @param {Buffer} contents File contents to write.
+ * @returns {string} The absolute path the file was written to.
+ */
+function writeMediaFixture(relativeStoragePath, contents) {
+  const absolutePath = join(mediaDir, relativeStoragePath);
+  mkdirSync(join(absolutePath, ".."), { recursive: true });
+  writeFileSync(absolutePath, contents);
+  return absolutePath;
+}
 
 /**
  * Seeds a user with the given role name and an API key for Bearer auth.
@@ -116,6 +136,223 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.title).toBe("Shared private");
+    });
+
+    test("includes durationSeconds, thumbnailUrl, and complete renditions", async () => {
+      const upload = await seedUpload({ durationSeconds: 125 });
+      await seedMetadata(upload.id, { title: "Enriched", visibility: "public" });
+      await seedVideoThumbnail(upload.id);
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoWidth: 854,
+        videoHeight: 480,
+      });
+      await seedFileVersion(upload.id, {
+        status: "pending",
+        resolution: "1080p",
+        videoWidth: 1920,
+        videoHeight: 1080,
+      });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.durationSeconds).toBe(125);
+      expect(res.body.thumbnailUrl).toBe(`/api/v1/videos/${upload.id}/thumbnail`);
+      expect(res.body.renditions).toEqual([
+        { resolution: "480p", width: 854, height: 480 },
+      ]);
+    });
+  });
+
+  describe("GET /videos/{id}/stream (getVideoStream)", () => {
+    test("streams the highest-resolution complete rendition with 200 when no Range header is sent", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const smallContents = Buffer.from("x".repeat(100));
+      const largeContents = Buffer.from("y".repeat(200));
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoHeight: 480,
+        mimeType: "video/mp4",
+        storagePath: `transcoded/${upload.uuidName}-480p.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.uuidName}-480p.mp4`, smallContents);
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "720p",
+        videoHeight: 720,
+        mimeType: "video/mp4",
+        storagePath: `transcoded/${upload.uuidName}-720p.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.uuidName}-720p.mp4`, largeContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/stream`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("video/mp4");
+      expect(res.headers["accept-ranges"]).toBe("bytes");
+      expect(Number(res.headers["content-length"])).toBe(largeContents.length);
+      expect(Buffer.compare(res.body, largeContents)).toBe(0);
+    });
+
+    test("honors a Range header with 206 partial content", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const contents = Buffer.from("0123456789");
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoHeight: 480,
+        mimeType: "video/mp4",
+        storagePath: `transcoded/${upload.uuidName}.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.uuidName}.mp4`, contents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/stream`)
+        .set("Range", "bytes=2-4")
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-range"]).toBe("bytes 2-4/10");
+      expect(res.body.toString()).toBe("234");
+    });
+
+    test("selects a rendition by ?quality=", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const small = Buffer.from("small-480p");
+      const large = Buffer.from("large-720p");
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoHeight: 480,
+        mimeType: "video/mp4",
+        storagePath: `transcoded/${upload.uuidName}-480p.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.uuidName}-480p.mp4`, small);
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "720p",
+        videoHeight: 720,
+        mimeType: "video/mp4",
+        storagePath: `transcoded/${upload.uuidName}-720p.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.uuidName}-720p.mp4`, large);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/stream?quality=480p`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(Buffer.compare(res.body, small)).toBe(0);
+    });
+
+    test("returns 404 for an unknown quality label", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoHeight: 480,
+        storagePath: `transcoded/${upload.uuidName}.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.uuidName}.mp4`, Buffer.from("data"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/stream?quality=1080p`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 when no complete renditions exist", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedFileVersion(upload.id, { status: "pending" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/stream`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "stream-owner-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        storagePath: `transcoded/${upload.uuidName}.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.uuidName}.mp4`, Buffer.from("data"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/stream`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /videos/{id}/thumbnail (getVideoThumbnail)", () => {
+    test("serves the thumbnail image for a public video", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const thumbnail = await seedVideoThumbnail(upload.id, {
+        thumbnailFilename: `${upload.uuidName}.jpg`,
+      });
+      const contents = Buffer.from("fake-jpeg-bytes");
+      writeMediaFixture(`thumbnails/${thumbnail.thumbnailFilename}`, contents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/thumbnail`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("image/jpeg");
+      expect(Buffer.compare(res.body, contents)).toBe(0);
+    });
+
+    test("returns 404 when no thumbnail has been generated", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "thumb-owner-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      const thumbnail = await seedVideoThumbnail(upload.id);
+      writeMediaFixture(`thumbnails/${thumbnail.thumbnailFilename}`, Buffer.from("x"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
+
+      expect(res.status).toBe(404);
     });
   });
 

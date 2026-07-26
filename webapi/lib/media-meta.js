@@ -1,3 +1,52 @@
+import { isAbsolute, join, resolve } from "node:path";
+
+const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
+
+/**
+ * Absolute path to the media root. Relative env values are resolved against
+ * the process working directory. Mirrors the same computation in
+ * `routes/uploads.js` and `processing/lib/media-paths.js`.
+ *
+ * @type {string}
+ */
+export const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
+  ? MEDIA_STORAGE_DIRECTORY
+  : resolve(process.cwd(), MEDIA_STORAGE_DIRECTORY);
+
+/**
+ * Resolves a relative storage path (as stored on ORIGINAL_UPLOADS,
+ * FILE_VERSIONS, etc., e.g. `"transcoded/<uuid>.mp4"`) to an absolute path
+ * under the media root.
+ *
+ * @param {string} relativeStoragePath Path relative to `mediaDir`.
+ * @returns {string} Absolute filesystem path.
+ */
+export function resolveMediaPath(relativeStoragePath) {
+  return join(mediaDir, relativeStoragePath);
+}
+
+/**
+ * Infers an image MIME type from a thumbnail filename's extension.
+ *
+ * @param {string} filename Thumbnail filename (e.g. "abc123.jpg").
+ * @returns {string|null} MIME type, or null when unknown.
+ */
+export function mimeTypeForImage(filename) {
+  const ext = String(filename || "")
+    .trim()
+    .toLowerCase()
+    .split(".")
+    .pop();
+  /** @type {Record<string, string>} */
+  const map = {
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+  };
+  return map[ext] || null;
+}
+
 /**
  * Height → resolution ladder shared with processing probe semantics.
  *

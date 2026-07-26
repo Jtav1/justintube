@@ -52,7 +52,8 @@ Future/wont do now
 - [x] `GET /api/v1/videos/:id` — getVideo
 - [x] `PATCH /api/v1/videos/:id` — updateVideo
 - [x] `DELETE /api/v1/videos/:id` — deleteVideo
-- [ ] `GET /api/v1/videos/:id/stream` — getVideoStream
+- [x] `GET /api/v1/videos/:id/stream` — getVideoStream
+- [x] `GET /api/v1/videos/:id/thumbnail` — getVideoThumbnail
 - [x] `POST /api/v1/videos/:id/delist` — delistVideo
 - [x] `GET /api/v1/videos/:id/access` — listVideoAccess
 - [x] `PUT /api/v1/videos/:id/access` — setVideoAccess

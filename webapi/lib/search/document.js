@@ -1,4 +1,10 @@
-import { ContentTag, OriginalUpload, User, VideoMetadata } from "../models/index.js";
+import {
+  ContentTag,
+  OriginalUpload,
+  User,
+  VideoMetadata,
+  VideoThumbnail,
+} from "../models/index.js";
 
 /**
  * Loads the searchable document for an upload, or null when it isn't eligible
@@ -14,6 +20,7 @@ export async function loadEligibleDocument(originalUploadId) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: false },
       { model: User, required: false },
+      { model: VideoThumbnail, required: false },
     ],
   });
   if (!upload || !upload.VideoMetadata) {
@@ -39,6 +46,10 @@ export async function loadEligibleDocument(originalUploadId) {
     visibility: upload.VideoMetadata.visibility,
     commentsEnabled: Boolean(upload.VideoMetadata.commentsEnabled),
     viewCount: Number(upload.VideoMetadata.viewCount ?? 0),
+    durationSeconds: upload.durationSeconds ?? null,
+    thumbnailUrl: upload.VideoThumbnail
+      ? `/api/v1/videos/${upload.id}/thumbnail`
+      : null,
     createdAt: upload.VideoMetadata.createdAt,
     updatedAt: upload.VideoMetadata.updatedAt,
   };

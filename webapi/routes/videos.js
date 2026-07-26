@@ -1,25 +1,39 @@
+import { join } from "node:path";
 import { Router } from "express";
 import { Op, literal } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
+import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
   ContentTag,
   FeaturedVideo,
+  FileVersion,
   OriginalUpload,
   Subscription,
   User,
   VideoAccess,
   VideoLike,
   VideoMetadata,
+  VideoThumbnail,
   sequelize,
 } from "../lib/models/index.js";
 import {
   canViewVideo,
   isOwnerOrAdmin,
 } from "../lib/video-access.js";
+import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
+
+/**
+ * Relative media subfolder where thumbnail images are expected to live
+ * (mirrors the `original/` and `transcoded/` convention). Thumbnail
+ * *generation* doesn't exist yet — this is only the serving-side assumption.
+ *
+ * @type {string}
+ */
+const THUMBNAILS_SUBDIR = "thumbnails";
 
 /**
  * Maximum length for video title.
@@ -59,8 +73,13 @@ function parsePositiveInt(raw) {
 /**
  * Serializes an upload + metadata pair for video API responses.
  *
- * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance.
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance
+ *   (expects `VideoThumbnail` preloaded when available; falls back to null).
  * @param {import('sequelize').Model} metadata VIDEO_METADATA instance.
+ * @param {object} [options] Extra fields to attach.
+ * @param {Array<{resolution: string|null, width: number|null, height: number|null}>} [options.renditions]
+ *   Available complete renditions (full `getVideo` only — omitted elsewhere to
+ *   keep list/search responses lightweight).
  * @returns {{
  *   id: number,
  *   title: string,
@@ -69,12 +88,14 @@ function parsePositiveInt(raw) {
  *   commentsEnabled: boolean,
  *   viewCount: number,
  *   userId: number|null,
+ *   durationSeconds: number|null,
+ *   thumbnailUrl: string|null,
  *   createdAt: Date,
  *   updatedAt: Date
  * }} Public video payload.
  */
-function serializeVideo(upload, metadata) {
-  return {
+function serializeVideo(upload, metadata, options = {}) {
+  const payload = {
     id: upload.id,
     title: metadata.title,
     description: metadata.description ?? null,
@@ -82,13 +103,21 @@ function serializeVideo(upload, metadata) {
     commentsEnabled: Boolean(metadata.commentsEnabled),
     viewCount: Number(metadata.viewCount ?? 0),
     userId: upload.userId ?? null,
+    durationSeconds: upload.durationSeconds ?? null,
+    thumbnailUrl: upload.VideoThumbnail
+      ? `/api/v1/videos/${upload.id}/thumbnail`
+      : null,
     createdAt: metadata.createdAt,
     updatedAt: metadata.updatedAt,
   };
+  if (options.renditions) {
+    payload.renditions = options.renditions;
+  }
+  return payload;
 }
 
 /**
- * Loads an upload with its metadata by primary key.
+ * Loads an upload with its metadata (and thumbnail, when present) by primary key.
  *
  * @param {number} id ORIGINAL_UPLOADS id.
  * @returns {Promise<{upload: import('sequelize').Model, metadata: import('sequelize').Model}|null>}
@@ -96,7 +125,10 @@ function serializeVideo(upload, metadata) {
  */
 async function loadUploadWithMetadata(id) {
   const upload = await OriginalUpload.findByPk(id, {
-    include: [{ model: VideoMetadata, as: "VideoMetadata", required: true }],
+    include: [
+      { model: VideoMetadata, as: "VideoMetadata", required: true },
+      { model: VideoThumbnail, required: false },
+    ],
   });
   if (!upload || !upload.VideoMetadata) {
     return null;
@@ -153,6 +185,7 @@ async function listPublicVideos(options = {}) {
         required: true,
         where: { visibility: "public" },
       },
+      { model: VideoThumbnail, required: false },
       ...(options.includes || []),
     ],
     order: options.order || [["id", "ASC"]],
@@ -519,13 +552,191 @@ export function createVideosRouter() {
         return;
       }
 
-      res.status(200).json(serializeVideo(upload, metadata));
+      const completeVersions = await FileVersion.findAll({
+        where: { originalUploadId: upload.id, status: "complete" },
+        order: [["videoHeight", "ASC"]],
+      });
+
+      res.status(200).json(
+        serializeVideo(upload, metadata, {
+          renditions: completeVersions.map((version) => ({
+            resolution: version.resolution,
+            width: version.videoWidth,
+            height: version.videoHeight,
+          })),
+        }),
+      );
     } catch (err) {
       console.error("getVideo failed:", err);
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load video.",
       });
+    }
+  });
+
+  /**
+   * GET /videos/:id/stream — getVideoStream
+   * Auth: optional. Private requires owner, grant, or admin. Streams a
+   * transcoded rendition with HTTP Range support (progressive MP4 playback;
+   * no HLS/DASH manifests).
+   *
+   * @openapi
+   * /api/v1/videos/{id}/stream:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Stream a video rendition (supports HTTP Range requests)
+   *     operationId: getVideoStream
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: query
+   *         name: quality
+   *         required: false
+   *         schema:
+   *           type: string
+   *         description: >
+   *           Resolution label (e.g. "720p") matching a complete rendition.
+   *           Defaults to the highest-resolution complete rendition when omitted.
+   *     responses:
+   *       "200":
+   *         description: Full file (no Range header sent)
+   *       "206":
+   *         description: Partial content (Range header honored)
+   *       "404":
+   *         description: Not found, inaccessible, or no matching complete rendition
+   *       "416":
+   *         description: Requested Range is out of bounds
+   */
+  router.get("/videos/:id/stream", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const renditions = await FileVersion.findAll({
+        where: { originalUploadId: upload.id, status: "complete" },
+      });
+      if (renditions.length === 0) {
+        sendNotFound(res);
+        return;
+      }
+
+      const requestedQuality =
+        typeof req.query.quality === "string" ? req.query.quality.trim() : "";
+
+      let version;
+      if (requestedQuality) {
+        version = renditions.find((v) => v.resolution === requestedQuality);
+        if (!version) {
+          sendNotFound(res);
+          return;
+        }
+      } else {
+        version = renditions.reduce((best, current) =>
+          (current.videoHeight ?? 0) > (best.videoHeight ?? 0) ? current : best,
+        );
+      }
+
+      const absolutePath = resolveMediaPath(version.storagePath);
+      await streamFileWithRangeSupport(req, res, absolutePath, version.mimeType);
+    } catch (err) {
+      console.error("getVideoStream failed:", err);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to stream video.",
+        });
+      }
+    }
+  });
+
+  /**
+   * GET /videos/:id/thumbnail — getVideoThumbnail
+   * Auth: optional. Private requires owner, grant, or admin.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/thumbnail:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Get a video's thumbnail image
+   *     operationId: getVideoThumbnail
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Thumbnail image
+   *       "404":
+   *         description: Not found, inaccessible, or no thumbnail generated yet
+   */
+  router.get("/videos/:id/thumbnail", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const thumbnail = upload.VideoThumbnail;
+      if (!thumbnail) {
+        sendNotFound(res);
+        return;
+      }
+
+      const absolutePath = resolveMediaPath(
+        join(THUMBNAILS_SUBDIR, thumbnail.thumbnailFilename),
+      );
+      const contentType = mimeTypeForImage(thumbnail.thumbnailFilename);
+      await streamFileWithRangeSupport(req, res, absolutePath, contentType);
+    } catch (err) {
+      console.error("getVideoThumbnail failed:", err);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to load thumbnail.",
+        });
+      }
     }
   });
 
