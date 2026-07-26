@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createNotificationPreferencesRouter } from "./notification-preferences.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
@@ -70,8 +71,6 @@ export function registerStubRoutes(router) {
   r("get", "/me/subscriptions", "listMySubscriptions");
   r("get", "/me/subscribers", "listMySubscribers");
   r("get", "/me/playlists", "listMyPlaylists");
-  r("get", "/me/notification-preferences", "getNotificationPreferences");
-  r("patch", "/me/notification-preferences", "updateNotificationPreferences");
 
   // Users / channels / engagement
   r("get", "/users/:username", "getUserChannel");
@@ -119,6 +118,7 @@ export function createApiRouter() {
   router.use(createAuthRouter());
   router.use(createUploadRouter());
   router.use(createApiKeysRouter());
+  router.use(createNotificationPreferencesRouter());
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
   router.use(createTranscodeProfilesRouter());

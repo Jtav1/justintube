@@ -8,6 +8,7 @@ import {
   EmailVerificationToken,
   FileVersion,
   Notification,
+  NotificationType,
   OriginalUpload,
   PlaylistItem,
   Role,
@@ -32,9 +33,10 @@ import { ensureSchema } from "../../lib/schema.js";
 
 /**
  * Models that hold per-test data, ordered so that children are deleted before
- * their parents (satisfying foreign-key constraints during a reset). Role is
- * intentionally omitted so the reference roles seeded by `ensureSchema` survive
- * across resets and remain available for `seedUser`.
+ * their parents (satisfying foreign-key constraints during a reset). Role and
+ * NotificationType are intentionally omitted so the reference data seeded by
+ * `ensureSchema` survives across resets and remains available for `seedUser`
+ * and `seedNotification`/`seedUserNotificationSetting`.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>[]}
  */
@@ -491,20 +493,30 @@ export async function seedSubscription(subscriberId, subscribedToId) {
 
 /**
  * Inserts a NOTIFICATIONS row for a target user, applying defaults for any
- * omitted field.
+ * omitted field. `notificationTypeId` is required by the model, so when no
+ * override is passed this looks up the first active NOTIFICATION_TYPES row.
  *
  * @param {number} userId Id of the target USERS row.
  * @param {object} [overrides] Partial column values to override the defaults.
- * @param {string|null} [overrides.notificationType] Free-form type string (nullable).
+ * @param {number} [overrides.notificationTypeId] Id of a NOTIFICATION_TYPES row.
  * @param {string} [overrides.title] Notification title.
  * @param {string} [overrides.message] Notification message body.
  * @param {string|null} [overrides.readAt] Timestamp the notification was read (null when unread).
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded notification's id and values.
  */
 export async function seedNotification(userId, overrides = {}) {
+  const notificationTypeId =
+    overrides.notificationTypeId ??
+    (
+      await NotificationType.findOne({
+        where: { enabled: true },
+        order: [["id", "ASC"]],
+      })
+    )?.id;
+
   const record = {
     userId,
-    notificationType: null,
+    notificationTypeId,
     title: "Sample notification",
     message: "Sample notification message",
     readAt: null,
@@ -521,14 +533,14 @@ export async function seedNotification(userId, overrides = {}) {
  *
  * @param {number} userId Id of the USERS row the preference belongs to.
  * @param {object} [overrides] Partial column values to override the defaults.
- * @param {string|null} [overrides.notificationType] Free-form type string (nullable).
+ * @param {number|null} [overrides.notificationTypeId] Id of a NOTIFICATION_TYPES row (nullable).
  * @param {number|boolean} [overrides.enabled] Whether the notification type is enabled.
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded setting's id and values.
  */
 export async function seedUserNotificationSetting(userId, overrides = {}) {
   const record = {
     userId,
-    notificationType: null,
+    notificationTypeId: null,
     enabled: true,
     ...overrides,
   };

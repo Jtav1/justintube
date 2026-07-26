@@ -1,7 +1,7 @@
 import { QueryTypes } from "sequelize";
 import { DB_CLIENT, sequelize } from "./db.js";
-import { models } from "./models/index.js";
-import { seedReferenceData, seedAdminUser } from "./seed.js";
+import { models, NotificationType } from "./models/index.js";
+import { seedReferenceData, seedAdminUser, seedNotificationTypes } from "./seed.js";
 import { syncSessionStore } from "./auth/session.js";
 
 /**
@@ -282,6 +282,213 @@ async function repairInvalidSqliteTimestamps() {
 }
 
 /**
+ * Checks whether a table exists, on either SQLite or MySQL.
+ *
+ * @param {string} table Physical table name.
+ * @returns {Promise<boolean>} True when the table exists.
+ */
+async function tableExists(table) {
+  if (DB_CLIENT === "sqlite") {
+    const rows = await sequelize.query(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = :table",
+      { type: QueryTypes.SELECT, replacements: { table } },
+    );
+    return rows.length > 0;
+  }
+  const rows = await sequelize.query(
+    `SELECT 1 FROM information_schema.tables
+      WHERE table_schema = DATABASE() AND table_name = :table`,
+    { type: QueryTypes.SELECT, replacements: { table } },
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Checks whether a column exists on a table, on either SQLite or MySQL.
+ *
+ * @param {string} table Physical table name.
+ * @param {string} column Physical column name.
+ * @returns {Promise<boolean>} True when the column exists.
+ */
+async function columnExists(table, column) {
+  if (DB_CLIENT === "sqlite") {
+    const columns = await sequelize.query(`PRAGMA table_info(\`${table}\`)`, {
+      type: QueryTypes.SELECT,
+    });
+    return columns.some((col) => col.name === column);
+  }
+  const rows = await sequelize.query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = :table AND column_name = :column`,
+    { type: QueryTypes.SELECT, replacements: { table, column } },
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Checks whether an index exists (by name) on a table, on either SQLite or MySQL.
+ *
+ * @param {string} table Physical table name.
+ * @param {string} index Index name.
+ * @returns {Promise<boolean>} True when the index exists.
+ */
+async function indexExists(table, index) {
+  if (DB_CLIENT === "sqlite") {
+    const rows = await sequelize.query(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = :index",
+      { type: QueryTypes.SELECT, replacements: { index } },
+    );
+    return rows.length > 0;
+  }
+  const rows = await sequelize.query(
+    `SELECT 1 FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = :table AND index_name = :index`,
+    { type: QueryTypes.SELECT, replacements: { table, index } },
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Migrates `USER_NOTIFICATION_SETTINGS.notification_type` (a free-form string)
+ * into a `notification_type_id` foreign key referencing NOTIFICATION_TYPES:
+ * adds the new column, backfills it by matching the old string to
+ * NOTIFICATION_TYPES.name, swaps the unique index from the old column to the
+ * new one, then drops the old column. Every step is guarded by an existence
+ * check, so this is idempotent and safe to run on every boot regardless of
+ * migration state (fresh install, mid-migration, already migrated).
+ *
+ * @returns {Promise<void>} Resolves once the table matches the current model.
+ */
+async function migrateUserNotificationSettingsFk() {
+  const TABLE = "USER_NOTIFICATION_SETTINGS";
+  if (!(await tableExists(TABLE))) {
+    return;
+  }
+
+  if (!(await columnExists(TABLE, "notification_type_id"))) {
+    const ddl =
+      DB_CLIENT === "sqlite"
+        ? "`notification_type_id` INTEGER"
+        : "`notification_type_id` INT UNSIGNED NULL";
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
+    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.notification_type_id`);
+  }
+
+  const hasOldColumn = await columnExists(TABLE, "notification_type");
+  if (hasOldColumn) {
+    await sequelize.query(`
+      UPDATE \`${TABLE}\`
+         SET \`notification_type_id\` = (
+           SELECT \`id\` FROM \`NOTIFICATION_TYPES\`
+            WHERE \`NOTIFICATION_TYPES\`.\`name\` = \`${TABLE}\`.\`notification_type\`
+         )
+       WHERE \`notification_type_id\` IS NULL
+         AND \`notification_type\` IS NOT NULL
+    `);
+  }
+
+  if (await indexExists(TABLE, "uq_user_notification_settings_user_type")) {
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query(
+        "DROP INDEX `uq_user_notification_settings_user_type`",
+      );
+    } else {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` DROP INDEX \`uq_user_notification_settings_user_type\``,
+      );
+    }
+    console.log(`[api]: dropped index uq_user_notification_settings_user_type on ${TABLE}`);
+  }
+
+  if (!(await indexExists(TABLE, "uq_user_notification_settings_user_type_id"))) {
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query(
+        `CREATE UNIQUE INDEX \`uq_user_notification_settings_user_type_id\` ON \`${TABLE}\` (\`user_id\`, \`notification_type_id\`)`,
+      );
+    } else {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` ADD UNIQUE INDEX \`uq_user_notification_settings_user_type_id\` (\`user_id\`, \`notification_type_id\`)`,
+      );
+    }
+    console.log(`[api]: created index uq_user_notification_settings_user_type_id on ${TABLE}`);
+  }
+
+  if (hasOldColumn) {
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP COLUMN \`notification_type\``);
+    console.log(`[api]: dropped column ${TABLE}.notification_type`);
+  }
+}
+
+/**
+ * Migrates `NOTIFICATIONS.notification_type` (a string constrained via
+ * `constrainedString`) into a `notification_type_id` foreign key referencing
+ * NOTIFICATION_TYPES: adds the new column, backfills it, tightens it to
+ * `NOT NULL` on MySQL (SQLite has no `ALTER COLUMN`, so it stays physically
+ * nullable there and relies on the Sequelize model's `allowNull: false` for
+ * enforcement — the same tradeoff `constrainedString` already makes on
+ * SQLite), then drops the old column. Guarded/idempotent like its
+ * `USER_NOTIFICATION_SETTINGS` counterpart.
+ *
+ * @returns {Promise<void>} Resolves once the table matches the current model.
+ */
+async function migrateNotificationsFk() {
+  const TABLE = "NOTIFICATIONS";
+  if (!(await tableExists(TABLE))) {
+    return;
+  }
+
+  if (!(await columnExists(TABLE, "notification_type_id"))) {
+    const ddl =
+      DB_CLIENT === "sqlite"
+        ? "`notification_type_id` INTEGER"
+        : "`notification_type_id` INT UNSIGNED NULL";
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
+    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.notification_type_id`);
+  }
+
+  if (await columnExists(TABLE, "notification_type")) {
+    await sequelize.query(`
+      UPDATE \`${TABLE}\`
+         SET \`notification_type_id\` = (
+           SELECT \`id\` FROM \`NOTIFICATION_TYPES\`
+            WHERE \`NOTIFICATION_TYPES\`.\`name\` = \`${TABLE}\`.\`notification_type\`
+         )
+       WHERE \`notification_type_id\` IS NULL
+         AND \`notification_type\` IS NOT NULL
+    `);
+
+    if (DB_CLIENT === "mysql") {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` MODIFY COLUMN \`notification_type_id\` INT UNSIGNED NOT NULL`,
+      );
+    }
+
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP COLUMN \`notification_type\``);
+    console.log(`[api]: migrated ${TABLE}.notification_type to notification_type_id`);
+  }
+}
+
+/**
+ * Migrates both `USER_NOTIFICATION_SETTINGS` and `NOTIFICATIONS` off their
+ * legacy free-form/constrained `notification_type` string columns onto a real
+ * `notification_type_id` foreign key referencing NOTIFICATION_TYPES. Runs
+ * before the normal sync path (see `ensureSchema`) because that path's
+ * emergent column/index add-or-drop timing is unsafe for this specific
+ * change on both dialects: a bare SQLite `sync()` would try to add the new
+ * unique index before the column it covers exists, and MySQL's
+ * `sync({ alter: true })` would drop the old string column before it has been
+ * backfilled.
+ *
+ * @returns {Promise<void>} Resolves once both tables match their models.
+ */
+async function migrateNotificationTypeForeignKeys() {
+  await NotificationType.sync();
+  await seedNotificationTypes();
+  await migrateUserNotificationSettingsFk();
+  await migrateNotificationsFk();
+}
+
+/**
  * Ensures all application tables and columns exist via Sequelize model sync,
  * then seeds reference data. Safe to run on every startup: MySQL uses
  * `sync({ alter: true })` for missing tables/columns; SQLite creates only
@@ -294,6 +501,8 @@ async function repairInvalidSqliteTimestamps() {
  */
 export async function ensureSchema() {
   console.log(`[api]: initializing ${DB_CLIENT} database`);
+
+  await migrateNotificationTypeForeignKeys();
 
   if (DB_CLIENT === "sqlite") {
     await ensureSqliteSchema();

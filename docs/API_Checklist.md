@@ -83,8 +83,8 @@ Future/wont do now
 - [ ] `GET /api/v1/me/subscriptions` — listMySubscriptions
 - [ ] `GET /api/v1/me/subscribers` — listMySubscribers
 - [ ] `GET /api/v1/me/playlists` — listMyPlaylists
-- [ ] `GET /api/v1/me/notification-preferences` — getNotificationPreferences
-- [ ] `PATCH /api/v1/me/notification-preferences` — updateNotificationPreferences
+- [x] `GET /api/v1/me/notification-preferences` — getNotificationPreferences
+- [x] `PATCH /api/v1/me/notification-preferences` — updateNotificationPreferences
 
 ### Me / API Keys
 

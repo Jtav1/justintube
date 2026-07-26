@@ -1,12 +1,11 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../db.js";
-import { constrainedString, timestampColumn } from "./attribute-helpers.js";
-import { NOTIFICATION_TYPES } from "./constants.js";
+import { timestampColumn } from "./attribute-helpers.js";
 
 /**
  * NOTIFICATIONS table model. One row per notification delivered to a target
- * user; `notificationType` is constrained to NOTIFICATION_TYPES and `readAt`
- * is null until read.
+ * user; `notificationTypeId` references NOTIFICATION_TYPES and `readAt` is
+ * null until read.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -22,9 +21,10 @@ export const Notification = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
     },
-    notificationType: constrainedString(NOTIFICATION_TYPES, {
+    notificationTypeId: {
+      type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
-    }),
+    },
     title: {
       type: DataTypes.STRING(255),
       allowNull: false,

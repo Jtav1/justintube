@@ -26,15 +26,3 @@ export const VISIBILITY_VALUES = ["public", "private", "unlisted", "hidden"];
  * @type {number[]}
  */
 export const LIKE_VALUES = [1];
-
-/**
- * Allowed notification types
- *
- * @type {string[]}
- */
-export const NOTIFICATION_TYPES = [
-  "subscription",
-  "like",
-  "comment",
-  "subscriber",
-];
