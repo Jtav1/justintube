@@ -48,7 +48,7 @@ Future/wont do now
 - [x] `GET /api/v1/videos` — listVideos
 - [x] `GET /api/v1/videos/featured` — listFeaturedVideos
 - [x] `GET /api/v1/videos/newest` — listNewestVideos
-- [ ] `POST /api/v1/videos/import` — importVideo
+- [x] `POST /api/v1/videos/import` — importVideo
 - [x] `GET /api/v1/videos/:id` — getVideo
 - [x] `PATCH /api/v1/videos/:id` — updateVideo
 - [x] `DELETE /api/v1/videos/:id` — deleteVideo
