@@ -9,6 +9,7 @@ import { createPagesRouter } from "./pages.js";
 import { createPlaylistsRouter } from "./playlists.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
+import { createThemesRouter } from "./themes.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
 import { createUploadRouter } from "./uploads.js";
 import { createUsersRouter } from "./users.js";
@@ -105,6 +106,7 @@ export function createApiRouter() {
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
   router.use(createTranscodeProfilesRouter());
+  router.use(createThemesRouter());
   router.use(createVideosRouter());
   router.use(createUsersRouter());
   router.use(createSearchRouter());

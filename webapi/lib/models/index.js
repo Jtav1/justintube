@@ -14,6 +14,7 @@ import { StaticPage } from "./static-page.js";
 import { StreamKey } from "./stream-key.js";
 import { Subscription } from "./subscription.js";
 import { SystemConfig } from "./system-config.js";
+import { Theme } from "./theme.js";
 import { TranscodeProfile } from "./transcode-profile.js";
 import { User } from "./user.js";
 import { UserApiKey } from "./user-api-key.js";
@@ -40,6 +41,15 @@ function registerAssociations() {
   });
   User.belongsTo(Role, {
     foreignKey: "roleId",
+    onDelete: "SET NULL",
+  });
+
+  Theme.hasMany(User, {
+    foreignKey: "themeId",
+    onDelete: "SET NULL",
+  });
+  User.belongsTo(Theme, {
+    foreignKey: "themeId",
     onDelete: "SET NULL",
   });
 
@@ -365,6 +375,7 @@ export const models = {
   StaticPage,
   StreamKey,
   SystemConfig,
+  Theme,
   VideoTransferMapping,
   VideoTransferHistory,
 };
@@ -385,6 +396,7 @@ export {
   StreamKey,
   Subscription,
   SystemConfig,
+  Theme,
   TranscodeProfile,
   User,
   UserApiKey,

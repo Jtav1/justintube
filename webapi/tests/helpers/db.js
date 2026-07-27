@@ -17,6 +17,7 @@ import {
   StaticPage,
   Subscription,
   SystemConfig,
+  Theme,
   TranscodeProfile,
   User,
   UserApiKey,
@@ -30,6 +31,7 @@ import {
   VideoTransferHistory,
   VideoTransferMapping,
 } from "../../lib/models/index.js";
+import { PUBLIC_THEME_OWNER } from "../../lib/models/theme.js";
 import { ensureSchema } from "../../lib/schema.js";
 
 /**
@@ -66,6 +68,7 @@ const RESET_MODELS = [
   SsoProvider,
   StaticPage,
   SystemConfig,
+  Theme,
 ];
 
 /**
@@ -610,6 +613,48 @@ export async function seedSystemConfig(overrides = {}) {
   };
 
   const row = await SystemConfig.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a THEMES row, applying defaults for any omitted field. Defaults to
+ * a `"public"`-owned, non-default theme with no background images.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.name] Theme name.
+ * @param {string|null} [overrides.description] Optional description.
+ * @param {string} [overrides.color1] 6-character hex color (no leading `#`).
+ * @param {string} [overrides.color2] 6-character hex color (no leading `#`).
+ * @param {string} [overrides.color3] 6-character hex color (no leading `#`).
+ * @param {string} [overrides.color4] 6-character hex color (no leading `#`).
+ * @param {string} [overrides.color5] 6-character hex color (no leading `#`).
+ * @param {string|null} [overrides.headerBackgroundFilename] Header background filename.
+ * @param {string|null} [overrides.sidebarBackgroundFilename] Sidebar background filename.
+ * @param {string|null} [overrides.viewBackgroundFilename] View background filename.
+ * @param {string|null} [overrides.footerBackgroundFilename] Footer background filename.
+ * @param {string} [overrides.themeOwner] `String(userId)` or `PUBLIC_THEME_OWNER`.
+ * @param {number|boolean} [overrides.isDefault] Whether this is the sitewide fallback theme.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded theme's id and values.
+ */
+export async function seedTheme(overrides = {}) {
+  const record = {
+    name: "Sample Theme",
+    description: null,
+    color1: "FFFFFF",
+    color2: "000000",
+    color3: "FF0000",
+    color4: "00FF00",
+    color5: "0000FF",
+    headerBackgroundFilename: null,
+    sidebarBackgroundFilename: null,
+    viewBackgroundFilename: null,
+    footerBackgroundFilename: null,
+    themeOwner: PUBLIC_THEME_OWNER,
+    isDefault: false,
+    ...overrides,
+  };
+
+  const row = await Theme.create(record);
   return asSeedResult(row, record);
 }
 

@@ -174,6 +174,16 @@ Internal (ingest server callbacks; Bearer `INTERNAL_SERVICE_TOKEN`, mirrors the 
 - [x] `PUT /api/v1/admin/config/:name` — adminUpsertSystemConfig
 - [x] `DELETE /api/v1/admin/config/:name` — adminDeleteSystemConfig
 
+### Themes
+
+- [x] `GET /api/v1/themes` — listThemes
+- [x] `POST /api/v1/themes` — createTheme
+- [x] `PATCH /api/v1/themes/:id` — updateTheme
+- [x] `DELETE /api/v1/themes/:id` — deleteTheme
+- [x] `GET /api/v1/themes/:id/images/:slot` — getThemeImage
+- [x] `PUT /api/v1/me/theme` — selectMyTheme
+- [x] `GET /api/v1/users/:id/theme` — getUserTheme
+
 ---
 
 ## Processing API (`processing/`)
