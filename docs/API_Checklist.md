@@ -72,19 +72,20 @@ Future/wont do now
 
 ### Me / library
 
-- [ ] `PATCH /api/v1/me` — updateMe
-- [ ] `GET /api/v1/me/settings` — getMeSettings
-- [ ] `GET /api/v1/me/videos` — listMyVideos
-- [ ] `GET /api/v1/me/history` — listMyHistory
-- [ ] `DELETE /api/v1/me/history` — clearMyHistory
-- [ ] `GET /api/v1/me/likes` — listMyLikes
-- [ ] `GET /api/v1/me/like-history` — listMyLikeHistory
-- [ ] `GET /api/v1/me/videos/likes-received` — listLikesReceived
+- [x] `PATCH /api/v1/me` — updateMe
+- [x] `GET /api/v1/me/settings` — getMeSettings
+- [x] `GET /api/v1/me/videos` — listMyVideos
+- [x] `GET /api/v1/me/likes` — listMyLikes
 - [ ] `GET /api/v1/me/subscriptions` — listMySubscriptions
 - [ ] `GET /api/v1/me/subscribers` — listMySubscribers
 - [ ] `GET /api/v1/me/playlists` — listMyPlaylists
 - [x] `GET /api/v1/me/notification-preferences` — getNotificationPreferences
 - [x] `PATCH /api/v1/me/notification-preferences` — updateNotificationPreferences
+
+Future
+
+- [ ] `GET /api/v1/me/history` — listMyHistory (Will require new history table)
+- [ ] `DELETE /api/v1/me/history` — clearMyHistory
 
 ### Me / API Keys
 

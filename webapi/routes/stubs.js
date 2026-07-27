@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createMeRouter } from "./me.js";
 import { createNotificationPreferencesRouter } from "./notification-preferences.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
@@ -60,12 +61,8 @@ export function registerStubRoutes(router) {
   r("delete", "/videos/:id/reaction", "clearVideoReaction");
 
   // Me / library / settings
-  r("patch", "/me", "updateMe");
-  r("get", "/me/settings", "getMeSettings");
-  r("get", "/me/videos", "listMyVideos");
   r("get", "/me/history", "listMyHistory");
   r("delete", "/me/history", "clearMyHistory");
-  r("get", "/me/likes", "listMyLikes");
   r("get", "/me/like-history", "listMyLikeHistory");
   r("get", "/me/videos/likes-received", "listLikesReceived");
   r("get", "/me/subscriptions", "listMySubscriptions");
@@ -118,6 +115,7 @@ export function createApiRouter() {
   router.use(createAuthRouter());
   router.use(createUploadRouter());
   router.use(createApiKeysRouter());
+  router.use(createMeRouter());
   router.use(createNotificationPreferencesRouter());
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
