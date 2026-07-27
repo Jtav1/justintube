@@ -1,6 +1,6 @@
 services:
   # Bundled MySQL used when running the full stack with Docker Compose.
-  # (Local development instead uses SQLite via `npm run dev` in ./api.)
+  # (Local development instead uses SQLite via `npm run dev` in ./webapi.)
   db:
     image: mysql:8.4
     container_name: justintube-db
@@ -8,7 +8,7 @@ services:
     environment:
       # Root credentials used only for container init / administration.
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      # Passed through to the init script (see api/db/init/01-init-justintube.sh).
+      # Passed through to the init script (see webapi/db/init/01-init-justintube.sh).
       JUSTINTUBE_DB: ${MYSQL_DATABASE:-justintube}
       JUSTINTUBE_USER: ${MYSQL_USER:-justintube}
       JUSTINTUBE_PASSWORD: ${MYSQL_PASSWORD:-password}
@@ -16,7 +16,7 @@ services:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - db-data:/var/lib/mysql
-      - ./api/db/init:/docker-entrypoint-initdb.d:ro
+      - ./webapi/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
         [
@@ -65,20 +65,20 @@ services:
       timeout: 5s
       retries: 5
 
-  api:
+  webapi:
     build:
-      context: ./api
+      context: ./webapi
     container_name: justintube-api
     restart: unless-stopped
     depends_on:
-      # db:
-      #   condition: service_healthy
+      db:
+        condition: service_healthy
       processing:
         condition: service_started
     environment:
       PORT: ${PORT:-3000}
       # The composed stack always uses the bundled MySQL service.
-      DB_CLIENT: sqlite
+      DB_CLIENT: mysql
       MYSQL_HOST: db
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE:-justintube}
@@ -101,8 +101,7 @@ services:
       - "${PORT:-3000}:3000"
     volumes:
       - media-data:/media
-      - sitedata-data:/sitedata
-      - ./api/db/data:/app/db/data
+      - ./webapi/media/sitedata:/sitedata
 
   processing:
     build:
@@ -119,16 +118,19 @@ services:
       MEDIA_STORAGE_DIRECTORY: /media
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      API_BASE_URL: http://api:3000
+      API_BASE_URL: http://webapi:3000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
-    ports:
-      - "${PROCESSING_PORT:-3001}:3001"
+    # Deliberately no `ports:` mapping — processing is internal-only and must
+    # be reached solely by `api` over the compose network (`http://processing:3001`).
+    # Also gated by INTERNAL_SERVICE_TOKEN (see processing/lib/require-internal-token.js)
+    # as defense-in-depth. Uncomment below only for local debugging.
+    # ports:
+    #   - "${PROCESSING_PORT:-3001}:3001"
     volumes:
       - media-data:/media
 
 volumes:
-  # db-data:
+  db-data:
   media-data:
-  sitedata-data:
   redis-data:
   search-data:

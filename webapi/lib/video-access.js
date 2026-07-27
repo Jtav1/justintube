@@ -43,8 +43,11 @@ export function isOwnerOrAdmin(user, role, upload) {
 
 /**
  * Returns true when the caller may watch the video given its visibility.
- * Public, unlisted, and hidden are viewable by id; private requires owner,
- * access grant, or admin.
+ * The owner (and admins) may always view their own video regardless of
+ * visibility. Otherwise: `public`/`unlisted` are viewable by anyone;
+ * `private`/`hidden` require a VIDEO_ACCESS grant. `hidden` is a stricter
+ * state than `unlisted` (e.g. a takedown) — unlike `unlisted`, it is not
+ * openly viewable by id.
  *
  * @param {import('sequelize').Model|null|undefined} user Authenticated user (optional).
  * @param {import('sequelize').Model|null|undefined} role Authenticated role (optional).
@@ -54,24 +57,19 @@ export function isOwnerOrAdmin(user, role, upload) {
  * @returns {boolean} Whether the caller may view the video.
  */
 export function canViewVideo(user, role, upload, metadata, hasAccessGrant = false) {
-  const visibility = metadata.visibility;
-  if (
-    visibility === "public" ||
-    visibility === "unlisted" ||
-    visibility === "hidden"
-  ) {
-    return true;
-  }
-
-  if (visibility !== "private") {
-    return false;
-  }
-
-  if (isAdmin(role)) {
-    return true;
-  }
   if (user && upload.userId != null && Number(user.id) === Number(upload.userId)) {
     return true;
   }
-  return Boolean(hasAccessGrant);
+  if (isAdmin(role)) {
+    return true;
+  }
+
+  const visibility = metadata.visibility;
+  if (visibility === "public" || visibility === "unlisted") {
+    return true;
+  }
+  if (visibility === "private" || visibility === "hidden") {
+    return Boolean(hasAccessGrant);
+  }
+  return false;
 }

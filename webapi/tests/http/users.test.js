@@ -9,6 +9,7 @@ import {
   seedSubscription,
   seedUpload,
   seedUser,
+  seedUserApiKey,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -231,6 +232,35 @@ describe("GET /users/:username/videos (listUserVideos)", () => {
     const res = await client.get("/api/v1/users/videos_bad_query/videos?limit=1000");
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_query");
+  });
+
+  test("includes the owner's own unlisted/hidden videos only when authenticated as that owner", async () => {
+    const owner = await seedUser({
+      username: "videos_owner_self",
+      email: "videos_owner_self@example.com",
+    });
+    await seedUserApiKey(owner.id, "jt_test_channel_owner_key");
+
+    const publicUpload = await seedUpload({ userId: owner.id });
+    await seedMetadata(publicUpload.id, { title: "Public video", visibility: "public" });
+    const unlistedUpload = await seedUpload({ userId: owner.id });
+    await seedMetadata(unlistedUpload.id, { title: "Unlisted video", visibility: "unlisted" });
+    const hiddenUpload = await seedUpload({ userId: owner.id });
+    await seedMetadata(hiddenUpload.id, { title: "Hidden video", visibility: "hidden" });
+
+    const client = createTestClient();
+
+    const anonRes = await client.get("/api/v1/users/videos_owner_self/videos");
+    expect(anonRes.status).toBe(200);
+    const anonTitles = anonRes.body.items.map((item) => item.title);
+    expect(anonTitles).toEqual(["Public video"]);
+
+    const selfRes = await client
+      .get("/api/v1/users/videos_owner_self/videos")
+      .set("Authorization", "Bearer jt_test_channel_owner_key");
+    expect(selfRes.status).toBe(200);
+    const selfTitles = selfRes.body.items.map((item) => item.title).sort();
+    expect(selfTitles).toEqual(["Hidden video", "Public video", "Unlisted video"]);
   });
 });
 

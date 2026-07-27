@@ -5,14 +5,15 @@ Express API that:
 1. Downloads videos with [yt-dlp](https://github.com/yt-dlp/yt-dlp) into `MEDIA_STORAGE_DIRECTORY`
 2. Queues ffmpeg transcodes with [BullMQ](https://docs.bullmq.io/) + Redis
 
-This service is called by the [Web API](../webapi/) after uploads (and for URL import later). When a transcode finishes or fails, it callbacks to the Web API under `/internal/file-versions/...`.
+This service is called by the [Web API](../webapi/) after uploads (and for URL import later). When a transcode or thumbnail job finishes or fails, it callbacks to the Web API under `/internal/file-versions/...` or `/internal/thumbnails/...` respectively. Every upload/import always enqueues a thumbnail (single-frame WebP extraction) job alongside any rendition jobs, regardless of transcode profile count.
 
 Shared media layout (same volume as the Web API in compose):
 
 | Path | Purpose |
 | ---- | ------- |
 | `$MEDIA_STORAGE_DIRECTORY/original` | Source uploads (Web API writes here) |
-| `$MEDIA_STORAGE_DIRECTORY/transcoded` | FFmpeg outputs |
+| `$MEDIA_STORAGE_DIRECTORY/transcoded` | FFmpeg rendition outputs |
+| `$MEDIA_STORAGE_DIRECTORY/thumbnails` | Auto-generated video thumbnails (WebP) |
 
 Default listen port: `PORT` (3001).
 

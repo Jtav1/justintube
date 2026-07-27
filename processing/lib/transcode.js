@@ -67,9 +67,11 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
 /**
  * @typedef {object} ValidatedTranscodeJob
- * @property {string} jobId Stable BullMQ job id (file version UUID).
- * @property {string} outputFilename Basename under `/media/transcoded`.
- * @property {TranscodeProfilePayload} profile Validated profile fields.
+ * @property {string} jobId Stable BullMQ job id.
+ * @property {string} outputFilename Basename under the job kind's output directory.
+ * @property {"rendition"|"thumbnail"} kind Job kind.
+ * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
+ * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  */
 
 /**
@@ -273,7 +275,32 @@ export function validateTranscodeProfile(profile) {
 }
 
 /**
- * Validates a single entry in a batch `jobs` array.
+ * Validates the optional `timestampSeconds` field on a thumbnail job.
+ *
+ * @param {unknown} value Raw timestampSeconds value.
+ * @param {string} fieldName Field label for error messages.
+ * @returns {number|null} Validated timestamp, or null (means "pick randomly").
+ * @throws {TranscodeValidationError} When present but not a finite number >= 0.
+ */
+function validateOptionalTimestampSeconds(value, fieldName) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TranscodeValidationError(
+      `${fieldName} must be a non-negative number or null`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Validates a single entry in a batch `jobs` array. Dispatches on `job.kind`:
+ * `"rendition"` (the default, for back-compat with jobs that omit `kind`)
+ * requires a `profile` and goes through the full transcode-mode/hardware
+ * gating in {@link validateTranscodeProfile}; `"thumbnail"` requires only a
+ * `timestampSeconds` and skips that gating entirely — a single-frame grab
+ * isn't a real transcode and shouldn't be blocked by `ENABLE_TRANSCODING`.
  *
  * @param {unknown} job Raw job object.
  * @param {number} index Zero-based index for error messages.
@@ -293,9 +320,18 @@ export function validateTranscodeJob(job, index) {
     body.outputFilename,
     `jobs[${index}].outputFilename`,
   );
-  const profile = validateTranscodeProfile(body.profile);
+  const kind = body.kind === "thumbnail" ? "thumbnail" : "rendition";
 
-  return { jobId, outputFilename, profile };
+  if (kind === "thumbnail") {
+    const timestampSeconds = validateOptionalTimestampSeconds(
+      body.timestampSeconds,
+      `jobs[${index}].timestampSeconds`,
+    );
+    return { jobId, outputFilename, kind, timestampSeconds };
+  }
+
+  const profile = validateTranscodeProfile(body.profile);
+  return { jobId, outputFilename, kind, profile };
 }
 
 /**
@@ -376,6 +412,7 @@ export function validateTranscodeBatchRequest(body, options = {}) {
       {
         jobId,
         outputFilename: buildOutputFilename(jobId, profile.outputContainer),
+        kind: "rendition",
         profile,
       },
     ],
@@ -478,6 +515,56 @@ export function buildFfmpegArgs({ inputPath, outputPath, profile }) {
     audioEncoder,
     "-f",
     profile.outputContainer,
+    outputPath,
+  ];
+}
+
+/**
+ * Maximum thumbnail frame dimensions (a bounding box, not a hard target) —
+ * matches the app's existing "480p" rendition convention.
+ *
+ * @type {number}
+ */
+const THUMBNAIL_MAX_WIDTH = 854;
+
+/**
+ * @type {number}
+ */
+const THUMBNAIL_MAX_HEIGHT = 480;
+
+/**
+ * Builds the ffmpeg argument list for a single-frame thumbnail extraction.
+ * Deliberately bypasses `validateTranscodeMode`/hardware-acceleration gating
+ * (see `validateTranscodeJob`) — this is a lightweight frame grab, not a real
+ * transcode, and `ENABLE_TRANSCODING=false` shouldn't block it.
+ *
+ * Scales down (never up) to fit within {@link THUMBNAIL_MAX_WIDTH}x
+ * {@link THUMBNAIL_MAX_HEIGHT} as a bounding box, preserving the source
+ * aspect ratio (`force_original_aspect_ratio=decrease`) rather than a hard
+ * `scale=854x480` stretch, which would distort any non-16:9 source. Encodes
+ * to WebP for efficient web delivery.
+ *
+ * @param {object} options Thumbnail execution options.
+ * @param {string} options.inputPath Absolute path to the source video file.
+ * @param {string} options.outputPath Absolute path for the output `.webp` file.
+ * @param {number} options.timestampSeconds Frame timestamp to seek to, in seconds.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildThumbnailFfmpegArgs({ inputPath, outputPath, timestampSeconds }) {
+  return [
+    "-y",
+    "-ss",
+    String(timestampSeconds),
+    "-i",
+    inputPath,
+    "-frames:v",
+    "1",
+    "-vf",
+    `scale='min(${THUMBNAIL_MAX_WIDTH},iw)':'min(${THUMBNAIL_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease`,
+    "-c:v",
+    "libwebp",
+    "-quality",
+    "80",
     outputPath,
   ];
 }

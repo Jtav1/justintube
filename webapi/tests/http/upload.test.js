@@ -5,6 +5,8 @@ import {
   queryRows,
   resetTables,
   seedTranscodeProfile,
+  seedUser,
+  seedUserApiKey,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -12,12 +14,17 @@ import {
  * HTTP contract tests for the implemented raw upload endpoint
  * (`POST /videos/upload`). These are GREEN: the route exists in
  * `routes/uploads.js` and persists to ORIGINAL_UPLOADS / FILE_VERSIONS.
+ * Requires an authenticated user with the `uploader` flag (or admin).
  */
 describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
   /** @type {ReturnType<typeof createTestClient>} */
   let client;
   /** @type {typeof fetch | undefined} */
   let originalFetch;
+  /** @type {{id: number} & Record<string, unknown>} */
+  let uploaderUser;
+  /** @type {string} */
+  const uploaderKey = "jt_test_uploader_key";
 
   beforeAll(async () => {
     await setupSchema();
@@ -33,12 +40,84 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     await resetTables();
   });
 
-  test("accepts a valid video file and persists an ORIGINAL_UPLOADS row", async () => {
-    const fetchMock = jest.fn();
-    globalThis.fetch = fetchMock;
+  /**
+   * Seeds an uploader-flagged user (stored on `uploaderUser`) with an API
+   * key. Callers build the actual request themselves afterward — a Supertest
+   * `Test` is thenable, so returning one from this helper and `await`-ing the
+   * call would resolve straight to the *response* instead of the request
+   * builder, breaking further chaining (e.g. `.attach(...)`).
+   *
+   * @returns {Promise<void>} Resolves once the uploader user + key exist.
+   */
+  async function seedUploaderCreds() {
+    uploaderUser = await seedUser({ uploader: true, emailVerified: true });
+    await seedUserApiKey(uploaderUser.id, uploaderKey);
+  }
+
+  /**
+   * Starts an authenticated `POST /videos/upload` request as `uploaderUser`.
+   * Call {@link seedUploaderCreds} first.
+   *
+   * @returns {import('supertest').Test} Request builder (not yet awaited).
+   */
+  function uploadRequest() {
+    return client.post("/api/v1/videos/upload").set("Authorization", `Bearer ${uploaderKey}`);
+  }
+
+  /**
+   * Builds a `fetch` mock that answers `POST /transcode` by accepting every
+   * job in the request (thumbnail + any rendition jobs) unconditionally —
+   * the shape `finalizeUploadTranscodes` always sends now, even with zero
+   * transcode profiles.
+   *
+   * @returns {jest.Mock} Mock matching the `globalThis.fetch` contract.
+   */
+  function acceptAllJobsFetchMock() {
+    return jest.fn(async (_url, options) => {
+      const body = JSON.parse(String(options.body));
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          success: true,
+          jobs: body.jobs.map((job) => ({
+            jobId: job.jobId,
+            outputFilename: job.outputFilename,
+            profileId: job.profile?.id ?? null,
+          })),
+        }),
+      };
+    });
+  }
+
+  test("rejects an unauthenticated request", async () => {
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  test("rejects an authenticated user without the uploader flag", async () => {
+    const viewer = await seedUser({ uploader: false, emailVerified: true });
+    await seedUserApiKey(viewer.id, "jt_test_non_uploader_key");
 
     const res = await client
       .post("/api/v1/videos/upload")
+      .set("Authorization", "Bearer jt_test_non_uploader_key")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
+  test("accepts a valid video file and persists an ORIGINAL_UPLOADS row", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -46,13 +125,13 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       originalFilename: "clip.mp4",
       fileExtension: "mp4",
       status: "uploaded",
-      userId: null,
+      userId: uploaderUser.id,
     });
     expect(typeof res.body.uuidName).toBe("string");
     expect(res.body.uuidName).toHaveLength(36);
     expect(res.body.storagePath).toBe(`original/${res.body.uuidName}.mp4`);
-    expect(res.body.fileVersions).toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(res.body.fileVersions).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const rows = await queryRows(
       "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
@@ -64,16 +143,67 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(rows[0].status).toBe("uploaded");
   });
 
-  test("does not call processing when no transcode profiles exist", async () => {
-    const fetchMock = jest.fn();
+  test("always enqueues a thumbnail job, even when no transcode profiles exist", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(payload.jobs).toHaveLength(1);
+    expect(payload.jobs[0]).toMatchObject({
+      jobId: res.body.uuidName,
+      outputFilename: `${res.body.uuidName}.webp`,
+      kind: "thumbnail",
+      timestampSeconds: null,
+    });
+  });
+
+  test("persists thumbnailTimestamp and forwards it to processing as seconds", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .field("thumbnailTimestamp", "12.34")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    // 12.34s rounds to the nearest tenth (12.3) both in storage and in what's
+    // forwarded to processing.
+    expect(payload.jobs[0].timestampSeconds).toBe(12.3);
+
+    const rows = await queryRows(
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
+      { uuidName: res.body.uuidName },
+    );
+    expect(Number(rows[0].thumbnail_timestamp_tenths)).toBe(123);
+  });
+
+  test("rejects a negative thumbnailTimestamp with 400 invalid_body", async () => {
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .field("thumbnailTimestamp", "-5")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("rejects a non-numeric thumbnailTimestamp with 400 invalid_body", async () => {
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .field("thumbnailTimestamp", "soon")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
   });
 
   test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
@@ -92,25 +222,11 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       audioCodec: "aac",
     });
 
-    const fetchMock = jest.fn(async (_url, options) => {
-      const body = JSON.parse(String(options.body));
-      return {
-        ok: true,
-        status: 202,
-        json: async () => ({
-          success: true,
-          jobs: body.jobs.map((job) => ({
-            jobId: job.jobId,
-            outputFilename: job.outputFilename,
-            profileId: job.profile.id,
-          })),
-        }),
-      };
-    });
+    const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -122,8 +238,11 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(payload.filename).toBe(`${res.body.uuidName}.mp4`);
-    expect(payload.jobs).toHaveLength(2);
-    expect(payload.jobs.map((j) => j.profile.id).sort()).toEqual(
+    // One thumbnail job + one job per rendition profile.
+    expect(payload.jobs).toHaveLength(3);
+    expect(payload.jobs.filter((j) => j.kind === "thumbnail")).toHaveLength(1);
+    const renditionJobs = payload.jobs.filter((j) => j.kind === "rendition");
+    expect(renditionJobs.map((j) => j.profile.id).sort()).toEqual(
       [profileA.id, profileB.id].sort(),
     );
 
@@ -164,9 +283,11 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
     const fetchMock = jest.fn(async (_url, options) => {
       const body = JSON.parse(String(options.body));
-      const accepted = body.jobs.filter((job) => job.profile.id === profileA.id);
+      const accepted = body.jobs.filter(
+        (job) => job.kind === "thumbnail" || job.profile.id === profileA.id,
+      );
       const skipped = body.jobs
-        .filter((job) => job.profile.id === profileB.id)
+        .filter((job) => job.kind === "rendition" && job.profile.id === profileB.id)
         .map((job) => ({
           jobId: job.jobId,
           profileId: job.profile.id,
@@ -180,7 +301,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
           jobs: accepted.map((job) => ({
             jobId: job.jobId,
             outputFilename: job.outputFilename,
-            profileId: job.profile.id,
+            profileId: job.profile?.id ?? null,
           })),
           skipped,
           source: { videoWidth: 1280, videoHeight: 720, durationSeconds: 42 },
@@ -189,8 +310,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     });
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -226,8 +347,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       json: async () => ({ success: false, error: "queue unavailable" }),
     }));
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -257,8 +378,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       throw new Error("fetch failed");
     });
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -272,15 +393,16 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
   });
 
   test("returns 400 missing_file when no file field is sent", async () => {
-    const res = await client.post("/api/v1/videos/upload");
+    await seedUploaderCreds();
+    const res = await uploadRequest();
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("missing_file");
   });
 
   test("returns 400 unsupported_file_type for a disallowed extension", async () => {
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("nope"), "notes.txt");
 
     expect(res.status).toBe(400);
@@ -291,8 +413,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
   test("returns 413 file_too_large when the file exceeds the size limit", async () => {
     // MAX_UPLOAD_SIZE_BYTES is set to 1024 in tests/setup/env.js.
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.alloc(4096, 0x61), "big.mp4");
 
     expect(res.status).toBe(413);

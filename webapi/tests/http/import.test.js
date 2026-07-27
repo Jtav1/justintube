@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { createTestClient } from "../helpers/app.js";
-import { queryRows, resetTables, seedTranscodeProfile, setupSchema } from "../helpers/db.js";
+import {
+  queryRows,
+  resetTables,
+  seedTranscodeProfile,
+  seedUser,
+  seedUserApiKey,
+  setupSchema,
+} from "../helpers/db.js";
 import { originalDir } from "../../routes/uploads.js";
 
 /**
@@ -12,12 +19,17 @@ import { originalDir } from "../../routes/uploads.js";
  * transcode-enqueue path as `POST /videos/upload`. Tests simulate the
  * processing side effect (the downloaded file landing in `original/`) by
  * writing a fixture there before mocking the `/download` response.
+ * Requires an authenticated user with the `uploader` flag (or admin).
  */
 describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
   /** @type {ReturnType<typeof createTestClient>} */
   let client;
   /** @type {typeof fetch | undefined} */
   let originalFetch;
+  /** @type {{id: number} & Record<string, unknown>} */
+  let uploaderUser;
+  /** @type {string} */
+  const uploaderKey = "jt_test_importer_key";
 
   beforeAll(async () => {
     await setupSchema();
@@ -45,17 +57,94 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     writeFileSync(join(originalDir, name), Buffer.from("fake-video"));
   }
 
-  test("downloads a video from a URL and persists an ORIGINAL_UPLOADS row", async () => {
-    writeDownloadedFixture("1737900000.mp4");
-    const fetchMock = jest.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true, filename: "1737900000.mp4" }),
-    }));
-    globalThis.fetch = fetchMock;
+  /**
+   * Seeds an uploader-flagged user (stored on `uploaderUser`) with an API
+   * key. Callers build the actual request themselves afterward — a Supertest
+   * `Test` is thenable, so returning one from this helper and `await`-ing the
+   * call would resolve straight to the *response* instead of the request
+   * builder, breaking further chaining (e.g. `.send(...)`).
+   *
+   * @returns {Promise<void>} Resolves once the uploader user + key exist.
+   */
+  async function seedUploaderCreds() {
+    uploaderUser = await seedUser({ uploader: true, emailVerified: true });
+    await seedUserApiKey(uploaderUser.id, uploaderKey);
+  }
+
+  /**
+   * Starts an authenticated `POST /videos/import` request as `uploaderUser`.
+   * Call {@link seedUploaderCreds} first.
+   *
+   * @returns {import('supertest').Test} Request builder (not yet awaited).
+   */
+  function importRequest() {
+    return client.post("/api/v1/videos/import").set("Authorization", `Bearer ${uploaderKey}`);
+  }
+
+  /**
+   * Builds a `fetch` mock that answers `POST /download` with a fixed
+   * downloaded filename and `POST /transcode` by accepting every job in the
+   * request (thumbnail + any rendition jobs) unconditionally — the shape
+   * `finalizeUploadTranscodes` always sends now, even with zero transcode
+   * profiles.
+   *
+   * @param {string} downloadedFilename Filename processing "downloaded".
+   * @returns {jest.Mock} Mock matching the `globalThis.fetch` contract.
+   */
+  function downloadThenAcceptAllJobsFetchMock(downloadedFilename) {
+    return jest.fn(async (url, options) => {
+      if (url === "http://processing.test:3001/download") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, filename: downloadedFilename }),
+        };
+      }
+      const body = JSON.parse(String(options.body));
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          success: true,
+          jobs: body.jobs.map((job) => ({
+            jobId: job.jobId,
+            outputFilename: job.outputFilename,
+            profileId: job.profile?.id ?? null,
+          })),
+        }),
+      };
+    });
+  }
+
+  test("rejects an unauthenticated request", async () => {
+    const res = await client
+      .post("/api/v1/videos/import")
+      .send({ url: "https://example.com/watch?v=abc" });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  test("rejects an authenticated user without the uploader flag", async () => {
+    const viewer = await seedUser({ uploader: false, emailVerified: true });
+    await seedUserApiKey(viewer.id, "jt_test_non_uploader_import_key");
 
     const res = await client
       .post("/api/v1/videos/import")
+      .set("Authorization", "Bearer jt_test_non_uploader_import_key")
+      .send({ url: "https://example.com/watch?v=abc" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
+  test("downloads a video from a URL and persists an ORIGINAL_UPLOADS row", async () => {
+    writeDownloadedFixture("1737900000.mp4");
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900000.mp4");
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
       .send({ url: "https://example.com/watch?v=abc" });
 
     expect(res.status).toBe(201);
@@ -63,17 +152,29 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       originalFilename: "1737900000.mp4",
       fileExtension: "mp4",
       status: "uploaded",
-      userId: null,
+      userId: uploaderUser.id,
     });
     expect(typeof res.body.uuidName).toBe("string");
     expect(res.body.uuidName).toHaveLength(36);
     expect(res.body.storagePath).toBe(`original/${res.body.uuidName}.mp4`);
-    expect(res.body.fileVersions).toBeUndefined();
+    expect(res.body.fileVersions).toEqual([]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/download");
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(payload.url).toBe("https://example.com/watch?v=abc");
+
+    const transcodeCall = fetchMock.mock.calls.find(
+      (call) => call[0] === "http://processing.test:3001/transcode",
+    );
+    const transcodePayload = JSON.parse(String(transcodeCall[1].body));
+    expect(transcodePayload.jobs).toHaveLength(1);
+    expect(transcodePayload.jobs[0]).toMatchObject({
+      jobId: res.body.uuidName,
+      outputFilename: `${res.body.uuidName}.webp`,
+      kind: "thumbnail",
+      timestampSeconds: null,
+    });
 
     expect(existsSync(join(originalDir, `${res.body.uuidName}.mp4`))).toBe(true);
     expect(existsSync(join(originalDir, "1737900000.mp4"))).toBe(false);
@@ -87,6 +188,55 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(rows[0].status).toBe("uploaded");
   });
 
+  test("persists thumbnailTimestamp and forwards it to processing as seconds", async () => {
+    writeDownloadedFixture("1737900002.mp4");
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900002.mp4");
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: 12.34 });
+
+    expect(res.status).toBe(201);
+    const transcodeCall = fetchMock.mock.calls.find(
+      (call) => call[0] === "http://processing.test:3001/transcode",
+    );
+    const payload = JSON.parse(String(transcodeCall[1].body));
+    expect(payload.jobs[0].timestampSeconds).toBe(12.3);
+
+    const rows = await queryRows(
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
+      { uuidName: res.body.uuidName },
+    );
+    expect(Number(rows[0].thumbnail_timestamp_tenths)).toBe(123);
+  });
+
+  test("rejects a negative thumbnailTimestamp with 400 invalid_body", async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: -5 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("rejects a non-numeric thumbnailTimestamp with 400 invalid_body", async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: "soon" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
     writeDownloadedFixture("1737900001.mp4");
     const profile = await seedTranscodeProfile({
@@ -97,32 +247,11 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       audioCodec: "aac",
     });
 
-    const fetchMock = jest.fn(async (url, options) => {
-      if (url === "http://processing.test:3001/download") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ success: true, filename: "1737900001.mp4" }),
-        };
-      }
-      const body = JSON.parse(String(options.body));
-      return {
-        ok: true,
-        status: 202,
-        json: async () => ({
-          success: true,
-          jobs: body.jobs.map((job) => ({
-            jobId: job.jobId,
-            outputFilename: job.outputFilename,
-            profileId: job.profile.id,
-          })),
-        }),
-      };
-    });
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900001.mp4");
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/import")
+    await seedUploaderCreds();
+    const res = await importRequest()
       .send({ url: "https://example.com/watch?v=xyz" });
 
     expect(res.status).toBe(201);
@@ -134,8 +263,10 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     );
     const payload = JSON.parse(String(transcodeCall[1].body));
     expect(payload.filename).toBe(`${res.body.uuidName}.mp4`);
-    expect(payload.jobs).toHaveLength(1);
-    expect(payload.jobs[0].profile.id).toBe(profile.id);
+    // One thumbnail job + one job for the rendition profile.
+    expect(payload.jobs).toHaveLength(2);
+    const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
+    expect(renditionJob.profile.id).toBe(profile.id);
 
     expect(res.body.fileVersions).toHaveLength(1);
     expect(res.body.fileVersions[0].status).toBe("processing");
@@ -151,7 +282,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock;
 
-    const res = await client.post("/api/v1/videos/import").send({});
+    await seedUploaderCreds();
+    const res = await importRequest().send({});
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_body");
@@ -162,8 +294,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/import")
+    await seedUploaderCreds();
+    const res = await importRequest()
       .send({ url: "ftp://example.com/video.mp4" });
 
     expect(res.status).toBe(400);
@@ -178,8 +310,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       json: async () => ({ success: false, error: "yt-dlp failed" }),
     }));
 
-    const res = await client
-      .post("/api/v1/videos/import")
+    await seedUploaderCreds();
+    const res = await importRequest()
       .send({ url: "https://example.com/watch?v=abc" });
 
     expect(res.status).toBe(502);
@@ -192,8 +324,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       throw new Error("fetch failed");
     });
 
-    const res = await client
-      .post("/api/v1/videos/import")
+    await seedUploaderCreds();
+    const res = await importRequest()
       .send({ url: "https://example.com/watch?v=abc" });
 
     expect(res.status).toBe(503);
@@ -208,8 +340,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       json: async () => ({ success: true, filename: "does-not-exist.mp4" }),
     }));
 
-    const res = await client
-      .post("/api/v1/videos/import")
+    await seedUploaderCreds();
+    const res = await importRequest()
       .send({ url: "https://example.com/watch?v=abc" });
 
     expect(res.status).toBe(500);

@@ -567,7 +567,7 @@ export function createAdminUsersRouter() {
    *             properties:
    *               newPassword: { type: string, minLength: 8 }
    *     responses:
-   *       204:
+   *       200:
    *         description: Password reset; user must change it on next use
    *       400:
    *         description: Invalid body or id
@@ -580,7 +580,7 @@ export function createAdminUsersRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   router.post(
     "/admin/users/:id/password",
@@ -591,6 +591,7 @@ export function createAdminUsersRouter() {
         const userId = parsePositiveInt(req.params.id);
         if (userId === null) {
           res.status(400).json({
+            success: false,
             error: "invalid_id",
             message: "id must be a positive integer.",
           });
@@ -600,6 +601,7 @@ export function createAdminUsersRouter() {
         const newPassword = String(req.body?.newPassword || "");
         if (!newPassword) {
           res.status(400).json({
+            success: false,
             error: "invalid_body",
             message: "newPassword is required.",
           });
@@ -608,6 +610,7 @@ export function createAdminUsersRouter() {
 
         if (newPassword.length < MIN_PASSWORD_LENGTH) {
           res.status(400).json({
+            success: false,
             error: "invalid_password",
             message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
           });
@@ -617,6 +620,7 @@ export function createAdminUsersRouter() {
         const user = await User.findByPk(userId);
         if (!user) {
           res.status(404).json({
+            success: false,
             error: "not_found",
             message: "User not found.",
           });
@@ -628,10 +632,11 @@ export function createAdminUsersRouter() {
           passwordHash,
           passwordExpired: true,
         });
-        res.status(204).end();
+        res.status(200).json({ success: true });
       } catch (err) {
         console.error("adminResetUserPassword failed:", err);
         res.status(500).json({
+          success: false,
           error: "internal_error",
           message: "Failed to reset user password.",
         });

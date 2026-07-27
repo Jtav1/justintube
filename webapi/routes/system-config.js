@@ -295,7 +295,7 @@ export function createSystemConfigRouter() {
    *         schema: { type: string, maxLength: 128 }
    *       - $ref: '#/components/parameters/CsrfTokenHeader'
    *     responses:
-   *       204:
+   *       200:
    *         description: Config deleted
    *       401:
    *         description: Not authenticated
@@ -306,7 +306,7 @@ export function createSystemConfigRouter() {
    *
    * @param {import('express').Request} req Incoming request (`name` path param).
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204, 404, or error.
+   * @returns {Promise<void>} Sends 200 `{ success: true }`, 404, or error.
    */
   router.delete(
     "/admin/config/:name",
@@ -316,6 +316,7 @@ export function createSystemConfigRouter() {
       const parsed = parseConfigName(req.params.name);
       if (!parsed.ok) {
         res.status(400).json({
+          success: false,
           error: "invalid_body",
           message: parsed.message,
         });
@@ -328,15 +329,17 @@ export function createSystemConfigRouter() {
         });
         if (!deleted) {
           res.status(404).json({
+            success: false,
             error: "not_found",
             message: "System configuration variable not found.",
           });
           return;
         }
-        res.status(204).end();
+        res.status(200).json({ success: true });
       } catch (err) {
         console.error("adminDeleteSystemConfig failed:", err);
         res.status(500).json({
+          success: false,
           error: "internal_error",
           message: "Failed to delete system configuration.",
         });

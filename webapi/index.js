@@ -12,6 +12,8 @@ import { ensureSchema } from "./lib/schema.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
+import { createInternalLivestreamsRouter } from "./routes/internal-livestreams.js";
+import { createInternalThumbnailsRouter } from "./routes/internal-thumbnails.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -124,6 +126,8 @@ export function createApp() {
   );
 
   app.use("/internal", createInternalFileVersionsRouter());
+  app.use("/internal", createInternalLivestreamsRouter());
+  app.use("/internal", createInternalThumbnailsRouter());
   app.use("/api/v1", createApiRouter());
 
   /**

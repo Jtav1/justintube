@@ -59,6 +59,15 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
     },
+    /**
+     * Requested thumbnail-frame timestamp, encoded as tenths-of-a-second
+     * (e.g. 12.3s -> 123) so 0.1s precision fits in an INTEGER column.
+     * Null means no timestamp was requested (processing picks a random one).
+     */
+    thumbnailTimestampTenths: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
     userId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,

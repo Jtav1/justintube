@@ -28,12 +28,23 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 
 /**
- * One job descriptor in a batch `POST /transcode` request.
+ * One job descriptor in a batch `POST /transcode` request. Two kinds:
+ * - `kind: "rendition"` — a normal profile-based transcode. `profile` is
+ *   required; `timestampSeconds` is unused. `jobId` is FILE_VERSIONS.uuid_name,
+ *   output lands under `/media/transcoded`.
+ * - `kind: "thumbnail"` — a single-frame extraction, always included
+ *   regardless of transcode profile count. `timestampSeconds` is the
+ *   requested frame timestamp (`null` = let processing pick a random one, or
+ *   whenever the requested value exceeds the video's actual duration);
+ *   `profile` is unused. `jobId` is ORIGINAL_UPLOADS.uuid_name, output lands
+ *   under `/media/thumbnails`.
  *
  * @typedef {object} TranscodeBatchJob
- * @property {string} jobId Stable BullMQ job id (FILE_VERSIONS.uuid_name).
- * @property {string} outputFilename Basename under `/media/transcoded`.
- * @property {TranscodeProfilePayload} profile Transcode profile fields.
+ * @property {string} jobId Stable BullMQ job id.
+ * @property {string} outputFilename Basename under the job kind's output directory.
+ * @property {"rendition"|"thumbnail"} kind Job kind, dispatched on by processing.
+ * @property {TranscodeProfilePayload} [profile] Required for `kind: "rendition"`.
+ * @property {number|null} [timestampSeconds] Required for `kind: "thumbnail"`.
  */
 
 /**
@@ -86,9 +97,12 @@ async function processingFetch(path, options = {}) {
     const init = {
       method,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        Authorization: `Bearer ${process.env.INTERNAL_SERVICE_TOKEN || ""}`,
+      },
     };
     if (options.body != null) {
-      init.headers = { "Content-Type": "application/json" };
+      init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
     response = await fetch(url, init);

@@ -90,7 +90,8 @@ describe("adminResetUserPassword", () => {
       .set("Authorization", `Bearer ${rawKey}`)
       .send({ newPassword: "temporary1" });
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
 
     const updated = await User.findByPk(target.id);
     expect(updated.passwordExpired).toBe(true);
@@ -440,7 +441,8 @@ describe("login passwordExpired status", () => {
         currentPassword: "temporary1",
         newPassword: "newpassword456",
       });
-    expect(change.status).toBe(204);
+    expect(change.status).toBe(200);
+    expect(change.body).toEqual({ success: true });
 
     const updated = await User.findByPk(seeded.id);
     expect(updated.passwordExpired).toBe(false);

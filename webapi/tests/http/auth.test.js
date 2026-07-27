@@ -81,10 +81,21 @@ describe("auth routes", () => {
     const logout = await agent
       .post("/api/v1/auth/logout")
       .set("X-CSRF-Token", register.body.csrfToken);
-    expect(logout.status).toBe(204);
+    expect(logout.status).toBe(200);
+    expect(logout.body).toEqual({ success: true });
 
     const meAfter = await agent.get("/api/v1/auth/me");
     expect(meAfter.status).toBe(401);
+  });
+
+  test("rejects logout without a session", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/logout")
+      .set("X-CSRF-Token", csrf);
+
+    expect(res.status).toBe(401);
   });
 
   test("login rotates CSRF token and authenticates", async () => {
@@ -252,11 +263,31 @@ describe("auth verify-email", () => {
     await resetTables();
   });
 
-  test("verifies email with a valid token and upgrades role to viewer", async () => {
-    const unverifiedRole = await Role.findOne({ where: { name: "unverified" } });
+  test("verifies email with a valid token without changing the user's role", async () => {
+    const user = await seedUser({ emailVerified: false });
+    const { rawToken } = await seedEmailVerificationToken(user.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/verify-email")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({
+      id: user.id,
+      emailVerified: true,
+      // seedUser defaults to the "viewer" role; verification must not touch it.
+      role: "viewer",
+    });
+  });
+
+  test("verification is independent of role — a moderator can be unverified, then verified", async () => {
+    const moderatorRole = await Role.findOne({ where: { name: "moderator" } });
     const user = await seedUser({
       emailVerified: false,
-      roleId: unverifiedRole?.id ?? null,
+      roleId: moderatorRole.id,
     });
     const { rawToken } = await seedEmailVerificationToken(user.id);
 
@@ -271,7 +302,7 @@ describe("auth verify-email", () => {
     expect(res.body.user).toMatchObject({
       id: user.id,
       emailVerified: true,
-      role: "viewer",
+      role: "moderator",
     });
   });
 
@@ -403,7 +434,8 @@ describe("auth resend-verification", () => {
       .post("/api/v1/auth/resend-verification")
       .set("X-CSRF-Token", loginCsrf);
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
   });
 });
 
@@ -435,7 +467,8 @@ describe("auth change password", () => {
         currentPassword: "password123",
         newPassword: "newpassword456",
       });
-    expect(change.status).toBe(204);
+    expect(change.status).toBe(200);
+    expect(change.body).toEqual({ success: true });
 
     await agent.post("/api/v1/auth/logout").set("X-CSRF-Token", login.body.csrfToken);
 

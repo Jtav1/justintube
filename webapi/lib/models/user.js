@@ -66,6 +66,10 @@ export const User = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
     },
+    themeId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
     createdAt: timestampColumn("created_at"),
     updatedAt: timestampColumn("updated_at"),
   },

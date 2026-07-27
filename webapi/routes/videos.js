@@ -25,6 +25,7 @@ import {
 } from "../lib/video-access.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
+import { serializeUserRef } from "../lib/serialize-user-ref.js";
 
 /**
  * Relative media subfolder where thumbnail images are expected to live
@@ -77,9 +78,22 @@ function parsePositiveInt(raw) {
  *   (expects `VideoThumbnail` preloaded when available; falls back to null).
  * @param {import('sequelize').Model} metadata VIDEO_METADATA instance.
  * @param {object} [options] Extra fields to attach.
- * @param {Array<{resolution: string|null, width: number|null, height: number|null}>} [options.renditions]
- *   Available complete renditions (full `getVideo` only — omitted elsewhere to
- *   keep list/search responses lightweight).
+ * @param {string[]} [options.tags] This video's CONTENT_TAGS tag strings.
+ *   Always attached (empty array when omitted) so every route returns the
+ *   same shape.
+ * @param {Array<{
+ *   id: number,
+ *   resolution: string|null,
+ *   width: number|null,
+ *   height: number|null,
+ *   mimeType: string|null,
+ *   fileSizeBytes: number|null,
+ *   streamUrl: string
+ * }>} [options.renditions]
+ *   Available complete transcoded copies, one per rendition, each carrying a
+ *   `streamUrl` a video player can select between (single-video routes only —
+ *   `getVideo`, `updateVideo`, `delistVideo` — omitted elsewhere to keep
+ *   list/search responses lightweight).
  * @returns {{
  *   id: number,
  *   title: string,
@@ -87,7 +101,8 @@ function parsePositiveInt(raw) {
  *   visibility: string,
  *   commentsEnabled: boolean,
  *   viewCount: number,
- *   userId: number|null,
+ *   uploader: {userId: number|null, username: string|null, displayName: string|null},
+ *   tags: string[],
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
  *   createdAt: Date,
@@ -102,7 +117,8 @@ export function serializeVideo(upload, metadata, options = {}) {
     visibility: metadata.visibility,
     commentsEnabled: Boolean(metadata.commentsEnabled),
     viewCount: Number(metadata.viewCount ?? 0),
-    userId: upload.userId ?? null,
+    uploader: serializeUserRef(upload.userId, upload.User?.username, upload.User?.displayName),
+    tags: options.tags ?? [],
     durationSeconds: upload.durationSeconds ?? null,
     thumbnailUrl: upload.VideoThumbnail
       ? `/api/v1/videos/${upload.id}/thumbnail`
@@ -117,6 +133,78 @@ export function serializeVideo(upload, metadata, options = {}) {
 }
 
 /**
+ * Batch-loads CONTENT_TAGS for a set of uploads, grouped by upload id. Used
+ * so every `serializeVideo` call site can attach `tags` without an N+1 query
+ * per video.
+ *
+ * @param {number[]} originalUploadIds Upload ids to load tags for.
+ * @returns {Promise<Map<number, string[]>>} Upload id → its tag strings.
+ */
+export async function loadTagsByUploadId(originalUploadIds) {
+  const map = new Map();
+  if (originalUploadIds.length === 0) {
+    return map;
+  }
+  const rows = await ContentTag.findAll({
+    where: { originalUploadId: { [Op.in]: originalUploadIds } },
+    order: [["tag", "ASC"]],
+  });
+  for (const row of rows) {
+    const list = map.get(row.originalUploadId) || [];
+    list.push(row.tag);
+    map.set(row.originalUploadId, list);
+  }
+  return map;
+}
+
+/**
+ * Serializes a complete FILE_VERSIONS row into a rendition reference a video
+ * player can use to offer a quality selection, including the URL to request
+ * that specific copy via `getVideoStream`.
+ *
+ * @param {number} originalUploadId Parent ORIGINAL_UPLOADS id.
+ * @param {import('sequelize').Model} version Complete FileVersion instance.
+ * @returns {{
+ *   id: number,
+ *   resolution: string|null,
+ *   width: number|null,
+ *   height: number|null,
+ *   mimeType: string|null,
+ *   fileSizeBytes: number|null,
+ *   streamUrl: string
+ * }} Rendition reference.
+ */
+function serializeFileVersion(originalUploadId, version) {
+  const streamUrl = version.resolution
+    ? `/api/v1/videos/${originalUploadId}/stream?quality=${encodeURIComponent(version.resolution)}`
+    : `/api/v1/videos/${originalUploadId}/stream`;
+  return {
+    id: version.id,
+    resolution: version.resolution,
+    width: version.videoWidth,
+    height: version.videoHeight,
+    mimeType: version.mimeType ?? null,
+    fileSizeBytes: version.fileSizeBytes != null ? Number(version.fileSizeBytes) : null,
+    streamUrl,
+  };
+}
+
+/**
+ * Loads every complete FILE_VERSIONS row for an upload, ordered lowest to
+ * highest resolution, and serializes each into a rendition reference.
+ *
+ * @param {number} originalUploadId Parent ORIGINAL_UPLOADS id.
+ * @returns {Promise<object[]>} Serialized renditions, lowest resolution first.
+ */
+async function loadRenditions(originalUploadId) {
+  const completeVersions = await FileVersion.findAll({
+    where: { originalUploadId, status: "complete" },
+    order: [["videoHeight", "ASC"]],
+  });
+  return completeVersions.map((version) => serializeFileVersion(originalUploadId, version));
+}
+
+/**
  * Loads an upload with its metadata (and thumbnail, when present) by primary key.
  *
  * @param {number} id ORIGINAL_UPLOADS id.
@@ -128,6 +216,7 @@ async function loadUploadWithMetadata(id) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
+      { model: User, required: false },
     ],
   });
   if (!upload || !upload.VideoMetadata) {
@@ -167,31 +256,47 @@ function sendNotFound(res) {
 }
 
 /**
- * Finds public videos with metadata, optionally filtered and ordered.
+ * Finds videos for a bulk browse/discovery list, optionally filtered and
+ * ordered. Public videos are always included; `unlisted`/`hidden` videos are
+ * included only for their owner (`options.viewerUserId`) — everyone else
+ * never sees delisted or hidden content in these bulk lists.
  *
  * @param {object} [options] Query options.
  * @param {import('sequelize').WhereOptions} [options.uploadWhere] Extra ORIGINAL_UPLOADS where.
  * @param {import('sequelize').Includeable[]} [options.includes] Extra includes.
  * @param {import('sequelize').Order} [options.order] Order clause.
+ * @param {number|null} [options.viewerUserId] Authenticated caller's id, if any.
  * @returns {Promise<object[]>} Serialized video items.
  */
 async function listPublicVideos(options = {}) {
+  const visibilityOr = [{ "$VideoMetadata.visibility$": "public" }];
+  if (options.viewerUserId) {
+    visibilityOr.push({
+      userId: options.viewerUserId,
+      "$VideoMetadata.visibility$": { [Op.in]: ["unlisted", "hidden"] },
+    });
+  }
+
   const rows = await OriginalUpload.findAll({
-    where: options.uploadWhere || {},
+    where: {
+      ...(options.uploadWhere || {}),
+      [Op.or]: visibilityOr,
+    },
     include: [
-      {
-        model: VideoMetadata,
-        as: "VideoMetadata",
-        required: true,
-        where: { visibility: "public" },
-      },
+      { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
+      { model: User, required: false },
       ...(options.includes || []),
     ],
     order: options.order || [["id", "ASC"]],
   });
 
-  return rows.map((upload) => serializeVideo(upload, upload.VideoMetadata));
+  const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+  return rows.map((upload) =>
+    serializeVideo(upload, upload.VideoMetadata, {
+      tags: tagsByUploadId.get(upload.id) || [],
+    }),
+  );
 }
 
 /**
@@ -432,10 +537,11 @@ export function createVideosRouter() {
    *       "200":
    *         description: Public video list
    */
-  router.get("/videos", optionalAuth, async (_req, res) => {
+  router.get("/videos", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -461,11 +567,12 @@ export function createVideosRouter() {
    *       "200":
    *         description: Featured video list
    */
-  router.get("/videos/featured", optionalAuth, async (_req, res) => {
+  router.get("/videos/featured", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
         includes: [{ model: FeaturedVideo, required: true }],
         order: [[FeaturedVideo, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -491,10 +598,11 @@ export function createVideosRouter() {
    *       "200":
    *         description: Newest public video list
    */
-  router.get("/videos/newest", optionalAuth, async (_req, res) => {
+  router.get("/videos/newest", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -552,18 +660,13 @@ export function createVideosRouter() {
         return;
       }
 
-      const completeVersions = await FileVersion.findAll({
-        where: { originalUploadId: upload.id, status: "complete" },
-        order: [["videoHeight", "ASC"]],
-      });
+      const renditions = await loadRenditions(upload.id);
+      const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
       res.status(200).json(
         serializeVideo(upload, metadata, {
-          renditions: completeVersions.map((version) => ({
-            resolution: version.resolution,
-            width: version.videoWidth,
-            height: version.videoHeight,
-          })),
+          tags: tagsByUploadId.get(upload.id) || [],
+          renditions,
         }),
       );
     } catch (err) {
@@ -807,6 +910,16 @@ export function createVideosRouter() {
       await sequelize.transaction(async (transaction) => {
         if (Object.keys(parsed.patch).length > 0) {
           await metadata.update(parsed.patch, { transaction });
+          if (parsed.patch.visibility === "hidden") {
+            // Grants are only meaningful for private videos; wipe them on
+            // entry to hidden rather than leaving stale access behind. Any
+            // other visibility change (including back to private) preserves
+            // existing grants.
+            await VideoAccess.destroy({
+              where: { originalUploadId: upload.id },
+              transaction,
+            });
+          }
         }
         if (parsed.tags !== undefined) {
           await ContentTag.destroy({
@@ -827,7 +940,16 @@ export function createVideosRouter() {
 
       await metadata.reload();
       syncVideoIndex(upload.id);
-      res.status(200).json(serializeVideo(upload, metadata));
+
+      const renditions = await loadRenditions(upload.id);
+      const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+
+      res.status(200).json(
+        serializeVideo(upload, metadata, {
+          tags: tagsByUploadId.get(upload.id) || [],
+          renditions,
+        }),
+      );
     } catch (err) {
       console.error("updateVideo failed:", err);
       res.status(500).json({
@@ -858,7 +980,7 @@ export function createVideosRouter() {
    *         schema:
    *           type: integer
    *     responses:
-   *       "204":
+   *       "200":
    *         description: Deleted
    */
   router.delete("/videos/:id", requireAuth, async (req, res) => {
@@ -866,6 +988,7 @@ export function createVideosRouter() {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
         res.status(400).json({
+          success: false,
           error: "invalid_id",
           message: "id must be a positive integer.",
         });
@@ -880,6 +1003,7 @@ export function createVideosRouter() {
 
       if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
         res.status(403).json({
+          success: false,
           error: "forbidden",
           message: "Only the owner or an admin can delete this video.",
         });
@@ -888,10 +1012,11 @@ export function createVideosRouter() {
 
       await upload.destroy();
       removeVideoDocument(id);
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("deleteVideo failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Failed to delete video.",
       });
@@ -900,13 +1025,15 @@ export function createVideosRouter() {
 
   /**
    * POST /videos/:id/delist — delistVideo
-   * Auth: required. Moderator or admin. Sets visibility to hidden.
+   * Auth: required. Moderator or admin. Sets visibility to unlisted — the
+   * video stays viewable by anyone with the link/id, but drops out of public
+   * browse/discovery lists (see `listPublicVideos`).
    *
    * @openapi
    * /api/v1/videos/{id}/delist:
    *   post:
    *     tags: [Videos]
-   *     summary: Delist a video (set hidden)
+   *     summary: Delist a video (set unlisted)
    *     operationId: delistVideo
    *     security:
    *       - cookieAuth: []
@@ -944,9 +1071,18 @@ export function createVideosRouter() {
         }
 
         const { upload, metadata } = loaded;
-        await metadata.update({ visibility: "hidden" });
+        await metadata.update({ visibility: "unlisted" });
         syncVideoIndex(upload.id);
-        res.status(200).json(serializeVideo(upload, metadata));
+
+        const renditions = await loadRenditions(upload.id);
+        const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+
+        res.status(200).json(
+          serializeVideo(upload, metadata, {
+            tags: tagsByUploadId.get(upload.id) || [],
+            renditions,
+          }),
+        );
       } catch (err) {
         console.error("delistVideo failed:", err);
         res.status(500).json({
@@ -1011,10 +1147,9 @@ export function createVideosRouter() {
       });
 
       res.status(200).json({
-        items: grants.map((grant) => ({
-          userId: grant.userId,
-          username: grant.User.username,
-        })),
+        items: grants.map((grant) =>
+          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+        ),
       });
     } catch (err) {
       console.error("listVideoAccess failed:", err);
@@ -1028,6 +1163,9 @@ export function createVideosRouter() {
   /**
    * PUT /videos/:id/access — setVideoAccess
    * Auth: required. Owner or admin. Body: `{ usernames: string[] }` replace-all.
+   * Only allowed while the video is currently `private` — grants are only
+   * meaningful for private videos, and are wiped automatically if the video
+   * is ever set to `hidden` (see `updateVideo`).
    *
    * @openapi
    * /api/v1/videos/{id}/access:
@@ -1048,6 +1186,8 @@ export function createVideosRouter() {
    *     responses:
    *       "200":
    *         description: Updated access grant list
+   *       "400":
+   *         description: Invalid body, or the video is not currently private
    */
   router.put("/videos/:id/access", requireAuth, async (req, res) => {
     try {
@@ -1069,15 +1209,23 @@ export function createVideosRouter() {
         return;
       }
 
-      const upload = await OriginalUpload.findByPk(id);
-      if (!upload) {
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
         sendNotFound(res);
         return;
       }
+      const { upload, metadata } = loaded;
       if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
         res.status(403).json({
           error: "forbidden",
           message: "Only the owner or an admin can set video access.",
+        });
+        return;
+      }
+      if (metadata.visibility !== "private") {
+        res.status(400).json({
+          error: "invalid_state",
+          message: "Video access can only be managed while the video is private.",
         });
         return;
       }
@@ -1126,10 +1274,9 @@ export function createVideosRouter() {
       });
 
       res.status(200).json({
-        items: grants.map((grant) => ({
-          userId: grant.userId,
-          username: grant.User.username,
-        })),
+        items: grants.map((grant) =>
+          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+        ),
       });
     } catch (err) {
       console.error("setVideoAccess failed:", err);
@@ -1431,6 +1578,7 @@ export function createVideosRouter() {
           },
         ],
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -1476,6 +1624,7 @@ export function createVideosRouter() {
       const items = await listPublicVideos({
         uploadWhere: { userId: { [Op.in]: channelIds } },
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user.id,
       });
       res.status(200).json({ items });
     } catch (err) {

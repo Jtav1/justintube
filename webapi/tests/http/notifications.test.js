@@ -172,8 +172,8 @@ describe("notifications routes", () => {
         .set("X-CSRF-Token", csrfToken)
         .send({ notificationIds: [aliceNotification.id, bobNotification.id] });
 
-      expect(res.status).toBe(204);
-      expect(res.body).toEqual({});
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
 
       const aliceRow = await Notification.findByPk(aliceNotification.id);
       expect(aliceRow.readAt).not.toBeNull();

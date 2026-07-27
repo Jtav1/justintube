@@ -3,10 +3,10 @@ WORKDIR /app
 
 # System deps: Python/pip for yt-dlp + ejs; ffmpeg strongly recommended by yt-dlp
 RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    ca-certificates \
-    ffmpeg \
+  python3 \
+  py3-pip \
+  ca-certificates \
+  ffmpeg \
   && pip install --no-cache-dir --break-system-packages yt-dlp yt-dlp-ejs
 
 ENV NODE_ENV=production

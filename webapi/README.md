@@ -67,7 +67,8 @@ Seeded into `ROLES` on boot ([`lib/seed.js`](lib/seed.js)). Acceptable role name
 | `uploader` | Verified user who can upload and manage their own videos. |
 | `viewer` | Default role that can watch and engage. |
 | `locked` | Account restricted from most actions (auth rejects these users). |
-| `unverified` | Account awaiting email verification. |
+
+Email verification is tracked independently of role via `USERS.emailVerified` (a boolean), not a role — a user of any role can be verified or unverified.
 
 ## Layout
 

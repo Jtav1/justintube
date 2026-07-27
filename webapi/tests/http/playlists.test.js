@@ -4,11 +4,13 @@ import { createTestClient } from "../helpers/app.js";
 import {
   queryRows,
   resetTables,
+  seedMetadata,
   seedPlaylist,
   seedPlaylistAccess,
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedVideoAccess,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -168,6 +170,62 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({ name: "Mine" });
     });
+
+    test("filters out hidden and inaccessible private videos, even for the playlist owner", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "get-key-7");
+      const videoOwner = await seedUserWithRoleAndKey("viewer", "get-key-7b");
+      const playlist = await seedPlaylist({
+        userId: owner.id,
+        title: "Mixed visibility",
+        visibility: "public",
+      });
+
+      const publicUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(publicUpload.id, { title: "Public video", visibility: "public" });
+
+      const unlistedUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(unlistedUpload.id, { title: "Unlisted video", visibility: "unlisted" });
+
+      const hiddenUpload = await seedUpload({ userId: owner.id });
+      await seedMetadata(hiddenUpload.id, { title: "Hidden video", visibility: "hidden" });
+
+      const privateNoGrantUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(privateNoGrantUpload.id, {
+        title: "Private, no grant",
+        visibility: "private",
+      });
+
+      const privateWithGrantUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(privateWithGrantUpload.id, {
+        title: "Private, granted",
+        visibility: "private",
+      });
+      await seedVideoAccess(privateWithGrantUpload.id, owner.id);
+
+      for (const upload of [
+        publicUpload,
+        unlistedUpload,
+        hiddenUpload,
+        privateNoGrantUpload,
+        privateWithGrantUpload,
+      ]) {
+        await client
+          .post(`/api/v1/playlists/${playlist.id}/items`)
+          .set("Authorization", "Bearer get-key-7")
+          .send({ videoId: upload.id });
+      }
+
+      const res = await client
+        .get(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer get-key-7");
+
+      expect(res.status).toBe(200);
+      expect(res.body.itemCount).toBe(3);
+      const titles = res.body.items.map((item) => item.title).sort();
+      expect(titles).toEqual(
+        ["Private, granted", "Public video", "Unlisted video"].sort(),
+      );
+    });
   });
 
   describe("PATCH /playlists/{id} (updatePlaylist)", () => {
@@ -205,7 +263,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
   });
 
   describe("DELETE /playlists/{id} (deletePlaylist)", () => {
-    test("returns 204 and removes the playlist (items and access grants cascade)", async () => {
+    test("returns 200 and removes the playlist (items and access grants cascade)", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "delete-key-1");
       const grantee = await seedUserWithRoleAndKey("viewer", "delete-key-1b");
       const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
@@ -220,7 +278,8 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .delete(`/api/v1/playlists/${playlist.id}`)
         .set("Authorization", "Bearer delete-key-1");
 
-      expect(res.status).toBe(204);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
 
       const playlistRows = await queryRows(
         "SELECT * FROM USER_PLAYLISTS WHERE id = :id",
@@ -372,7 +431,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.items).toEqual([
-        { userId: grantee.id, username: "grantee_list" },
+        { userId: grantee.id, username: "grantee_list", displayName: null },
       ]);
     });
 
@@ -406,6 +465,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       expect(res.body).toEqual({
         userId: grantee.id,
         username: "grantee_add",
+        displayName: null,
         granted: true,
       });
 
@@ -493,7 +553,12 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .set("Authorization", "Bearer remove-access-key-1");
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ userId: grantee.id, granted: false });
+      expect(res.body).toEqual({
+        userId: grantee.id,
+        username: grantee.username,
+        displayName: null,
+        granted: false,
+      });
 
       const rows = await queryRows(
         "SELECT * FROM PLAYLIST_ACCESS WHERE playlist_id = :playlistId",
@@ -512,7 +577,12 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .set("Authorization", "Bearer remove-access-key-3");
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ userId: other.id, granted: false });
+      expect(res.body).toEqual({
+        userId: other.id,
+        username: other.username,
+        displayName: null,
+        granted: false,
+      });
     });
 
     test("rejects a non-owner with 403", async () => {

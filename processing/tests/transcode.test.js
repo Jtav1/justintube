@@ -5,12 +5,14 @@ import {
 import {
   buildFfmpegArgs,
   buildOutputFilename,
+  buildThumbnailFfmpegArgs,
   getTranscodeConfig,
   parseHardwareEncoders,
   resolveAudioEncoder,
   resolveHardwareAccelerator,
   resolveVideoEncoder,
   validateTranscodeBatchRequest,
+  validateTranscodeJob,
   validateTranscodeProfile,
   validateTranscodeRequest,
 } from "../lib/transcode.js";
@@ -90,10 +92,104 @@ describe("validateTranscodeProfile / validateTranscodeRequest", () => {
         {
           jobId,
           outputFilename: `${jobId}.mp4`,
+          kind: "rendition",
           profile: { ...validProfile, outputContainer: "mp4" },
         },
       ],
     });
+  });
+});
+
+describe("thumbnail job validation and ffmpeg args", () => {
+  test("validateTranscodeJob accepts a thumbnail job with a null timestamp", () => {
+    const jobId = "66666666-6666-6666-6666-666666666666";
+    expect(
+      validateTranscodeJob(
+        { jobId, outputFilename: `${jobId}.webp`, kind: "thumbnail", timestampSeconds: null },
+        0,
+      ),
+    ).toEqual({
+      jobId,
+      outputFilename: `${jobId}.webp`,
+      kind: "thumbnail",
+      timestampSeconds: null,
+    });
+  });
+
+  test("validateTranscodeJob accepts a thumbnail job with a numeric timestamp", () => {
+    const jobId = "77777777-7777-7777-7777-777777777777";
+    expect(
+      validateTranscodeJob(
+        { jobId, outputFilename: `${jobId}.webp`, kind: "thumbnail", timestampSeconds: 12.3 },
+        0,
+      ),
+    ).toEqual({
+      jobId,
+      outputFilename: `${jobId}.webp`,
+      kind: "thumbnail",
+      timestampSeconds: 12.3,
+    });
+  });
+
+  test("validateTranscodeJob rejects a negative thumbnail timestamp", () => {
+    const jobId = "88888888-8888-8888-8888-888888888888";
+    expect(() =>
+      validateTranscodeJob(
+        { jobId, outputFilename: `${jobId}.webp`, kind: "thumbnail", timestampSeconds: -1 },
+        0,
+      ),
+    ).toThrow(TranscodeValidationError);
+  });
+
+  test("validateTranscodeJob rejects a non-numeric thumbnail timestamp", () => {
+    const jobId = "99999999-9999-9999-9999-999999999999";
+    expect(() =>
+      validateTranscodeJob(
+        { jobId, outputFilename: `${jobId}.webp`, kind: "thumbnail", timestampSeconds: "soon" },
+        0,
+      ),
+    ).toThrow(TranscodeValidationError);
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for thumbnail jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      const jobId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+      expect(() =>
+        validateTranscodeJob(
+          { jobId, outputFilename: `${jobId}.webp`, kind: "thumbnail", timestampSeconds: null },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("buildThumbnailFfmpegArgs builds a bounded-scale, webp-encoded single-frame command", () => {
+    const args = buildThumbnailFfmpegArgs({
+      inputPath: "/media/original/in.mp4",
+      outputPath: "/media/thumbnails/out.webp",
+      timestampSeconds: 12.3,
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-ss",
+      "12.3",
+      "-i",
+      "/media/original/in.mp4",
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale='min(854,iw)':'min(480,ih)':force_original_aspect_ratio=decrease",
+      "-c:v",
+      "libwebp",
+      "-quality",
+      "80",
+      "/media/thumbnails/out.webp",
+    ]);
   });
 });
 

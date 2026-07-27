@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import express from "express";
+import { requireInternalToken } from "./lib/require-internal-token.js";
 import { createDownloadRouter } from "./routes/download.js";
 import { createTranscodeRouter } from "./routes/transcode.js";
 import {
@@ -41,10 +42,14 @@ export function createApp(options = {}) {
     });
   });
 
-  app.use("/download", createDownloadRouter());
+  app.use("/download", requireInternalToken, createDownloadRouter());
 
   if (transcodeQueue) {
-    app.use("/transcode", createTranscodeRouter({ queue: transcodeQueue }));
+    app.use(
+      "/transcode",
+      requireInternalToken,
+      createTranscodeRouter({ queue: transcodeQueue }),
+    );
   }
 
   return app;

@@ -138,11 +138,51 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.title).toBe("Shared private");
     });
 
+    test("returns 404 for hidden videos to a stranger", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-hidden-key-1");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Hidden", visibility: "hidden" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 200 for a hidden video to its owner", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-hidden-key-2");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Hidden", visibility: "hidden" });
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-hidden-key-2");
+
+      expect(res.status).toBe(200);
+      expect(res.body.title).toBe("Hidden");
+    });
+
+    test("returns 200 for a hidden video to a VIDEO_ACCESS grantee", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-hidden-key-3");
+      const grantee = await seedUserWithRoleAndKey("viewer", "grantee-hidden-key-1", {
+        username: "hiddengrantee1",
+      });
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Hidden shared", visibility: "hidden" });
+      await seedVideoAccess(upload.id, grantee.id);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer grantee-hidden-key-1");
+
+      expect(res.status).toBe(200);
+      expect(res.body.title).toBe("Hidden shared");
+    });
+
     test("includes durationSeconds, thumbnailUrl, and complete renditions", async () => {
       const upload = await seedUpload({ durationSeconds: 125 });
       await seedMetadata(upload.id, { title: "Enriched", visibility: "public" });
       await seedVideoThumbnail(upload.id);
-      await seedFileVersion(upload.id, {
+      const complete = await seedFileVersion(upload.id, {
         status: "complete",
         resolution: "480p",
         videoWidth: 854,
@@ -161,8 +201,29 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.durationSeconds).toBe(125);
       expect(res.body.thumbnailUrl).toBe(`/api/v1/videos/${upload.id}/thumbnail`);
       expect(res.body.renditions).toEqual([
-        { resolution: "480p", width: 854, height: 480 },
+        {
+          id: complete.id,
+          resolution: "480p",
+          width: 854,
+          height: 480,
+          mimeType: "video/mp4",
+          fileSizeBytes: 1024,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
+        },
       ]);
+      expect(res.body.tags).toEqual([]);
+    });
+
+    test("includes this video's own tags", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Tagged", visibility: "public" });
+      await seedContentTag(upload.id, { tag: "gaming" });
+      await seedContentTag(upload.id, { tag: "co-op" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags.sort()).toEqual(["co-op", "gaming"]);
     });
   });
 
@@ -420,6 +481,38 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(403);
       expect(res.body.error).toBe("forbidden");
     });
+
+    test("response includes tags and complete renditions, same as getVideo", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-update-shape-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Before", visibility: "public" });
+      await seedContentTag(upload.id, { tag: "existing" });
+      const complete = await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoWidth: 854,
+        videoHeight: 480,
+      });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-update-shape-key")
+        .send({ tags: ["new-tag"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["new-tag"]);
+      expect(res.body.renditions).toEqual([
+        {
+          id: complete.id,
+          resolution: "480p",
+          width: 854,
+          height: 480,
+          mimeType: "video/mp4",
+          fileSizeBytes: 1024,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
+        },
+      ]);
+    });
   });
 
   describe("DELETE /videos/{id} (deleteVideo)", () => {
@@ -434,7 +527,7 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(401);
     });
 
-    test("returns 204 and removes the upload (and its metadata via cascade)", async () => {
+    test("returns 200 and removes the upload (and its metadata via cascade)", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "owner-delete-key");
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id);
@@ -443,7 +536,8 @@ describe("Video discovery and metadata endpoints", () => {
         .delete(`/api/v1/videos/${upload.id}`)
         .set("Authorization", "Bearer owner-delete-key");
 
-      expect(res.status).toBe(204);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
 
       const uploads = await queryRows(
         "SELECT * FROM ORIGINAL_UPLOADS WHERE id = :id",
@@ -474,6 +568,8 @@ describe("Video discovery and metadata endpoints", () => {
         visibility: "private",
       });
 
+      await seedContentTag(publicUpload.id, { tag: "vlog" });
+
       const res = await client.get("/api/v1/videos");
 
       expect(res.status).toBe(200);
@@ -481,6 +577,55 @@ describe("Video discovery and metadata endpoints", () => {
       const titles = res.body.items.map((item) => item.title);
       expect(titles).toContain("Public one");
       expect(titles).not.toContain("Private one");
+
+      const publicItem = res.body.items.find((item) => item.title === "Public one");
+      expect(publicItem.tags).toEqual(["vlog"]);
+    });
+
+    test("excludes another user's unlisted/hidden videos but includes the caller's own", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-owner-key");
+      const stranger = await seedUserWithRoleAndKey("viewer", "list-stranger-key");
+
+      const ownUnlisted = await seedUpload({
+        originalFilename: "own-unlisted.mp4",
+        userId: owner.id,
+      });
+      await seedMetadata(ownUnlisted.id, {
+        title: "My unlisted",
+        visibility: "unlisted",
+      });
+      const ownHidden = await seedUpload({
+        originalFilename: "own-hidden.mp4",
+        userId: owner.id,
+      });
+      await seedMetadata(ownHidden.id, {
+        title: "My hidden",
+        visibility: "hidden",
+      });
+      const othersUnlisted = await seedUpload({
+        originalFilename: "others-unlisted.mp4",
+        userId: stranger.id,
+      });
+      await seedMetadata(othersUnlisted.id, {
+        title: "Someone else's unlisted",
+        visibility: "unlisted",
+      });
+
+      const anonRes = await client.get("/api/v1/videos");
+      expect(anonRes.status).toBe(200);
+      const anonTitles = anonRes.body.items.map((item) => item.title);
+      expect(anonTitles).not.toContain("My unlisted");
+      expect(anonTitles).not.toContain("My hidden");
+      expect(anonTitles).not.toContain("Someone else's unlisted");
+
+      const ownerRes = await client
+        .get("/api/v1/videos")
+        .set("Authorization", "Bearer list-owner-key");
+      expect(ownerRes.status).toBe(200);
+      const ownerTitles = ownerRes.body.items.map((item) => item.title);
+      expect(ownerTitles).toContain("My unlisted");
+      expect(ownerTitles).toContain("My hidden");
+      expect(ownerTitles).not.toContain("Someone else's unlisted");
     });
   });
 
@@ -539,7 +684,7 @@ describe("Video discovery and metadata endpoints", () => {
   });
 
   describe("POST /videos/{id}/delist (delistVideo)", () => {
-    test("sets visibility to hidden for moderators", async () => {
+    test("sets visibility to unlisted for moderators", async () => {
       await seedUserWithRoleAndKey("moderator", "mod-delist-key");
       const upload = await seedUpload();
       await seedMetadata(upload.id, {
@@ -552,7 +697,7 @@ describe("Video discovery and metadata endpoints", () => {
         .set("Authorization", "Bearer mod-delist-key");
 
       expect(res.status).toBe(200);
-      expect(res.body.visibility).toBe("hidden");
+      expect(res.body.visibility).toBe("unlisted");
     });
 
     test("forbids viewers from delisting", async () => {
@@ -566,6 +711,37 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(403);
       expect(res.body.error).toBe("forbidden");
+    });
+
+    test("response includes tags and complete renditions, same as getVideo", async () => {
+      await seedUserWithRoleAndKey("moderator", "mod-delist-shape-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "To delist", visibility: "public" });
+      await seedContentTag(upload.id, { tag: "keeper" });
+      const complete = await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoWidth: 854,
+        videoHeight: 480,
+      });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/delist`)
+        .set("Authorization", "Bearer mod-delist-shape-key");
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["keeper"]);
+      expect(res.body.renditions).toEqual([
+        {
+          id: complete.id,
+          resolution: "480p",
+          width: 854,
+          height: 480,
+          mimeType: "video/mp4",
+          fileSizeBytes: 1024,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
+        },
+      ]);
     });
   });
 
@@ -583,7 +759,7 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(putRes.status).toBe(200);
       expect(putRes.body.items).toEqual([
-        { userId: friend.id, username: "friend_user" },
+        { userId: friend.id, username: "friend_user", displayName: null },
       ]);
 
       const getRes = await client
@@ -607,6 +783,68 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("invalid_body");
+    });
+
+    test("rejects setting access on a non-private video", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-nonprivate-access");
+      const friend = await seedUser({ username: "friend_nonprivate" });
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client
+        .put(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer owner-nonprivate-access")
+        .send({ usernames: [friend.username] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_state");
+    });
+
+    test("wipes existing grants when the video transitions to hidden", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-wipe-access");
+      const friend = await seedUser({ username: "friend_wipe" });
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedVideoAccess(upload.id, friend.id);
+
+      const patchRes = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-wipe-access")
+        .send({ visibility: "hidden" });
+      expect(patchRes.status).toBe(200);
+
+      const getRes = await client
+        .get(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer owner-wipe-access");
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.items).toEqual([]);
+    });
+
+    test("preserves existing grants when the video transitions to public or back to private", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-preserve-access");
+      const friend = await seedUser({ username: "friend_preserve" });
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedVideoAccess(upload.id, friend.id);
+
+      const toPublic = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-preserve-access")
+        .send({ visibility: "public" });
+      expect(toPublic.status).toBe(200);
+
+      const backToPrivate = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-preserve-access")
+        .send({ visibility: "private" });
+      expect(backToPrivate.status).toBe(200);
+
+      const getRes = await client
+        .get(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer owner-preserve-access");
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.items).toHaveLength(1);
+      expect(getRes.body.items[0].username).toBe("friend_preserve");
     });
   });
 

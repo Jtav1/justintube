@@ -169,7 +169,7 @@ export function createNotificationsRouter() {
    *                 items:
    *                   type: integer
    *     responses:
-   *       204:
+   *       200:
    *         description: Notifications marked read
    *       400:
    *         description: Invalid body
@@ -178,13 +178,13 @@ export function createNotificationsRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   router.post("/notifications/read", requireAuth, async (req, res) => {
     try {
       const parsed = parseMarkReadBody(req.body);
       if (!parsed.ok) {
-        res.status(400).json({ error: "invalid_body", message: parsed.message });
+        res.status(400).json({ success: false, error: "invalid_body", message: parsed.message });
         return;
       }
 
@@ -198,10 +198,11 @@ export function createNotificationsRouter() {
         },
       );
 
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("markNotificationsRead failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Failed to mark notifications as read.",
       });

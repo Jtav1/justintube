@@ -104,7 +104,8 @@ describe("admin system config routes", () => {
     const del = await client
       .delete("/api/v1/admin/config/site_name")
       .set(auth);
-    expect(del.status).toBe(204);
+    expect(del.status).toBe(200);
+    expect(del.body).toEqual({ success: true });
 
     const missing = await client
       .get("/api/v1/admin/config/site_name")

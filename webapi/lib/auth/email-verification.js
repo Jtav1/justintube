@@ -24,31 +24,19 @@ export function hashVerificationToken(rawToken) {
 }
 
 /**
- * Marks a user as email-verified and upgrades `unverified` role to `viewer`.
+ * Marks a user as email-verified. Verification is tracked independently of
+ * role — `roleId` is never touched here; a user keeps whatever role they had
+ * regardless of verification status.
  *
  * @param {import('sequelize').Model} user User instance to update.
  * @param {import('sequelize').Transaction} [transaction] Optional Sequelize transaction.
  * @returns {Promise<import('sequelize').Model>} Reloaded user with Role included.
  */
 export async function markUserVerified(user, transaction) {
-  const role = user.Role || null;
-  let viewerRoleId = user.roleId;
-
-  if (role && role.name === "unverified") {
-    const viewerRole = await Role.findOne({
-      where: { name: "viewer" },
-      transaction,
-    });
-    if (viewerRole) {
-      viewerRoleId = viewerRole.id;
-    }
-  }
-
   await user.update(
     {
       emailVerified: true,
       emailVerifiedAt: new Date(),
-      roleId: viewerRoleId,
     },
     { transaction },
   );

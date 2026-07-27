@@ -20,7 +20,8 @@ import {
 } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
-import { serializeVideo } from "./videos.js";
+import { canViewVideo } from "../lib/video-access.js";
+import { loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
  * Absolute path to the directory where avatar images are stored
@@ -446,14 +447,21 @@ export function createMeRouter() {
         include: [
           { model: VideoMetadata, as: "VideoMetadata", required: true },
           { model: VideoThumbnail, required: false },
+          { model: User, required: false },
         ],
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
         limit,
         offset: (page - 1) * limit,
       });
 
+      const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+
       res.status(200).json({
-        items: rows.map((upload) => serializeVideo(upload, upload.VideoMetadata)),
+        items: rows.map((upload) =>
+          serializeVideo(upload, upload.VideoMetadata, {
+            tags: tagsByUploadId.get(upload.id) || [],
+          }),
+        ),
         page,
         limit,
         totalHits: count,
@@ -471,8 +479,8 @@ export function createMeRouter() {
   /**
    * Returns videos the authenticated user has liked (positive VIDEO_LIKES
    * rows), newest like first, paginated. Only includes videos the user can
-   * currently see: public/unlisted always; private only with ownership or a
-   * VIDEO_ACCESS grant; hidden only when the user owns it.
+   * currently see, per {@link canViewVideo}: owner/admin always; public and
+   * unlisted always; private and hidden only with a VIDEO_ACCESS grant.
    * GET /api/v1/me/likes
    * Auth: session cookie or Bearer API key (`requireAuth`).
    *
@@ -537,6 +545,7 @@ export function createMeRouter() {
             include: [
               { model: VideoMetadata, as: "VideoMetadata", required: true },
               { model: VideoThumbnail, required: false },
+              { model: User, required: false },
             ],
           },
         ],
@@ -545,28 +554,27 @@ export function createMeRouter() {
 
       const visibleLikes = likes.filter((like) => {
         const upload = like.OriginalUpload;
-        const { visibility } = upload.VideoMetadata;
-        const isOwner =
-          upload.userId != null && Number(upload.userId) === Number(req.user.id);
-        if (visibility === "public" || visibility === "unlisted") {
-          return true;
-        }
-        if (visibility === "private") {
-          return isOwner || grantedUploadIds.has(upload.id);
-        }
-        if (visibility === "hidden") {
-          return isOwner;
-        }
-        return false;
+        return canViewVideo(
+          req.user,
+          req.authRole,
+          upload,
+          upload.VideoMetadata,
+          grantedUploadIds.has(upload.id),
+        );
       });
 
       const totalHits = visibleLikes.length;
       const offset = (page - 1) * limit;
       const pageLikes = visibleLikes.slice(offset, offset + limit);
+      const tagsByUploadId = await loadTagsByUploadId(
+        pageLikes.map((like) => like.OriginalUpload.id),
+      );
 
       res.status(200).json({
         items: pageLikes.map((like) =>
-          serializeVideo(like.OriginalUpload, like.OriginalUpload.VideoMetadata),
+          serializeVideo(like.OriginalUpload, like.OriginalUpload.VideoMetadata, {
+            tags: tagsByUploadId.get(like.OriginalUpload.id) || [],
+          }),
         ),
         page,
         limit,
@@ -880,7 +888,7 @@ export function createMeRouter() {
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     responses:
-   *       204:
+   *       200:
    *         description: Avatar removed (idempotent; also returned when no avatar was set)
    *       401:
    *         description: Not authenticated
@@ -933,7 +941,7 @@ export function createMeRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   router.delete("/me/avatar", requireAuth, async (req, res) => {
     try {
@@ -941,10 +949,11 @@ export function createMeRouter() {
         await unlink(join(avatarsDir, req.user.avatarFilename)).catch(() => {});
         await req.user.update({ avatarFilename: null });
       }
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("deleteMyAvatar failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Failed to remove your avatar.",
       });
