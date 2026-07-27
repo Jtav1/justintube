@@ -271,8 +271,7 @@ export function createAuthRouter() {
       }
 
       const needsVerify = requireEmailVerification();
-      const roleName = needsVerify ? "unverified" : "viewer";
-      const role = await Role.findOne({ where: { name: roleName } });
+      const role = await Role.findOne({ where: { name: "viewer" } });
       const passwordHash = await hashPassword(password);
 
       const user = await User.create({
@@ -395,7 +394,8 @@ export function createAuthRouter() {
   /**
    * Destroys the current session cookie.
    * POST /api/v1/auth/logout — no body.
-   * Auth: X-CSRF-Token required (session cookie clients); Bearer API keys skip CSRF.
+   * Auth: required (session cookie or Bearer API key). X-CSRF-Token required
+   * for session cookie clients; Bearer API keys skip CSRF.
    *
    * @openapi
    * /api/v1/auth/logout:
@@ -403,17 +403,22 @@ export function createAuthRouter() {
    *     tags: [Auth]
    *     summary: Log out and clear session cookie
    *     operationId: authLogout
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
    *     parameters:
    *       - $ref: '#/components/parameters/CsrfTokenHeader'
    *     responses:
    *       204:
    *         description: Session destroyed
+   *       401:
+   *         description: Not authenticated
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 204 No Content.
    */
-  auth.post("/logout", async (req, res) => {
+  auth.post("/logout", requireAuth, async (req, res) => {
     try {
       await destroySession(req);
       res.clearCookie("justintube.sid");

@@ -20,6 +20,7 @@ import {
 } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
+import { canViewVideo } from "../lib/video-access.js";
 import { serializeVideo } from "./videos.js";
 
 /**
@@ -472,8 +473,8 @@ export function createMeRouter() {
   /**
    * Returns videos the authenticated user has liked (positive VIDEO_LIKES
    * rows), newest like first, paginated. Only includes videos the user can
-   * currently see: public/unlisted always; private only with ownership or a
-   * VIDEO_ACCESS grant; hidden only when the user owns it.
+   * currently see, per {@link canViewVideo}: owner/admin always; public and
+   * unlisted always; private and hidden only with a VIDEO_ACCESS grant.
    * GET /api/v1/me/likes
    * Auth: session cookie or Bearer API key (`requireAuth`).
    *
@@ -547,19 +548,13 @@ export function createMeRouter() {
 
       const visibleLikes = likes.filter((like) => {
         const upload = like.OriginalUpload;
-        const { visibility } = upload.VideoMetadata;
-        const isOwner =
-          upload.userId != null && Number(upload.userId) === Number(req.user.id);
-        if (visibility === "public" || visibility === "unlisted") {
-          return true;
-        }
-        if (visibility === "private") {
-          return isOwner || grantedUploadIds.has(upload.id);
-        }
-        if (visibility === "hidden") {
-          return isOwner;
-        }
-        return false;
+        return canViewVideo(
+          req.user,
+          req.authRole,
+          upload,
+          upload.VideoMetadata,
+          grantedUploadIds.has(upload.id),
+        );
       });
 
       const totalHits = visibleLikes.length;

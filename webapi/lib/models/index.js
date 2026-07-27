@@ -11,6 +11,7 @@ import { PlaylistItem } from "./playlist-item.js";
 import { Role } from "./role.js";
 import { SsoProvider } from "./sso-provider.js";
 import { StaticPage } from "./static-page.js";
+import { StreamKey } from "./stream-key.js";
 import { Subscription } from "./subscription.js";
 import { SystemConfig } from "./system-config.js";
 import { TranscodeProfile } from "./transcode-profile.js";
@@ -47,6 +48,15 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
   UserApiKey.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasOne(StreamKey, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  StreamKey.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "CASCADE",
   });
@@ -353,6 +363,7 @@ export const models = {
   NotificationType,
   UserNotificationSetting,
   StaticPage,
+  StreamKey,
   SystemConfig,
   VideoTransferMapping,
   VideoTransferHistory,
@@ -371,6 +382,7 @@ export {
   Role,
   SsoProvider,
   StaticPage,
+  StreamKey,
   Subscription,
   SystemConfig,
   TranscodeProfile,

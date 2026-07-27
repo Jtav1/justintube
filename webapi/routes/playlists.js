@@ -8,12 +8,13 @@ import {
   PlaylistItem,
   User,
   UserPlaylist,
+  VideoAccess,
   VideoMetadata,
   VideoThumbnail,
 } from "../lib/models/index.js";
 import { canViewPlaylist } from "../lib/playlist-access.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
-import { isOwnerOrAdmin } from "../lib/video-access.js";
+import { isAdmin, isOwnerOrAdmin } from "../lib/video-access.js";
 import { serializeVideo } from "./videos.js";
 
 /**
@@ -76,6 +77,56 @@ async function userHasAccessGrant(playlistId, userId) {
   }
   const grant = await PlaylistAccess.findOne({ where: { playlistId, userId } });
   return Boolean(grant);
+}
+
+/**
+ * Filters PLAYLIST_ITEMS rows (with `OriginalUpload.VideoMetadata` preloaded)
+ * down to the videos the requesting caller may actually see, independent of
+ * whether they can see the playlist itself: `public`/`unlisted` videos are
+ * always kept; `hidden` videos are always dropped (delisted content has no
+ * business surfacing via a playlist, even to the playlist owner); `private`
+ * videos are kept only for their owner, an admin, or someone holding a
+ * VIDEO_ACCESS grant on that specific video.
+ *
+ * @param {import('sequelize').Model[]} items PLAYLIST_ITEMS rows to filter.
+ * @param {import('sequelize').Model|null|undefined} user Authenticated user (optional).
+ * @param {import('sequelize').Model|null|undefined} role Authenticated role (optional).
+ * @returns {Promise<import('sequelize').Model[]>} The subset of `items` the caller may view.
+ */
+async function filterViewablePlaylistItems(items, user, role) {
+  const privateItems = items.filter(
+    (item) => item.OriginalUpload.VideoMetadata.visibility === "private",
+  );
+
+  let grantedUploadIds = new Set();
+  if (privateItems.length > 0 && user && !isAdmin(role)) {
+    const grants = await VideoAccess.findAll({
+      where: {
+        userId: user.id,
+        originalUploadId: privateItems.map((item) => item.OriginalUpload.id),
+      },
+      attributes: ["originalUploadId"],
+    });
+    grantedUploadIds = new Set(grants.map((grant) => grant.originalUploadId));
+  }
+
+  return items.filter((item) => {
+    const upload = item.OriginalUpload;
+    const visibility = upload.VideoMetadata.visibility;
+    if (visibility === "hidden") {
+      return false;
+    }
+    if (visibility !== "private") {
+      return true;
+    }
+    if (isAdmin(role)) {
+      return true;
+    }
+    if (user && upload.userId != null && Number(user.id) === Number(upload.userId)) {
+      return true;
+    }
+    return grantedUploadIds.has(upload.id);
+  });
 }
 
 /**
@@ -169,7 +220,12 @@ export function createPlaylistsRouter() {
 
   /**
    * GET /playlists/:id — getPlaylist
-   * Auth: optional. Returns the playlist and its items when viewable.
+   * Auth: optional. Returns the playlist and its items when viewable. Items
+   * are additionally filtered per-video: `hidden` videos are never returned,
+   * and `private` videos are only returned to their owner, an admin, or a
+   * caller holding a VIDEO_ACCESS grant on that video (see
+   * {@link filterViewablePlaylistItems}) — independent of whether the
+   * playlist itself is public.
    *
    * @openapi
    * /api/v1/playlists/{id}:
@@ -231,8 +287,10 @@ export function createPlaylistsRouter() {
         ],
       });
 
-      const payload = serializePlaylist(playlist, items.length);
-      payload.items = items.map((item) =>
+      const viewableItems = await filterViewablePlaylistItems(items, req.user, req.authRole);
+
+      const payload = serializePlaylist(playlist, viewableItems.length);
+      payload.items = viewableItems.map((item) =>
         serializeVideo(item.OriginalUpload, item.OriginalUpload.VideoMetadata),
       );
 

@@ -4,11 +4,13 @@ import { createTestClient } from "../helpers/app.js";
 import {
   queryRows,
   resetTables,
+  seedMetadata,
   seedPlaylist,
   seedPlaylistAccess,
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedVideoAccess,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -167,6 +169,62 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({ name: "Mine" });
+    });
+
+    test("filters out hidden and inaccessible private videos, even for the playlist owner", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "get-key-7");
+      const videoOwner = await seedUserWithRoleAndKey("viewer", "get-key-7b");
+      const playlist = await seedPlaylist({
+        userId: owner.id,
+        title: "Mixed visibility",
+        visibility: "public",
+      });
+
+      const publicUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(publicUpload.id, { title: "Public video", visibility: "public" });
+
+      const unlistedUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(unlistedUpload.id, { title: "Unlisted video", visibility: "unlisted" });
+
+      const hiddenUpload = await seedUpload({ userId: owner.id });
+      await seedMetadata(hiddenUpload.id, { title: "Hidden video", visibility: "hidden" });
+
+      const privateNoGrantUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(privateNoGrantUpload.id, {
+        title: "Private, no grant",
+        visibility: "private",
+      });
+
+      const privateWithGrantUpload = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(privateWithGrantUpload.id, {
+        title: "Private, granted",
+        visibility: "private",
+      });
+      await seedVideoAccess(privateWithGrantUpload.id, owner.id);
+
+      for (const upload of [
+        publicUpload,
+        unlistedUpload,
+        hiddenUpload,
+        privateNoGrantUpload,
+        privateWithGrantUpload,
+      ]) {
+        await client
+          .post(`/api/v1/playlists/${playlist.id}/items`)
+          .set("Authorization", "Bearer get-key-7")
+          .send({ videoId: upload.id });
+      }
+
+      const res = await client
+        .get(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer get-key-7");
+
+      expect(res.status).toBe(200);
+      expect(res.body.itemCount).toBe(3);
+      const titles = res.body.items.map((item) => item.title).sort();
+      expect(titles).toEqual(
+        ["Private, granted", "Public video", "Unlisted video"].sort(),
+      );
     });
   });
 

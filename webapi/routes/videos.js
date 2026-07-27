@@ -169,24 +169,34 @@ function sendNotFound(res) {
 }
 
 /**
- * Finds public videos with metadata, optionally filtered and ordered.
+ * Finds videos for a bulk browse/discovery list, optionally filtered and
+ * ordered. Public videos are always included; `unlisted`/`hidden` videos are
+ * included only for their owner (`options.viewerUserId`) — everyone else
+ * never sees delisted or hidden content in these bulk lists.
  *
  * @param {object} [options] Query options.
  * @param {import('sequelize').WhereOptions} [options.uploadWhere] Extra ORIGINAL_UPLOADS where.
  * @param {import('sequelize').Includeable[]} [options.includes] Extra includes.
  * @param {import('sequelize').Order} [options.order] Order clause.
+ * @param {number|null} [options.viewerUserId] Authenticated caller's id, if any.
  * @returns {Promise<object[]>} Serialized video items.
  */
 async function listPublicVideos(options = {}) {
+  const visibilityOr = [{ "$VideoMetadata.visibility$": "public" }];
+  if (options.viewerUserId) {
+    visibilityOr.push({
+      userId: options.viewerUserId,
+      "$VideoMetadata.visibility$": { [Op.in]: ["unlisted", "hidden"] },
+    });
+  }
+
   const rows = await OriginalUpload.findAll({
-    where: options.uploadWhere || {},
+    where: {
+      ...(options.uploadWhere || {}),
+      [Op.or]: visibilityOr,
+    },
     include: [
-      {
-        model: VideoMetadata,
-        as: "VideoMetadata",
-        required: true,
-        where: { visibility: "public" },
-      },
+      { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
       { model: User, required: false },
       ...(options.includes || []),
@@ -435,10 +445,11 @@ export function createVideosRouter() {
    *       "200":
    *         description: Public video list
    */
-  router.get("/videos", optionalAuth, async (_req, res) => {
+  router.get("/videos", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -464,11 +475,12 @@ export function createVideosRouter() {
    *       "200":
    *         description: Featured video list
    */
-  router.get("/videos/featured", optionalAuth, async (_req, res) => {
+  router.get("/videos/featured", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
         includes: [{ model: FeaturedVideo, required: true }],
         order: [[FeaturedVideo, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -494,10 +506,11 @@ export function createVideosRouter() {
    *       "200":
    *         description: Newest public video list
    */
-  router.get("/videos/newest", optionalAuth, async (_req, res) => {
+  router.get("/videos/newest", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -810,6 +823,16 @@ export function createVideosRouter() {
       await sequelize.transaction(async (transaction) => {
         if (Object.keys(parsed.patch).length > 0) {
           await metadata.update(parsed.patch, { transaction });
+          if (parsed.patch.visibility === "hidden") {
+            // Grants are only meaningful for private videos; wipe them on
+            // entry to hidden rather than leaving stale access behind. Any
+            // other visibility change (including back to private) preserves
+            // existing grants.
+            await VideoAccess.destroy({
+              where: { originalUploadId: upload.id },
+              transaction,
+            });
+          }
         }
         if (parsed.tags !== undefined) {
           await ContentTag.destroy({
@@ -903,13 +926,15 @@ export function createVideosRouter() {
 
   /**
    * POST /videos/:id/delist — delistVideo
-   * Auth: required. Moderator or admin. Sets visibility to hidden.
+   * Auth: required. Moderator or admin. Sets visibility to unlisted — the
+   * video stays viewable by anyone with the link/id, but drops out of public
+   * browse/discovery lists (see `listPublicVideos`).
    *
    * @openapi
    * /api/v1/videos/{id}/delist:
    *   post:
    *     tags: [Videos]
-   *     summary: Delist a video (set hidden)
+   *     summary: Delist a video (set unlisted)
    *     operationId: delistVideo
    *     security:
    *       - cookieAuth: []
@@ -947,7 +972,7 @@ export function createVideosRouter() {
         }
 
         const { upload, metadata } = loaded;
-        await metadata.update({ visibility: "hidden" });
+        await metadata.update({ visibility: "unlisted" });
         syncVideoIndex(upload.id);
         res.status(200).json(serializeVideo(upload, metadata));
       } catch (err) {
@@ -1030,6 +1055,9 @@ export function createVideosRouter() {
   /**
    * PUT /videos/:id/access — setVideoAccess
    * Auth: required. Owner or admin. Body: `{ usernames: string[] }` replace-all.
+   * Only allowed while the video is currently `private` — grants are only
+   * meaningful for private videos, and are wiped automatically if the video
+   * is ever set to `hidden` (see `updateVideo`).
    *
    * @openapi
    * /api/v1/videos/{id}/access:
@@ -1050,6 +1078,8 @@ export function createVideosRouter() {
    *     responses:
    *       "200":
    *         description: Updated access grant list
+   *       "400":
+   *         description: Invalid body, or the video is not currently private
    */
   router.put("/videos/:id/access", requireAuth, async (req, res) => {
     try {
@@ -1071,15 +1101,23 @@ export function createVideosRouter() {
         return;
       }
 
-      const upload = await OriginalUpload.findByPk(id);
-      if (!upload) {
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
         sendNotFound(res);
         return;
       }
+      const { upload, metadata } = loaded;
       if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
         res.status(403).json({
           error: "forbidden",
           message: "Only the owner or an admin can set video access.",
+        });
+        return;
+      }
+      if (metadata.visibility !== "private") {
+        res.status(400).json({
+          error: "invalid_state",
+          message: "Video access can only be managed while the video is private.",
         });
         return;
       }
@@ -1432,6 +1470,7 @@ export function createVideosRouter() {
           },
         ],
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -1477,6 +1516,7 @@ export function createVideosRouter() {
       const items = await listPublicVideos({
         uploadWhere: { userId: { [Op.in]: channelIds } },
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        viewerUserId: req.user.id,
       });
       res.status(200).json({ items });
     } catch (err) {

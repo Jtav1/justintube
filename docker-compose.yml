@@ -121,8 +121,12 @@ services:
       REDIS_PORT: 6379
       API_BASE_URL: http://api:3000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
-    ports:
-      - "${PROCESSING_PORT:-3001}:3001"
+    # Deliberately no `ports:` mapping — processing is internal-only and must
+    # be reached solely by `api` over the compose network (`http://processing:3001`).
+    # Also gated by INTERNAL_SERVICE_TOKEN (see processing/lib/require-internal-token.js)
+    # as defense-in-depth. Uncomment below only for local debugging.
+    # ports:
+    #   - "${PROCESSING_PORT:-3001}:3001"
     volumes:
       - media-data:/media
 

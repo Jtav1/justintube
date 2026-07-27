@@ -22,10 +22,6 @@ const DEFAULT_ROLES = [
     name: "locked",
     description: "Account restricted from most actions.",
   },
-  {
-    name: "unverified",
-    description: "Account awaiting email verification.",
-  },
 ];
 
 /**

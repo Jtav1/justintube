@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { Router } from "express";
+import { Op } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
-import { requireAuth } from "../lib/auth/require-auth.js";
+import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
 import {
   OriginalUpload,
@@ -78,14 +79,17 @@ function serializeChannelUser(user) {
 }
 
 /**
- * Loads a paginated page of a user's public videos, newest first.
+ * Loads a paginated page of a user's videos, newest first. Public videos are
+ * always included; `unlisted`/`hidden` videos are included only when the
+ * caller is viewing their own channel (`isSelf`).
  *
  * @param {number} userId Target user's id.
  * @param {{page: number, limit: number}} pagination Parsed pagination.
+ * @param {boolean} [isSelf=false] Whether the caller is this channel's owner.
  * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
- *   Paginated public video list envelope.
+ *   Paginated video list envelope.
  */
-async function loadUserPublicVideosPage(userId, pagination) {
+async function loadUserPublicVideosPage(userId, pagination, isSelf = false) {
   const { page, limit } = pagination;
   const { rows, count } = await OriginalUpload.findAndCountAll({
     where: { userId },
@@ -94,7 +98,9 @@ async function loadUserPublicVideosPage(userId, pagination) {
         model: VideoMetadata,
         as: "VideoMetadata",
         required: true,
-        where: { visibility: "public" },
+        where: isSelf
+          ? { visibility: { [Op.in]: ["public", "unlisted", "hidden"] } }
+          : { visibility: "public" },
       },
       { model: VideoThumbnail, required: false },
       { model: User, required: false },
@@ -124,9 +130,10 @@ export function createUsersRouter() {
 
   /**
    * Returns a user's public channel profile plus a paginated page of their
-   * public videos, newest first.
+   * videos, newest first. Public videos are always included; the channel
+   * owner viewing their own channel also sees their unlisted/hidden videos.
    * GET /api/v1/users/:username
-   * Auth: none required (public).
+   * Auth: optional — unlocks the owner's own unlisted/hidden videos.
    *
    * @openapi
    * /api/v1/users/{username}:
@@ -167,7 +174,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the channel profile or an error response.
    */
-  router.get("/users/:username", async (req, res) => {
+  router.get("/users/:username", optionalAuth, async (req, res) => {
     try {
       const pagination = parsePagination(req.query);
       if (!pagination.ok) {
@@ -181,7 +188,8 @@ export function createUsersRouter() {
         return;
       }
 
-      const videos = await loadUserPublicVideosPage(user.id, pagination);
+      const isSelf = req.user?.id != null && Number(req.user.id) === Number(user.id);
+      const videos = await loadUserPublicVideosPage(user.id, pagination, isSelf);
       res.status(200).json({ user: serializeChannelUser(user), videos });
     } catch (err) {
       console.error("getUserChannel failed:", err);
@@ -193,9 +201,11 @@ export function createUsersRouter() {
   });
 
   /**
-   * Returns a paginated list of a user's public videos, newest first.
+   * Returns a paginated list of a user's videos, newest first. Public videos
+   * are always included; the channel owner viewing their own channel also
+   * sees their unlisted/hidden videos.
    * GET /api/v1/users/:username/videos
-   * Auth: none required (public).
+   * Auth: optional — unlocks the owner's own unlisted/hidden videos.
    *
    * @openapi
    * /api/v1/users/{username}/videos:
@@ -236,7 +246,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the paginated video list or an error response.
    */
-  router.get("/users/:username/videos", async (req, res) => {
+  router.get("/users/:username/videos", optionalAuth, async (req, res) => {
     try {
       const pagination = parsePagination(req.query);
       if (!pagination.ok) {
@@ -250,7 +260,8 @@ export function createUsersRouter() {
         return;
       }
 
-      const videos = await loadUserPublicVideosPage(user.id, pagination);
+      const isSelf = req.user?.id != null && Number(req.user.id) === Number(user.id);
+      const videos = await loadUserPublicVideosPage(user.id, pagination, isSelf);
       res.status(200).json(videos);
     } catch (err) {
       console.error("listUserVideos failed:", err);

@@ -5,6 +5,8 @@ import {
   queryRows,
   resetTables,
   seedTranscodeProfile,
+  seedUser,
+  seedUserApiKey,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -12,12 +14,17 @@ import {
  * HTTP contract tests for the implemented raw upload endpoint
  * (`POST /videos/upload`). These are GREEN: the route exists in
  * `routes/uploads.js` and persists to ORIGINAL_UPLOADS / FILE_VERSIONS.
+ * Requires an authenticated user with the `uploader` flag (or admin).
  */
 describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
   /** @type {ReturnType<typeof createTestClient>} */
   let client;
   /** @type {typeof fetch | undefined} */
   let originalFetch;
+  /** @type {{id: number} & Record<string, unknown>} */
+  let uploaderUser;
+  /** @type {string} */
+  const uploaderKey = "jt_test_uploader_key";
 
   beforeAll(async () => {
     await setupSchema();
@@ -33,12 +40,58 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     await resetTables();
   });
 
+  /**
+   * Seeds an uploader-flagged user (stored on `uploaderUser`) with an API
+   * key. Callers build the actual request themselves afterward — a Supertest
+   * `Test` is thenable, so returning one from this helper and `await`-ing the
+   * call would resolve straight to the *response* instead of the request
+   * builder, breaking further chaining (e.g. `.attach(...)`).
+   *
+   * @returns {Promise<void>} Resolves once the uploader user + key exist.
+   */
+  async function seedUploaderCreds() {
+    uploaderUser = await seedUser({ uploader: true, emailVerified: true });
+    await seedUserApiKey(uploaderUser.id, uploaderKey);
+  }
+
+  /**
+   * Starts an authenticated `POST /videos/upload` request as `uploaderUser`.
+   * Call {@link seedUploaderCreds} first.
+   *
+   * @returns {import('supertest').Test} Request builder (not yet awaited).
+   */
+  function uploadRequest() {
+    return client.post("/api/v1/videos/upload").set("Authorization", `Bearer ${uploaderKey}`);
+  }
+
+  test("rejects an unauthenticated request", async () => {
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  test("rejects an authenticated user without the uploader flag", async () => {
+    const viewer = await seedUser({ uploader: false, emailVerified: true });
+    await seedUserApiKey(viewer.id, "jt_test_non_uploader_key");
+
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .set("Authorization", "Bearer jt_test_non_uploader_key")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
   test("accepts a valid video file and persists an ORIGINAL_UPLOADS row", async () => {
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -46,7 +99,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       originalFilename: "clip.mp4",
       fileExtension: "mp4",
       status: "uploaded",
-      userId: null,
+      userId: uploaderUser.id,
     });
     expect(typeof res.body.uuidName).toBe("string");
     expect(res.body.uuidName).toHaveLength(36);
@@ -68,8 +121,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -109,8 +162,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     });
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -189,8 +242,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     });
     globalThis.fetch = fetchMock;
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -226,8 +279,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       json: async () => ({ success: false, error: "queue unavailable" }),
     }));
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -257,8 +310,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       throw new Error("fetch failed");
     });
 
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
@@ -272,15 +325,16 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
   });
 
   test("returns 400 missing_file when no file field is sent", async () => {
-    const res = await client.post("/api/v1/videos/upload");
+    await seedUploaderCreds();
+    const res = await uploadRequest();
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("missing_file");
   });
 
   test("returns 400 unsupported_file_type for a disallowed extension", async () => {
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.from("nope"), "notes.txt");
 
     expect(res.status).toBe(400);
@@ -291,8 +345,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
   test("returns 413 file_too_large when the file exceeds the size limit", async () => {
     // MAX_UPLOAD_SIZE_BYTES is set to 1024 in tests/setup/env.js.
-    const res = await client
-      .post("/api/v1/videos/upload")
+    await seedUploaderCreds();
+    const res = await uploadRequest()
       .attach("file", Buffer.alloc(4096, 0x61), "big.mp4");
 
     expect(res.status).toBe(413);

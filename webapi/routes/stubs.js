@@ -53,13 +53,6 @@ export function registerStubRoutes(router) {
     router[method](path, notImplemented(operationId));
   };
 
-  // Auth (unimplemented)
-  r("get", "/auth/sso/providers", "authSsoProviders");
-  r("get", "/auth/sso/:provider/start", "authSsoStart");
-  r("get", "/auth/sso/:provider/callback", "authSsoCallback");
-  r("post", "/auth/sso/link", "authSsoLink");
-  r("delete", "/auth/sso/link/:provider", "authSsoUnlink");
-
   // Search & discovery (unimplemented remainders)
   r("get", "/videos/:id/reaction", "getVideoReaction");
   r("delete", "/videos/:id/reaction", "clearVideoReaction");
@@ -70,6 +63,18 @@ export function registerStubRoutes(router) {
   r("get", "/me/like-history", "listMyLikeHistory");
   r("get", "/me/videos/likes-received", "listLikesReceived");
 
+  // Me / stream key (OBS / RTMP ingest credential)
+  r("get", "/me/stream-key", "getMyStreamKey");
+  r("post", "/me/stream-key/rotate", "rotateMyStreamKey");
+  r("delete", "/me/stream-key", "revokeMyStreamKey");
+
+  // Livestreaming
+  r("get", "/livestreams", "listLivestreams");
+  r("get", "/livestreams/:id", "getLivestream");
+  r("patch", "/livestreams/:id", "updateLivestream");
+  r("get", "/livestreams/:id/playback", "getLivestreamPlayback");
+  r("get", "/users/:username/live", "getUserLiveStatus");
+
   // CAST
   r("post", "/cast", "createCastSpace");
   r("post", "/cast/join", "joinCastSpace");
@@ -79,7 +84,6 @@ export function registerStubRoutes(router) {
   r("get", "/cast/:id/members", "listCastMembers");
   r("get", "/cast/:id/display", "getCastDisplay");
   r("get", "/cast/:id/sync", "castSyncWebSocket");
-
 }
 
 /**

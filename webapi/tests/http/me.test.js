@@ -362,6 +362,14 @@ describe("me / videos and likes routes", () => {
     await seedMetadata(hiddenOthers.id, { title: "Hidden by other", visibility: "hidden" });
     await seedVideoLike(hiddenOthers.id, { userId: user.id });
 
+    const hiddenWithAccess = await seedUpload({ userId: other.id });
+    await seedMetadata(hiddenWithAccess.id, {
+      title: "Hidden with access",
+      visibility: "hidden",
+    });
+    await seedVideoLike(hiddenWithAccess.id, { userId: user.id });
+    await seedVideoAccess(hiddenWithAccess.id, user.id);
+
     const privateNoAccess = await seedUpload({ userId: other.id });
     await seedMetadata(privateNoAccess.id, { title: "Private no access", visibility: "private" });
     await seedVideoLike(privateNoAccess.id, { userId: user.id });
@@ -382,7 +390,12 @@ describe("me / videos and likes routes", () => {
     const res = await agent.get("/api/v1/me/likes").query({ limit: 50 });
     expect(res.status).toBe(200);
     const titles = res.body.items.map((item) => item.title).sort();
-    expect(titles).toEqual(["Hidden mine", "Private with access", "Public other"]);
+    expect(titles).toEqual([
+      "Hidden mine",
+      "Hidden with access",
+      "Private with access",
+      "Public other",
+    ]);
   });
 
   test("GET /me/likes paginates with page/limit and rejects limit >= 100", async () => {

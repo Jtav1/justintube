@@ -86,9 +86,12 @@ async function processingFetch(path, options = {}) {
     const init = {
       method,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        Authorization: `Bearer ${process.env.INTERNAL_SERVICE_TOKEN || ""}`,
+      },
     };
     if (options.body != null) {
-      init.headers = { "Content-Type": "application/json" };
+      init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
     response = await fetch(url, init);

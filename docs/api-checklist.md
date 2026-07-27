@@ -33,14 +33,6 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `POST /api/v1/auth/resend-verification` — authResendVerification
 - [x] `POST /api/v1/auth/password` — authChangePassword
 
-Future/wont do now
-
-- [ ] `GET /api/v1/auth/sso/providers` — authSsoProviders
-- [ ] `GET /api/v1/auth/sso/:provider/start` — authSsoStart
-- [ ] `GET /api/v1/auth/sso/:provider/callback` — authSsoCallback
-- [ ] `POST /api/v1/auth/sso/link` — authSsoLink
-- [ ] `DELETE /api/v1/auth/sso/link/:provider` — authSsoUnlink
-
 ### Search & discovery
 
 - [x] `GET /api/v1/search/suggest` — searchSuggest
@@ -120,6 +112,32 @@ Future
 - [x] `GET /api/v1/playlists/:id/access` — listPlaylistAccess
 - [x] `POST /api/v1/playlists/:id/access` — addPlaylistAccess
 - [x] `DELETE /api/v1/playlists/:id/access/:userId` — removePlaylistAccess
+
+### Livestreaming (FUTURE)
+
+Requires a new RTMP/ingest component (e.g. MediaMTX or nginx-rtmp) sitting in
+front of the webapi — Express can't terminate RTMP itself. OBS pushes to that
+ingest server using a per-user stream key (dedicated `STREAM_KEYS` table, same
+hash/prefix/revoke pattern as `USER_API_KEYS` but scoped to publish-only so a
+leaked key can't be used to call the rest of the API). The ingest server calls
+the `/internal/livestreams/*` callbacks below the same way `processing` calls
+`/internal/file-versions/*` today.
+
+- [ ] `GET /api/v1/me/stream-key` — getMyStreamKey
+- [ ] `POST /api/v1/me/stream-key/rotate` — rotateMyStreamKey (invalidates the old key)
+- [ ] `DELETE /api/v1/me/stream-key` — revokeMyStreamKey
+
+- [ ] `GET /api/v1/livestreams` — listLivestreams (currently-live public streams)
+- [ ] `GET /api/v1/livestreams/:id` — getLivestream (status, viewer count, playback info)
+- [ ] `PATCH /api/v1/livestreams/:id` — updateLivestream (title/description/visibility)
+- [ ] `GET /api/v1/livestreams/:id/playback` — getLivestreamPlayback (resolves the HLS manifest URL; enforces the same visibility/access-grant checks as `canViewVideo`)
+- [ ] `GET /api/v1/users/:username/live` — getUserLiveStatus (channel-page "LIVE" badge)
+
+Internal (ingest server callbacks; Bearer `INTERNAL_SERVICE_TOKEN`, mirrors the processing-callback pattern above):
+
+- [ ] `POST /internal/livestreams/authorize` — livestreamAuthorize (on-publish webhook: validates the stream key, finds/creates the LIVESTREAMS row)
+- [ ] `POST /internal/livestreams/:id/start` — livestreamStart
+- [ ] `POST /internal/livestreams/:id/stop` — livestreamStop (optionally hands the recording to `processing` to become a normal VOD)
 
 ### CAST (FUTURE)
 
