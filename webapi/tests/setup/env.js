@@ -19,7 +19,9 @@ const scratchDir = mkdtempSync(join(tmpdir(), `justintube-test-${workerId}-`));
 process.env.DB_CLIENT = "sqlite";
 process.env.SQLITE_FILE = join(scratchDir, "test.sqlite");
 process.env.MEDIA_STORAGE_DIRECTORY = join(scratchDir, "media");
+process.env.SITEDATA_STORAGE_DIRECTORY = join(scratchDir, "sitedata");
 process.env.FILETYPES_ALLOWED = "mp4,webm,mkv";
+process.env.AVATAR_FILETYPES_ALLOWED = "jpg,jpeg,png,webp";
 process.env.PROCESSING_API_URL = "http://processing.test:3001";
 process.env.INTERNAL_SERVICE_TOKEN = "test-internal-token";
 process.env.TRANSCODE_RECONCILE_ENABLED = "false";
@@ -31,3 +33,4 @@ process.env.ADMIN_USERNAME = "testadmin";
 process.env.ADMIN_PASSWORD = "testadminpassword";
 // Small cap so the "file too large" (413) path is exercisable with tiny fixtures.
 process.env.MAX_UPLOAD_SIZE_BYTES = String(1024);
+process.env.MAX_AVATAR_SIZE_BYTES = String(1024);

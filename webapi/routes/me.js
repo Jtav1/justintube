@@ -1,16 +1,138 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { unlink } from "node:fs/promises";
+import { extname, join } from "node:path";
 import { Router } from "express";
+import multer from "multer";
 import { Op } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
+import { mimeTypeForImage } from "../lib/media-meta.js";
 import {
   OriginalUpload,
+  Subscription,
   User,
+  UserPlaylist,
   VideoAccess,
   VideoLike,
   VideoMetadata,
   VideoThumbnail,
 } from "../lib/models/index.js";
+import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { serializeVideo } from "./videos.js";
+
+/**
+ * Absolute path to the directory where avatar images are stored
+ * (`SITEDATA_STORAGE_DIRECTORY/avatars`).
+ *
+ * @type {string}
+ */
+const avatarsDir = resolveSitedataPath("avatars");
+
+// Ensure the avatars directory exists before any upload is attempted.
+mkdirSync(avatarsDir, { recursive: true });
+
+/**
+ * Set of allowed lowercase avatar file extensions (without a leading dot),
+ * parsed from the AVATAR_FILETYPES_ALLOWED env var.
+ *
+ * @type {Set<string>}
+ */
+const allowedAvatarExtensions = new Set(
+  (process.env.AVATAR_FILETYPES_ALLOWED || "jpg,jpeg,png,webp")
+    .split(",")
+    .map((ext) => ext.trim().toLowerCase().replace(/^\./, ""))
+    .filter(Boolean),
+);
+
+/**
+ * Maximum accepted avatar upload size in bytes. Defaults to 5 MiB; override
+ * with the MAX_AVATAR_SIZE_BYTES env var.
+ *
+ * @type {number}
+ */
+const maxAvatarSizeBytes = Number(process.env.MAX_AVATAR_SIZE_BYTES) || 5 * 1024 * 1024;
+
+/**
+ * Normalizes a file's extension to a lowercase value without the leading dot.
+ *
+ * @private
+ * @param {string} filename Original client-provided filename.
+ * @returns {string} Lowercase extension without a dot (empty string if none).
+ */
+function normalizedAvatarExtension(filename) {
+  return extname(filename).toLowerCase().replace(/^\./, "");
+}
+
+/**
+ * Multer storage engine that writes avatar uploads to `avatars/` under the
+ * sitedata root using a freshly generated UUID as the filename (preserving
+ * the original extension).
+ */
+const avatarStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, avatarsDir),
+  filename: (_req, file, cb) => {
+    const ext = normalizedAvatarExtension(file.originalname);
+    cb(null, ext ? `${randomUUID()}.${ext}` : randomUUID());
+  },
+});
+
+/**
+ * Multer file filter that rejects any file whose extension is not present in
+ * AVATAR_FILETYPES_ALLOWED.
+ *
+ * @private
+ * @param {import('express').Request} _req Incoming request (unused).
+ * @param {Express.Multer.File} file File metadata provided by multer.
+ * @param {multer.FileFilterCallback} cb Callback signaling acceptance/rejection.
+ * @returns {void} Invokes `cb` with the filter decision.
+ */
+function avatarFileFilter(_req, file, cb) {
+  const ext = normalizedAvatarExtension(file.originalname);
+  if (!allowedAvatarExtensions.has(ext)) {
+    const error = new Error(`File type ".${ext}" is not allowed.`);
+    error.code = "UNSUPPORTED_FILE_TYPE";
+    cb(error);
+    return;
+  }
+  cb(null, true);
+}
+
+const avatarUpload = multer({
+  storage: avatarStorage,
+  fileFilter: avatarFileFilter,
+  limits: { fileSize: maxAvatarSizeBytes },
+});
+
+/**
+ * Express error-handling middleware that maps avatar-upload multer errors to
+ * JSON responses, mirroring `uploadErrorHandler` in `routes/uploads.js`.
+ *
+ * @param {Error} err Error thrown during avatar upload handling.
+ * @param {import('express').Request} _req Incoming request (unused).
+ * @param {import('express').Response} res Express response.
+ * @param {import('express').NextFunction} next Passes non-upload errors along.
+ * @returns {void} Sends an error JSON response or delegates via `next`.
+ */
+function avatarUploadErrorHandler(err, _req, res, next) {
+  if (err?.code === "UNSUPPORTED_FILE_TYPE") {
+    res.status(400).json({
+      error: "unsupported_file_type",
+      message: err.message,
+      allowed: [...allowedAvatarExtensions],
+    });
+    return;
+  }
+  if (err instanceof multer.MulterError) {
+    const isTooLarge = err.code === "LIMIT_FILE_SIZE";
+    res.status(isTooLarge ? 413 : 400).json({
+      error: isTooLarge ? "file_too_large" : "upload_error",
+      message: err.message,
+    });
+    return;
+  }
+  next(err);
+}
 
 /**
  * Maximum page size for GET /me/videos and GET /me/likes.
@@ -51,6 +173,7 @@ const FORBIDDEN_FIELDS = [
  *   email: string,
  *   displayName: string|null,
  *   bio: string|null,
+ *   avatarFilename: string|null,
  *   emailVerified: boolean,
  *   emailVerifiedAt: Date|null,
  *   uploader: boolean,
@@ -68,6 +191,7 @@ function serializeMeSettings(user, role = null) {
     email: user.email,
     displayName: user.displayName ?? null,
     bio: user.bio ?? null,
+    avatarFilename: user.avatarFilename ?? null,
     emailVerified: Boolean(user.emailVerified),
     emailVerifiedAt: user.emailVerifiedAt ?? null,
     uploader: Boolean(user.uploader),
@@ -158,6 +282,23 @@ function parsePagination(query) {
   }
 
   return { ok: true, page: pageRaw, limit: limitRaw };
+}
+
+/**
+ * Maps a hydrated User instance (as included on a Subscription row) to the
+ * public-safe shape returned by `listMySubscriptions`/`listMySubscribers`.
+ *
+ * @param {import('sequelize').Model} user User model instance.
+ * @returns {{id: number, username: string, displayName: string|null, avatarFilename: string|null}}
+ *   Public-safe hydrated user payload.
+ */
+function serializeSubscriptionUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName ?? null,
+    avatarFilename: user.avatarFilename ?? null,
+  };
 }
 
 /**
@@ -475,6 +616,375 @@ export function createMeRouter() {
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your liked videos.",
+      });
+    }
+  });
+
+  /**
+   * Returns the users the authenticated user is subscribed to, newest
+   * subscription first, paginated.
+   * GET /api/v1/me/subscriptions
+   * Auth: session cookie or Bearer API key (`requireAuth`).
+   *
+   * @openapi
+   * /api/v1/me/subscriptions:
+   *   get:
+   *     tags: [Me]
+   *     summary: List who I'm subscribed to
+   *     operationId: listMySubscriptions
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
+   *     responses:
+   *       200:
+   *         description: Paginated list of users I'm subscribed to
+   *       400:
+   *         description: Invalid page/limit
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the paginated subscription list or an error response.
+   */
+  router.get("/me/subscriptions", requireAuth, async (req, res) => {
+    try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { rows, count } = await Subscription.findAndCountAll({
+        where: { subscriberId: req.user.id },
+        include: [
+          {
+            model: User,
+            as: "SubscribedTo",
+            attributes: ["id", "username", "displayName", "avatarFilename"],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
+        limit,
+        offset: (page - 1) * limit,
+      });
+
+      res.status(200).json({
+        items: rows.map((row) => ({
+          ...serializeSubscriptionUser(row.SubscribedTo),
+          subscribedAt: row.createdAt,
+        })),
+        page,
+        limit,
+        totalHits: count,
+        totalPages: count === 0 ? 0 : Math.ceil(count / limit),
+      });
+    } catch (err) {
+      console.error("listMySubscriptions failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list your subscriptions.",
+      });
+    }
+  });
+
+  /**
+   * Returns the users subscribed to the authenticated user, newest
+   * subscription first, paginated.
+   * GET /api/v1/me/subscribers
+   * Auth: session cookie or Bearer API key (`requireAuth`).
+   *
+   * @openapi
+   * /api/v1/me/subscribers:
+   *   get:
+   *     tags: [Me]
+   *     summary: List who is subscribed to me
+   *     operationId: listMySubscribers
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
+   *     responses:
+   *       200:
+   *         description: Paginated list of users subscribed to me
+   *       400:
+   *         description: Invalid page/limit
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the paginated subscriber list or an error response.
+   */
+  router.get("/me/subscribers", requireAuth, async (req, res) => {
+    try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { rows, count } = await Subscription.findAndCountAll({
+        where: { subscribedToId: req.user.id },
+        include: [
+          {
+            model: User,
+            as: "Subscriber",
+            attributes: ["id", "username", "displayName", "avatarFilename"],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
+        limit,
+        offset: (page - 1) * limit,
+      });
+
+      res.status(200).json({
+        items: rows.map((row) => ({
+          ...serializeSubscriptionUser(row.Subscriber),
+          subscribedAt: row.createdAt,
+        })),
+        page,
+        limit,
+        totalHits: count,
+        totalPages: count === 0 ? 0 : Math.ceil(count / limit),
+      });
+    } catch (err) {
+      console.error("listMySubscribers failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list your subscribers.",
+      });
+    }
+  });
+
+  /**
+   * Returns the authenticated user's own playlists, newest first, paginated.
+   * GET /api/v1/me/playlists
+   * Auth: session cookie or Bearer API key (`requireAuth`).
+   *
+   * @openapi
+   * /api/v1/me/playlists:
+   *   get:
+   *     tags: [Me]
+   *     summary: List my playlists
+   *     operationId: listMyPlaylists
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
+   *     responses:
+   *       200:
+   *         description: Paginated list of my playlists
+   *       400:
+   *         description: Invalid page/limit
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the paginated playlist list or an error response.
+   */
+  router.get("/me/playlists", requireAuth, async (req, res) => {
+    try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { rows, count } = await UserPlaylist.findAndCountAll({
+        where: { userId: req.user.id },
+        order: [["createdAt", "DESC"]],
+        limit,
+        offset: (page - 1) * limit,
+      });
+
+      res.status(200).json({
+        items: rows.map((playlist) => ({
+          id: playlist.id,
+          title: playlist.title,
+          description: playlist.description ?? null,
+          visibility: playlist.visibility,
+          lastAddedAt: playlist.lastAddedAt ?? null,
+          createdAt: playlist.createdAt,
+        })),
+        page,
+        limit,
+        totalHits: count,
+        totalPages: count === 0 ? 0 : Math.ceil(count / limit),
+      });
+    } catch (err) {
+      console.error("listMyPlaylists failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list your playlists.",
+      });
+    }
+  });
+
+  /**
+   * Uploads (or replaces) the authenticated user's avatar image. Deletes the
+   * previous avatar file from disk, if any, after the new one is persisted.
+   * POST /api/v1/me/avatar — multipart `file`.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/me/avatar:
+   *   post:
+   *     tags: [Me]
+   *     summary: Upload or replace my avatar image
+   *     operationId: updateMyAvatar
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         multipart/form-data:
+   *           schema:
+   *             type: object
+   *             required: [file]
+   *             properties:
+   *               file:
+   *                 type: string
+   *                 format: binary
+   *     responses:
+   *       200:
+   *         description: Avatar updated
+   *       400:
+   *         description: Missing file, or unsupported file type
+   *       401:
+   *         description: Not authenticated
+   *       413:
+   *         description: File too large
+   *   delete:
+   *     tags: [Me]
+   *     summary: Remove my avatar image
+   *     operationId: deleteMyAvatar
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       204:
+   *         description: Avatar removed (idempotent; also returned when no avatar was set)
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the updated avatar filename or an error response.
+   */
+  router.post(
+    "/me/avatar",
+    requireAuth,
+    avatarUpload.single("file"),
+    async (req, res) => {
+      try {
+        if (!req.file) {
+          res.status(400).json({ error: "invalid_body", message: "file is required." });
+          return;
+        }
+
+        const previousAvatarFilename = req.user.avatarFilename;
+
+        try {
+          await req.user.update({ avatarFilename: req.file.filename });
+        } catch (err) {
+          await unlink(join(avatarsDir, req.file.filename)).catch(() => {});
+          throw err;
+        }
+
+        if (previousAvatarFilename && previousAvatarFilename !== req.file.filename) {
+          await unlink(join(avatarsDir, previousAvatarFilename)).catch(() => {});
+        }
+
+        res.status(200).json({ avatarFilename: req.user.avatarFilename });
+      } catch (err) {
+        console.error("updateMyAvatar failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to update your avatar.",
+        });
+      }
+    },
+  );
+  router.use(avatarUploadErrorHandler);
+
+  /**
+   * Removes the authenticated user's avatar image, deleting the file from
+   * disk (best-effort) and clearing the column. Idempotent.
+   * DELETE /api/v1/me/avatar
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 or an error response.
+   */
+  router.delete("/me/avatar", requireAuth, async (req, res) => {
+    try {
+      if (req.user.avatarFilename) {
+        await unlink(join(avatarsDir, req.user.avatarFilename)).catch(() => {});
+        await req.user.update({ avatarFilename: null });
+      }
+      res.status(204).end();
+    } catch (err) {
+      console.error("deleteMyAvatar failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to remove your avatar.",
       });
     }
   });

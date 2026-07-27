@@ -202,6 +202,11 @@ async function ensureSqliteMissingColumns() {
       column: "resolution_name",
       ddl: "`resolution_name` VARCHAR(10) NOT NULL DEFAULT '720p'",
     },
+    {
+      table: "USERS",
+      column: "avatar_filename",
+      ddl: "`avatar_filename` VARCHAR(255)",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

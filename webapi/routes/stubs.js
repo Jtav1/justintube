@@ -8,6 +8,7 @@ import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
 import { createUploadRouter } from "./uploads.js";
+import { createUsersRouter } from "./users.js";
 import { createVideosRouter } from "./videos.js";
 
 /**
@@ -65,9 +66,6 @@ export function registerStubRoutes(router) {
   r("delete", "/me/history", "clearMyHistory");
   r("get", "/me/like-history", "listMyLikeHistory");
   r("get", "/me/videos/likes-received", "listLikesReceived");
-  r("get", "/me/subscriptions", "listMySubscriptions");
-  r("get", "/me/subscribers", "listMySubscribers");
-  r("get", "/me/playlists", "listMyPlaylists");
 
   // Users / channels / engagement
   r("get", "/users/:username", "getUserChannel");
@@ -121,6 +119,7 @@ export function createApiRouter() {
   router.use(createAdminUsersRouter());
   router.use(createTranscodeProfilesRouter());
   router.use(createVideosRouter());
+  router.use(createUsersRouter());
   router.use(createSearchRouter());
   registerStubRoutes(router);
   return router;

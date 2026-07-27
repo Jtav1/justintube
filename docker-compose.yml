@@ -86,6 +86,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
       MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
       MEDIA_STORAGE_DIRECTORY: /media
+      SITEDATA_STORAGE_DIRECTORY: /sitedata
       PROCESSING_API_URL: http://processing:3001
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
       TRANSCODE_RECONCILE_CRON: ${TRANSCODE_RECONCILE_CRON:-*/5 * * * *}
@@ -100,6 +101,7 @@ services:
       - "${PORT:-3000}:3000"
     volumes:
       - media-data:/media
+      - sitedata-data:/sitedata
       - ./api/db/data:/app/db/data
 
   processing:
@@ -127,5 +129,6 @@ services:
 volumes:
   # db-data:
   media-data:
+  sitedata-data:
   redis-data:
   search-data:

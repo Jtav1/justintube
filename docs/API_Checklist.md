@@ -60,8 +60,6 @@ Future/wont do now
 - [x] `POST /api/v1/videos/:id/view` — recordVideoView
 - [x] `POST /api/v1/videos/:id/like` — likeVideo
 - [x] `POST /api/v1/videos/:id/dislike` — dislikeVideo
-- [ ] `GET /api/v1/videos/:id/reaction` — getVideoReaction
-- [ ] `DELETE /api/v1/videos/:id/reaction` — clearVideoReaction
 - [x] `GET /api/v1/tags` — listTags
 - [x] `GET /api/v1/tags/:tag/videos` — listTagVideos
 - [x] `GET /api/v1/feed/subscriptions` — feedSubscriptions
@@ -76,9 +74,9 @@ Future/wont do now
 - [x] `GET /api/v1/me/settings` — getMeSettings
 - [x] `GET /api/v1/me/videos` — listMyVideos
 - [x] `GET /api/v1/me/likes` — listMyLikes
-- [ ] `GET /api/v1/me/subscriptions` — listMySubscriptions
-- [ ] `GET /api/v1/me/subscribers` — listMySubscribers
-- [ ] `GET /api/v1/me/playlists` — listMyPlaylists
+- [x] `GET /api/v1/me/subscriptions` — listMySubscriptions
+- [x] `GET /api/v1/me/subscribers` — listMySubscribers
+- [x] `GET /api/v1/me/playlists` — listMyPlaylists
 - [x] `GET /api/v1/me/notification-preferences` — getNotificationPreferences
 - [x] `PATCH /api/v1/me/notification-preferences` — updateNotificationPreferences
 
@@ -103,6 +101,12 @@ Future
 - [ ] `GET /api/v1/users/:id/subscription` — getSubscriptionState
 - [ ] `POST /api/v1/users/:id/ban` — banUser
 - [ ] `DELETE /api/v1/users/:id/ban` — unbanUser
+
+### Avatars
+
+- [x] `POST /api/v1/me/avatar` — updateMyAvatar
+- [x] `DELETE /api/v1/me/avatar` — deleteMyAvatar
+- [x] `GET /api/v1/users/:username/avatar` — getUserAvatar
 
 ### Playlists
 
