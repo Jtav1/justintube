@@ -94,13 +94,13 @@ Future
 
 ### Users / channels / engagement
 
-- [ ] `GET /api/v1/users/:username` — getUserChannel
-- [ ] `GET /api/v1/users/:username/videos` — listUserVideos
-- [ ] `POST /api/v1/users/:id/subscribe` — subscribeToUser
-- [ ] `DELETE /api/v1/users/:id/subscribe` — unsubscribeFromUser
-- [ ] `GET /api/v1/users/:id/subscription` — getSubscriptionState
-- [ ] `POST /api/v1/users/:id/ban` — banUser
-- [ ] `DELETE /api/v1/users/:id/ban` — unbanUser
+- [x] `GET /api/v1/users/:username` — getUserChannel
+- [x] `GET /api/v1/users/:username/videos` — listUserVideos
+- [x] `POST /api/v1/users/:id/subscribe` — subscribeToUser
+- [x] `DELETE /api/v1/users/:id/subscribe` — unsubscribeFromUser
+- [x] `GET /api/v1/users/:id/subscription` — getSubscriptionState
+- [x] `POST /api/v1/users/:id/ban` — banUser
+- [x] `DELETE /api/v1/users/:id/ban` — unbanUser
 
 ### Avatars
 

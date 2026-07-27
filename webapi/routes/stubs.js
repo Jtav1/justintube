@@ -67,15 +67,6 @@ export function registerStubRoutes(router) {
   r("get", "/me/like-history", "listMyLikeHistory");
   r("get", "/me/videos/likes-received", "listLikesReceived");
 
-  // Users / channels / engagement
-  r("get", "/users/:username", "getUserChannel");
-  r("get", "/users/:username/videos", "listUserVideos");
-  r("post", "/users/:id/subscribe", "subscribeToUser");
-  r("delete", "/users/:id/subscribe", "unsubscribeFromUser");
-  r("get", "/users/:id/subscription", "getSubscriptionState");
-  r("post", "/users/:id/ban", "banUser");
-  r("delete", "/users/:id/ban", "unbanUser");
-
   // Playlists
   r("post", "/playlists", "createPlaylist");
   r("get", "/playlists/:id", "getPlaylist");
