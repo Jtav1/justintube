@@ -4,6 +4,9 @@ import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
 import { createMeRouter } from "./me.js";
 import { createNotificationPreferencesRouter } from "./notification-preferences.js";
+import { createNotificationsRouter } from "./notifications.js";
+import { createPagesRouter } from "./pages.js";
+import { createPlaylistsRouter } from "./playlists.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
@@ -67,23 +70,6 @@ export function registerStubRoutes(router) {
   r("get", "/me/like-history", "listMyLikeHistory");
   r("get", "/me/videos/likes-received", "listLikesReceived");
 
-  // Users / channels / engagement
-  r("get", "/users/:username", "getUserChannel");
-  r("get", "/users/:username/videos", "listUserVideos");
-  r("post", "/users/:id/subscribe", "subscribeToUser");
-  r("delete", "/users/:id/subscribe", "unsubscribeFromUser");
-  r("get", "/users/:id/subscription", "getSubscriptionState");
-  r("post", "/users/:id/ban", "banUser");
-  r("delete", "/users/:id/ban", "unbanUser");
-
-  // Playlists
-  r("post", "/playlists", "createPlaylist");
-  r("get", "/playlists/:id", "getPlaylist");
-  r("patch", "/playlists/:id", "updatePlaylist");
-  r("delete", "/playlists/:id", "deletePlaylist");
-  r("post", "/playlists/:id/items", "addPlaylistItem");
-  r("delete", "/playlists/:id/items/:videoId", "removePlaylistItem");
-
   // CAST
   r("post", "/cast", "createCastSpace");
   r("post", "/cast/join", "joinCastSpace");
@@ -94,11 +80,6 @@ export function registerStubRoutes(router) {
   r("get", "/cast/:id/display", "getCastDisplay");
   r("get", "/cast/:id/sync", "castSyncWebSocket");
 
-  // Notifications & pages
-  r("get", "/notifications", "listNotifications");
-  r("post", "/notifications/read", "markNotificationsRead");
-  r("get", "/pages/about", "getAboutPage");
-  r("get", "/pages/rules", "getRulesPage");
 }
 
 /**
@@ -115,12 +96,15 @@ export function createApiRouter() {
   router.use(createApiKeysRouter());
   router.use(createMeRouter());
   router.use(createNotificationPreferencesRouter());
+  router.use(createNotificationsRouter());
+  router.use(createPagesRouter());
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
   router.use(createTranscodeProfilesRouter());
   router.use(createVideosRouter());
   router.use(createUsersRouter());
   router.use(createSearchRouter());
+  router.use(createPlaylistsRouter());
   registerStubRoutes(router);
   return router;
 }

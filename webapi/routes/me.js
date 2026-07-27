@@ -18,6 +18,7 @@ import {
   VideoMetadata,
   VideoThumbnail,
 } from "../lib/models/index.js";
+import { parsePagination } from "../lib/pagination.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { serializeVideo } from "./videos.js";
 
@@ -134,20 +135,6 @@ function avatarUploadErrorHandler(err, _req, res, next) {
   next(err);
 }
 
-/**
- * Maximum page size for GET /me/videos and GET /me/likes.
- *
- * @type {number}
- */
-const MAX_LIMIT = 99;
-
-/**
- * Default page size for GET /me/videos and GET /me/likes.
- *
- * @type {number}
- */
-const DEFAULT_LIMIT = 20;
-
 const FORBIDDEN_FIELDS = [
   "id",
   "username",
@@ -257,31 +244,6 @@ function parseMeUpdate(body) {
   }
 
   return { ok: true, updates };
-}
-
-/**
- * Parses and validates `page`/`limit` query params shared by GET /me/videos
- * and GET /me/likes.
- *
- * @param {import('express').Request['query']} query Raw Express query object.
- * @returns {{ok: true, page: number, limit: number}|{ok: false, message: string}}
- *   Parsed pagination or a validation error.
- */
-function parsePagination(query) {
-  const pageRaw = query.page === undefined ? 1 : Number(query.page);
-  if (!Number.isInteger(pageRaw) || pageRaw < 1) {
-    return { ok: false, message: "page must be a positive integer." };
-  }
-
-  const limitRaw = query.limit === undefined ? DEFAULT_LIMIT : Number(query.limit);
-  if (!Number.isInteger(limitRaw) || limitRaw < 1) {
-    return { ok: false, message: "limit must be a positive integer." };
-  }
-  if (limitRaw > MAX_LIMIT) {
-    return { ok: false, message: "limit must be less than 100." };
-  }
-
-  return { ok: true, page: pageRaw, limit: limitRaw };
 }
 
 /**

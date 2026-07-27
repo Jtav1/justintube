@@ -94,13 +94,13 @@ Future
 
 ### Users / channels / engagement
 
-- [ ] `GET /api/v1/users/:username` — getUserChannel
-- [ ] `GET /api/v1/users/:username/videos` — listUserVideos
-- [ ] `POST /api/v1/users/:id/subscribe` — subscribeToUser
-- [ ] `DELETE /api/v1/users/:id/subscribe` — unsubscribeFromUser
-- [ ] `GET /api/v1/users/:id/subscription` — getSubscriptionState
-- [ ] `POST /api/v1/users/:id/ban` — banUser
-- [ ] `DELETE /api/v1/users/:id/ban` — unbanUser
+- [x] `GET /api/v1/users/:username` — getUserChannel
+- [x] `GET /api/v1/users/:username/videos` — listUserVideos
+- [x] `POST /api/v1/users/:id/subscribe` — subscribeToUser
+- [x] `DELETE /api/v1/users/:id/subscribe` — unsubscribeFromUser
+- [x] `GET /api/v1/users/:id/subscription` — getSubscriptionState
+- [x] `POST /api/v1/users/:id/ban` — banUser
+- [x] `DELETE /api/v1/users/:id/ban` — unbanUser
 
 ### Avatars
 
@@ -110,14 +110,18 @@ Future
 
 ### Playlists
 
-- [ ] `POST /api/v1/playlists` — createPlaylist
-- [ ] `GET /api/v1/playlists/:id` — getPlaylist
-- [ ] `PATCH /api/v1/playlists/:id` — updatePlaylist
-- [ ] `DELETE /api/v1/playlists/:id` — deletePlaylist
-- [ ] `POST /api/v1/playlists/:id/items` — addPlaylistItem
-- [ ] `DELETE /api/v1/playlists/:id/items/:videoId` — removePlaylistItem
+- [x] `POST /api/v1/playlists` — createPlaylist
+- [x] `GET /api/v1/playlists/:id` — getPlaylist
+- [x] `PATCH /api/v1/playlists/:id` — updatePlaylist
+- [x] `DELETE /api/v1/playlists/:id` — deletePlaylist
+- [x] `POST /api/v1/playlists/:id/items` — addPlaylistItem
+- [x] `DELETE /api/v1/playlists/:id/items/:videoId` — removePlaylistItem
 
-### CAST
+- [x] `GET /api/v1/playlists/:id/access` — listPlaylistAccess
+- [x] `POST /api/v1/playlists/:id/access` — addPlaylistAccess
+- [x] `DELETE /api/v1/playlists/:id/access/:userId` — removePlaylistAccess
+
+### CAST (FUTURE)
 
 - [ ] `POST /api/v1/cast` — createCastSpace
 - [ ] `POST /api/v1/cast/join` — joinCastSpace
@@ -130,10 +134,10 @@ Future
 
 ### Notifications & pages
 
-- [ ] `GET /api/v1/notifications` — listNotifications
-- [ ] `POST /api/v1/notifications/read` — markNotificationsRead
-- [ ] `GET /api/v1/pages/about` — getAboutPage
-- [ ] `GET /api/v1/pages/rules` — getRulesPage
+- [x] `GET /api/v1/notifications` — listNotifications
+- [x] `POST /api/v1/notifications/read` — markNotificationsRead
+- [x] `GET /api/v1/pages/about` — getAboutPage
+- [x] `GET /api/v1/pages/rules` — getRulesPage
 
 ### Admin
 
