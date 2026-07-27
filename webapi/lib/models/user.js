@@ -44,6 +44,10 @@ export const User = sequelize.define(
       type: DataTypes.STRING(5000),
       allowNull: true,
     },
+    avatarFilename: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     emailVerified: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

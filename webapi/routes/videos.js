@@ -94,7 +94,7 @@ function parsePositiveInt(raw) {
  *   updatedAt: Date
  * }} Public video payload.
  */
-function serializeVideo(upload, metadata, options = {}) {
+export function serializeVideo(upload, metadata, options = {}) {
   const payload = {
     id: upload.id,
     title: metadata.title,

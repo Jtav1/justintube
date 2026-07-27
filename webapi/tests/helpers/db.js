@@ -484,10 +484,12 @@ export async function seedUserIdentity(userId, providerId, overrides = {}) {
  *
  * @param {number} subscriberId Id of the subscribing USERS row.
  * @param {number} subscribedToId Id of the subscribed-to USERS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {Date|string} [overrides.createdAt] Timestamp the subscription was created.
  * @returns {Promise<{id: number, subscriberId: number, subscribedToId: number}>} The seeded subscription's id and user ids.
  */
-export async function seedSubscription(subscriberId, subscribedToId) {
-  const row = await Subscription.create({ subscriberId, subscribedToId });
+export async function seedSubscription(subscriberId, subscribedToId, overrides = {}) {
+  const row = await Subscription.create({ subscriberId, subscribedToId, ...overrides });
   return { id: row.id, subscriberId, subscribedToId };
 }
 
