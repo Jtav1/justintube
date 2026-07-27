@@ -81,7 +81,8 @@ describe("auth routes", () => {
     const logout = await agent
       .post("/api/v1/auth/logout")
       .set("X-CSRF-Token", register.body.csrfToken);
-    expect(logout.status).toBe(204);
+    expect(logout.status).toBe(200);
+    expect(logout.body).toEqual({ success: true });
 
     const meAfter = await agent.get("/api/v1/auth/me");
     expect(meAfter.status).toBe(401);
@@ -433,7 +434,8 @@ describe("auth resend-verification", () => {
       .post("/api/v1/auth/resend-verification")
       .set("X-CSRF-Token", loginCsrf);
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
   });
 });
 
@@ -465,7 +467,8 @@ describe("auth change password", () => {
         currentPassword: "password123",
         newPassword: "newpassword456",
       });
-    expect(change.status).toBe(204);
+    expect(change.status).toBe(200);
+    expect(change.body).toEqual({ success: true });
 
     await agent.post("/api/v1/auth/logout").set("X-CSRF-Token", login.body.csrfToken);
 

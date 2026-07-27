@@ -888,7 +888,7 @@ export function createMeRouter() {
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     responses:
-   *       204:
+   *       200:
    *         description: Avatar removed (idempotent; also returned when no avatar was set)
    *       401:
    *         description: Not authenticated
@@ -941,7 +941,7 @@ export function createMeRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   router.delete("/me/avatar", requireAuth, async (req, res) => {
     try {
@@ -949,10 +949,11 @@ export function createMeRouter() {
         await unlink(join(avatarsDir, req.user.avatarFilename)).catch(() => {});
         await req.user.update({ avatarFilename: null });
       }
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("deleteMyAvatar failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Failed to remove your avatar.",
       });

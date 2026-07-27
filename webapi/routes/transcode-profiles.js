@@ -591,7 +591,7 @@ export function createTranscodeProfilesRouter() {
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     responses:
-   *       204:
+   *       200:
    *         description: Profile deleted
    *       400:
    *         description: Invalid id
@@ -604,7 +604,7 @@ export function createTranscodeProfilesRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204, or error.
+   * @returns {Promise<void>} Sends 200 `{ success: true }`, or error.
    */
   router.delete(
     "/admin/transcode-profiles/:id",
@@ -614,6 +614,7 @@ export function createTranscodeProfilesRouter() {
       const id = parsePositiveInt(req.params.id);
       if (id === null) {
         res.status(400).json({
+          success: false,
           error: "invalid_id",
           message: "id must be a positive integer.",
         });
@@ -624,6 +625,7 @@ export function createTranscodeProfilesRouter() {
         const row = await TranscodeProfile.findByPk(id);
         if (!row) {
           res.status(404).json({
+            success: false,
             error: "not_found",
             message: "Transcode profile not found.",
           });
@@ -631,10 +633,11 @@ export function createTranscodeProfilesRouter() {
         }
 
         await row.destroy();
-        res.status(204).end();
+        res.status(200).json({ success: true });
       } catch (err) {
         console.error("adminDeleteTranscodeProfile failed:", err);
         res.status(500).json({
+          success: false,
           error: "internal_error",
           message: "Failed to delete transcode profile.",
         });

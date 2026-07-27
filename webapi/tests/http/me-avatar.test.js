@@ -173,7 +173,8 @@ describe("me / avatar routes", () => {
     expect(await fileExists(join(avatarsDir, firstFilename))).toBe(false);
 
     const del = await agent.delete("/api/v1/me/avatar").set("X-CSRF-Token", csrfToken);
-    expect(del.status).toBe(204);
+    expect(del.status).toBe(200);
+    expect(del.body).toEqual({ success: true });
     expect(await fileExists(join(avatarsDir, secondFilename))).toBe(false);
 
     const settingsAfterDelete = await agent.get("/api/v1/me/settings");
@@ -181,6 +182,7 @@ describe("me / avatar routes", () => {
 
     // Idempotent: deleting again with no avatar set still succeeds.
     const delAgain = await agent.delete("/api/v1/me/avatar").set("X-CSRF-Token", csrfToken);
-    expect(delAgain.status).toBe(204);
+    expect(delAgain.status).toBe(200);
+    expect(delAgain.body).toEqual({ success: true });
   });
 });

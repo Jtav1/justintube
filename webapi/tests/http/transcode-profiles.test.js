@@ -151,7 +151,8 @@ describe("admin transcode profiles", () => {
       .delete(`/api/v1/admin/transcode-profiles/${created.body.id}`)
       .set("Authorization", `Bearer ${rawKey}`);
 
-    expect(deleted.status).toBe(204);
+    expect(deleted.status).toBe(200);
+    expect(deleted.body).toEqual({ success: true });
     expect(await TranscodeProfile.findByPk(created.body.id)).toBeNull();
 
     const listAfter = await client

@@ -86,12 +86,13 @@ export function createInternalThumbnailsRouter() {
    *
    * @param {import('express').Request} req Request with `uploadUuid` param + `{ thumbnailFilename }` body.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 200 `{ success }`, 400, 404, or error.
+   * @returns {Promise<void>} Sends 200 `{ success, uploadUuid, status }`, 400, 404, or error.
    */
   router.post("/thumbnails/:uploadUuid/complete", async (req, res) => {
     const uploadUuid = String(req.params.uploadUuid || "").trim();
     if (!uploadUuid) {
       res.status(400).json({
+        success: false,
         error: "missing_uuid",
         message: "uploadUuid is required.",
       });
@@ -104,6 +105,7 @@ export function createInternalThumbnailsRouter() {
         : "";
     if (!thumbnailFilename) {
       res.status(400).json({
+        success: false,
         error: "invalid_body",
         message: "thumbnailFilename is required.",
       });
@@ -113,6 +115,7 @@ export function createInternalThumbnailsRouter() {
     const upload = await OriginalUpload.findOne({ where: { uuidName: uploadUuid } });
     if (!upload) {
       res.status(404).json({
+        success: false,
         error: "not_found",
         message: "Upload not found.",
       });
@@ -129,7 +132,11 @@ export function createInternalThumbnailsRouter() {
 
     syncVideoIndex(upload.id);
 
-    res.status(200).json({ success: true });
+    res.status(200).json({
+      success: true,
+      uploadUuid: upload.uuidName,
+      status: "complete",
+    });
   });
 
   return router;

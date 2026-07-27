@@ -409,23 +409,24 @@ export function createAuthRouter() {
    *     parameters:
    *       - $ref: '#/components/parameters/CsrfTokenHeader'
    *     responses:
-   *       204:
+   *       200:
    *         description: Session destroyed
    *       401:
    *         description: Not authenticated
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 No Content.
+   * @returns {Promise<void>} Sends 200 `{ success: true }`.
    */
   auth.post("/logout", requireAuth, async (req, res) => {
     try {
       await destroySession(req);
       res.clearCookie("justintube.sid");
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("authLogout failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Logout failed.",
       });
@@ -550,7 +551,7 @@ export function createAuthRouter() {
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     responses:
-   *       204:
+   *       200:
    *         description: Verification email sent
    *       403:
    *         description: Email already verified
@@ -559,7 +560,7 @@ export function createAuthRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   auth.post(
     "/resend-verification",
@@ -569,6 +570,7 @@ export function createAuthRouter() {
       try {
         if (!emailEnabled()) {
           res.status(503).json({
+            success: false,
             error: "email_disabled",
             message: "Email is not configured.",
           });
@@ -577,6 +579,7 @@ export function createAuthRouter() {
 
         if (req.user.emailVerified) {
           res.status(403).json({
+            success: false,
             error: "already_verified",
             message: "Email is already verified.",
           });
@@ -584,10 +587,11 @@ export function createAuthRouter() {
         }
 
         await sendUserVerificationEmail(req.user);
-        res.status(204).end();
+        res.status(200).json({ success: true });
       } catch (err) {
         console.error("authResendVerification failed:", err);
         res.status(500).json({
+          success: false,
           error: "internal_error",
           message: "Failed to resend verification email.",
         });
@@ -621,7 +625,7 @@ export function createAuthRouter() {
    *               currentPassword: { type: string }
    *               newPassword: { type: string, minLength: 8 }
    *     responses:
-   *       204:
+   *       200:
    *         description: Password updated
    *       401:
    *         description: Current password incorrect
@@ -630,12 +634,13 @@ export function createAuthRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   auth.post("/password", requireAuth, async (req, res) => {
     try {
       if (req.authMethod !== "session") {
         res.status(403).json({
+          success: false,
           error: "session_required",
           message: "Password change requires a session cookie.",
         });
@@ -647,6 +652,7 @@ export function createAuthRouter() {
 
       if (!currentPassword || !newPassword) {
         res.status(400).json({
+          success: false,
           error: "invalid_body",
           message: "currentPassword and newPassword are required.",
         });
@@ -655,6 +661,7 @@ export function createAuthRouter() {
 
       if (!req.user.passwordHash) {
         res.status(403).json({
+          success: false,
           error: "password_not_set",
           message: "This account does not have a local password.",
         });
@@ -663,6 +670,7 @@ export function createAuthRouter() {
 
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
         res.status(400).json({
+          success: false,
           error: "invalid_password",
           message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
         });
@@ -675,6 +683,7 @@ export function createAuthRouter() {
       );
       if (!currentOk) {
         res.status(401).json({
+          success: false,
           error: "invalid_credentials",
           message: "Current password is incorrect.",
         });
@@ -686,10 +695,11 @@ export function createAuthRouter() {
         passwordHash,
         passwordExpired: false,
       });
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("authChangePassword failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Password change failed.",
       });

@@ -193,7 +193,8 @@ describe("me / api-keys routes", () => {
     const revoke = await client
       .delete(`/api/v1/me/api-keys/${seeded.id}`)
       .set("Authorization", "Bearer jt_revoke_me_key_00001");
-    expect(revoke.status).toBe(204);
+    expect(revoke.status).toBe(200);
+    expect(revoke.body).toEqual({ success: true });
 
     const row = await UserApiKey.findByPk(seeded.id);
     expect(row.revokedAt).not.toBeNull();
@@ -342,7 +343,8 @@ describe("admin / api-keys routes", () => {
     const revoke = await agent
       .delete(`/api/v1/admin/api-keys/${victimKey.id}`)
       .set("X-CSRF-Token", csrfToken);
-    expect(revoke.status).toBe(204);
+    expect(revoke.status).toBe(200);
+    expect(revoke.body).toEqual({ success: true });
 
     const after = await createTestClient()
       .get("/api/v1/auth/me")

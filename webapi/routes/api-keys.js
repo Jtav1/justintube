@@ -445,7 +445,7 @@ export function createApiKeysRouter() {
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     responses:
-   *       204:
+   *       200:
    *         description: Key revoked (or already revoked)
    *       400:
    *         description: Invalid id
@@ -456,13 +456,14 @@ export function createApiKeysRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   router.delete("/me/api-keys/:id", requireAuth, async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
         res.status(400).json({
+          success: false,
           error: "invalid_id",
           message: "id must be a positive integer.",
         });
@@ -474,6 +475,7 @@ export function createApiKeysRouter() {
       });
       if (!row) {
         res.status(404).json({
+          success: false,
           error: "not_found",
           message: "API key not found.",
         });
@@ -481,10 +483,11 @@ export function createApiKeysRouter() {
       }
 
       await softRevoke(row);
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("revokeMyApiKey failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Failed to revoke API key.",
       });
@@ -584,7 +587,7 @@ export function createApiKeysRouter() {
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     responses:
-   *       204:
+   *       200:
    *         description: Key revoked (or already revoked)
    *       400:
    *         description: Invalid id
@@ -597,7 +600,7 @@ export function createApiKeysRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 204 or an error response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
   router.delete(
     "/admin/api-keys/:id",
@@ -608,6 +611,7 @@ export function createApiKeysRouter() {
         const id = parsePositiveInt(req.params.id);
         if (id == null) {
           res.status(400).json({
+            success: false,
             error: "invalid_id",
             message: "id must be a positive integer.",
           });
@@ -617,6 +621,7 @@ export function createApiKeysRouter() {
         const row = await UserApiKey.findByPk(id);
         if (!row) {
           res.status(404).json({
+            success: false,
             error: "not_found",
             message: "API key not found.",
           });
@@ -624,10 +629,11 @@ export function createApiKeysRouter() {
         }
 
         await softRevoke(row);
-        res.status(204).end();
+        res.status(200).json({ success: true });
       } catch (err) {
         console.error("adminRevokeApiKey failed:", err);
         res.status(500).json({
+          success: false,
           error: "internal_error",
           message: "Failed to revoke API key.",
         });

@@ -263,7 +263,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
   });
 
   describe("DELETE /playlists/{id} (deletePlaylist)", () => {
-    test("returns 204 and removes the playlist (items and access grants cascade)", async () => {
+    test("returns 200 and removes the playlist (items and access grants cascade)", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "delete-key-1");
       const grantee = await seedUserWithRoleAndKey("viewer", "delete-key-1b");
       const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
@@ -278,7 +278,8 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .delete(`/api/v1/playlists/${playlist.id}`)
         .set("Authorization", "Bearer delete-key-1");
 
-      expect(res.status).toBe(204);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
 
       const playlistRows = await queryRows(
         "SELECT * FROM USER_PLAYLISTS WHERE id = :id",

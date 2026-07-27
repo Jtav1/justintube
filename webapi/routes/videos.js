@@ -938,7 +938,7 @@ export function createVideosRouter() {
    *         schema:
    *           type: integer
    *     responses:
-   *       "204":
+   *       "200":
    *         description: Deleted
    */
   router.delete("/videos/:id", requireAuth, async (req, res) => {
@@ -946,6 +946,7 @@ export function createVideosRouter() {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
         res.status(400).json({
+          success: false,
           error: "invalid_id",
           message: "id must be a positive integer.",
         });
@@ -960,6 +961,7 @@ export function createVideosRouter() {
 
       if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
         res.status(403).json({
+          success: false,
           error: "forbidden",
           message: "Only the owner or an admin can delete this video.",
         });
@@ -968,10 +970,11 @@ export function createVideosRouter() {
 
       await upload.destroy();
       removeVideoDocument(id);
-      res.status(204).end();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("deleteVideo failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Failed to delete video.",
       });

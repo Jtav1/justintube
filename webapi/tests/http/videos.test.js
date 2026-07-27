@@ -511,7 +511,7 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(401);
     });
 
-    test("returns 204 and removes the upload (and its metadata via cascade)", async () => {
+    test("returns 200 and removes the upload (and its metadata via cascade)", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "owner-delete-key");
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id);
@@ -520,7 +520,8 @@ describe("Video discovery and metadata endpoints", () => {
         .delete(`/api/v1/videos/${upload.id}`)
         .set("Authorization", "Bearer owner-delete-key");
 
-      expect(res.status).toBe(204);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
 
       const uploads = await queryRows(
         "SELECT * FROM ORIGINAL_UPLOADS WHERE id = :id",

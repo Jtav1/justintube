@@ -249,7 +249,7 @@ Every route that returns video data, and exactly which fields it includes. Goal:
 | `POST /videos/upload` | uploadVideo | D | Pre-metadata upload record |
 | `POST /videos/import` | importVideo | D | Same |
 
-**Not a video representation** (listed for completeness, not a gap): `GET /videos/:id/stream` and `GET /videos/:id/thumbnail` stream binary media, not JSON. `POST /videos/:id/view` returns `{viewCount}`, `POST /videos/:id/like` / `dislike` return `{liked}`, `DELETE /videos/:id` returns `204` with no body, and `GET`/`PUT /videos/:id/access` return access-grant lists, not video fields.
+**Not a video representation** (listed for completeness, not a gap): `GET /videos/:id/stream` and `GET /videos/:id/thumbnail` stream binary media, not JSON. `POST /videos/:id/view` returns `{viewCount}`, `POST /videos/:id/like` / `dislike` return `{liked}`, `DELETE /videos/:id` returns `200 { success: true }` (see "Zero-data response audit" below), and `GET`/`PUT /videos/:id/access` return access-grant lists, not video fields.
 
 ### Fixes applied
 
@@ -258,6 +258,33 @@ Every route that returns video data, and exactly which fields it includes. Goal:
 3. ~~`description` defaults differ (`null` vs `""`)~~ — **fixed**. `serializeHit` (`routes/search.js`) now normalizes with `hit.description || null` instead of `hit.description ?? null` — the search index stores an unset description as `""`, which `??` never catches (it's not nullish) but `||` does.
 
 Remaining, deliberately out of scope: shapes C (search suggest) and D (upload/import) stay minimal/different for their use cases (typeahead performance; pre-metadata creation response) — not bugs, just the only two "video-returning" routes that don't share `serializeVideo`/`serializeHit`.
+
+---
+
+## Zero-data response audit
+
+Reviewed every route in both services for responses that carry no data at all, regardless of status code (i.e. beyond the standard `{error, message}` shape on 4xx/5xx). Two categories turned up, both now fixed:
+
+**12 routes returned bare `204 No Content`.** All are now `200` with `{ success: true }` on success (and `success: false` added alongside the existing `error`/`message` fields on that same handler's own local error branches — not touched on shared middleware like `requireAuth`/`requireAdmin`/`csrfProtection`, which stay `{error, message}` for every route uniformly):
+
+| Route | operationId |
+|---|---|
+| `POST /auth/logout` | authLogout |
+| `POST /auth/resend-verification` | authResendVerification |
+| `POST /auth/password` | authChangePassword |
+| `DELETE /me/api-keys/:id` | revokeMyApiKey |
+| `DELETE /me/avatar` | deleteMyAvatar |
+| `POST /admin/users/:id/password` | adminResetUserPassword |
+| `DELETE /admin/api-keys/:id` | adminRevokeApiKey |
+| `DELETE /admin/config/:name` | adminDeleteSystemConfig |
+| `DELETE /admin/transcode-profiles/:id` | adminDeleteTranscodeProfile |
+| `DELETE /playlists/:id` | deletePlaylist |
+| `DELETE /videos/:id` | deleteVideo |
+| `POST /notifications/read` | markNotificationsRead |
+
+`processing/` has no 204 endpoints — every route there already returns at least `{success, ...}`.
+
+**`POST /internal/thumbnails/:uploadUuid/complete` returned only `{ success: true }`**, unlike its sibling `POST /internal/file-versions/:uuid/complete` (`{success, uuidName, status}`). Brought in line: now returns `{ success: true, uploadUuid, status: "complete" }`, matching the identifying-key-plus-status shape of the file-version callback.
 
 ---
 

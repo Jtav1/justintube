@@ -426,7 +426,7 @@ export function createPlaylistsRouter() {
    *         schema:
    *           type: integer
    *     responses:
-   *       "204":
+   *       "200":
    *         description: Playlist deleted
    *       "403":
    *         description: Not the owner or an admin
@@ -438,6 +438,7 @@ export function createPlaylistsRouter() {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
         res.status(400).json({
+          success: false,
           error: "invalid_id",
           message: "id must be a positive integer.",
         });
@@ -451,6 +452,7 @@ export function createPlaylistsRouter() {
       }
       if (!isOwnerOrAdmin(req.user, req.authRole, playlist)) {
         res.status(403).json({
+          success: false,
           error: "forbidden",
           message: "Only the playlist owner or an admin can delete this playlist.",
         });
@@ -458,10 +460,11 @@ export function createPlaylistsRouter() {
       }
 
       await playlist.destroy();
-      res.status(204).send();
+      res.status(200).json({ success: true });
     } catch (err) {
       console.error("deletePlaylist failed:", err);
       res.status(500).json({
+        success: false,
         error: "internal_error",
         message: "Failed to delete playlist.",
       });

@@ -68,7 +68,11 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
       .send({ thumbnailFilename });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true });
+    expect(res.body).toEqual({
+      success: true,
+      uploadUuid: upload.uuidName,
+      status: "complete",
+    });
 
     const rows = await queryRows(
       "SELECT * FROM VIDEO_THUMBNAIL WHERE original_upload_id = :id",
