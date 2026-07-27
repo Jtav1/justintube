@@ -25,9 +25,16 @@ import { validateTranscodeBatchRequest } from "../lib/transcode.js";
  * @param {import('bullmq').Queue} options.queue BullMQ transcode queue.
  * @param {(inputPath: string) => Promise<{ videoWidth: number|null, videoHeight: number|null }>}
  *   [options.probeInput] Optional probe override (defaults to ffprobe).
+ * @param {(inputPath: string) => Promise<number|null>} [options.probeDuration]
+ *   Optional duration probe override (defaults to ffprobe), used to validate
+ *   thumbnail-job timestamps.
  * @returns {import('express').Router} Router handling queue and status requests.
  */
-export function createTranscodeRouter({ queue, probeInput = probeVideoDimensions }) {
+export function createTranscodeRouter({
+  queue,
+  probeInput = probeVideoDimensions,
+  probeDuration = probeVideoDuration,
+}) {
   const router = Router();
 
   /**
@@ -67,12 +74,31 @@ export function createTranscodeRouter({ queue, probeInput = probeVideoDimensions
       // is scoped to the resolution-skip decision above.
       let durationSeconds = null;
       try {
-        durationSeconds = await probeVideoDuration(inputPath);
+        durationSeconds = await probeDuration(inputPath);
       } catch (err) {
         console.error(
           "ffprobe failed to read duration for transcode input:",
           err instanceof Error ? err.message : err,
         );
+      }
+
+      // Resolve the final thumbnail timestamp before enqueueing: null (no
+      // preference) or a value past the video's actual duration both fall
+      // back to a random timestamp within the video. When duration probing
+      // itself failed, there's nothing to validate against — pass whatever
+      // was given through as-is (ffmpeg's -ss will fail closed like a bad
+      // rendition would).
+      for (const job of jobs) {
+        if (job.kind !== "thumbnail" || durationSeconds == null) {
+          continue;
+        }
+        if (
+          job.timestampSeconds == null ||
+          job.timestampSeconds > durationSeconds ||
+          job.timestampSeconds < 0
+        ) {
+          job.timestampSeconds = Math.round(Math.random() * durationSeconds * 10) / 10;
+        }
       }
 
       /** @type {typeof jobs} */
@@ -81,7 +107,7 @@ export function createTranscodeRouter({ queue, probeInput = probeVideoDimensions
       const skipped = [];
 
       for (const job of jobs) {
-        if (shouldSkipProfileForSource(job.profile, source)) {
+        if (job.kind === "rendition" && shouldSkipProfileForSource(job.profile, source)) {
           skipped.push({
             jobId: job.jobId,
             profileId: job.profile.id,
@@ -99,7 +125,7 @@ export function createTranscodeRouter({ queue, probeInput = probeVideoDimensions
       const jobSummaries = accepted.map((job) => ({
         jobId: job.jobId,
         outputFilename: job.outputFilename,
-        profileId: job.profile.id,
+        profileId: job.profile?.id ?? null,
       }));
 
       const payload = {

@@ -197,6 +197,70 @@ A follow-up pass tightened video visibility/auth further:
 
 ---
 
+## Video object field consistency
+
+Every route that returns video data, and exactly which fields it includes. Goal: confirm a video looks the same whether it comes back as part of a bulk list or a single-video fetch. Four distinct shapes are in use.
+
+### Shape reference
+
+**A. `serializeVideo(upload, metadata, options)`** (`routes/videos.js`) — the canonical shape, built from `ORIGINAL_UPLOADS` + `VIDEO_METADATA` (+ `User`, `VideoThumbnail`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | number | `ORIGINAL_UPLOADS.id` |
+| `title` | string | `VIDEO_METADATA.title` |
+| `description` | string \| `null` | `null` when unset |
+| `visibility` | string | `public` / `unlisted` / `private` / `hidden` |
+| `commentsEnabled` | boolean | |
+| `viewCount` | number | |
+| `uploader` | `{userId, username, displayName}` | via `serializeUserRef` (`lib/serialize-user-ref.js`) |
+| `tags` | `string[]` | This video's `CONTENT_TAGS`, batch-loaded via `loadTagsByUploadId` (`routes/videos.js`) — always present, `[]` when the video has none |
+| `durationSeconds` | number \| `null` | |
+| `thumbnailUrl` | string \| `null` | `/api/v1/videos/{id}/thumbnail` if a thumbnail exists, else `null` |
+| `createdAt` | ISO date | `VIDEO_METADATA.createdAt` |
+| `updatedAt` | ISO date | `VIDEO_METADATA.updatedAt` |
+| `renditions` | array (optional) | `[{resolution, width, height}]` for complete transcodes — attached by the three single-video routes (`getVideo`, `updateVideo`, `delistVideo`); the key is absent (not `null`) on every bulk-list route |
+
+**B. `serializeHit(hit)`** (`routes/search.js`) — maps a search-index document, not a live DB row. Same fields as shape A except it never attaches `renditions` (search hits don't carry transcode state). `description` now consistently normalizes to `null` when unset, matching shape A (see Fixes below).
+
+**C. Search suggest** (`routes/search.js`, inline, no shared helper) — deliberately minimal for typeahead: `{ id, title, uploader }` only. No `description`, `visibility`, `viewCount`, `durationSeconds`, `thumbnailUrl`, `createdAt`/`updatedAt`, or `tags`.
+
+**D. Upload/import response** (`uploadResponseBody(upload)`, `routes/uploads.js`) — an `ORIGINAL_UPLOADS`-only shape returned at creation time, before `VIDEO_METADATA` exists: `{ id, originalFilename, uuidName, fileExtension, mimeType, fileSizeBytes, storagePath, status, userId, videoWidth, videoHeight, resolution, durationSeconds }`, plus `fileVersions`/`failures`/`skippedProfiles` when relevant. No `title`, `description`, `visibility`, `commentsEnabled`, `viewCount`, `uploader` object, `tags`, or `thumbnailUrl` — none of shape A's catalog fields exist yet at this point in the flow.
+
+### Route → shape
+
+| Route | operationId | Shape | Notes |
+|---|---|---|---|
+| `GET /videos/:id` | getVideo | A (+ `renditions`) | |
+| `PATCH /videos/:id` | updateVideo | A (+ `renditions`) | |
+| `POST /videos/:id/delist` | delistVideo | A (+ `renditions`) | |
+| `GET /videos` | listVideos | A | |
+| `GET /videos/featured` | listFeaturedVideos | A | |
+| `GET /videos/newest` | listNewestVideos | A | |
+| `GET /tags/:tag/videos` | listTagVideos | A | |
+| `GET /feed/subscriptions` | feedSubscriptions | A | |
+| `GET /me/videos` | listMyVideos | A | |
+| `GET /me/likes` | listMyLikes | A | |
+| `GET /users/:username` | getUserChannel | A | Under `videos.items` |
+| `GET /users/:username/videos` | listUserVideos | A | |
+| `GET /playlists/:id` | getPlaylist | A | Under `items`, post-`filterViewablePlaylistItems` |
+| `GET /search` | searchVideos | B | |
+| `GET /search/suggest` | searchSuggest | C | `{id, title, uploader}` only |
+| `POST /videos/upload` | uploadVideo | D | Pre-metadata upload record |
+| `POST /videos/import` | importVideo | D | Same |
+
+**Not a video representation** (listed for completeness, not a gap): `GET /videos/:id/stream` and `GET /videos/:id/thumbnail` stream binary media, not JSON. `POST /videos/:id/view` returns `{viewCount}`, `POST /videos/:id/like` / `dislike` return `{liked}`, `DELETE /videos/:id` returns `204` with no body, and `GET`/`PUT /videos/:id/access` return access-grant lists, not video fields.
+
+### Fixes applied
+
+1. ~~`renditions` is missing from `updateVideo` and `delistVideo`~~ — **fixed**. Both now run the same complete-`FileVersion` query as `getVideo` and pass the result as `options.renditions`, so every single-video route returns the identical shape.
+2. ~~`tags` only ever appears on `GET /search` results~~ — **fixed**. `serializeVideo` now always includes `tags` (defaulting to `[]`), sourced from a new `loadTagsByUploadId(originalUploadIds)` helper (`routes/videos.js`) that batch-loads `CONTENT_TAGS` in one query per response rather than per video. Wired into every shape-A call site: `listPublicVideos`, `getVideo`, `updateVideo`, `delistVideo`, `listMyVideos`, `listMyLikes`, `getPlaylist`, and `loadUserPublicVideosPage`.
+3. ~~`description` defaults differ (`null` vs `""`)~~ — **fixed**. `serializeHit` (`routes/search.js`) now normalizes with `hit.description || null` instead of `hit.description ?? null` — the search index stores an unset description as `""`, which `??` never catches (it's not nullish) but `||` does.
+
+Remaining, deliberately out of scope: shapes C (search suggest) and D (upload/import) stay minimal/different for their use cases (typeahead performance; pre-metadata creation response) — not bugs, just the only two "video-returning" routes that don't share `serializeVideo`/`serializeHit`.
+
+---
+
 ## Remaining open item (pre-existing, unrelated to this audit)
 
 - [ ] Create standard response-object shapes for thumbnail and video-stream-page payloads (carried over from the original note in this file; not addressed here).

@@ -16,7 +16,7 @@ import {
 import { parsePagination } from "../lib/pagination.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
-import { serializeVideo } from "./videos.js";
+import { loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
  * Sends a standard 404 for an unknown username or missing avatar.
@@ -110,8 +110,14 @@ async function loadUserPublicVideosPage(userId, pagination, isSelf = false) {
     offset: (page - 1) * limit,
   });
 
+  const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+
   return {
-    items: rows.map((upload) => serializeVideo(upload, upload.VideoMetadata)),
+    items: rows.map((upload) =>
+      serializeVideo(upload, upload.VideoMetadata, {
+        tags: tagsByUploadId.get(upload.id) || [],
+      }),
+    ),
     page,
     limit,
     totalHits: count,

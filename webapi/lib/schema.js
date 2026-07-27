@@ -207,6 +207,11 @@ async function ensureSqliteMissingColumns() {
       column: "avatar_filename",
       ddl: "`avatar_filename` VARCHAR(255)",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "thumbnail_timestamp_tenths",
+      ddl: "`thumbnail_timestamp_tenths` INTEGER UNSIGNED NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

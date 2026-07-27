@@ -78,9 +78,13 @@ function parsePositiveInt(raw) {
  *   (expects `VideoThumbnail` preloaded when available; falls back to null).
  * @param {import('sequelize').Model} metadata VIDEO_METADATA instance.
  * @param {object} [options] Extra fields to attach.
+ * @param {string[]} [options.tags] This video's CONTENT_TAGS tag strings.
+ *   Always attached (empty array when omitted) so every route returns the
+ *   same shape.
  * @param {Array<{resolution: string|null, width: number|null, height: number|null}>} [options.renditions]
- *   Available complete renditions (full `getVideo` only — omitted elsewhere to
- *   keep list/search responses lightweight).
+ *   Available complete renditions (single-video routes only — `getVideo`,
+ *   `updateVideo`, `delistVideo` — omitted elsewhere to keep list/search
+ *   responses lightweight).
  * @returns {{
  *   id: number,
  *   title: string,
@@ -89,6 +93,7 @@ function parsePositiveInt(raw) {
  *   commentsEnabled: boolean,
  *   viewCount: number,
  *   uploader: {userId: number|null, username: string|null, displayName: string|null},
+ *   tags: string[],
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
  *   createdAt: Date,
@@ -104,6 +109,7 @@ export function serializeVideo(upload, metadata, options = {}) {
     commentsEnabled: Boolean(metadata.commentsEnabled),
     viewCount: Number(metadata.viewCount ?? 0),
     uploader: serializeUserRef(upload.userId, upload.User?.username, upload.User?.displayName),
+    tags: options.tags ?? [],
     durationSeconds: upload.durationSeconds ?? null,
     thumbnailUrl: upload.VideoThumbnail
       ? `/api/v1/videos/${upload.id}/thumbnail`
@@ -115,6 +121,31 @@ export function serializeVideo(upload, metadata, options = {}) {
     payload.renditions = options.renditions;
   }
   return payload;
+}
+
+/**
+ * Batch-loads CONTENT_TAGS for a set of uploads, grouped by upload id. Used
+ * so every `serializeVideo` call site can attach `tags` without an N+1 query
+ * per video.
+ *
+ * @param {number[]} originalUploadIds Upload ids to load tags for.
+ * @returns {Promise<Map<number, string[]>>} Upload id → its tag strings.
+ */
+export async function loadTagsByUploadId(originalUploadIds) {
+  const map = new Map();
+  if (originalUploadIds.length === 0) {
+    return map;
+  }
+  const rows = await ContentTag.findAll({
+    where: { originalUploadId: { [Op.in]: originalUploadIds } },
+    order: [["tag", "ASC"]],
+  });
+  for (const row of rows) {
+    const list = map.get(row.originalUploadId) || [];
+    list.push(row.tag);
+    map.set(row.originalUploadId, list);
+  }
+  return map;
 }
 
 /**
@@ -204,7 +235,12 @@ async function listPublicVideos(options = {}) {
     order: options.order || [["id", "ASC"]],
   });
 
-  return rows.map((upload) => serializeVideo(upload, upload.VideoMetadata));
+  const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+  return rows.map((upload) =>
+    serializeVideo(upload, upload.VideoMetadata, {
+      tags: tagsByUploadId.get(upload.id) || [],
+    }),
+  );
 }
 
 /**
@@ -572,9 +608,11 @@ export function createVideosRouter() {
         where: { originalUploadId: upload.id, status: "complete" },
         order: [["videoHeight", "ASC"]],
       });
+      const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
       res.status(200).json(
         serializeVideo(upload, metadata, {
+          tags: tagsByUploadId.get(upload.id) || [],
           renditions: completeVersions.map((version) => ({
             resolution: version.resolution,
             width: version.videoWidth,
@@ -853,7 +891,23 @@ export function createVideosRouter() {
 
       await metadata.reload();
       syncVideoIndex(upload.id);
-      res.status(200).json(serializeVideo(upload, metadata));
+
+      const completeVersions = await FileVersion.findAll({
+        where: { originalUploadId: upload.id, status: "complete" },
+        order: [["videoHeight", "ASC"]],
+      });
+      const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+
+      res.status(200).json(
+        serializeVideo(upload, metadata, {
+          tags: tagsByUploadId.get(upload.id) || [],
+          renditions: completeVersions.map((version) => ({
+            resolution: version.resolution,
+            width: version.videoWidth,
+            height: version.videoHeight,
+          })),
+        }),
+      );
     } catch (err) {
       console.error("updateVideo failed:", err);
       res.status(500).json({
@@ -974,7 +1028,23 @@ export function createVideosRouter() {
         const { upload, metadata } = loaded;
         await metadata.update({ visibility: "unlisted" });
         syncVideoIndex(upload.id);
-        res.status(200).json(serializeVideo(upload, metadata));
+
+        const completeVersions = await FileVersion.findAll({
+          where: { originalUploadId: upload.id, status: "complete" },
+          order: [["videoHeight", "ASC"]],
+        });
+        const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+
+        res.status(200).json(
+          serializeVideo(upload, metadata, {
+            tags: tagsByUploadId.get(upload.id) || [],
+            renditions: completeVersions.map((version) => ({
+              resolution: version.resolution,
+              width: version.videoWidth,
+              height: version.videoHeight,
+            })),
+          }),
+        );
       } catch (err) {
         console.error("delistVideo failed:", err);
         res.status(500).json({

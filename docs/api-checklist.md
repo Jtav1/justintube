@@ -21,6 +21,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 
 - [x] `POST /internal/file-versions/:uuid/complete` — fileVersionComplete
 - [x] `POST /internal/file-versions/:uuid/fail` — fileVersionFail
+- [x] `POST /internal/thumbnails/:uploadUuid/complete` — thumbnailComplete
 
 ### Auth
 

@@ -15,7 +15,7 @@ import {
 import { canViewPlaylist } from "../lib/playlist-access.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { isAdmin, isOwnerOrAdmin } from "../lib/video-access.js";
-import { serializeVideo } from "./videos.js";
+import { loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
  * Parses a route param as a positive integer.
@@ -288,10 +288,15 @@ export function createPlaylistsRouter() {
       });
 
       const viewableItems = await filterViewablePlaylistItems(items, req.user, req.authRole);
+      const tagsByUploadId = await loadTagsByUploadId(
+        viewableItems.map((item) => item.OriginalUpload.id),
+      );
 
       const payload = serializePlaylist(playlist, viewableItems.length);
       payload.items = viewableItems.map((item) =>
-        serializeVideo(item.OriginalUpload, item.OriginalUpload.VideoMetadata),
+        serializeVideo(item.OriginalUpload, item.OriginalUpload.VideoMetadata, {
+          tags: tagsByUploadId.get(item.OriginalUpload.id) || [],
+        }),
       );
 
       res.status(200).json(payload);

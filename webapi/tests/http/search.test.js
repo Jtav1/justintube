@@ -56,6 +56,23 @@ describe("Search endpoints (GET /search, GET /search/suggest)", () => {
       expect(res.body.items.map((item) => item.id)).toContain(upload.id);
     });
 
+    test("GET /search returns description: null for a video with no description, matching other video routes", async () => {
+      const upload = await seedUpload({ status: "ready" });
+      await seedMetadata(upload.id, {
+        title: "No Description Here",
+        description: null,
+        visibility: "public",
+      });
+      await syncVideoIndex(upload.id);
+
+      const res = await client.get("/api/v1/search?q=No+Description");
+
+      expect(res.status).toBe(200);
+      const hit = res.body.items.find((item) => item.id === upload.id);
+      expect(hit).toBeDefined();
+      expect(hit.description).toBeNull();
+    });
+
     test("GET /search/suggest finds a seeded public video by title prefix", async () => {
       const upload = await seedUpload({ status: "ready" });
       await seedMetadata(upload.id, { title: "Suggestible Video", visibility: "public" });

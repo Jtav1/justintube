@@ -27,8 +27,16 @@ export const originalDir = join(mediaDir, "original");
  */
 export const transcodedDir = join(mediaDir, "transcoded");
 
+/**
+ * Absolute path where generated video thumbnails are written (`media/thumbnails`).
+ *
+ * @type {string}
+ */
+export const thumbnailsDir = join(mediaDir, "thumbnails");
+
 mkdirSync(originalDir, { recursive: true });
 mkdirSync(transcodedDir, { recursive: true });
+mkdirSync(thumbnailsDir, { recursive: true });
 
 /**
  * Error thrown for invalid client input (maps to HTTP 400).
@@ -105,4 +113,15 @@ export function resolveOriginalInputPath(filename) {
  */
 export function resolveTranscodedOutputPath(outputFilename) {
   return join(transcodedDir, outputFilename);
+}
+
+/**
+ * Builds the absolute output path for a thumbnail basename under
+ * `thumbnailsDir`.
+ *
+ * @param {string} outputFilename Basename to write under `/media/thumbnails`.
+ * @returns {string} Absolute path for the output file.
+ */
+export function resolveThumbnailOutputPath(outputFilename) {
+  return join(thumbnailsDir, outputFilename);
 }

@@ -1,11 +1,17 @@
+import { stat } from "node:fs/promises";
 import { Queue, Worker } from "bullmq";
-import { notifyFileVersionComplete, notifyFileVersionFailed } from "./api-client.js";
+import {
+  notifyFileVersionComplete,
+  notifyFileVersionFailed,
+  notifyThumbnailComplete,
+} from "./api-client.js";
 import {
   resolveOriginalInputPath,
+  resolveThumbnailOutputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
 import { collectOutputMetadata } from "./probe.js";
-import { buildFfmpegArgs, runFfmpeg } from "./transcode.js";
+import { buildFfmpegArgs, buildThumbnailFfmpegArgs, runFfmpeg } from "./transcode.js";
 
 /**
  * BullMQ queue name for ffmpeg transcode jobs.
@@ -51,9 +57,51 @@ export function createTranscodeQueue(connection) {
 }
 
 /**
- * Processes a single transcode job: resolve paths, run ffmpeg, collect
- * metadata, notify the API, and return the result payload.
+ * Processes a single thumbnail (frame-extraction) job: resolve paths, run
+ * ffmpeg, confirm the output exists, and notify the API. Unlike rendition
+ * jobs, no FILE_VERSIONS row exists for a thumbnail, so there's no
+ * width/height/resolution metadata to collect — the API only needs the
+ * output filename.
  *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename`, `outputFilename`, and `timestampSeconds`.
+ * @returns {Promise<{ outputFilename: string }>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+async function processThumbnailJob(job) {
+  const { inputFilename, outputFilename, timestampSeconds } = job.data;
+  const jobId = String(job.id);
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const outputPath = resolveThumbnailOutputPath(outputFilename);
+  const args = buildThumbnailFfmpegArgs({ inputPath, outputPath, timestampSeconds });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await stat(outputPath);
+  await job.updateProgress(80);
+
+  const notify = await notifyThumbnailComplete(jobId, { thumbnailFilename: outputFilename });
+  if (!notify.ok) {
+    console.error(
+      `failed to notify API of completed thumbnail ${jobId}:`,
+      notify.error,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  return { outputFilename };
+}
+
+/**
+ * Processes a single rendition transcode job: resolve paths, run ffmpeg,
+ * collect metadata, notify the API, and return the result payload.
+ *
+ * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
  *   `inputFilename`, `outputFilename`, and `profile`.
  * @returns {Promise<{
@@ -68,7 +116,7 @@ export function createTranscodeQueue(connection) {
  * }>} Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails.
  */
-export async function processTranscodeJob(job) {
+async function processRenditionJob(job) {
   const { inputFilename, outputFilename, profile } = job.data;
   const jobId = String(job.id);
 
@@ -108,6 +156,21 @@ export async function processTranscodeJob(job) {
     storagePath: metadata.storagePath,
     mimeType: metadata.mimeType,
   };
+}
+
+/**
+ * Processes a single queued job, dispatching on `job.data.kind`.
+ *
+ * @param {import('bullmq').Job} job BullMQ job (`data.kind` is `"thumbnail"`
+ *   or `"rendition"`).
+ * @returns {Promise<object>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+export async function processTranscodeJob(job) {
+  if (job.data?.kind === "thumbnail") {
+    return processThumbnailJob(job);
+  }
+  return processRenditionJob(job);
 }
 
 /**
@@ -157,21 +220,19 @@ export async function enqueueTranscodeJob(queue, options) {
  *
  * @param {import('bullmq').Queue} queue Transcode queue instance.
  * @param {string} inputFilename Basename under `/media/original`.
- * @param {Array<{
- *   jobId: string,
- *   outputFilename: string,
- *   profile: import('./transcode.js').TranscodeProfilePayload
- * }>} jobs Validated job descriptors.
+ * @param {Array<import('./transcode.js').ValidatedTranscodeJob>} jobs Validated job descriptors.
  * @returns {Promise<import('bullmq').Job[]>} Created BullMQ jobs.
  */
 export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
   return queue.addBulk(
     jobs.map((job) => ({
-      name: "ffmpeg-transcode",
+      name: job.kind === "thumbnail" ? "ffmpeg-thumbnail" : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
+        kind: job.kind,
         profile: job.profile,
+        timestampSeconds: job.timestampSeconds,
       },
       opts: { jobId: job.jobId },
     })),
@@ -223,7 +284,10 @@ export async function removeTranscodeJob(queue, jobId) {
 }
 
 /**
- * Notifies the API that a BullMQ job failed (best-effort).
+ * Notifies the API that a BullMQ job failed (best-effort). Thumbnail jobs
+ * have no pending placeholder row to roll back (unlike FILE_VERSIONS, no
+ * VIDEO_THUMBNAIL row exists until success), so a failed thumbnail job just
+ * logs locally rather than calling back to the API.
  *
  * @param {import('bullmq').Job | undefined} job Failed job, when available.
  * @param {Error | undefined} err Failure reason.
@@ -240,6 +304,12 @@ export async function notifyTranscodeJobFailed(job, err) {
       : typeof job?.failedReason === "string" && job.failedReason
         ? job.failedReason
         : "transcode failed";
+
+  if (job?.data?.kind === "thumbnail") {
+    console.error(`thumbnail job ${jobId} failed:`, message);
+    return;
+  }
+
   const notify = await notifyFileVersionFailed(jobId, message);
   if (!notify.ok) {
     console.error(

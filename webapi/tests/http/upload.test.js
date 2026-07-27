@@ -64,6 +64,32 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     return client.post("/api/v1/videos/upload").set("Authorization", `Bearer ${uploaderKey}`);
   }
 
+  /**
+   * Builds a `fetch` mock that answers `POST /transcode` by accepting every
+   * job in the request (thumbnail + any rendition jobs) unconditionally —
+   * the shape `finalizeUploadTranscodes` always sends now, even with zero
+   * transcode profiles.
+   *
+   * @returns {jest.Mock} Mock matching the `globalThis.fetch` contract.
+   */
+  function acceptAllJobsFetchMock() {
+    return jest.fn(async (_url, options) => {
+      const body = JSON.parse(String(options.body));
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          success: true,
+          jobs: body.jobs.map((job) => ({
+            jobId: job.jobId,
+            outputFilename: job.outputFilename,
+            profileId: job.profile?.id ?? null,
+          })),
+        }),
+      };
+    });
+  }
+
   test("rejects an unauthenticated request", async () => {
     const res = await client
       .post("/api/v1/videos/upload")
@@ -87,7 +113,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
   });
 
   test("accepts a valid video file and persists an ORIGINAL_UPLOADS row", async () => {
-    const fetchMock = jest.fn();
+    const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
 
     await seedUploaderCreds();
@@ -104,8 +130,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(typeof res.body.uuidName).toBe("string");
     expect(res.body.uuidName).toHaveLength(36);
     expect(res.body.storagePath).toBe(`original/${res.body.uuidName}.mp4`);
-    expect(res.body.fileVersions).toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(res.body.fileVersions).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const rows = await queryRows(
       "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
@@ -117,8 +143,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(rows[0].status).toBe("uploaded");
   });
 
-  test("does not call processing when no transcode profiles exist", async () => {
-    const fetchMock = jest.fn();
+  test("always enqueues a thumbnail job, even when no transcode profiles exist", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
 
     await seedUploaderCreds();
@@ -126,7 +152,58 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
     expect(res.status).toBe(201);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(payload.jobs).toHaveLength(1);
+    expect(payload.jobs[0]).toMatchObject({
+      jobId: res.body.uuidName,
+      outputFilename: `${res.body.uuidName}.webp`,
+      kind: "thumbnail",
+      timestampSeconds: null,
+    });
+  });
+
+  test("persists thumbnailTimestamp and forwards it to processing as seconds", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .field("thumbnailTimestamp", "12.34")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    // 12.34s rounds to the nearest tenth (12.3) both in storage and in what's
+    // forwarded to processing.
+    expect(payload.jobs[0].timestampSeconds).toBe(12.3);
+
+    const rows = await queryRows(
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
+      { uuidName: res.body.uuidName },
+    );
+    expect(Number(rows[0].thumbnail_timestamp_tenths)).toBe(123);
+  });
+
+  test("rejects a negative thumbnailTimestamp with 400 invalid_body", async () => {
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .field("thumbnailTimestamp", "-5")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("rejects a non-numeric thumbnailTimestamp with 400 invalid_body", async () => {
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .field("thumbnailTimestamp", "soon")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
   });
 
   test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
@@ -145,21 +222,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       audioCodec: "aac",
     });
 
-    const fetchMock = jest.fn(async (_url, options) => {
-      const body = JSON.parse(String(options.body));
-      return {
-        ok: true,
-        status: 202,
-        json: async () => ({
-          success: true,
-          jobs: body.jobs.map((job) => ({
-            jobId: job.jobId,
-            outputFilename: job.outputFilename,
-            profileId: job.profile.id,
-          })),
-        }),
-      };
-    });
+    const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
 
     await seedUploaderCreds();
@@ -175,8 +238,11 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(payload.filename).toBe(`${res.body.uuidName}.mp4`);
-    expect(payload.jobs).toHaveLength(2);
-    expect(payload.jobs.map((j) => j.profile.id).sort()).toEqual(
+    // One thumbnail job + one job per rendition profile.
+    expect(payload.jobs).toHaveLength(3);
+    expect(payload.jobs.filter((j) => j.kind === "thumbnail")).toHaveLength(1);
+    const renditionJobs = payload.jobs.filter((j) => j.kind === "rendition");
+    expect(renditionJobs.map((j) => j.profile.id).sort()).toEqual(
       [profileA.id, profileB.id].sort(),
     );
 
@@ -217,9 +283,11 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
     const fetchMock = jest.fn(async (_url, options) => {
       const body = JSON.parse(String(options.body));
-      const accepted = body.jobs.filter((job) => job.profile.id === profileA.id);
+      const accepted = body.jobs.filter(
+        (job) => job.kind === "thumbnail" || job.profile.id === profileA.id,
+      );
       const skipped = body.jobs
-        .filter((job) => job.profile.id === profileB.id)
+        .filter((job) => job.kind === "rendition" && job.profile.id === profileB.id)
         .map((job) => ({
           jobId: job.jobId,
           profileId: job.profile.id,
@@ -233,7 +301,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
           jobs: accepted.map((job) => ({
             jobId: job.jobId,
             outputFilename: job.outputFilename,
-            profileId: job.profile.id,
+            profileId: job.profile?.id ?? null,
           })),
           skipped,
           source: { videoWidth: 1280, videoHeight: 720, durationSeconds: 42 },

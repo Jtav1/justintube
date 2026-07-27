@@ -63,6 +63,15 @@ const maxUploadSizeBytes =
   Number(process.env.MAX_UPLOAD_SIZE_BYTES) || 2 * 1024 * 1024 * 1024;
 
 /**
+ * File extension used for auto-generated video thumbnails (WebP — efficient
+ * for web delivery). Must match the extension `buildThumbnailFfmpegArgs`
+ * (processing) and its `-c:v libwebp` encoder produce.
+ *
+ * @type {string}
+ */
+const THUMBNAIL_OUTPUT_EXT = "webp";
+
+/**
  * Normalizes a file's extension to a lowercase value without the leading dot.
  *
  * @private
@@ -193,9 +202,6 @@ function fileVersionResponseBody(version) {
  */
 async function finalizeUploadTranscodes(upload, storedFilename) {
   const profiles = await TranscodeProfile.findAll();
-  if (profiles.length === 0) {
-    return { status: 201, body: uploadResponseBody(upload) };
-  }
 
   /** @type {import('sequelize').Model[]} */
   const versions = [];
@@ -242,15 +248,28 @@ async function finalizeUploadTranscodes(upload, storedFilename) {
     };
   }
 
-  const jobs = versions.map((version, index) => ({
+  const renditionJobs = versions.map((version, index) => ({
     jobId: version.uuidName,
     outputFilename: `${version.uuidName}.${version.fileExtension}`,
+    kind: "rendition",
     profile: toTranscodeProfilePayload(profiles[index]),
   }));
 
+  // A thumbnail job is always enqueued alongside any renditions (or on its
+  // own when there are zero transcode profiles) — see `THUMBNAIL_OUTPUT_EXT`.
+  const thumbnailJob = {
+    jobId: upload.uuidName,
+    outputFilename: `${upload.uuidName}.${THUMBNAIL_OUTPUT_EXT}`,
+    kind: "thumbnail",
+    timestampSeconds:
+      upload.thumbnailTimestampTenths != null
+        ? upload.thumbnailTimestampTenths / 10
+        : null,
+  };
+
   const enqueue = await requestTranscodeBatch({
     filename: storedFilename,
-    jobs,
+    jobs: [thumbnailJob, ...renditionJobs],
   });
 
   if (!enqueue.ok) {
@@ -358,6 +377,30 @@ async function finalizeUploadTranscodes(upload, storedFilename) {
 }
 
 /**
+ * Parses an optional thumbnail-timestamp field (seconds, possibly fractional)
+ * into tenths-of-a-second for storage on `ORIGINAL_UPLOADS`. Multipart form
+ * fields arrive as strings; JSON bodies may send a number directly. Omitted
+ * means "no preference" — processing will pick a random timestamp.
+ *
+ * @param {unknown} raw Raw `thumbnailTimestamp` value from the request.
+ * @returns {{ok: true, tenths: number|null}|{ok: false, message: string}}
+ *   Parsed tenths-of-a-second (null when omitted), or a validation error.
+ */
+function parseThumbnailTimestampTenths(raw) {
+  if (raw === undefined || raw === null || raw === "") {
+    return { ok: true, tenths: null };
+  }
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return {
+      ok: false,
+      message: "thumbnailTimestamp must be a non-negative number of seconds.",
+    };
+  }
+  return { ok: true, tenths: Math.round(seconds * 10) };
+}
+
+/**
  * Express handler for raw video upload.
  * POST /api/v1/videos/upload — multipart form field `file` (single).
  * Auth: required, uploader flag (or admin). Handler runs after `requireAuth`
@@ -381,6 +424,17 @@ async function uploadVideo(req, res) {
     return;
   }
 
+  const thumbnailTimestamp = parseThumbnailTimestampTenths(req.body?.thumbnailTimestamp);
+  if (!thumbnailTimestamp.ok) {
+    // Roll back the already-stored file so we don't leave orphaned media behind.
+    await unlink(join(originalDir, file.filename)).catch(() => {});
+    res.status(400).json({
+      error: "invalid_body",
+      message: thumbnailTimestamp.message,
+    });
+    return;
+  }
+
   const uuidName = file.generatedUuid;
   const fileExtension = normalizedExtension(file.originalname);
   // Relative storage path uses forward slashes for cross-platform DB consistency.
@@ -396,6 +450,7 @@ async function uploadVideo(req, res) {
       fileSizeBytes: file.size ?? null,
       storagePath,
       userId: req.user.id,
+      thumbnailTimestampTenths: thumbnailTimestamp.tenths,
     });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.
@@ -463,6 +518,15 @@ async function importVideo(req, res) {
     res.status(400).json({
       error: "invalid_body",
       message: err instanceof Error ? err.message : "url is invalid",
+    });
+    return;
+  }
+
+  const thumbnailTimestamp = parseThumbnailTimestampTenths(req.body?.thumbnailTimestamp);
+  if (!thumbnailTimestamp.ok) {
+    res.status(400).json({
+      error: "invalid_body",
+      message: thumbnailTimestamp.message,
     });
     return;
   }
@@ -535,6 +599,7 @@ async function importVideo(req, res) {
       fileSizeBytes,
       storagePath,
       userId: req.user.id,
+      thumbnailTimestampTenths: thumbnailTimestamp.tenths,
     });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.
@@ -615,6 +680,14 @@ export function createUploadRouter() {
    *               file:
    *                 type: string
    *                 format: binary
+   *               thumbnailTimestamp:
+   *                 type: number
+   *                 format: float
+   *                 minimum: 0
+   *                 description: >
+   *                   Optional timestamp (seconds, may be fractional) to grab the
+   *                   auto-generated thumbnail frame from. Omitted, or past the
+   *                   video's actual duration, picks a random timestamp instead.
    *     responses:
    *       201:
    *         description: Upload recorded
@@ -662,6 +735,14 @@ export function createUploadRouter() {
    *               url:
    *                 type: string
    *                 format: uri
+   *               thumbnailTimestamp:
+   *                 type: number
+   *                 format: float
+   *                 minimum: 0
+   *                 description: >
+   *                   Optional timestamp (seconds, may be fractional) to grab the
+   *                   auto-generated thumbnail frame from. Omitted, or past the
+   *                   video's actual duration, picks a random timestamp instead.
    *     responses:
    *       201:
    *         description: Video downloaded and recorded

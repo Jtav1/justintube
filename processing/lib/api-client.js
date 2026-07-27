@@ -114,3 +114,19 @@ export async function notifyFileVersionFailed(uuid, error) {
     error,
   });
 }
+
+/**
+ * Notifies the API that an upload's thumbnail was generated successfully.
+ *
+ * @param {string} uploadUuid ORIGINAL_UPLOADS.uuid_name (BullMQ job id for
+ *   thumbnail jobs).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.thumbnailFilename Basename written under `/media/thumbnails`.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyThumbnailComplete(uploadUuid, metadata) {
+  return postInternal(`/internal/thumbnails/${encodeURIComponent(uploadUuid)}/complete`, {
+    thumbnailFilename: metadata.thumbnailFilename,
+  });
+}

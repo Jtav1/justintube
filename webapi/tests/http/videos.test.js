@@ -203,6 +203,19 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.renditions).toEqual([
         { resolution: "480p", width: 854, height: 480 },
       ]);
+      expect(res.body.tags).toEqual([]);
+    });
+
+    test("includes this video's own tags", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Tagged", visibility: "public" });
+      await seedContentTag(upload.id, { tag: "gaming" });
+      await seedContentTag(upload.id, { tag: "co-op" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags.sort()).toEqual(["co-op", "gaming"]);
     });
   });
 
@@ -460,6 +473,30 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(403);
       expect(res.body.error).toBe("forbidden");
     });
+
+    test("response includes tags and complete renditions, same as getVideo", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-update-shape-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Before", visibility: "public" });
+      await seedContentTag(upload.id, { tag: "existing" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoWidth: 854,
+        videoHeight: 480,
+      });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-update-shape-key")
+        .send({ tags: ["new-tag"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["new-tag"]);
+      expect(res.body.renditions).toEqual([
+        { resolution: "480p", width: 854, height: 480 },
+      ]);
+    });
   });
 
   describe("DELETE /videos/{id} (deleteVideo)", () => {
@@ -514,6 +551,8 @@ describe("Video discovery and metadata endpoints", () => {
         visibility: "private",
       });
 
+      await seedContentTag(publicUpload.id, { tag: "vlog" });
+
       const res = await client.get("/api/v1/videos");
 
       expect(res.status).toBe(200);
@@ -521,6 +560,9 @@ describe("Video discovery and metadata endpoints", () => {
       const titles = res.body.items.map((item) => item.title);
       expect(titles).toContain("Public one");
       expect(titles).not.toContain("Private one");
+
+      const publicItem = res.body.items.find((item) => item.title === "Public one");
+      expect(publicItem.tags).toEqual(["vlog"]);
     });
 
     test("excludes another user's unlisted/hidden videos but includes the caller's own", async () => {
@@ -652,6 +694,29 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(403);
       expect(res.body.error).toBe("forbidden");
+    });
+
+    test("response includes tags and complete renditions, same as getVideo", async () => {
+      await seedUserWithRoleAndKey("moderator", "mod-delist-shape-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "To delist", visibility: "public" });
+      await seedContentTag(upload.id, { tag: "keeper" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoWidth: 854,
+        videoHeight: 480,
+      });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/delist`)
+        .set("Authorization", "Bearer mod-delist-shape-key");
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["keeper"]);
+      expect(res.body.renditions).toEqual([
+        { resolution: "480p", width: 854, height: 480 },
+      ]);
     });
   });
 

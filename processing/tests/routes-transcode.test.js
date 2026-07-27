@@ -86,6 +86,7 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
         data: {
           inputFilename: fixtureName,
           outputFilename: res.body.outputFilename,
+          kind: "rendition",
           profile,
         },
         opts: { jobId: res.body.jobId },
@@ -308,5 +309,142 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
     expect(res.body.jobs).toEqual([]);
     expect(res.body.skipped).toHaveLength(1);
     expect(queue.addBulk).not.toHaveBeenCalled();
+  });
+
+  describe("thumbnail jobs", () => {
+    test("enqueues a mixed batch of rendition and thumbnail jobs", async () => {
+      const queue = {
+        addBulk: jest.fn().mockResolvedValue([{ id: "a" }, { id: "b" }]),
+        getJob: jest.fn(),
+      };
+      const app = createTestApp(queue);
+      const renditionJob = {
+        jobId: "11111111-1111-1111-1111-111111111111",
+        outputFilename: "11111111-1111-1111-1111-111111111111.mp4",
+        kind: "rendition",
+        profile,
+      };
+      const thumbnailJob = {
+        jobId: "22222222-2222-2222-2222-222222222222",
+        outputFilename: "22222222-2222-2222-2222-222222222222.webp",
+        kind: "thumbnail",
+        timestampSeconds: 3,
+      };
+
+      const res = await request(app)
+        .post("/transcode")
+        .send({ filename: fixtureName, jobs: [renditionJob, thumbnailJob] });
+
+      expect(res.status).toBe(202);
+      expect(res.body.jobs).toEqual([
+        { jobId: renditionJob.jobId, outputFilename: renditionJob.outputFilename, profileId: 1 },
+        { jobId: thumbnailJob.jobId, outputFilename: thumbnailJob.outputFilename, profileId: null },
+      ]);
+      expect(queue.addBulk).toHaveBeenCalledTimes(1);
+      expect(queue.addBulk).toHaveBeenCalledWith([
+        {
+          name: "ffmpeg-transcode",
+          data: {
+            inputFilename: fixtureName,
+            outputFilename: renditionJob.outputFilename,
+            kind: "rendition",
+            profile,
+          },
+          opts: { jobId: renditionJob.jobId },
+        },
+        {
+          name: "ffmpeg-thumbnail",
+          data: {
+            inputFilename: fixtureName,
+            outputFilename: thumbnailJob.outputFilename,
+            kind: "thumbnail",
+            // durationSeconds is null for this fake fixture (ffprobe fails
+            // against non-video bytes), so the requested timestamp passes
+            // through unchanged rather than being clamped/randomized.
+            timestampSeconds: 3,
+          },
+          opts: { jobId: thumbnailJob.jobId },
+        },
+      ]);
+    });
+
+    test("thumbnail jobs bypass the resolution skip check", async () => {
+      const queue = {
+        addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+        getJob: jest.fn(),
+      };
+      const probeInput = jest.fn(async () => ({ videoWidth: 320, videoHeight: 240 }));
+      const app = createTestApp(queue, { probeInput });
+
+      const thumbnailJob = {
+        jobId: "33333333-3333-3333-3333-333333333333",
+        outputFilename: "33333333-3333-3333-3333-333333333333.webp",
+        kind: "thumbnail",
+        timestampSeconds: null,
+      };
+
+      const res = await request(app)
+        .post("/transcode")
+        .send({ filename: fixtureName, jobs: [thumbnailJob] });
+
+      expect(res.status).toBe(202);
+      expect(res.body.skipped).toEqual([]);
+      expect(res.body.jobs).toHaveLength(1);
+      expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    });
+
+    test("randomizes the timestamp when it exceeds the probed duration", async () => {
+      const queue = {
+        addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+        getJob: jest.fn(),
+      };
+      const app = createTestApp(queue, {
+        probeDuration: async () => 10,
+      });
+
+      const thumbnailJob = {
+        jobId: "44444444-4444-4444-4444-444444444444",
+        outputFilename: "44444444-4444-4444-4444-444444444444.webp",
+        kind: "thumbnail",
+        timestampSeconds: 999,
+      };
+
+      const res = await request(app)
+        .post("/transcode")
+        .send({ filename: fixtureName, jobs: [thumbnailJob] });
+
+      expect(res.status).toBe(202);
+      const enqueued = queue.addBulk.mock.calls[0][0][0];
+      expect(enqueued.data.timestampSeconds).not.toBe(999);
+      expect(enqueued.data.timestampSeconds).toBeGreaterThanOrEqual(0);
+      expect(enqueued.data.timestampSeconds).toBeLessThanOrEqual(10);
+    });
+
+    test("randomizes the timestamp when omitted", async () => {
+      const queue = {
+        addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+        getJob: jest.fn(),
+      };
+      const app = createTestApp(queue, {
+        probeDuration: async () => 10,
+      });
+
+      const thumbnailJob = {
+        jobId: "55555555-5555-5555-5555-555555555555",
+        outputFilename: "55555555-5555-5555-5555-555555555555.webp",
+        kind: "thumbnail",
+        timestampSeconds: null,
+      };
+
+      const res = await request(app)
+        .post("/transcode")
+        .send({ filename: fixtureName, jobs: [thumbnailJob] });
+
+      expect(res.status).toBe(202);
+      const enqueued = queue.addBulk.mock.calls[0][0][0];
+      expect(typeof enqueued.data.timestampSeconds).toBe("number");
+      expect(enqueued.data.timestampSeconds).toBeGreaterThanOrEqual(0);
+      expect(enqueued.data.timestampSeconds).toBeLessThanOrEqual(10);
+    });
   });
 });

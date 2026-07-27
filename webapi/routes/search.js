@@ -161,7 +161,10 @@ function serializeHit(hit) {
   return {
     id: hit.id,
     title: hit.title,
-    description: hit.description ?? null,
+    // The search index stores an unset description as "" (empty string), not
+    // null/undefined, so `?? null` alone would never fire here — `|| null`
+    // normalizes it back to the same `null` every other video route uses.
+    description: hit.description || null,
     visibility: hit.visibility,
     commentsEnabled: Boolean(hit.commentsEnabled),
     viewCount: Number(hit.viewCount ?? 0),
