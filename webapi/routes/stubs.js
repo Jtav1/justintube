@@ -6,6 +6,7 @@ import { createMeRouter } from "./me.js";
 import { createNotificationPreferencesRouter } from "./notification-preferences.js";
 import { createNotificationsRouter } from "./notifications.js";
 import { createPagesRouter } from "./pages.js";
+import { createPlaylistsRouter } from "./playlists.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
@@ -69,14 +70,6 @@ export function registerStubRoutes(router) {
   r("get", "/me/like-history", "listMyLikeHistory");
   r("get", "/me/videos/likes-received", "listLikesReceived");
 
-  // Playlists
-  r("post", "/playlists", "createPlaylist");
-  r("get", "/playlists/:id", "getPlaylist");
-  r("patch", "/playlists/:id", "updatePlaylist");
-  r("delete", "/playlists/:id", "deletePlaylist");
-  r("post", "/playlists/:id/items", "addPlaylistItem");
-  r("delete", "/playlists/:id/items/:videoId", "removePlaylistItem");
-
   // CAST
   r("post", "/cast", "createCastSpace");
   r("post", "/cast/join", "joinCastSpace");
@@ -111,6 +104,7 @@ export function createApiRouter() {
   router.use(createVideosRouter());
   router.use(createUsersRouter());
   router.use(createSearchRouter());
+  router.use(createPlaylistsRouter());
   registerStubRoutes(router);
   return router;
 }

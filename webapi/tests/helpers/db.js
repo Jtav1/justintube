@@ -10,6 +10,7 @@ import {
   Notification,
   NotificationType,
   OriginalUpload,
+  PlaylistAccess,
   PlaylistItem,
   Role,
   SsoProvider,
@@ -42,6 +43,7 @@ import { ensureSchema } from "../../lib/schema.js";
  */
 const RESET_MODELS = [
   PlaylistItem,
+  PlaylistAccess,
   FileVersion,
   VideoMetadata,
   VideoThumbnail,
@@ -182,6 +184,26 @@ export async function seedPlaylist(overrides = {}) {
   };
 
   const row = await UserPlaylist.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a PLAYLIST_ACCESS row granting a user permission to view a private
+ * playlist.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {number} overrides.playlistId Owning playlist id.
+ * @param {number} overrides.userId Granted user id.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded grant's id and values.
+ */
+export async function seedPlaylistAccess(overrides = {}) {
+  const record = {
+    playlistId: null,
+    userId: null,
+    ...overrides,
+  };
+
+  const row = await PlaylistAccess.create(record);
   return asSeedResult(row, record);
 }
 

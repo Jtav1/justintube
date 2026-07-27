@@ -110,14 +110,18 @@ Future
 
 ### Playlists
 
-- [ ] `POST /api/v1/playlists` — createPlaylist
-- [ ] `GET /api/v1/playlists/:id` — getPlaylist
-- [ ] `PATCH /api/v1/playlists/:id` — updatePlaylist
-- [ ] `DELETE /api/v1/playlists/:id` — deletePlaylist
-- [ ] `POST /api/v1/playlists/:id/items` — addPlaylistItem
-- [ ] `DELETE /api/v1/playlists/:id/items/:videoId` — removePlaylistItem
+- [x] `POST /api/v1/playlists` — createPlaylist
+- [x] `GET /api/v1/playlists/:id` — getPlaylist
+- [x] `PATCH /api/v1/playlists/:id` — updatePlaylist
+- [x] `DELETE /api/v1/playlists/:id` — deletePlaylist
+- [x] `POST /api/v1/playlists/:id/items` — addPlaylistItem
+- [x] `DELETE /api/v1/playlists/:id/items/:videoId` — removePlaylistItem
 
-### CAST
+- [x] `GET /api/v1/playlists/:id/access` — listPlaylistAccess
+- [x] `POST /api/v1/playlists/:id/access` — addPlaylistAccess
+- [x] `DELETE /api/v1/playlists/:id/access/:userId` — removePlaylistAccess
+
+### CAST (FUTURE)
 
 - [ ] `POST /api/v1/cast` — createCastSpace
 - [ ] `POST /api/v1/cast/join` — joinCastSpace

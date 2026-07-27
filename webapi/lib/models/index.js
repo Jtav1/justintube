@@ -6,6 +6,7 @@ import { FileVersion } from "./file-version.js";
 import { Notification } from "./notification.js";
 import { NotificationType } from "./notification-type.js";
 import { OriginalUpload } from "./original-upload.js";
+import { PlaylistAccess } from "./playlist-access.js";
 import { PlaylistItem } from "./playlist-item.js";
 import { Role } from "./role.js";
 import { SsoProvider } from "./sso-provider.js";
@@ -158,6 +159,24 @@ function registerAssociations() {
   });
   PlaylistItem.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  UserPlaylist.hasMany(PlaylistAccess, {
+    foreignKey: "playlistId",
+    onDelete: "CASCADE",
+  });
+  PlaylistAccess.belongsTo(UserPlaylist, {
+    foreignKey: "playlistId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(PlaylistAccess, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  PlaylistAccess.belongsTo(User, {
+    foreignKey: "userId",
     onDelete: "CASCADE",
   });
 
@@ -324,6 +343,7 @@ export const models = {
   FileVersion,
   UserPlaylist,
   PlaylistItem,
+  PlaylistAccess,
   VideoLike,
   VideoAccess,
   ContentTag,
@@ -346,6 +366,7 @@ export {
   Notification,
   NotificationType,
   OriginalUpload,
+  PlaylistAccess,
   PlaylistItem,
   Role,
   SsoProvider,
