@@ -81,10 +81,19 @@ function parsePositiveInt(raw) {
  * @param {string[]} [options.tags] This video's CONTENT_TAGS tag strings.
  *   Always attached (empty array when omitted) so every route returns the
  *   same shape.
- * @param {Array<{resolution: string|null, width: number|null, height: number|null}>} [options.renditions]
- *   Available complete renditions (single-video routes only — `getVideo`,
- *   `updateVideo`, `delistVideo` — omitted elsewhere to keep list/search
- *   responses lightweight).
+ * @param {Array<{
+ *   id: number,
+ *   resolution: string|null,
+ *   width: number|null,
+ *   height: number|null,
+ *   mimeType: string|null,
+ *   fileSizeBytes: number|null,
+ *   streamUrl: string
+ * }>} [options.renditions]
+ *   Available complete transcoded copies, one per rendition, each carrying a
+ *   `streamUrl` a video player can select between (single-video routes only —
+ *   `getVideo`, `updateVideo`, `delistVideo` — omitted elsewhere to keep
+ *   list/search responses lightweight).
  * @returns {{
  *   id: number,
  *   title: string,
@@ -146,6 +155,53 @@ export async function loadTagsByUploadId(originalUploadIds) {
     map.set(row.originalUploadId, list);
   }
   return map;
+}
+
+/**
+ * Serializes a complete FILE_VERSIONS row into a rendition reference a video
+ * player can use to offer a quality selection, including the URL to request
+ * that specific copy via `getVideoStream`.
+ *
+ * @param {number} originalUploadId Parent ORIGINAL_UPLOADS id.
+ * @param {import('sequelize').Model} version Complete FileVersion instance.
+ * @returns {{
+ *   id: number,
+ *   resolution: string|null,
+ *   width: number|null,
+ *   height: number|null,
+ *   mimeType: string|null,
+ *   fileSizeBytes: number|null,
+ *   streamUrl: string
+ * }} Rendition reference.
+ */
+function serializeFileVersion(originalUploadId, version) {
+  const streamUrl = version.resolution
+    ? `/api/v1/videos/${originalUploadId}/stream?quality=${encodeURIComponent(version.resolution)}`
+    : `/api/v1/videos/${originalUploadId}/stream`;
+  return {
+    id: version.id,
+    resolution: version.resolution,
+    width: version.videoWidth,
+    height: version.videoHeight,
+    mimeType: version.mimeType ?? null,
+    fileSizeBytes: version.fileSizeBytes != null ? Number(version.fileSizeBytes) : null,
+    streamUrl,
+  };
+}
+
+/**
+ * Loads every complete FILE_VERSIONS row for an upload, ordered lowest to
+ * highest resolution, and serializes each into a rendition reference.
+ *
+ * @param {number} originalUploadId Parent ORIGINAL_UPLOADS id.
+ * @returns {Promise<object[]>} Serialized renditions, lowest resolution first.
+ */
+async function loadRenditions(originalUploadId) {
+  const completeVersions = await FileVersion.findAll({
+    where: { originalUploadId, status: "complete" },
+    order: [["videoHeight", "ASC"]],
+  });
+  return completeVersions.map((version) => serializeFileVersion(originalUploadId, version));
 }
 
 /**
@@ -604,20 +660,13 @@ export function createVideosRouter() {
         return;
       }
 
-      const completeVersions = await FileVersion.findAll({
-        where: { originalUploadId: upload.id, status: "complete" },
-        order: [["videoHeight", "ASC"]],
-      });
+      const renditions = await loadRenditions(upload.id);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
       res.status(200).json(
         serializeVideo(upload, metadata, {
           tags: tagsByUploadId.get(upload.id) || [],
-          renditions: completeVersions.map((version) => ({
-            resolution: version.resolution,
-            width: version.videoWidth,
-            height: version.videoHeight,
-          })),
+          renditions,
         }),
       );
     } catch (err) {
@@ -892,20 +941,13 @@ export function createVideosRouter() {
       await metadata.reload();
       syncVideoIndex(upload.id);
 
-      const completeVersions = await FileVersion.findAll({
-        where: { originalUploadId: upload.id, status: "complete" },
-        order: [["videoHeight", "ASC"]],
-      });
+      const renditions = await loadRenditions(upload.id);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
       res.status(200).json(
         serializeVideo(upload, metadata, {
           tags: tagsByUploadId.get(upload.id) || [],
-          renditions: completeVersions.map((version) => ({
-            resolution: version.resolution,
-            width: version.videoWidth,
-            height: version.videoHeight,
-          })),
+          renditions,
         }),
       );
     } catch (err) {
@@ -1032,20 +1074,13 @@ export function createVideosRouter() {
         await metadata.update({ visibility: "unlisted" });
         syncVideoIndex(upload.id);
 
-        const completeVersions = await FileVersion.findAll({
-          where: { originalUploadId: upload.id, status: "complete" },
-          order: [["videoHeight", "ASC"]],
-        });
+        const renditions = await loadRenditions(upload.id);
         const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
         res.status(200).json(
           serializeVideo(upload, metadata, {
             tags: tagsByUploadId.get(upload.id) || [],
-            renditions: completeVersions.map((version) => ({
-              resolution: version.resolution,
-              width: version.videoWidth,
-              height: version.videoHeight,
-            })),
+            renditions,
           }),
         );
       } catch (err) {

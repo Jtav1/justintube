@@ -182,7 +182,7 @@ describe("Video discovery and metadata endpoints", () => {
       const upload = await seedUpload({ durationSeconds: 125 });
       await seedMetadata(upload.id, { title: "Enriched", visibility: "public" });
       await seedVideoThumbnail(upload.id);
-      await seedFileVersion(upload.id, {
+      const complete = await seedFileVersion(upload.id, {
         status: "complete",
         resolution: "480p",
         videoWidth: 854,
@@ -201,7 +201,15 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.durationSeconds).toBe(125);
       expect(res.body.thumbnailUrl).toBe(`/api/v1/videos/${upload.id}/thumbnail`);
       expect(res.body.renditions).toEqual([
-        { resolution: "480p", width: 854, height: 480 },
+        {
+          id: complete.id,
+          resolution: "480p",
+          width: 854,
+          height: 480,
+          mimeType: "video/mp4",
+          fileSizeBytes: 1024,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
+        },
       ]);
       expect(res.body.tags).toEqual([]);
     });
@@ -479,7 +487,7 @@ describe("Video discovery and metadata endpoints", () => {
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id, { title: "Before", visibility: "public" });
       await seedContentTag(upload.id, { tag: "existing" });
-      await seedFileVersion(upload.id, {
+      const complete = await seedFileVersion(upload.id, {
         status: "complete",
         resolution: "480p",
         videoWidth: 854,
@@ -494,7 +502,15 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(200);
       expect(res.body.tags).toEqual(["new-tag"]);
       expect(res.body.renditions).toEqual([
-        { resolution: "480p", width: 854, height: 480 },
+        {
+          id: complete.id,
+          resolution: "480p",
+          width: 854,
+          height: 480,
+          mimeType: "video/mp4",
+          fileSizeBytes: 1024,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
+        },
       ]);
     });
   });
@@ -702,7 +718,7 @@ describe("Video discovery and metadata endpoints", () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, { title: "To delist", visibility: "public" });
       await seedContentTag(upload.id, { tag: "keeper" });
-      await seedFileVersion(upload.id, {
+      const complete = await seedFileVersion(upload.id, {
         status: "complete",
         resolution: "480p",
         videoWidth: 854,
@@ -716,7 +732,15 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(200);
       expect(res.body.tags).toEqual(["keeper"]);
       expect(res.body.renditions).toEqual([
-        { resolution: "480p", width: 854, height: 480 },
+        {
+          id: complete.id,
+          resolution: "480p",
+          width: 854,
+          height: 480,
+          mimeType: "video/mp4",
+          fileSizeBytes: 1024,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
+        },
       ]);
     });
   });
