@@ -4,6 +4,8 @@ import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
 import { createMeRouter } from "./me.js";
 import { createNotificationPreferencesRouter } from "./notification-preferences.js";
+import { createNotificationsRouter } from "./notifications.js";
+import { createPagesRouter } from "./pages.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createTranscodeProfilesRouter } from "./transcode-profiles.js";
@@ -85,11 +87,6 @@ export function registerStubRoutes(router) {
   r("get", "/cast/:id/display", "getCastDisplay");
   r("get", "/cast/:id/sync", "castSyncWebSocket");
 
-  // Notifications & pages
-  r("get", "/notifications", "listNotifications");
-  r("post", "/notifications/read", "markNotificationsRead");
-  r("get", "/pages/about", "getAboutPage");
-  r("get", "/pages/rules", "getRulesPage");
 }
 
 /**
@@ -106,6 +103,8 @@ export function createApiRouter() {
   router.use(createApiKeysRouter());
   router.use(createMeRouter());
   router.use(createNotificationPreferencesRouter());
+  router.use(createNotificationsRouter());
+  router.use(createPagesRouter());
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
   router.use(createTranscodeProfilesRouter());

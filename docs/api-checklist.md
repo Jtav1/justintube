@@ -130,10 +130,10 @@ Future
 
 ### Notifications & pages
 
-- [ ] `GET /api/v1/notifications` — listNotifications
-- [ ] `POST /api/v1/notifications/read` — markNotificationsRead
-- [ ] `GET /api/v1/pages/about` — getAboutPage
-- [ ] `GET /api/v1/pages/rules` — getRulesPage
+- [x] `GET /api/v1/notifications` — listNotifications
+- [x] `POST /api/v1/notifications/read` — markNotificationsRead
+- [x] `GET /api/v1/pages/about` — getAboutPage
+- [x] `GET /api/v1/pages/rules` — getRulesPage
 
 ### Admin
 
