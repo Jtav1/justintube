@@ -97,6 +97,7 @@ async function loadUserPublicVideosPage(userId, pagination) {
         where: { visibility: "public" },
       },
       { model: VideoThumbnail, required: false },
+      { model: User, required: false },
     ],
     order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
     limit,

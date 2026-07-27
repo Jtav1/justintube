@@ -446,6 +446,7 @@ export function createMeRouter() {
         include: [
           { model: VideoMetadata, as: "VideoMetadata", required: true },
           { model: VideoThumbnail, required: false },
+          { model: User, required: false },
         ],
         order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
         limit,
@@ -537,6 +538,7 @@ export function createMeRouter() {
             include: [
               { model: VideoMetadata, as: "VideoMetadata", required: true },
               { model: VideoThumbnail, required: false },
+              { model: User, required: false },
             ],
           },
         ],

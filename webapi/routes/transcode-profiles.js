@@ -3,7 +3,8 @@ import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { RESOLUTION_VALUES } from "../lib/models/constants.js";
-import { TranscodeProfile } from "../lib/models/index.js";
+import { TranscodeProfile, User } from "../lib/models/index.js";
+import { serializeUserRef } from "../lib/serialize-user-ref.js";
 
 /**
  * Maximum length for transcode profile description.
@@ -46,7 +47,7 @@ function parsePositiveInt(raw) {
  *   outputContainer: string,
  *   videoCodec: string,
  *   audioCodec: string,
- *   creatorUserId: number|null,
+ *   creator: {userId: number|null, username: string|null, displayName: string|null},
  *   createdAt: Date,
  *   updatedAt: Date
  * }} Public profile payload.
@@ -61,7 +62,7 @@ function serializeTranscodeProfile(row) {
     outputContainer: row.outputContainer,
     videoCodec: row.videoCodec,
     audioCodec: row.audioCodec,
-    creatorUserId: row.creatorUserId ?? null,
+    creator: serializeUserRef(row.creatorUserId, row.Creator?.username, row.Creator?.displayName),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -359,6 +360,7 @@ export function createTranscodeProfilesRouter() {
     async (_req, res) => {
       try {
         const rows = await TranscodeProfile.findAll({
+          include: [{ model: User, as: "Creator", required: false }],
           order: [["id", "ASC"]],
         });
         res.status(200).json({
@@ -446,7 +448,10 @@ export function createTranscodeProfilesRouter() {
       }
 
       try {
-        const row = await TranscodeProfile.create(parsed.patch);
+        const created = await TranscodeProfile.create(parsed.patch);
+        const row = await TranscodeProfile.findByPk(created.id, {
+          include: [{ model: User, as: "Creator", required: false }],
+        });
         res.status(201).json(serializeTranscodeProfile(row));
       } catch (err) {
         console.error("adminCreateTranscodeProfile failed:", err);
@@ -539,7 +544,9 @@ export function createTranscodeProfilesRouter() {
       }
 
       try {
-        const row = await TranscodeProfile.findByPk(id);
+        const row = await TranscodeProfile.findByPk(id, {
+          include: [{ model: User, as: "Creator", required: false }],
+        });
         if (!row) {
           res.status(404).json({
             error: "not_found",
@@ -549,6 +556,7 @@ export function createTranscodeProfilesRouter() {
         }
 
         await row.update(parsed.patch);
+        await row.reload();
         res.status(200).json(serializeTranscodeProfile(row));
       } catch (err) {
         console.error("adminUpdateTranscodeProfile failed:", err);

@@ -372,7 +372,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.items).toEqual([
-        { userId: grantee.id, username: "grantee_list" },
+        { userId: grantee.id, username: "grantee_list", displayName: null },
       ]);
     });
 
@@ -406,6 +406,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       expect(res.body).toEqual({
         userId: grantee.id,
         username: "grantee_add",
+        displayName: null,
         granted: true,
       });
 
@@ -493,7 +494,12 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .set("Authorization", "Bearer remove-access-key-1");
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ userId: grantee.id, granted: false });
+      expect(res.body).toEqual({
+        userId: grantee.id,
+        username: grantee.username,
+        displayName: null,
+        granted: false,
+      });
 
       const rows = await queryRows(
         "SELECT * FROM PLAYLIST_ACCESS WHERE playlist_id = :playlistId",
@@ -512,7 +518,12 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .set("Authorization", "Bearer remove-access-key-3");
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ userId: other.id, granted: false });
+      expect(res.body).toEqual({
+        userId: other.id,
+        username: other.username,
+        displayName: null,
+        granted: false,
+      });
     });
 
     test("rejects a non-owner with 403", async () => {

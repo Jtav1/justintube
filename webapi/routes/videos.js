@@ -25,6 +25,7 @@ import {
 } from "../lib/video-access.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
+import { serializeUserRef } from "../lib/serialize-user-ref.js";
 
 /**
  * Relative media subfolder where thumbnail images are expected to live
@@ -87,7 +88,7 @@ function parsePositiveInt(raw) {
  *   visibility: string,
  *   commentsEnabled: boolean,
  *   viewCount: number,
- *   userId: number|null,
+ *   uploader: {userId: number|null, username: string|null, displayName: string|null},
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
  *   createdAt: Date,
@@ -102,7 +103,7 @@ export function serializeVideo(upload, metadata, options = {}) {
     visibility: metadata.visibility,
     commentsEnabled: Boolean(metadata.commentsEnabled),
     viewCount: Number(metadata.viewCount ?? 0),
-    userId: upload.userId ?? null,
+    uploader: serializeUserRef(upload.userId, upload.User?.username, upload.User?.displayName),
     durationSeconds: upload.durationSeconds ?? null,
     thumbnailUrl: upload.VideoThumbnail
       ? `/api/v1/videos/${upload.id}/thumbnail`
@@ -128,6 +129,7 @@ async function loadUploadWithMetadata(id) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
+      { model: User, required: false },
     ],
   });
   if (!upload || !upload.VideoMetadata) {
@@ -186,6 +188,7 @@ async function listPublicVideos(options = {}) {
         where: { visibility: "public" },
       },
       { model: VideoThumbnail, required: false },
+      { model: User, required: false },
       ...(options.includes || []),
     ],
     order: options.order || [["id", "ASC"]],
@@ -1011,10 +1014,9 @@ export function createVideosRouter() {
       });
 
       res.status(200).json({
-        items: grants.map((grant) => ({
-          userId: grant.userId,
-          username: grant.User.username,
-        })),
+        items: grants.map((grant) =>
+          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+        ),
       });
     } catch (err) {
       console.error("listVideoAccess failed:", err);
@@ -1126,10 +1128,9 @@ export function createVideosRouter() {
       });
 
       res.status(200).json({
-        items: grants.map((grant) => ({
-          userId: grant.userId,
-          username: grant.User.username,
-        })),
+        items: grants.map((grant) =>
+          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+        ),
       });
     } catch (err) {
       console.error("setVideoAccess failed:", err);

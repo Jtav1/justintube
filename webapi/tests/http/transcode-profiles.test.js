@@ -124,7 +124,7 @@ describe("admin transcode profiles", () => {
       videoCodec: "h264",
       audioCodec: "aac",
       description: "created by admin",
-      creatorUserId: admin.id,
+      creator: { userId: admin.id, username: admin.username, displayName: null },
     });
 
     const updated = await client

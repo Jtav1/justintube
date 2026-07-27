@@ -583,7 +583,7 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(putRes.status).toBe(200);
       expect(putRes.body.items).toEqual([
-        { userId: friend.id, username: "friend_user" },
+        { userId: friend.id, username: "friend_user", displayName: null },
       ]);
 
       const getRes = await client

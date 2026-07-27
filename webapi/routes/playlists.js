@@ -12,6 +12,7 @@ import {
   VideoThumbnail,
 } from "../lib/models/index.js";
 import { canViewPlaylist } from "../lib/playlist-access.js";
+import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { isOwnerOrAdmin } from "../lib/video-access.js";
 import { serializeVideo } from "./videos.js";
 
@@ -220,6 +221,7 @@ export function createPlaylistsRouter() {
             include: [
               { model: VideoMetadata, as: "VideoMetadata", required: true },
               { model: VideoThumbnail, required: false },
+              { model: User, required: false },
             ],
           },
         ],
@@ -646,10 +648,9 @@ export function createPlaylistsRouter() {
       });
 
       res.status(200).json({
-        items: grants.map((grant) => ({
-          userId: grant.userId,
-          username: grant.User.username,
-        })),
+        items: grants.map((grant) =>
+          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+        ),
       });
     } catch (err) {
       console.error("listPlaylistAccess failed:", err);
@@ -756,8 +757,7 @@ export function createPlaylistsRouter() {
       });
 
       res.status(200).json({
-        userId: targetUser.id,
-        username: targetUser.username,
+        ...serializeUserRef(targetUser.id, targetUser.username, targetUser.displayName),
         granted: true,
       });
     } catch (err) {
@@ -827,11 +827,16 @@ export function createPlaylistsRouter() {
         return;
       }
 
+      const targetUser = await User.findByPk(userId);
+
       await PlaylistAccess.destroy({
         where: { playlistId: playlist.id, userId },
       });
 
-      res.status(200).json({ userId, granted: false });
+      res.status(200).json({
+        ...serializeUserRef(userId, targetUser?.username, targetUser?.displayName),
+        granted: false,
+      });
     } catch (err) {
       console.error("removePlaylistAccess failed:", err);
       res.status(500).json({

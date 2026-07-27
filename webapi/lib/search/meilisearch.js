@@ -141,6 +141,6 @@ export async function suggestVideos(q, limit = 8) {
     .search(q || "", {
       filter: "visibility = public",
       limit,
-      attributesToRetrieve: ["id", "title", "username"],
+      attributesToRetrieve: ["id", "title", "userId", "username", "displayName"],
     });
 }
