@@ -1,0 +1,85 @@
+.theme-selector {
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+}
+
+.theme-selector-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-selector-scrollable {
+  max-height: 88px;
+  overflow-y: auto;
+}
+
+.theme-selector-row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.theme-selector-row:hover {
+  background: var(--accent-bg);
+}
+
+.theme-selector-name {
+  flex: 1;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text-h);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theme-selector-swatches {
+  display: flex;
+}
+
+.theme-selector-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid;
+  box-sizing: border-box;
+}
+
+.theme-selector-swatch:not(:first-child) {
+  margin-left: -6px;
+}
+
+.theme-selector-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  color: var(--text-h);
+  flex-shrink: 0;
+}
+
+.theme-selector-edit-link {
+  display: block;
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+  text-align: center;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.theme-selector-edit-link:hover {
+  background: var(--accent-bg);
+}

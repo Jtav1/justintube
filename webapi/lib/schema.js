@@ -1,7 +1,12 @@
 import { QueryTypes } from "sequelize";
 import { DB_CLIENT, sequelize } from "./db.js";
 import { models, NotificationType } from "./models/index.js";
-import { seedReferenceData, seedAdminUser, seedNotificationTypes } from "./seed.js";
+import {
+  seedReferenceData,
+  seedAdminUser,
+  seedThemes,
+  seedNotificationTypes,
+} from "./seed.js";
 import { syncSessionStore } from "./auth/session.js";
 
 /**
@@ -523,5 +528,6 @@ export async function ensureSchema() {
 
   await seedReferenceData();
   await seedAdminUser();
+  await seedThemes();
   await syncSessionStore();
 }

@@ -1,5 +1,6 @@
-import { NotificationType, Role, User } from "./models/index.js";
+import { NotificationType, Role, Theme, User } from "./models/index.js";
 import { hashPassword } from "./auth/password.js";
+import { PUBLIC_THEME_OWNER } from "./models/theme.js";
 
 /**
  * The standard authorization roles seeded into the ROLES table. Names are kept
@@ -73,6 +74,63 @@ export async function seedNotificationTypes() {
       where: { name },
       defaults: { description, enabled: true },
     });
+  }
+}
+
+/**
+ * The system-wide public themes seeded on boot. Colors mirror the light- and
+ * dark-mode CSS custom properties in `webview/src/index.css` so applying
+ * either is a visual no-op until someone customizes it. Mapping:
+ * color1=--border, color2=--bg, color3=--text, color4=--text-h,
+ * color5=--accent.
+ *
+ * Exactly one entry must have `isDefault: true` — `GET /api/v1/themes`
+ * relies on it as the fallback for callers with no theme selected.
+ *
+ * @type {Array<{name: string, isDefault: boolean, color1: string, color2: string, color3: string, color4: string, color5: string}>}
+ */
+const SEEDED_THEMES = [
+  {
+    name: "Light",
+    isDefault: true,
+    color1: "E5E4E7",
+    color2: "FFFFFF",
+    color3: "6B6375",
+    color4: "08060D",
+    color5: "AA3BFF",
+  },
+  {
+    name: "Dark",
+    isDefault: false,
+    color1: "2E303A",
+    color2: "16171D",
+    color3: "9CA3AF",
+    color4: "F3F4F6",
+    color5: "C084FC",
+  },
+];
+
+/**
+ * Ensures the system-wide public themes (Light, Dark) exist, with Light
+ * flagged as the fallback `isDefault` theme. Idempotent via findOrCreate,
+ * keyed by name.
+ *
+ * @returns {Promise<void>} Resolves once both themes have been seeded.
+ */
+export async function seedThemes() {
+  for (const { name, ...rest } of SEEDED_THEMES) {
+    const [, created] = await Theme.findOrCreate({
+      where: { name, themeOwner: PUBLIC_THEME_OWNER },
+      defaults: {
+        name,
+        themeOwner: PUBLIC_THEME_OWNER,
+        ...rest,
+      },
+    });
+
+    if (created) {
+      console.log(`[api]: seeded "${name}" theme`);
+    }
   }
 }
 

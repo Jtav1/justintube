@@ -1,0 +1,36 @@
+.video-listing {
+  text-align: left;
+}
+
+.video-listing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.video-listing-empty,
+.video-listing-error {
+  text-align: center;
+  color: var(--text);
+}
+
+.video-listing-load-more {
+  display: block;
+  margin: 24px auto 0;
+  font: inherit;
+  padding: 10px 20px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.video-listing-load-more:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.video-listing-load-more:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

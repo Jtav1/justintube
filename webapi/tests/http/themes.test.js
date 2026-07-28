@@ -102,7 +102,7 @@ describe("themes routes", () => {
       const res = await client.get("/api/v1/themes");
 
       expect(res.status).toBe(200);
-      expect(res.body.items.map((t) => t.name)).toEqual(["Public A"]);
+      expect(res.body.items.map((t) => t.name)).toEqual(["Light", "Dark", "Public A"]);
       expect(res.body.selectedThemeId).toBeUndefined();
     });
 

@@ -1,4 +1,4 @@
-#login-center {
+#auth-center {
   display: flex;
   place-content: center;
   place-items: center;
@@ -8,7 +8,7 @@
   box-sizing: border-box;
 }
 
-.login-card {
+.auth-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -45,7 +45,13 @@
   }
 }
 
-.login-submit {
+.auth-error {
+  margin: 0;
+  font-size: 14px;
+  color: #d33;
+}
+
+.auth-submit {
   font: inherit;
   margin-top: 8px;
   padding: 10px;
@@ -65,7 +71,7 @@
   }
 }
 
-.register-link {
+.auth-link {
   margin-top: 4px;
   text-align: center;
   font-size: 14px;
