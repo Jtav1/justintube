@@ -1,5 +1,7 @@
 import { Router } from "express";
-import { optionalAuth } from "../lib/auth/require-auth.js";
+import { Op } from "sequelize";
+import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
+import { Role, User } from "../lib/models/index.js";
 import { advancedSearchEnabled, searchVideos, suggestVideos } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 
@@ -23,6 +25,20 @@ const DEFAULT_LIMIT = 20;
  * @type {number}
  */
 const SUGGEST_LIMIT = 8;
+
+/**
+ * Default result count for GET /search/users.
+ *
+ * @type {number}
+ */
+const USER_SEARCH_DEFAULT_LIMIT = 10;
+
+/**
+ * Maximum result count for GET /search/users.
+ *
+ * @type {number}
+ */
+const USER_SEARCH_MAX_LIMIT = 25;
 
 /**
  * Maps the public `sort` query value to a Meilisearch sort clause. `relevance`
@@ -152,6 +168,27 @@ function parseSearchQuery(query) {
 }
 
 /**
+ * Parses and validates GET /search/users query params.
+ *
+ * @param {import('express').Request['query']} query Raw Express query object.
+ * @returns {{ok: true, q: string, limit: number}|{ok: false, message: string}}
+ *   Parsed params or a validation error.
+ */
+function parseUserSearchQuery(query) {
+  const q = typeof query.q === "string" ? query.q.trim() : "";
+
+  const limitRaw = query.limit === undefined ? USER_SEARCH_DEFAULT_LIMIT : Number(query.limit);
+  if (!Number.isInteger(limitRaw) || limitRaw < 1) {
+    return { ok: false, message: "limit must be a positive integer." };
+  }
+  if (limitRaw > USER_SEARCH_MAX_LIMIT) {
+    return { ok: false, message: `limit must be at most ${USER_SEARCH_MAX_LIMIT}.` };
+  }
+
+  return { ok: true, q, limit: limitRaw };
+}
+
+/**
  * Maps a raw Meilisearch hit to the public search result DTO.
  *
  * @param {object} hit Document as stored in the `videos` index.
@@ -184,6 +221,82 @@ function serializeHit(hit) {
  */
 export function createSearchRouter() {
   const router = Router();
+
+  /**
+   * GET /search/users — searchUsers
+   * Auth: required (any authenticated user). Prefix-matches username or
+   * displayName, excluding locked accounts. Powers client-side recipient
+   * pickers (e.g. the Upload page's private-share field).
+   *
+   * @openapi
+   * /api/v1/search/users:
+   *   get:
+   *     tags: [Search]
+   *     summary: Search users by username or display name prefix
+   *     operationId: searchUsers
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - name: q
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: string
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 25
+   *           default: 10
+   *     responses:
+   *       200:
+   *         description: Matching users
+   *       400:
+   *         description: Invalid query
+   *       401:
+   *         description: Not authenticated
+   *       500:
+   *         description: Search failed unexpectedly
+   */
+  router.get("/search/users", requireAuth, async (req, res) => {
+    const parsed = parseUserSearchQuery(req.query);
+    if (!parsed.ok) {
+      res.status(400).json({ error: "invalid_query", message: parsed.message });
+      return;
+    }
+
+    if (!parsed.q) {
+      res.status(200).json({ items: [] });
+      return;
+    }
+
+    try {
+      const rows = await User.findAll({
+        where: {
+          [Op.or]: [
+            { username: { [Op.like]: `${parsed.q}%` } },
+            { displayName: { [Op.like]: `${parsed.q}%` } },
+          ],
+        },
+        include: [{ model: Role, required: false }],
+        order: [["username", "ASC"]],
+        limit: parsed.limit,
+      });
+      const items = rows
+        .filter((row) => row.Role?.name !== "locked")
+        .map((row) => serializeUserRef(row.id, row.username, row.displayName));
+      res.status(200).json({ items });
+    } catch (err) {
+      console.error("searchUsers failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to search users.",
+      });
+    }
+  });
 
   /**
    * GET /search — searchVideos

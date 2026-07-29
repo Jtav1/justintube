@@ -1,21 +1,30 @@
 import { Link } from 'react-router-dom'
-import { Home, User, Star } from 'lucide-react'
+import { Home, User, ListVideo, ThumbsUp, Star, Users, ShieldCheck } from 'lucide-react'
+import { useAuth } from '../context/useAuth.js'
 import './Sidebar.css'
 
-const NAV_ITEMS = [
-  { key: 'home', label: 'Home', icon: Home, to: '/' },
-  { key: 'profile', label: 'My Profile', icon: User, to: null },
-  { key: 'featured', label: 'Featured', icon: Star, to: null },
-]
-
 function Sidebar({ collapsed, backgroundUrl }) {
+  const { user } = useAuth()
+
+  const navItems = [
+    { key: 'home', label: 'Home', icon: Home, to: '/' },
+    { key: 'profile', label: 'My Profile', icon: User, to: user ? `/users/${user.username}` : null },
+    { key: 'playlists', label: 'Playlists', icon: ListVideo, to: '/' },
+    { key: 'liked', label: 'Liked', icon: ThumbsUp, to: '/' },
+    { key: 'featured', label: 'Featured', icon: Star, to: '/' },
+    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: '/' },
+    ...(user?.role === 'admin'
+      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/' }]
+      : []),
+  ]
+
   return (
     <nav
       className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}
       style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}
     >
       <ul className="sidebar-nav">
-        {NAV_ITEMS.map(({ key, label, icon: Icon, to }) => (
+        {navItems.map(({ key, label, icon: Icon, to }) => (
           <li key={key}>
             {to ? (
               <Link to={to} className="sidebar-item">

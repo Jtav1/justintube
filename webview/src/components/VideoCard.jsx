@@ -1,16 +1,23 @@
+import { ImageOff } from 'lucide-react'
 import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/format.js'
+import apiClient from '../api/client.js'
 import './VideoCard.css'
 
 function VideoCard({ video }) {
   const uploaderName = video.uploader?.displayName || video.uploader?.username
+  const thumbnailUrl = video.thumbnailUrl
+    ? `${apiClient.defaults.baseURL}${video.thumbnailUrl}`
+    : null
 
   return (
     <article className="video-card">
       <div className="video-card-thumb">
-        {video.thumbnailUrl ? (
-          <img src={video.thumbnailUrl} alt="" loading="lazy" />
+        {thumbnailUrl ? (
+          <img src={thumbnailUrl} alt="" loading="lazy" />
         ) : (
-          <div className="video-card-thumb-placeholder" />
+          <div className="video-card-thumb-placeholder">
+            <ImageOff size={28} />
+          </div>
         )}
         {video.durationSeconds != null && (
           <span className="video-card-duration">{formatDuration(video.durationSeconds)}</span>

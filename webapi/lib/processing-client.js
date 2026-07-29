@@ -197,3 +197,17 @@ export async function removeTranscodeJob(jobId) {
     body: null,
   });
 }
+
+/**
+ * Checks whether the processing service is reachable and reports itself
+ * healthy. Used to gate features that depend on it (e.g. URL import).
+ *
+ * @returns {Promise<{ ok: boolean, status: number, body: object|null, error: string|null }>}
+ *   Normalized outcome; `ok` is true only when processing responded 2xx.
+ */
+export async function getProcessingHealth() {
+  return processingFetch("/health", {
+    method: "GET",
+    body: null,
+  });
+}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Menu, Palette, Search, UserRound } from 'lucide-react'
+import { Menu, Palette, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import ThemeSelector from './ThemeSelector.jsx'
@@ -62,6 +62,10 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
         </form>
       </div>
       <div className="topbar-right">
+        <Link to="/upload" className="topbar-upload">
+          <Video size={18} />
+          <span>Upload</span>
+        </Link>
         <div className="topbar-theme" ref={themeMenuRef}>
           <button
             type="button"
@@ -81,20 +85,24 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
         </div>
         {user ? (
           <>
-            {user.avatarFilename ? (
-              <img className="topbar-avatar" src={avatarUrl} alt="" />
-            ) : (
-              <span className="topbar-avatar topbar-avatar-placeholder">
-                <UserRound size={18} />
-              </span>
-            )}
-            <span className="topbar-username">{user.displayName || user.username}</span>
+            <Link to={`/users/${user.username}`} className="topbar-user-button">
+              {user.avatarFilename ? (
+                <img className="topbar-avatar" src={avatarUrl} alt="" />
+              ) : (
+                <span className="topbar-avatar topbar-avatar-placeholder">
+                  <UserRound size={18} />
+                </span>
+              )}
+              <span className="topbar-username">{user.displayName || user.username}</span>
+            </Link>
             <button type="button" className="topbar-logout" onClick={logout}>
               Log out
             </button>
           </>
         ) : (
-          <Link to="/login">Log in</Link>
+          <Link to="/login" className="topbar-login">
+            Log in
+          </Link>
         )}
       </div>
     </header>

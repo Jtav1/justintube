@@ -213,6 +213,11 @@ async function ensureSqliteMissingColumns() {
       ddl: "`avatar_filename` VARCHAR(255)",
     },
     {
+      table: "USERS",
+      column: "banner_filename",
+      ddl: "`banner_filename` VARCHAR(255)",
+    },
+    {
       table: "ORIGINAL_UPLOADS",
       column: "thumbnail_timestamp_tenths",
       ddl: "`thumbnail_timestamp_tenths` INTEGER UNSIGNED NULL",

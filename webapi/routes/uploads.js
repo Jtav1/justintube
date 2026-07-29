@@ -13,8 +13,12 @@ import {
   plannedTranscodedStoragePath,
 } from "../lib/media-meta.js";
 import { markUploadFileVersionsFailed } from "../lib/file-versions.js";
-import { FileVersion, OriginalUpload, TranscodeProfile } from "../lib/models/index.js";
-import { requestDownload, requestTranscodeBatch } from "../lib/processing-client.js";
+import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, sequelize } from "../lib/models/index.js";
+import {
+  getProcessingHealth,
+  requestDownload,
+  requestTranscodeBatch,
+} from "../lib/processing-client.js";
 
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
@@ -148,6 +152,21 @@ function uploadResponseBody(upload) {
     resolution: upload.resolution,
     durationSeconds: upload.durationSeconds,
   };
+}
+
+/**
+ * Derives a default video title from an original filename by stripping its
+ * extension. Falls back to the raw filename if stripping would leave it
+ * empty (e.g. a filename with no basename before the extension).
+ *
+ * @private
+ * @param {string} originalFilename Client-provided filename.
+ * @returns {string} Title suitable as VIDEO_METADATA.title (never empty).
+ */
+function defaultTitleFromFilename(originalFilename) {
+  const ext = extname(originalFilename);
+  const stripped = ext ? originalFilename.slice(0, -ext.length) : originalFilename;
+  return stripped.trim() || originalFilename;
 }
 
 /**
@@ -442,15 +461,28 @@ async function uploadVideo(req, res) {
 
   let upload;
   try {
-    upload = await OriginalUpload.create({
-      originalFilename: file.originalname,
-      uuidName,
-      fileExtension,
-      mimeType: file.mimetype || null,
-      fileSizeBytes: file.size ?? null,
-      storagePath,
-      userId: req.user.id,
-      thumbnailTimestampTenths: thumbnailTimestamp.tenths,
+    upload = await sequelize.transaction(async (transaction) => {
+      const created = await OriginalUpload.create(
+        {
+          originalFilename: file.originalname,
+          uuidName,
+          fileExtension,
+          mimeType: file.mimetype || null,
+          fileSizeBytes: file.size ?? null,
+          storagePath,
+          userId: req.user.id,
+          thumbnailTimestampTenths: thumbnailTimestamp.tenths,
+        },
+        { transaction },
+      );
+      await VideoMetadata.create(
+        {
+          originalUploadId: created.id,
+          title: defaultTitleFromFilename(file.originalname),
+        },
+        { transaction },
+      );
+      return created;
     });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.
@@ -591,15 +623,28 @@ async function importVideo(req, res) {
 
   let upload;
   try {
-    upload = await OriginalUpload.create({
-      originalFilename: downloadedFilename,
-      uuidName,
-      fileExtension,
-      mimeType: mimeTypeForContainer(fileExtension),
-      fileSizeBytes,
-      storagePath,
-      userId: req.user.id,
-      thumbnailTimestampTenths: thumbnailTimestamp.tenths,
+    upload = await sequelize.transaction(async (transaction) => {
+      const created = await OriginalUpload.create(
+        {
+          originalFilename: downloadedFilename,
+          uuidName,
+          fileExtension,
+          mimeType: mimeTypeForContainer(fileExtension),
+          fileSizeBytes,
+          storagePath,
+          userId: req.user.id,
+          thumbnailTimestampTenths: thumbnailTimestamp.tenths,
+        },
+        { transaction },
+      );
+      await VideoMetadata.create(
+        {
+          originalUploadId: created.id,
+          title: defaultTitleFromFilename(downloadedFilename),
+        },
+        { transaction },
+      );
+      return created;
     });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.
@@ -758,6 +803,39 @@ export function createUploadRouter() {
    *         description: Processing service unreachable
    */
   router.post("/videos/import", requireAuth, csrfProtection, requireUploader, importVideo);
+
+  /**
+   * GET /api/v1/videos/import/status — importStatus
+   * Auth: required. Reports whether the processing service (which backs
+   * `POST /videos/import`) is currently reachable and healthy, so clients can
+   * hide/disable URL-import UI when it isn't.
+   *
+   * @openapi
+   * /api/v1/videos/import/status:
+   *   get:
+   *     tags: [Uploads]
+   *     summary: Check whether URL import is currently available
+   *     operationId: importStatus
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: Processing-service availability
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 available:
+   *                   type: boolean
+   *       401:
+   *         description: Not authenticated
+   */
+  router.get("/videos/import/status", requireAuth, async (_req, res) => {
+    const health = await getProcessingHealth();
+    res.status(200).json({ available: health.ok });
+  });
 
   return router;
 }

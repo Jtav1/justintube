@@ -1,0 +1,100 @@
+.chip-input {
+  position: relative;
+}
+
+.chip-input-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.chip-input-field:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chip-input-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--text-h);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.chip-input-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chip-input-remove:hover {
+  background: var(--accent-border);
+  color: var(--text-h);
+}
+
+.chip-input-text {
+  flex: 1;
+  min-width: 120px;
+  font: inherit;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-h);
+  padding: 4px;
+}
+
+.chip-input-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  z-index: 20;
+  overflow: hidden;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.chip-input-suggestion {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.chip-input-suggestion:hover {
+  background: var(--accent-bg);
+}
+
+.chip-input-dropdown-status {
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 13px;
+}

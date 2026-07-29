@@ -1,0 +1,91 @@
+import apiClient from './client.js'
+
+/**
+ * Fetches a user's public channel profile plus a paginated, sortable page of
+ * their videos.
+ * @param {string} username
+ * @param {{ page?: number, limit?: number, sort?: string }} [params]
+ * @returns {Promise<{user: object, videos: {items: object[], page: number, limit: number, totalHits: number, totalPages: number}}>}
+ */
+export async function getUserChannel(username, { page, limit, sort } = {}) {
+  const res = await apiClient.get(`/api/v1/users/${encodeURIComponent(username)}`, {
+    params: { page, limit, sort },
+  })
+  return res.data
+}
+
+/**
+ * Updates a user's display-facing profile fields (displayName/bio). Usable
+ * by the profile owner or a moderator/admin.
+ * @param {number} userId
+ * @param {{ displayName?: string, bio?: string }} updates
+ * @returns {Promise<{id: number, username: string, displayName: string|null, bio: string|null}>}
+ */
+export async function updateUserProfile(userId, updates) {
+  const res = await apiClient.patch(`/api/v1/users/${userId}/profile`, updates)
+  return res.data
+}
+
+/**
+ * Uploads (or replaces) a user's banner image. Usable by the profile owner
+ * or a moderator/admin.
+ * @param {number} userId
+ * @param {File} file
+ * @returns {Promise<{bannerFilename: string}>}
+ */
+export async function updateUserBanner(userId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await apiClient.post(`/api/v1/users/${userId}/banner`, formData)
+  return res.data
+}
+
+/**
+ * Removes a user's banner image. Usable by the profile owner or a
+ * moderator/admin.
+ * @param {number} userId
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function deleteUserBanner(userId) {
+  const res = await apiClient.delete(`/api/v1/users/${userId}/banner`)
+  return res.data
+}
+
+/**
+ * Uploads (or replaces) a user's avatar image. Usable by the profile owner
+ * or a moderator/admin.
+ * @param {number} userId
+ * @param {File} file
+ * @returns {Promise<{avatarFilename: string}>}
+ */
+export async function updateUserAvatar(userId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await apiClient.post(`/api/v1/users/${userId}/avatar`, formData)
+  return res.data
+}
+
+/**
+ * Removes a user's avatar image. Usable by the profile owner or a
+ * moderator/admin.
+ * @param {number} userId
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function deleteUserAvatar(userId) {
+  const res = await apiClient.delete(`/api/v1/users/${userId}/avatar`)
+  return res.data
+}
+
+/**
+ * Searches users by username/display-name prefix (used by recipient pickers,
+ * e.g. sharing a private video with specific users).
+ * @param {string} query
+ * @param {{ limit?: number }} [options]
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null}>}>}
+ */
+export async function searchUsers(query, { limit } = {}) {
+  const res = await apiClient.get('/api/v1/search/users', {
+    params: { q: query, limit },
+  })
+  return res.data
+}

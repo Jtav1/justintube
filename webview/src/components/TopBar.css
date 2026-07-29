@@ -100,6 +100,24 @@
   font-size: 14px;
 }
 
+.topbar-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.topbar-upload:hover {
+  background: var(--accent-border);
+}
+
 .topbar-theme {
   position: relative;
   display: flex;
@@ -135,6 +153,25 @@
   padding: 4px 0;
 }
 
+.topbar-user-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  padding: 4px 12px 4px 4px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-h);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.topbar-user-button:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+
 .topbar-avatar {
   width: 32px;
   height: 32px;
@@ -167,4 +204,19 @@
 
 .topbar-logout:hover {
   border-color: var(--accent-border);
+}
+
+.topbar-login {
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.topbar-login:hover {
+  background: var(--accent-border);
 }

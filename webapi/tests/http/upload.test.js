@@ -143,6 +143,43 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(rows[0].status).toBe("uploaded");
   });
 
+  test("creates a VIDEO_METADATA row with a default title and private visibility", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+
+    const rows = await queryRows(
+      "SELECT * FROM VIDEO_METADATA WHERE original_upload_id = :id",
+      { id: res.body.id },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("clip");
+    expect(rows[0].visibility).toBe("private");
+  });
+
+  test("a freshly uploaded video can immediately be patched (no 404 from a missing VIDEO_METADATA row)", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const uploadRes = await uploadRequest()
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+    expect(uploadRes.status).toBe(201);
+
+    const patchRes = await client
+      .patch(`/api/v1/videos/${uploadRes.body.id}`)
+      .set("Authorization", `Bearer ${uploaderKey}`)
+      .send({ title: "New Title" });
+
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.title).toBe("New Title");
+  });
+
   test("always enqueues a thumbnail job, even when no transcode profiles exist", async () => {
     const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
@@ -419,5 +456,85 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
     expect(res.status).toBe(413);
     expect(res.body.error).toBe("file_too_large");
+  });
+});
+
+describe("GET /videos/import/status (processing health check)", () => {
+  /** @type {ReturnType<typeof createTestClient>} */
+  let client;
+  /** @type {typeof fetch | undefined} */
+  let originalFetch;
+  /** @type {string} */
+  const uploaderKey = "jt_test_import_status_key";
+
+  beforeAll(async () => {
+    await setupSchema();
+    client = createTestClient();
+  });
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    await resetTables();
+  });
+
+  async function seedUploaderCreds() {
+    const uploaderUser = await seedUser({ uploader: true, emailVerified: true });
+    await seedUserApiKey(uploaderUser.id, uploaderKey);
+  }
+
+  test("rejects an unauthenticated request", async () => {
+    const res = await client.get("/api/v1/videos/import/status");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  test("returns available: true when processing reports healthy", async () => {
+    globalThis.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "ok", redis: "configured" }),
+    }));
+
+    await seedUploaderCreds();
+    const res = await client
+      .get("/api/v1/videos/import/status")
+      .set("Authorization", `Bearer ${uploaderKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ available: true });
+  });
+
+  test("returns available: false when processing responds with a non-2xx status", async () => {
+    globalThis.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "boom" }),
+    }));
+
+    await seedUploaderCreds();
+    const res = await client
+      .get("/api/v1/videos/import/status")
+      .set("Authorization", `Bearer ${uploaderKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ available: false });
+  });
+
+  test("returns available: false when processing is unreachable", async () => {
+    globalThis.fetch = jest.fn(async () => {
+      throw new Error("fetch failed");
+    });
+
+    await seedUploaderCreds();
+    const res = await client
+      .get("/api/v1/videos/import/status")
+      .set("Authorization", `Bearer ${uploaderKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ available: false });
   });
 });
