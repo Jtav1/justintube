@@ -129,6 +129,19 @@ services:
     volumes:
       - media-data:/media
 
+  webview:
+    build:
+      context: ./webview
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000}
+    container_name: justintube-webview
+    restart: unless-stopped
+    depends_on:
+      webapi:
+        condition: service_started
+    ports:
+      - "${WEBVIEW_PORT:-5173}:80"
+
 volumes:
   db-data:
   media-data:

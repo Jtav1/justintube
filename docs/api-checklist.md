@@ -38,6 +38,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 
 - [x] `GET /api/v1/search/suggest` — searchSuggest
 - [x] `GET /api/v1/search` — searchVideos
+- [x] `GET /api/v1/search/users` — searchUsers
 - [x] `GET /api/v1/videos` — listVideos
 - [x] `GET /api/v1/videos/featured` — listFeaturedVideos
 - [x] `GET /api/v1/videos/newest` — listNewestVideos
@@ -47,6 +48,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `DELETE /api/v1/videos/:id` — deleteVideo
 - [x] `GET /api/v1/videos/:id/stream` — getVideoStream
 - [x] `GET /api/v1/videos/:id/thumbnail` — getVideoThumbnail
+- [x] `POST /api/v1/videos/:id/thumbnail` — updateVideoThumbnail
 - [x] `POST /api/v1/videos/:id/delist` — delistVideo
 - [x] `GET /api/v1/videos/:id/access` — listVideoAccess
 - [x] `PUT /api/v1/videos/:id/access` — setVideoAccess
@@ -60,6 +62,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 ### Uploads
 
 - [x] `POST /api/v1/videos/upload` — uploadVideo (multipart)
+- [x] `GET /api/v1/videos/import/status` — importStatus
 
 ### Me / library
 
@@ -94,12 +97,21 @@ Future
 - [x] `GET /api/v1/users/:id/subscription` — getSubscriptionState
 - [x] `POST /api/v1/users/:id/ban` — banUser
 - [x] `DELETE /api/v1/users/:id/ban` — unbanUser
+- [x] `PATCH /api/v1/users/:id/profile` — updateUserProfile (displayName/bio; owner, moderator, or admin)
 
 ### Avatars
 
 - [x] `POST /api/v1/me/avatar` — updateMyAvatar
 - [x] `DELETE /api/v1/me/avatar` — deleteMyAvatar
 - [x] `GET /api/v1/users/:username/avatar` — getUserAvatar
+- [x] `POST /api/v1/users/:id/avatar` — updateUserAvatar (owner, moderator, or admin)
+- [x] `DELETE /api/v1/users/:id/avatar` — deleteUserAvatar (owner, moderator, or admin)
+
+### Banners
+
+- [x] `POST /api/v1/users/:id/banner` — updateUserBanner (owner, moderator, or admin)
+- [x] `DELETE /api/v1/users/:id/banner` — deleteUserBanner (owner, moderator, or admin)
+- [x] `GET /api/v1/users/:username/banner` — getUserBanner
 
 ### Playlists
 

@@ -48,6 +48,10 @@ export const User = sequelize.define(
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    bannerFilename: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     emailVerified: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
