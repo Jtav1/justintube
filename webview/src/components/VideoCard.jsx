@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ImageOff, MoreVertical } from 'lucide-react'
 import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/format.js'
 import { useAuth } from '../context/useAuth.js'
+import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import apiClient from '../api/client.js'
 import './VideoCard.css'
 
@@ -11,13 +12,20 @@ const TITLE_FONT_SIZE = 18
 const TITLE_FONT_WEIGHT = 500
 const TITLE_SHRINK_PX = 4
 
-function VideoCard({ video, orientation = 'vertical' }) {
+function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
   const titleRef = useRef(null)
   const measureCanvasRef = useRef(null)
   const [titleShrunk, setTitleShrunk] = useState(false)
+
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const [myPlaylists, setMyPlaylists] = useState(null)
+  const [playlistsLoading, setPlaylistsLoading] = useState(false)
+  const [playlistsError, setPlaylistsError] = useState(null)
+  const [addStatus, setAddStatus] = useState({})
 
   useEffect(() => {
     const el = titleRef.current
@@ -55,6 +63,44 @@ function VideoCard({ video, orientation = 'vertical' }) {
     await navigator.clipboard.writeText(`${window.location.origin}${videoPath}`)
   }
 
+  function closeMenu() {
+    setMenuOpen(false)
+    setAddMenuOpen(false)
+  }
+
+  async function handleToggleAddMenu() {
+    const opening = !addMenuOpen
+    setAddMenuOpen(opening)
+    if (opening && myPlaylists === null && !playlistsLoading) {
+      setPlaylistsLoading(true)
+      setPlaylistsError(null)
+      try {
+        const data = await listMyPlaylists({ limit: 99 })
+        setMyPlaylists(data.items)
+      } catch {
+        setPlaylistsError('Failed to load your playlists.')
+      } finally {
+        setPlaylistsLoading(false)
+      }
+    }
+  }
+
+  function handleCreateNewPlaylist() {
+    closeMenu()
+    navigate(`/playlists/new?videoId=${video.id}`)
+  }
+
+  async function handleAddToExistingPlaylist(playlistId) {
+    setAddStatus((prev) => ({ ...prev, [playlistId]: 'adding' }))
+    try {
+      await addVideoToPlaylist(playlistId, video.id)
+      closeMenu()
+    } catch (err) {
+      const conflict = err?.response?.status === 409
+      setAddStatus((prev) => ({ ...prev, [playlistId]: conflict ? 'conflict' : 'error' }))
+    }
+  }
+
   useEffect(() => {
     if (!menuOpen) {
       return undefined
@@ -62,7 +108,7 @@ function VideoCard({ video, orientation = 'vertical' }) {
 
     function handleClickOutside(event) {
       if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setMenuOpen(false)
+        closeMenu()
       }
     }
 
@@ -102,44 +148,87 @@ function VideoCard({ video, orientation = 'vertical' }) {
             {formatViewCount(video.viewCount)} &middot; {formatRelativeDate(video.createdAt)}
           </p>
         </div>
-        <div className="video-card-menu" ref={menuRef}>
-          <button
-            type="button"
-            className="video-card-menu-toggle"
-            aria-label="Video options"
-            onClick={() => setMenuOpen((prev) => !prev)}
-          >
-            <MoreVertical size={18} />
-          </button>
-          {menuOpen && (
-            <div className="video-card-menu-dropdown">
-              <button type="button" className="video-card-menu-item" onClick={handleCopyLink}>
-                Copy Link
-              </button>
-              <button type="button" className="video-card-menu-item" onClick={() => setMenuOpen(false)}>
-                Add to Playlist
-              </button>
-              {isOwner && (
-                <button
-                  type="button"
-                  className="video-card-menu-item"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Edit
+        {!hideMenu && (
+          <div className="video-card-menu" ref={menuRef}>
+            <button
+              type="button"
+              className="video-card-menu-toggle"
+              aria-label="Video options"
+              onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+            >
+              <MoreVertical size={18} />
+            </button>
+            {menuOpen && (
+              <div className="video-card-menu-dropdown">
+                <button type="button" className="video-card-menu-item" onClick={handleCopyLink}>
+                  Copy Link
                 </button>
-              )}
-              {isModerator && (
-                <button
-                  type="button"
-                  className="video-card-menu-item"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  MOD: Delist
+                <button type="button" className="video-card-menu-item" onClick={handleToggleAddMenu}>
+                  Add to Playlist
                 </button>
-              )}
-            </div>
-          )}
-        </div>
+                {addMenuOpen && (
+                  <div className="video-card-playlist-submenu">
+                    <button
+                      type="button"
+                      className="video-card-playlist-submenu-item video-card-playlist-submenu-create"
+                      onClick={handleCreateNewPlaylist}
+                    >
+                      Create New Playlist
+                    </button>
+                    {playlistsLoading && (
+                      <p className="video-card-playlist-submenu-note">Loading your playlists...</p>
+                    )}
+                    {playlistsError && (
+                      <p className="video-card-playlist-submenu-note video-card-playlist-submenu-error">
+                        {playlistsError}
+                      </p>
+                    )}
+                    {!playlistsLoading && myPlaylists && myPlaylists.length === 0 && (
+                      <p className="video-card-playlist-submenu-note">
+                        You don&apos;t have any playlists yet.
+                      </p>
+                    )}
+                    {myPlaylists?.map((playlist) => {
+                      const status = addStatus[playlist.id]
+                      return (
+                        <button
+                          key={playlist.id}
+                          type="button"
+                          className="video-card-playlist-submenu-item"
+                          disabled={status === 'adding'}
+                          onClick={() => handleAddToExistingPlaylist(playlist.id)}
+                        >
+                          {playlist.title}
+                          {status === 'adding' && ' — Adding...'}
+                          {status === 'conflict' && ' — Already added'}
+                          {status === 'error' && ' — Failed, try again'}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {isOwner && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    Edit
+                  </button>
+                )}
+                {isModerator && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    MOD: Delist
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </article>
   )

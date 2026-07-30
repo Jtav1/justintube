@@ -239,6 +239,61 @@
   color: #d33;
 }
 
+.profile-section {
+  margin-bottom: 40px;
+}
+
+.profile-section-title {
+  margin: 0 0 16px;
+  font-family: var(--heading);
+  font-size: 20px;
+  color: var(--text-h);
+}
+
+.profile-playlists-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.profile-playlists-more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.profile-playlists-more-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  background: var(--code-bg);
+}
+
+.profile-playlists-more-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-h);
+}
+
+.profile-playlists-more:hover .profile-playlists-more-circle {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.profile-playlists-more-label {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
 .profile-videos-header {
   display: flex;
   justify-content: flex-end;

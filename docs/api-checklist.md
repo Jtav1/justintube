@@ -97,6 +97,7 @@ Future
 
 - [x] `GET /api/v1/users/:username` — getUserChannel
 - [x] `GET /api/v1/users/:username/videos` — listUserVideos
+- [x] `GET /api/v1/users/:username/playlists` — listUserPlaylists
 - [x] `POST /api/v1/users/:id/subscribe` — subscribeToUser
 - [x] `DELETE /api/v1/users/:id/subscribe` — unsubscribeFromUser
 - [x] `GET /api/v1/users/:id/subscription` — getSubscriptionState
@@ -121,6 +122,7 @@ Future
 ### Playlists
 
 - [x] `POST /api/v1/playlists` — createPlaylist
+- [x] `GET /api/v1/playlists` — listPlaylists
 - [x] `GET /api/v1/playlists/:id` — getPlaylist
 - [x] `PATCH /api/v1/playlists/:id` — updatePlaylist
 - [x] `DELETE /api/v1/playlists/:id` — deletePlaylist
