@@ -2,6 +2,17 @@
   text-align: left;
 }
 
+.video-listing-section {
+  margin-bottom: 40px;
+}
+
+.video-listing-section-title {
+  margin: 0 0 16px;
+  font-family: var(--heading);
+  font-size: 20px;
+  color: var(--text-h);
+}
+
 .video-listing-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

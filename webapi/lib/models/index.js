@@ -1,4 +1,5 @@
 import { sequelize } from "../db.js";
+import { Comment } from "./comment.js";
 import { ContentTag } from "./content-tag.js";
 import { EmailVerificationToken } from "./email-verification-token.js";
 import { FeaturedVideo } from "./featured-video.js";
@@ -245,6 +246,35 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
+  OriginalUpload.hasMany(Comment, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  Comment.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(Comment, {
+    foreignKey: "userId",
+    onDelete: "SET NULL",
+  });
+  Comment.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "SET NULL",
+  });
+
+  Comment.hasMany(Comment, {
+    as: "Replies",
+    foreignKey: "parentCommentId",
+    onDelete: "CASCADE",
+  });
+  Comment.belongsTo(Comment, {
+    as: "ParentComment",
+    foreignKey: "parentCommentId",
+    onDelete: "CASCADE",
+  });
+
   OriginalUpload.hasOne(FeaturedVideo, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -367,6 +397,7 @@ export const models = {
   VideoLike,
   VideoAccess,
   ContentTag,
+  Comment,
   FeaturedVideo,
   Subscription,
   Notification,
@@ -381,6 +412,7 @@ export const models = {
 };
 
 export {
+  Comment,
   ContentTag,
   EmailVerificationToken,
   FeaturedVideo,

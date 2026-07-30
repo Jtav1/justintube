@@ -1,0 +1,29 @@
+.video-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  margin: 0;
+  padding: 16px;
+}
+
+.video-page-error {
+  color: var(--text);
+}
+
+.video-page-layout {
+  display: flex;
+  align-items: stretch;
+  gap: 24px;
+  width: 100%;
+}
+
+.video-page-main {
+  width: 75%;
+  min-width: 0;
+}
+
+.video-page-layout .video-suggested {
+  width: 25%;
+  flex-shrink: 0;
+}

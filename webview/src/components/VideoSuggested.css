@@ -1,0 +1,27 @@
+.video-suggested {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.video-suggested-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.video-suggested-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(5 * 92px + 4 * 8px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.video-suggested-list .video-card-horizontal .video-card-thumb {
+  width: 120px;
+}
+
+.video-suggested-list .video-card-title {
+  font-size: 14px;
+}

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
-import { searchVideos } from '../api/videos.js'
+import { getFeaturedVideos, getNewestVideos } from '../api/videos.js'
 import VideoCard from '../components/VideoCard.jsx'
 import './VideoListing.css'
 
 const PAGE_LIMIT = 24
 
 function VideoListing() {
-  const [items, setItems] = useState([])
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
+  const [featured, setFeatured] = useState([])
+  const [recent, setRecent] = useState([])
+  const [visibleCount, setVisibleCount] = useState(PAGE_LIMIT)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -19,10 +19,14 @@ function VideoListing() {
       setLoading(true)
       setError(null)
       try {
-        const data = await searchVideos({ sort: 'newest', page, limit: PAGE_LIMIT })
+        const [featuredData, recentData] = await Promise.all([
+          getFeaturedVideos(),
+          getNewestVideos(),
+        ])
         if (!cancelled) {
-          setItems((prev) => (page === 1 ? data.items : [...prev, ...data.items]))
-          setTotalPages(data.totalPages)
+          const featuredIds = new Set(featuredData.items.map((video) => video.id))
+          setFeatured(featuredData.items)
+          setRecent(recentData.items.filter((video) => !featuredIds.has(video.id)))
         }
       } catch {
         if (!cancelled) {
@@ -40,29 +44,46 @@ function VideoListing() {
     return () => {
       cancelled = true
     }
-  }, [page])
+  }, [])
+
+  const visibleRecent = recent.slice(0, visibleCount)
 
   return (
     <section className="video-listing">
       {error && <p className="video-listing-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && featured.length === 0 && recent.length === 0 && !error && (
         <p className="video-listing-empty">No videos yet.</p>
       )}
-      <div className="video-listing-grid">
-        {items.map((video) => (
-          <VideoCard key={video.id} video={video} />
-        ))}
-      </div>
-      {page < totalPages && (
-        <button
-          type="button"
-          className="video-listing-load-more"
-          disabled={loading}
-          onClick={() => setPage((prev) => prev + 1)}
-        >
-          {loading ? 'Loading...' : 'Load more'}
-        </button>
+
+      {featured.length > 0 && (
+        <div className="video-listing-section">
+          <h2 className="video-listing-section-title">Featured Videos</h2>
+          <div className="video-listing-grid">
+            {featured.map((video) => (
+              <VideoCard key={video.id} video={video} />
+            ))}
+          </div>
+        </div>
       )}
+
+      <div className="video-listing-section">
+        <h2 className="video-listing-section-title">Recent Uploads</h2>
+        <div className="video-listing-grid">
+          {visibleRecent.map((video) => (
+            <VideoCard key={video.id} video={video} />
+          ))}
+        </div>
+        {visibleCount < recent.length && (
+          <button
+            type="button"
+            className="video-listing-load-more"
+            disabled={loading}
+            onClick={() => setVisibleCount((prev) => prev + PAGE_LIMIT)}
+          >
+            Load more
+          </button>
+        )}
+      </div>
     </section>
   )
 }

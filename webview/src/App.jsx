@@ -5,16 +5,31 @@ import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
 import UploadPage from './pages/UploadPage.jsx'
+import VideoPage from './pages/VideoPage.jsx'
+import ControlPanelPage from './pages/AdminPanel.jsx'
+import ModReportsPage from './pages/ModReports.jsx'
+import UserPlaylistsPage from './pages/UserPlaylists.jsx'
+import PlaylistsPage from './pages/Playlists.jsx'
+import FeaturedVideosPage from './pages/FeaturedVideos.jsx'
+import SubscriptionsPage from './pages/UserSubscriptions.jsx'
 
 function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/control-panel" element={<ControlPanelPage />} />
+      <Route path="/reports" element={<ModReportsPage />} />
       <Route element={<AppLayout />}>
         <Route path="/" element={<VideoListing />} />
+        <Route path="/video" element={<VideoPage />} />
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />
+        <Route path="/playlists/:username" element={<UserPlaylistsPage />} />
+        <Route path="/playlists" element={<PlaylistsPage />} />
+        <Route path="/liked/:username" element={<UserPlaylistsPage />} />
+        <Route path="/featured" element={<FeaturedVideosPage />} />
+        <Route path="/subscriptions" element={<SubscriptionsPage />} />
       </Route>
     </Routes>
   )

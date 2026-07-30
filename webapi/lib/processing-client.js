@@ -36,7 +36,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
  *   regardless of transcode profile count. `timestampSeconds` is the
  *   requested frame timestamp (`null` = let processing pick a random one, or
  *   whenever the requested value exceeds the video's actual duration);
- *   `profile` is unused. `jobId` is ORIGINAL_UPLOADS.uuid_name, output lands
+ *   `profile` is unused. `jobId` is ORIGINAL_UPLOADS.video_id, output lands
  *   under `/media/thumbnails`.
  *
  * @typedef {object} TranscodeBatchJob

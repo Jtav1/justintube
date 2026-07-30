@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { hashApiKey, apiKeyPrefix } from "../../lib/auth/api-key.js";
 import { hashVerificationToken } from "../../lib/auth/email-verification.js";
 import { query } from "../../lib/db.js";
+import { generateVideoId } from "../../lib/video-id.js";
 import {
+  Comment,
   ContentTag,
   FeaturedVideo,
   EmailVerificationToken,
@@ -52,6 +54,7 @@ const RESET_MODELS = [
   VideoLike,
   VideoAccess,
   ContentTag,
+  Comment,
   FeaturedVideo,
   UserPlaylist,
   OriginalUpload,
@@ -111,7 +114,7 @@ function asSeedResult(instance, record) {
  *
  * @param {object} [overrides] Partial column values to override the defaults.
  * @param {string} [overrides.originalFilename] Client-provided filename.
- * @param {string} [overrides.uuidName] On-disk UUID filename (defaults to a fresh UUID).
+ * @param {string} [overrides.videoId] Public video id (defaults to a fresh generated id).
  * @param {string} [overrides.fileExtension] Lowercase extension without a dot.
  * @param {string|null} [overrides.mimeType] MIME type of the upload.
  * @param {number|null} [overrides.fileSizeBytes] Size of the file in bytes.
@@ -124,7 +127,7 @@ function asSeedResult(instance, record) {
 export async function seedUpload(overrides = {}) {
   const record = {
     originalFilename: "sample.mp4",
-    uuidName: randomUUID(),
+    videoId: generateVideoId(),
     fileExtension: "mp4",
     mimeType: "video/mp4",
     fileSizeBytes: 2048,
@@ -333,6 +336,34 @@ export async function seedContentTag(originalUploadId, overrides = {}) {
   };
 
   const row = await ContentTag.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a COMMENTS row on an existing upload, applying defaults for any
+ * omitted field.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {number|null} userId Id of the commenting USERS row (nullable).
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.body] Comment text.
+ * @param {number|null} [overrides.parentCommentId] Parent comment id, for replies.
+ * @param {boolean} [overrides.distinguishedMod] Moderator-distinguished flag.
+ * @param {boolean} [overrides.distinguishedAdmin] Admin-distinguished flag.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded comment's id and values.
+ */
+export async function seedComment(originalUploadId, userId, overrides = {}) {
+  const record = {
+    originalUploadId,
+    userId,
+    parentCommentId: null,
+    body: "sample comment",
+    distinguishedMod: false,
+    distinguishedAdmin: false,
+    ...overrides,
+  };
+
+  const row = await Comment.create(record);
   return asSeedResult(row, record);
 }
 

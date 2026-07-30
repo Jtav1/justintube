@@ -4,6 +4,7 @@ import { UploadCloud } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import {
   uploadVideoFile,
+  importVideoUrl,
   updateVideo,
   setVideoAccess,
   getImportStatus,
@@ -191,7 +192,7 @@ function UploadPage() {
   }
 
   const submitDisabled =
-    !file || url.trim().length > 0 || title.trim().length === 0 || submitting
+    (!file && url.trim().length === 0) || title.trim().length === 0 || submitting
 
   function handleFormKeyDown(event) {
     if (event.key !== 'Enter') {
@@ -220,10 +221,14 @@ function UploadPage() {
 
     let createdId
     try {
-      const uploaded = await uploadVideoFile(file)
+      const uploaded = file ? await uploadVideoFile(file) : await importVideoUrl(url.trim())
       createdId = uploaded.id
     } catch {
-      setSubmitError('Failed to upload the file. Please try again.')
+      setSubmitError(
+        file
+          ? 'Failed to upload the file. Please try again.'
+          : 'Failed to import the video from that URL. Please try again.',
+      )
       setSubmitting(false)
       return
     }

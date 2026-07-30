@@ -55,6 +55,10 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `POST /api/v1/videos/:id/view` — recordVideoView
 - [x] `POST /api/v1/videos/:id/like` — likeVideo
 - [x] `POST /api/v1/videos/:id/dislike` — dislikeVideo
+- [x] `POST /api/v1/videos/:id/comments` — createComment
+- [x] `GET /api/v1/videos/:id/comments` — listComments
+- [x] `PATCH /api/v1/videos/:id/comments/:commentId` — updateComment
+- [x] `DELETE /api/v1/videos/:id/comments/:commentId` — deleteComment
 - [x] `GET /api/v1/tags` — listTags
 - [x] `GET /api/v1/tags/:tag/videos` — listTagVideos
 - [x] `GET /api/v1/feed/subscriptions` — feedSubscriptions

@@ -8,6 +8,7 @@ import {
   seedNotificationTypes,
 } from "./seed.js";
 import { syncSessionStore } from "./auth/session.js";
+import { generateVideoId } from "./video-id.js";
 
 /**
  * SQLite views that are no longer part of the application schema and should be
@@ -489,6 +490,93 @@ async function migrateNotificationsFk() {
 }
 
 /**
+ * Migrates `ORIGINAL_UPLOADS.uuid_name` (a 36-char UUID) into `video_id` (a
+ * 6-character case-sensitive alphanumeric public id): adds the new column,
+ * backfills it with freshly generated unique codes, swaps the unique index
+ * from the old column to the new one, tightens `video_id` to `NOT NULL` on
+ * MySQL, then drops the old column. Guarded/idempotent like its
+ * `USER_NOTIFICATION_SETTINGS`/`NOTIFICATIONS` counterparts — safe to run on
+ * every boot regardless of migration state.
+ *
+ * @returns {Promise<void>} Resolves once the table matches the current model.
+ */
+async function migrateOriginalUploadVideoId() {
+  const TABLE = "ORIGINAL_UPLOADS";
+  if (!(await tableExists(TABLE))) {
+    return;
+  }
+
+  if (!(await columnExists(TABLE, "video_id"))) {
+    const ddl =
+      DB_CLIENT === "sqlite"
+        ? "`video_id` VARCHAR BINARY(6)"
+        : "`video_id` VARCHAR(6) BINARY NULL";
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
+    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.video_id`);
+  }
+
+  const hasOldColumn = await columnExists(TABLE, "uuid_name");
+  if (hasOldColumn) {
+    const existingIds = await sequelize.query(
+      `SELECT \`video_id\` FROM \`${TABLE}\` WHERE \`video_id\` IS NOT NULL`,
+      { type: QueryTypes.SELECT },
+    );
+    const used = new Set(existingIds.map((row) => row.video_id));
+
+    const pending = await sequelize.query(
+      `SELECT \`id\` FROM \`${TABLE}\` WHERE \`video_id\` IS NULL`,
+      { type: QueryTypes.SELECT },
+    );
+    for (const row of pending) {
+      let candidate = generateVideoId();
+      while (used.has(candidate)) {
+        candidate = generateVideoId();
+      }
+      used.add(candidate);
+      await sequelize.query(
+        `UPDATE \`${TABLE}\` SET \`video_id\` = :videoId WHERE \`id\` = :id`,
+        { replacements: { videoId: candidate, id: row.id } },
+      );
+    }
+    if (pending.length > 0) {
+      console.log(`[api]: backfilled ${pending.length} ${TABLE}.video_id value(s)`);
+    }
+  }
+
+  if (await indexExists(TABLE, "uq_uuid_name")) {
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query("DROP INDEX `uq_uuid_name`");
+    } else {
+      await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP INDEX \`uq_uuid_name\``);
+    }
+    console.log(`[api]: dropped index uq_uuid_name on ${TABLE}`);
+  }
+
+  if (!(await indexExists(TABLE, "uq_video_id"))) {
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query(
+        `CREATE UNIQUE INDEX \`uq_video_id\` ON \`${TABLE}\` (\`video_id\`)`,
+      );
+    } else {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` ADD UNIQUE INDEX \`uq_video_id\` (\`video_id\`)`,
+      );
+    }
+    console.log(`[api]: created index uq_video_id on ${TABLE}`);
+  }
+
+  if (hasOldColumn) {
+    if (DB_CLIENT === "mysql") {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` MODIFY COLUMN \`video_id\` VARCHAR(6) BINARY NOT NULL`,
+      );
+    }
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP COLUMN \`uuid_name\``);
+    console.log(`[api]: migrated ${TABLE}.uuid_name to video_id`);
+  }
+}
+
+/**
  * Migrates both `USER_NOTIFICATION_SETTINGS` and `NOTIFICATIONS` off their
  * legacy free-form/constrained `notification_type` string columns onto a real
  * `notification_type_id` foreign key referencing NOTIFICATION_TYPES. Runs
@@ -522,6 +610,7 @@ async function migrateNotificationTypeForeignKeys() {
 export async function ensureSchema() {
   console.log(`[api]: initializing ${DB_CLIENT} database`);
 
+  await migrateOriginalUploadVideoId();
   await migrateNotificationTypeForeignKeys();
 
   if (DB_CLIENT === "sqlite") {

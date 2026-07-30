@@ -20,10 +20,10 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.STRING(255),
       allowNull: false,
     },
-    uuidName: {
-      type: DataTypes.STRING(36),
+    videoId: {
+      type: DataTypes.STRING(6).BINARY,
       allowNull: false,
-      unique: "uq_uuid_name",
+      unique: "uq_video_id",
     },
     fileExtension: {
       type: DataTypes.STRING(16),

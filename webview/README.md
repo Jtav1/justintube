@@ -1,18 +1,47 @@
-# React + Vite
+# Justintube Web UI (`webview/`)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React+Vite application for Justintube. Serves the web frontend. 
+Uses `lucide` icons (see `package.json`)
 
-Currently, two official plugins are available:
+## Requirements
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Nodejs  **≥ 20.6**  (see `package.json` `engines`)
+- Docker (for full suite of dependencies) or at minimum Sqlite for dev mode
 
-## React Compiler
+## Setup
+```bash
+cp .env.example .env
+npm install
+```
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+Important env vars
+| Variable | Purpose |
+| -------- | ------- |
+| `VITE_API_BASE_URL` |  API URL (default `localhost:3000`) |
 
-Note: This will impact Vite dev & build performances.
+Vite only exposes `VITE_`-prefixed vars to client code, and bakes them in at build time (not read
+at container runtime).
 
-## Expanding the ESLint configuration
+## Commands
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm run dev       # start the Vite dev server
+npm run build     # production build to dist/
+npm run preview   # serve the production build locally
+npm run lint      # eslint .
+```
+
+## Structure
+
+```
+src/
+  api/          axios client + per-resource request functions (auth, users, videos, themes)
+  components/   reusable UI pieces (Sidebar, TopBar, VideoCard, VideoPlayer, VideoComments, ...)
+  context/      React context/providers (auth, theme) and their hooks
+  layouts/      shared page chrome (AppLayout)
+  lib/          small framework-free helpers (formatting, etc.)
+  pages/        route-level views (VideoListing, VideoPage, UploadPage, ProfilePage, AdminPanel, ...)
+```
+
+Talks to the `webapi` service (see [`../webapi`](../webapi)) via `VITE_API_BASE_URL`; routing is
+handled by `react-router-dom`.

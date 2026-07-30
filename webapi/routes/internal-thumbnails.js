@@ -68,6 +68,7 @@ export function createInternalThumbnailsRouter() {
    *         in: path
    *         required: true
    *         schema: { type: string }
+   *         description: The upload's public videoId.
    *     requestBody:
    *       content:
    *         application/json:
@@ -86,7 +87,7 @@ export function createInternalThumbnailsRouter() {
    *
    * @param {import('express').Request} req Request with `uploadUuid` param + `{ thumbnailFilename }` body.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 200 `{ success, uploadUuid, status }`, 400, 404, or error.
+   * @returns {Promise<void>} Sends 200 `{ success, videoId, status }`, 400, 404, or error.
    */
   router.post("/thumbnails/:uploadUuid/complete", async (req, res) => {
     const uploadUuid = String(req.params.uploadUuid || "").trim();
@@ -112,7 +113,7 @@ export function createInternalThumbnailsRouter() {
       return;
     }
 
-    const upload = await OriginalUpload.findOne({ where: { uuidName: uploadUuid } });
+    const upload = await OriginalUpload.findOne({ where: { videoId: uploadUuid } });
     if (!upload) {
       res.status(404).json({
         success: false,
@@ -134,7 +135,7 @@ export function createInternalThumbnailsRouter() {
 
     res.status(200).json({
       success: true,
-      uploadUuid: upload.uuidName,
+      videoId: upload.videoId,
       status: "complete",
     });
   });

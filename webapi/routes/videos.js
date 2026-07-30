@@ -11,6 +11,7 @@ import { requireModerator } from "../lib/auth/require-moderator.js";
 import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
+  Comment,
   ContentTag,
   FeaturedVideo,
   FileVersion,
@@ -25,6 +26,8 @@ import {
 } from "../lib/models/index.js";
 import {
   canViewVideo,
+  isAdmin,
+  isModeratorOrAdmin,
   isOwnerOrAdmin,
 } from "../lib/video-access.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
@@ -179,6 +182,13 @@ const MAX_TAGS = 50;
 const MAX_TAG_LENGTH = 255;
 
 /**
+ * Maximum length for a comment's body text.
+ *
+ * @type {number}
+ */
+const MAX_COMMENT_LENGTH = 2000;
+
+/**
  * Parses a route `:id` param as a positive integer primary key.
  *
  * @param {unknown} raw Route parameter value.
@@ -211,12 +221,14 @@ function parsePositiveInt(raw) {
  *   fileSizeBytes: number|null,
  *   streamUrl: string
  * }>} [options.renditions]
- *   Available complete transcoded copies, one per rendition, each carrying a
- *   `streamUrl` a video player can select between (single-video routes only —
- *   `getVideo`, `updateVideo`, `delistVideo` — omitted elsewhere to keep
- *   list/search responses lightweight).
+ *   Available complete transcoded copies plus a trailing `"original"` entry
+ *   for the untranscoded upload, each carrying a `streamUrl` a video player
+ *   can select between (single-video routes only — `getVideo`, `updateVideo`,
+ *   `delistVideo` — omitted elsewhere to keep list/search responses
+ *   lightweight).
  * @returns {{
  *   id: number,
+ *   videoId: string,
  *   title: string,
  *   description: string|null,
  *   visibility: string,
@@ -233,6 +245,7 @@ function parsePositiveInt(raw) {
 export function serializeVideo(upload, metadata, options = {}) {
   const payload = {
     id: upload.id,
+    videoId: upload.videoId,
     title: metadata.title,
     description: metadata.description ?? null,
     visibility: metadata.visibility,
@@ -311,18 +324,81 @@ function serializeFileVersion(originalUploadId, version) {
 }
 
 /**
- * Loads every complete FILE_VERSIONS row for an upload, ordered lowest to
- * highest resolution, and serializes each into a rendition reference.
+ * Serializes an ORIGINAL_UPLOADS row itself into a rendition reference, so a
+ * video player can offer the untranscoded source as a quality option
+ * alongside transcoded renditions. Always labeled `"original"` regardless of
+ * the upload's own probed resolution.
  *
- * @param {number} originalUploadId Parent ORIGINAL_UPLOADS id.
- * @returns {Promise<object[]>} Serialized renditions, lowest resolution first.
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance.
+ * @returns {{
+ *   id: number,
+ *   resolution: "original",
+ *   width: number|null,
+ *   height: number|null,
+ *   mimeType: string|null,
+ *   fileSizeBytes: number|null,
+ *   streamUrl: string
+ * }} Rendition reference for the original file.
  */
-async function loadRenditions(originalUploadId) {
+function serializeOriginalRendition(upload) {
+  return {
+    id: upload.id,
+    resolution: "original",
+    width: upload.videoWidth,
+    height: upload.videoHeight,
+    mimeType: upload.mimeType ?? null,
+    fileSizeBytes: upload.fileSizeBytes != null ? Number(upload.fileSizeBytes) : null,
+    streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+  };
+}
+
+/**
+ * Loads every complete FILE_VERSIONS row for an upload, ordered lowest to
+ * highest resolution, and serializes each into a rendition reference,
+ * appending the original upload itself as a final `"original"` entry.
+ *
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance.
+ * @returns {Promise<object[]>} Serialized renditions, lowest resolution
+ *   first, with the original upload last.
+ */
+async function loadRenditions(upload) {
   const completeVersions = await FileVersion.findAll({
-    where: { originalUploadId, status: "complete" },
+    where: { originalUploadId: upload.id, status: "complete" },
     order: [["videoHeight", "ASC"]],
   });
-  return completeVersions.map((version) => serializeFileVersion(originalUploadId, version));
+  const renditions = completeVersions.map((version) => serializeFileVersion(upload.id, version));
+  renditions.push(serializeOriginalRendition(upload));
+  return renditions;
+}
+
+/**
+ * Serializes a COMMENTS row for API responses.
+ *
+ * @param {import('sequelize').Model} comment Comment instance (expects `User` preloaded).
+ * @returns {{
+ *   id: number,
+ *   originalUploadId: number,
+ *   parentCommentId: number|null,
+ *   author: {userId: number|null, username: string|null, displayName: string|null},
+ *   body: string,
+ *   distinguishedMod: boolean,
+ *   distinguishedAdmin: boolean,
+ *   createdAt: Date,
+ *   updatedAt: Date
+ * }} Public comment payload.
+ */
+function serializeComment(comment) {
+  return {
+    id: comment.id,
+    originalUploadId: comment.originalUploadId,
+    parentCommentId: comment.parentCommentId ?? null,
+    author: serializeUserRef(comment.userId, comment.User?.username, comment.User?.displayName),
+    body: comment.body,
+    distinguishedMod: Boolean(comment.distinguishedMod),
+    distinguishedAdmin: Boolean(comment.distinguishedAdmin),
+    createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt,
+  };
 }
 
 /**
@@ -344,6 +420,50 @@ async function loadUploadWithMetadata(id) {
     return null;
   }
   return { upload, metadata: upload.VideoMetadata };
+}
+
+/**
+ * Loads an upload with its metadata (and thumbnail, when present) by its
+ * public `videoId`.
+ *
+ * @param {string} videoId ORIGINAL_UPLOADS videoId.
+ * @returns {Promise<{upload: import('sequelize').Model, metadata: import('sequelize').Model}|null>}
+ *   Pair when both rows exist; otherwise null.
+ */
+async function loadUploadWithMetadataByVideoId(videoId) {
+  const upload = await OriginalUpload.findOne({
+    where: { videoId },
+    include: [
+      { model: VideoMetadata, as: "VideoMetadata", required: true },
+      { model: VideoThumbnail, required: false },
+      { model: User, required: false },
+    ],
+  });
+  if (!upload || !upload.VideoMetadata) {
+    return null;
+  }
+  return { upload, metadata: upload.VideoMetadata };
+}
+
+/**
+ * Loads an upload with its metadata by route identifier, accepting either
+ * the numeric primary key or the public `videoId` — lets video page links
+ * use the videoId while internal/API-only routes keep using the pk.
+ *
+ * @param {string} raw Route parameter value.
+ * @returns {Promise<{upload: import('sequelize').Model, metadata: import('sequelize').Model}|null>}
+ *   Pair when both rows exist; otherwise null.
+ */
+async function loadUploadWithMetadataByIdentifier(raw) {
+  const id = parsePositiveInt(raw);
+  if (id != null) {
+    return loadUploadWithMetadata(id);
+  }
+  const videoId = String(raw ?? "").trim();
+  if (!videoId) {
+    return null;
+  }
+  return loadUploadWithMetadataByVideoId(videoId);
 }
 
 /**
@@ -378,9 +498,11 @@ function sendNotFound(res) {
 
 /**
  * Finds videos for a bulk browse/discovery list, optionally filtered and
- * ordered. Public videos are always included; `unlisted`/`hidden` videos are
- * included only for their owner (`options.viewerUserId`) — everyone else
- * never sees delisted or hidden content in these bulk lists.
+ * ordered. Public videos are always included; `unlisted`/`hidden`/`private`
+ * videos are included for their owner (`options.viewerUserId`); `private`
+ * and `hidden` videos are additionally included for any viewer holding a
+ * matching VIDEO_ACCESS grant. Everyone else never sees delisted, hidden, or
+ * private content in these bulk lists.
  *
  * @param {object} [options] Query options.
  * @param {import('sequelize').WhereOptions} [options.uploadWhere] Extra ORIGINAL_UPLOADS where.
@@ -394,8 +516,20 @@ async function listPublicVideos(options = {}) {
   if (options.viewerUserId) {
     visibilityOr.push({
       userId: options.viewerUserId,
-      "$VideoMetadata.visibility$": { [Op.in]: ["unlisted", "hidden"] },
+      "$VideoMetadata.visibility$": { [Op.in]: ["unlisted", "hidden", "private"] },
     });
+
+    const grants = await VideoAccess.findAll({
+      where: { userId: options.viewerUserId },
+      attributes: ["originalUploadId"],
+    });
+    const grantedUploadIds = grants.map((grant) => grant.originalUploadId);
+    if (grantedUploadIds.length > 0) {
+      visibilityOr.push({
+        id: { [Op.in]: grantedUploadIds },
+        "$VideoMetadata.visibility$": { [Op.in]: ["private", "hidden"] },
+      });
+    }
   }
 
   const rows = await OriginalUpload.findAll({
@@ -636,6 +770,110 @@ function parseAccessBody(body) {
 }
 
 /**
+ * Parses createComment body `{ body, parentCommentId?, distinguishedMod?, distinguishedAdmin? }`.
+ *
+ * @param {unknown} body Request body.
+ * @returns {{
+ *   ok: true,
+ *   body: string,
+ *   parentCommentId?: number,
+ *   distinguishedMod?: boolean,
+ *   distinguishedAdmin?: boolean
+ * }|{ok: false, message: string}} Parsed fields or a validation error.
+ */
+function parseCreateCommentBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, message: "JSON body is required." };
+  }
+
+  const text = typeof body.body === "string" ? body.body.trim() : "";
+  if (!text) {
+    return { ok: false, message: "body is required." };
+  }
+  if (text.length > MAX_COMMENT_LENGTH) {
+    return { ok: false, message: `body must be at most ${MAX_COMMENT_LENGTH} characters.` };
+  }
+
+  const result = { ok: true, body: text };
+
+  if (body.parentCommentId !== undefined) {
+    const parentCommentId = Number(body.parentCommentId);
+    if (!Number.isInteger(parentCommentId) || parentCommentId < 1) {
+      return { ok: false, message: "parentCommentId must be a positive integer." };
+    }
+    result.parentCommentId = parentCommentId;
+  }
+
+  if (body.distinguishedMod !== undefined) {
+    if (typeof body.distinguishedMod !== "boolean") {
+      return { ok: false, message: "distinguishedMod must be a boolean." };
+    }
+    result.distinguishedMod = body.distinguishedMod;
+  }
+
+  if (body.distinguishedAdmin !== undefined) {
+    if (typeof body.distinguishedAdmin !== "boolean") {
+      return { ok: false, message: "distinguishedAdmin must be a boolean." };
+    }
+    result.distinguishedAdmin = body.distinguishedAdmin;
+  }
+
+  return result;
+}
+
+/**
+ * Parses updateComment body `{ body?, distinguishedMod?, distinguishedAdmin? }`. At least one
+ * recognized key is required.
+ *
+ * @param {unknown} body Request body.
+ * @returns {{
+ *   ok: true,
+ *   patch: {body?: string, distinguishedMod?: boolean, distinguishedAdmin?: boolean}
+ * }|{ok: false, message: string}} Parsed patch or a validation error.
+ */
+function parseUpdateCommentBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, message: "JSON body is required." };
+  }
+
+  const patch = {};
+
+  if (body.body !== undefined) {
+    const text = typeof body.body === "string" ? body.body.trim() : "";
+    if (!text) {
+      return { ok: false, message: "body must be a non-empty string." };
+    }
+    if (text.length > MAX_COMMENT_LENGTH) {
+      return { ok: false, message: `body must be at most ${MAX_COMMENT_LENGTH} characters.` };
+    }
+    patch.body = text;
+  }
+
+  if (body.distinguishedMod !== undefined) {
+    if (typeof body.distinguishedMod !== "boolean") {
+      return { ok: false, message: "distinguishedMod must be a boolean." };
+    }
+    patch.distinguishedMod = body.distinguishedMod;
+  }
+
+  if (body.distinguishedAdmin !== undefined) {
+    if (typeof body.distinguishedAdmin !== "boolean") {
+      return { ok: false, message: "distinguishedAdmin must be a boolean." };
+    }
+    patch.distinguishedAdmin = body.distinguishedAdmin;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return {
+      ok: false,
+      message: "At least one of body, distinguishedMod, or distinguishedAdmin is required.",
+    };
+  }
+
+  return { ok: true, patch };
+}
+
+/**
  * Builds the videos / tags / feed discovery router.
  *
  * @returns {import('express').Router} Router mounted under `/api/v1`.
@@ -737,20 +975,23 @@ export function createVideosRouter() {
 
   /**
    * GET /videos/:id — getVideo
-   * Auth: optional. Private requires owner, grant, or admin.
+   * Auth: optional. Private requires owner, grant, or admin. Accepts either
+   * the numeric id or the video's public videoId (see `videoId` on the
+   * response payload) — the video page link uses the videoId.
    *
    * @openapi
    * /api/v1/videos/{id}:
    *   get:
    *     tags: [Videos]
-   *     summary: Get a video by id
+   *     summary: Get a video by id or videoId
    *     operationId: getVideo
    *     parameters:
    *       - in: path
    *         name: id
    *         required: true
    *         schema:
-   *           type: integer
+   *           type: string
+   *         description: Numeric video id or its public videoId.
    *     responses:
    *       "200":
    *         description: Video metadata
@@ -759,16 +1000,7 @@ export function createVideosRouter() {
    */
   router.get("/videos/:id", optionalAuth, async (req, res) => {
     try {
-      const id = parsePositiveInt(req.params.id);
-      if (id == null) {
-        res.status(400).json({
-          error: "invalid_id",
-          message: "id must be a positive integer.",
-        });
-        return;
-      }
-
-      const loaded = await loadUploadWithMetadata(id);
+      const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
       if (!loaded) {
         sendNotFound(res);
         return;
@@ -781,7 +1013,7 @@ export function createVideosRouter() {
         return;
       }
 
-      const renditions = await loadRenditions(upload.id);
+      const renditions = await loadRenditions(upload);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
       res.status(200).json(
@@ -823,7 +1055,8 @@ export function createVideosRouter() {
    *         schema:
    *           type: string
    *         description: >
-   *           Resolution label (e.g. "720p") matching a complete rendition.
+   *           Resolution label (e.g. "720p") matching a complete rendition, or
+   *           "original" to stream the untranscoded uploaded file directly.
    *           Defaults to the highest-resolution complete rendition when omitted.
    *     responses:
    *       "200":
@@ -859,6 +1092,15 @@ export function createVideosRouter() {
         return;
       }
 
+      const requestedQuality =
+        typeof req.query.quality === "string" ? req.query.quality.trim() : "";
+
+      if (requestedQuality === "original") {
+        const absolutePath = resolveMediaPath(upload.storagePath);
+        await streamFileWithRangeSupport(req, res, absolutePath, upload.mimeType);
+        return;
+      }
+
       const renditions = await FileVersion.findAll({
         where: { originalUploadId: upload.id, status: "complete" },
       });
@@ -866,9 +1108,6 @@ export function createVideosRouter() {
         sendNotFound(res);
         return;
       }
-
-      const requestedQuality =
-        typeof req.query.quality === "string" ? req.query.quality.trim() : "";
 
       let version;
       if (requestedQuality) {
@@ -1190,7 +1429,7 @@ export function createVideosRouter() {
       await metadata.reload();
       syncVideoIndex(upload.id);
 
-      const renditions = await loadRenditions(upload.id);
+      const renditions = await loadRenditions(upload);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
       res.status(200).json(
@@ -1323,7 +1562,7 @@ export function createVideosRouter() {
         await metadata.update({ visibility: "unlisted" });
         syncVideoIndex(upload.id);
 
-        const renditions = await loadRenditions(upload.id);
+        const renditions = await loadRenditions(upload);
         const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
         res.status(200).json(
@@ -1726,6 +1965,388 @@ export function createVideosRouter() {
       res.status(500).json({
         error: "internal_error",
         message: "Failed to dislike video.",
+      });
+    }
+  });
+
+  /**
+   * POST /videos/:id/comments — createComment
+   * Auth: required. Requires canView. Blocked when the video's comments are
+   * disabled unless the caller is a moderator/admin self-distinguishing the
+   * comment (`distinguishedMod`/`distinguishedAdmin: true`), matching their
+   * role's own flag.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/comments:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Post a comment (or reply) on a video
+   *     operationId: createComment
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "201":
+   *         description: Created comment
+   *       "400":
+   *         description: Invalid body, or parentCommentId not on this video
+   *       "403":
+   *         description: Forbidden (comments disabled, or not authorized for a distinguished flag)
+   *       "404":
+   *         description: Video not found or inaccessible
+   */
+  router.post("/videos/:id/comments", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const parsed = parseCreateCommentBody(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: "invalid_body", message: parsed.message });
+        return;
+      }
+
+      if (parsed.distinguishedMod !== undefined && !isModeratorOrAdmin(req.authRole)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only a moderator or admin may set distinguishedMod.",
+        });
+        return;
+      }
+      if (parsed.distinguishedAdmin !== undefined && !isAdmin(req.authRole)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only an admin may set distinguishedAdmin.",
+        });
+        return;
+      }
+
+      if (!metadata.commentsEnabled) {
+        const selfDistinguished = parsed.distinguishedMod === true || parsed.distinguishedAdmin === true;
+        if (!selfDistinguished) {
+          res.status(403).json({
+            error: "comments_disabled",
+            message: "Comments are disabled on this video.",
+          });
+          return;
+        }
+      }
+
+      if (parsed.parentCommentId !== undefined) {
+        const parentComment = await Comment.findByPk(parsed.parentCommentId);
+        if (!parentComment || parentComment.originalUploadId !== upload.id) {
+          res.status(400).json({
+            error: "invalid_parent_comment",
+            message: "parentCommentId does not refer to a comment on this video.",
+          });
+          return;
+        }
+      }
+
+      const comment = await Comment.create({
+        originalUploadId: upload.id,
+        userId: req.user.id,
+        parentCommentId: parsed.parentCommentId ?? null,
+        body: parsed.body,
+        distinguishedMod: parsed.distinguishedMod ?? false,
+        distinguishedAdmin: parsed.distinguishedAdmin ?? false,
+      });
+      await comment.reload({ include: [{ model: User, required: false }] });
+
+      res.status(201).json(serializeComment(comment));
+    } catch (err) {
+      console.error("createComment failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to create comment.",
+      });
+    }
+  });
+
+  /**
+   * GET /videos/:id/comments — listComments
+   * Auth: optional. Requires canView. All comments on the video, oldest first
+   * (regardless of the commentsEnabled flag - reading is always allowed).
+   *
+   * @openapi
+   * /api/v1/videos/{id}/comments:
+   *   get:
+   *     tags: [Videos]
+   *     summary: List comments on a video
+   *     operationId: listComments
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Comment list
+   *       "404":
+   *         description: Video not found or inaccessible
+   */
+  router.get("/videos/:id/comments", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const comments = await Comment.findAll({
+        where: { originalUploadId: upload.id },
+        order: [["createdAt", "ASC"]],
+        include: [{ model: User, required: false }],
+      });
+
+      res.status(200).json({ items: comments.map(serializeComment) });
+    } catch (err) {
+      console.error("listComments failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list comments.",
+      });
+    }
+  });
+
+  /**
+   * PATCH /videos/:id/comments/:commentId — updateComment
+   * Auth: required. `body` may only be changed by the comment's author.
+   * `distinguishedMod` requires moderator/admin; `distinguishedAdmin` requires admin.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/comments/{commentId}:
+   *   patch:
+   *     tags: [Videos]
+   *     summary: Edit a comment's body, or toggle its distinguished flags
+   *     operationId: updateComment
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: path
+   *         name: commentId
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Updated comment
+   *       "400":
+   *         description: Invalid or empty body
+   *       "403":
+   *         description: Not authorized for the requested change
+   *       "404":
+   *         description: Video or comment not found
+   */
+  router.patch("/videos/:id/comments/:commentId", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      const commentId = parsePositiveInt(req.params.commentId);
+      if (id == null || commentId == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id and commentId must be positive integers.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const comment = await Comment.findByPk(commentId);
+      if (!comment || comment.originalUploadId !== upload.id) {
+        sendNotFound(res);
+        return;
+      }
+
+      const parsed = parseUpdateCommentBody(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: "invalid_body", message: parsed.message });
+        return;
+      }
+
+      const { patch } = parsed;
+      if (patch.body !== undefined && Number(req.user.id) !== Number(comment.userId)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the comment's author may edit its body.",
+        });
+        return;
+      }
+      if (patch.distinguishedMod !== undefined && !isModeratorOrAdmin(req.authRole)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only a moderator or admin may set distinguishedMod.",
+        });
+        return;
+      }
+      if (patch.distinguishedAdmin !== undefined && !isAdmin(req.authRole)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only an admin may set distinguishedAdmin.",
+        });
+        return;
+      }
+
+      await comment.update(patch);
+      await comment.reload({ include: [{ model: User, required: false }] });
+
+      res.status(200).json(serializeComment(comment));
+    } catch (err) {
+      console.error("updateComment failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to update comment.",
+      });
+    }
+  });
+
+  /**
+   * DELETE /videos/:id/comments/:commentId — deleteComment
+   * Auth: required. The author may delete their own comment; a moderator may
+   * delete any comment that isn't distinguishedAdmin; an admin may delete any
+   * comment unconditionally. Deleting a comment cascades to its replies.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/comments/{commentId}:
+   *   delete:
+   *     tags: [Videos]
+   *     summary: Delete a comment
+   *     operationId: deleteComment
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: path
+   *         name: commentId
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "204":
+   *         description: Comment deleted
+   *       "403":
+   *         description: Not authorized to delete this comment
+   *       "404":
+   *         description: Video or comment not found
+   */
+  router.delete("/videos/:id/comments/:commentId", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      const commentId = parsePositiveInt(req.params.commentId);
+      if (id == null || commentId == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id and commentId must be positive integers.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const comment = await Comment.findByPk(commentId);
+      if (!comment || comment.originalUploadId !== upload.id) {
+        sendNotFound(res);
+        return;
+      }
+
+      const isOwner = Number(req.user.id) === Number(comment.userId);
+      const canDelete =
+        isOwner ||
+        isAdmin(req.authRole) ||
+        (isModeratorOrAdmin(req.authRole) && !comment.distinguishedAdmin);
+      if (!canDelete) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Not authorized to delete this comment.",
+        });
+        return;
+      }
+
+      await comment.destroy();
+      res.status(204).send();
+    } catch (err) {
+      console.error("deleteComment failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to delete comment.",
       });
     }
   });

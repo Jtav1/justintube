@@ -90,6 +90,9 @@
   align-items: center;
   gap: 8px;
   max-width: calc(100% - 40px);
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.45);
 }
 
 .profile-username {
@@ -104,7 +107,7 @@
 .profile-username-handle,
 .profile-username-role {
   font-weight: 400;
-  color: #9ca3af;
+  color: #cdd0d6;
 }
 
 .profile-edit-icon {

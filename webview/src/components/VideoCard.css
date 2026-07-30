@@ -1,16 +1,35 @@
 .video-card {
   display: flex;
-  flex-direction: column;
   gap: 4px;
   text-align: left;
 }
 
+.video-card-vertical {
+  flex-direction: column;
+}
+
+.video-card-horizontal {
+  flex-direction: row;
+  gap: 12px;
+}
+
 .video-card-thumb {
+  display: block;
   position: relative;
   aspect-ratio: 16 / 9;
   border-radius: 8px;
   overflow: hidden;
   background: var(--code-bg);
+}
+
+.video-card-horizontal .video-card-thumb {
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.video-card-horizontal .video-card-body {
+  flex-grow: 1;
+  min-width: 0;
 }
 
 .video-card-thumb img {
@@ -33,7 +52,7 @@
 .video-card-duration {
   position: absolute;
   right: 6px;
-  bottom: 6px;
+  bottom: 1px;
   padding: 2px 6px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.75);
@@ -42,16 +61,102 @@
   font-family: var(--mono);
 }
 
+.video-card-body {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.video-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
 .video-card-title {
-  margin: 6px 0 0;
-  font-size: 15px;
+  margin: 0;
+  font-size: 16px;
   font-weight: 500;
-  line-height: 130%;
+  line-height: 120%;
   color: var(--text-h);
+}
+
+.video-card-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.video-card-title a:hover {
+  text-decoration: underline;
 }
 
 .video-card-meta {
   margin: 0;
   font-size: 13px;
+  font-weight: 300;
+  line-height: 100%;
   color: var(--text);
+}
+
+.video-card-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.video-card-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.video-card:hover .video-card-menu-toggle,
+.video-card-menu-open .video-card-menu-toggle {
+  opacity: 1;
+}
+
+.video-card-menu-toggle:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.video-card-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  z-index: 20;
+  overflow: hidden;
+  padding: 4px 0;
+}
+
+.video-card-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-h);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.video-card-menu-item:hover {
+  background: var(--accent-bg);
 }

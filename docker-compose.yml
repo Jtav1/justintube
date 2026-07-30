@@ -97,6 +97,14 @@ services:
       MEILI_HOST: http://search:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-meili-master-key}
       MEILI_INDEX_NAME: ${MEILI_INDEX_NAME:-videos}
+      # Seeded admin user (created once on boot when both are set)
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: password
+      # Allows the webview SPA's browser-side requests through CORS. Required
+      # because the webapi image sets NODE_ENV=production, which disables
+      # cross-origin requests entirely when this is unset (see
+      # webapi/lib/auth/cors.js).
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEBVIEW_PORT:-5173}}
     ports:
       - "${PORT:-3000}:3000"
     volumes:
