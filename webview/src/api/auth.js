@@ -78,3 +78,14 @@ export async function verifyEmail(token) {
   const res = await apiClient.post('/api/v1/auth/verify-email', { token })
   return res.data.user
 }
+
+/**
+ * Changes the current session's password (session cookie only).
+ * @param {string} currentPassword
+ * @param {string} newPassword
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function changePassword(currentPassword, newPassword) {
+  const res = await apiClient.post('/api/v1/auth/password', { currentPassword, newPassword })
+  return res.data
+}

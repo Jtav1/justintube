@@ -43,8 +43,19 @@ export function AuthProvider({ children }) {
     window.location.reload()
   }
 
+  /**
+   * Re-fetches the current session's user, syncing global state (e.g. after
+   * changing username/email elsewhere in the app).
+   * @returns {Promise<object|null>}
+   */
+  async function refreshUser() {
+    const currentUser = await authApi.getCurrentUser()
+    setUser(currentUser)
+    return currentUser
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   )

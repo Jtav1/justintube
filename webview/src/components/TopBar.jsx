@@ -10,6 +10,8 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
   const { user, logout } = useAuth()
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const themeMenuRef = useRef(null)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef(null)
 
   useEffect(() => {
     if (!themeMenuOpen) {
@@ -25,6 +27,21 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [themeMenuOpen])
+
+  useEffect(() => {
+    if (!userMenuOpen) {
+      return undefined
+    }
+
+    function handleClickOutside(event) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setUserMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [userMenuOpen])
 
   const avatarUrl = user
     ? `${apiClient.defaults.baseURL}/api/v1/users/${user.username}/avatar`
@@ -90,16 +107,42 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
         </div>
         {user ? (
           <>
-            <Link to={`/users/${user.username}`} className="topbar-user-button">
-              {user.avatarFilename ? (
-                <img className="topbar-avatar" src={avatarUrl} alt="" />
-              ) : (
-                <span className="topbar-avatar topbar-avatar-placeholder">
-                  <UserRound size={18} />
-                </span>
+            <div className="topbar-user" ref={userMenuRef}>
+              <button
+                type="button"
+                className="topbar-user-button"
+                onClick={() => setUserMenuOpen((open) => !open)}
+                aria-haspopup="true"
+                aria-expanded={userMenuOpen}
+              >
+                {user.avatarFilename ? (
+                  <img className="topbar-avatar" src={avatarUrl} alt="" />
+                ) : (
+                  <span className="topbar-avatar topbar-avatar-placeholder">
+                    <UserRound size={18} />
+                  </span>
+                )}
+                <span className="topbar-username">{user.displayName || user.username}</span>
+              </button>
+              {userMenuOpen && (
+                <div className="topbar-user-menu" role="menu">
+                  <Link
+                    to={`/users/${user.username}`}
+                    className="topbar-user-menu-item"
+                    onClick={() => setUserMenuOpen(false)}
+                  >
+                    My Profile
+                  </Link>
+                  <Link
+                    to="/settings"
+                    className="topbar-user-menu-item"
+                    onClick={() => setUserMenuOpen(false)}
+                  >
+                    Settings
+                  </Link>
+                </div>
               )}
-              <span className="topbar-username">{user.displayName || user.username}</span>
-            </Link>
+            </div>
             <button type="button" className="topbar-logout" onClick={logout}>
               Log out
             </button>

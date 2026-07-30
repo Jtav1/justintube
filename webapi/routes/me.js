@@ -7,6 +7,7 @@ import multer from "multer";
 import { Op } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
+import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
 import {
   OriginalUpload,
@@ -138,7 +139,6 @@ function avatarUploadErrorHandler(err, _req, res, next) {
 
 const FORBIDDEN_FIELDS = [
   "id",
-  "username",
   "passwordHash",
   "passwordExpired",
   "emailVerified",
@@ -162,6 +162,7 @@ const FORBIDDEN_FIELDS = [
  *   displayName: string|null,
  *   bio: string|null,
  *   avatarFilename: string|null,
+ *   bannerFilename: string|null,
  *   emailVerified: boolean,
  *   emailVerifiedAt: Date|null,
  *   uploader: boolean,
@@ -180,6 +181,7 @@ function serializeMeSettings(user, role = null) {
     displayName: user.displayName ?? null,
     bio: user.bio ?? null,
     avatarFilename: user.avatarFilename ?? null,
+    bannerFilename: user.bannerFilename ?? null,
     emailVerified: Boolean(user.emailVerified),
     emailVerifiedAt: user.emailVerifiedAt ?? null,
     uploader: Boolean(user.uploader),
@@ -191,9 +193,9 @@ function serializeMeSettings(user, role = null) {
 }
 
 /**
- * Validates and normalizes a `PATCH /me` request body. Only `displayName`,
- * `bio`, and `email` may be changed; any other known User field present in
- * the body is rejected rather than silently ignored.
+ * Validates and normalizes a `PATCH /me` request body. Only `username`,
+ * `displayName`, `bio`, and `email` may be changed; any other known User
+ * field present in the body is rejected rather than silently ignored.
  *
  * @param {unknown} body Parsed request body.
  * @returns {{ ok: true, updates: Record<string, unknown> }
@@ -216,6 +218,17 @@ function parseMeUpdate(body) {
 
   const updates = {};
 
+  if (Object.prototype.hasOwnProperty.call(body, "username")) {
+    const username = String(body.username || "").trim();
+    if (!username) {
+      return { ok: false, message: "username must not be empty." };
+    }
+    if (username.length > 255) {
+      return { ok: false, message: "username must be at most 255 characters." };
+    }
+    updates.username = username;
+  }
+
   if (Object.prototype.hasOwnProperty.call(body, "displayName")) {
     const displayNameRaw = body.displayName;
     updates.displayName =
@@ -236,6 +249,9 @@ function parseMeUpdate(body) {
     const email = String(body.email || "").trim().toLowerCase();
     if (!email) {
       return { ok: false, message: "email must not be empty." };
+    }
+    if (!isValidEmailFormat(email)) {
+      return { ok: false, message: "email must be a valid email address." };
     }
     updates.email = email;
   }
@@ -310,8 +326,9 @@ export function createMeRouter() {
   });
 
   /**
-   * Updates the authenticated user's editable account fields (`displayName`,
-   * `bio`, `email`). Changing `email` resets `emailVerified`/`emailVerifiedAt`.
+   * Updates the authenticated user's editable account fields (`username`,
+   * `displayName`, `bio`, `email`). Changing `email` resets
+   * `emailVerified`/`emailVerifiedAt`.
    * PATCH /api/v1/me
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *
@@ -333,6 +350,7 @@ export function createMeRouter() {
    *           schema:
    *             type: object
    *             properties:
+   *               username: { type: string }
    *               displayName: { type: string, nullable: true }
    *               bio: { type: string, nullable: true }
    *               email: { type: string }
@@ -344,7 +362,7 @@ export function createMeRouter() {
    *       401:
    *         description: Not authenticated
    *       409:
-   *         description: Email already registered to another account
+   *         description: Username or email already registered to another account
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -359,6 +377,22 @@ export function createMeRouter() {
       }
 
       const { updates } = parsed;
+
+      if (
+        Object.prototype.hasOwnProperty.call(updates, "username") &&
+        updates.username !== req.user.username
+      ) {
+        const duplicate = await User.findOne({
+          where: { username: updates.username, id: { [Op.ne]: req.user.id } },
+        });
+        if (duplicate) {
+          res.status(409).json({
+            error: "conflict",
+            message: "Username is already registered to another account.",
+          });
+          return;
+        }
+      }
 
       if (
         Object.prototype.hasOwnProperty.call(updates, "email") &&

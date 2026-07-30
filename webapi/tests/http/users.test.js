@@ -54,6 +54,124 @@ async function registerSession(agent, account) {
   return { csrfToken: res.body.csrfToken, user: res.body.user };
 }
 
+describe("GET /api/v1/users (listUsers)", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  test("lists users alphabetically by username, excluding locked accounts", async () => {
+    await seedUser({ username: "zeta_user", email: "zeta_user@example.com" });
+    await seedUser({ username: "alpha_user", email: "alpha_user@example.com" });
+    const locked = await seedUser({ username: "locked_user", email: "locked_user@example.com" });
+    const { queryRows } = await import("../helpers/db.js");
+    const [lockedRole] = await queryRows("SELECT id FROM ROLES WHERE name = :name", { name: "locked" });
+    await queryRows("UPDATE USERS SET role_id = :roleId WHERE id = :id", {
+      roleId: lockedRole.id,
+      id: locked.id,
+    });
+
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users").query({ limit: 99 });
+    expect(res.status).toBe(200);
+    const usernames = res.body.items.map((u) => u.username);
+    expect(usernames).toContain("alpha_user");
+    expect(usernames).toContain("zeta_user");
+    expect(usernames).not.toContain("locked_user");
+    expect(usernames.indexOf("alpha_user")).toBeLessThan(usernames.indexOf("zeta_user"));
+  });
+
+  test("counts only public uploads toward uploadCount", async () => {
+    const owner = await seedUser({ username: "upload_count_owner", email: "upload_count_owner@example.com" });
+    const publicUpload = await seedUpload({ userId: owner.id });
+    await seedMetadata(publicUpload.id, { title: "Public video", visibility: "public" });
+    const privateUpload = await seedUpload({ userId: owner.id });
+    await seedMetadata(privateUpload.id, { title: "Private video", visibility: "private" });
+
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users");
+    expect(res.status).toBe(200);
+    const row = res.body.items.find((u) => u.username === "upload_count_owner");
+    expect(row.uploadCount).toBe(1);
+  });
+
+  test("returns 0 uploadCount for a user with no uploads", async () => {
+    await seedUser({ username: "no_uploads_user", email: "no_uploads_user@example.com" });
+
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users");
+    expect(res.status).toBe(200);
+    const row = res.body.items.find((u) => u.username === "no_uploads_user");
+    expect(row.uploadCount).toBe(0);
+  });
+
+  test("omits emailVerified/uploader for an anonymous caller", async () => {
+    await seedUser({ username: "anon_view_user", email: "anon_view_user@example.com" });
+
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users");
+    expect(res.status).toBe(200);
+    const row = res.body.items.find((u) => u.username === "anon_view_user");
+    expect(row.emailVerified).toBeUndefined();
+    expect(row.uploader).toBeUndefined();
+  });
+
+  test("omits emailVerified/uploader for a non-admin authenticated caller", async () => {
+    await seedUser({
+      username: "viewer_target_user",
+      email: "viewer_target_user@example.com",
+      emailVerified: true,
+      uploader: true,
+    });
+    const viewer = await seedUser({ username: "plain_viewer_user", email: "plain_viewer_user@example.com" });
+    await seedUserApiKey(viewer.id, "jt_test_list_users_plain_viewer_key");
+
+    const res = await createTestClient()
+      .get("/api/v1/users")
+      .set("Authorization", "Bearer jt_test_list_users_plain_viewer_key");
+    expect(res.status).toBe(200);
+    const row = res.body.items.find((u) => u.username === "viewer_target_user");
+    expect(row.emailVerified).toBeUndefined();
+    expect(row.uploader).toBeUndefined();
+  });
+
+  test("includes emailVerified/uploader for an admin caller", async () => {
+    await seedUser({
+      username: "admin_view_target_user",
+      email: "admin_view_target_user@example.com",
+      emailVerified: false,
+      uploader: true,
+    });
+
+    const agent = createTestAgent();
+    const { user: admin } = await registerSession(agent, {
+      username: "list_users_admin",
+      email: "list_users_admin@example.com",
+    });
+    const { queryRows } = await import("../helpers/db.js");
+    const [adminRole] = await queryRows("SELECT id FROM ROLES WHERE name = :name", { name: "admin" });
+    await queryRows("UPDATE USERS SET role_id = :roleId WHERE id = :id", {
+      roleId: adminRole.id,
+      id: admin.id,
+    });
+
+    const res = await agent.get("/api/v1/users");
+    expect(res.status).toBe(200);
+    const row = res.body.items.find((u) => u.username === "admin_view_target_user");
+    expect(row).toMatchObject({ emailVerified: false, uploader: true });
+  });
+
+  test("rejects an invalid page parameter", async () => {
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users").query({ page: 0 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_query");
+  });
+});
+
 describe("GET /users/:username/avatar", () => {
   beforeAll(async () => {
     await setupSchema();
