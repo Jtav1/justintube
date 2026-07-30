@@ -138,6 +138,19 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(res.body.error).toBe("forbidden");
   });
 
+  test("rejects an uploader-flagged user with an unverified email", async () => {
+    const unverified = await seedUser({ uploader: true, emailVerified: false });
+    await seedUserApiKey(unverified.id, "jt_test_unverified_importer_key");
+
+    const res = await client
+      .post("/api/v1/videos/import")
+      .set("Authorization", "Bearer jt_test_unverified_importer_key")
+      .send({ url: "https://example.com/watch?v=abc" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
   test("downloads a video from a URL and persists an ORIGINAL_UPLOADS row", async () => {
     writeDownloadedFixture("1737900000.mp4");
     const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900000.mp4");

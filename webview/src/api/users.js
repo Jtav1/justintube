@@ -77,6 +77,27 @@ export async function deleteUserAvatar(userId) {
 }
 
 /**
+ * Resends the email verification message for an arbitrary user, on an
+ * admin's behalf.
+ * @param {number} userId
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function adminResendUserVerification(userId) {
+  const res = await apiClient.post(`/api/v1/admin/users/${userId}/resend-verification`)
+  return res.data
+}
+
+/**
+ * Grants an arbitrary user uploader access, on an admin's behalf.
+ * @param {number} userId
+ * @returns {Promise<object>} The updated user record.
+ */
+export async function adminGrantUploader(userId) {
+  const res = await apiClient.patch(`/api/v1/admin/users/${userId}`, { uploader: true })
+  return res.data
+}
+
+/**
  * Searches users by username/display-name prefix (used by recipient pickers,
  * e.g. sharing a private video with specific users).
  * @param {string} query

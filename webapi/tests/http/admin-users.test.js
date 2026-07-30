@@ -6,6 +6,7 @@ import {
   test,
 } from "@jest/globals";
 import { hashPassword, verifyPassword } from "../../lib/auth/password.js";
+import { resetMailerForTests } from "../../lib/email/mailer.js";
 import { Role, User } from "../../lib/models/index.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
@@ -130,6 +131,108 @@ describe("adminResetUserPassword", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_password");
+  });
+});
+
+describe("adminResendUserVerification", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.MAIL_FROM_ADDRESS;
+    resetMailerForTests();
+    await resetTables();
+  });
+
+  test("rejects unauthenticated resend", async () => {
+    const client = createTestClient();
+    const target = await seedUser({ emailVerified: false });
+
+    const res = await client
+      .post(`/api/v1/admin/users/${target.id}/resend-verification`)
+      .set("Authorization", "Bearer jt_not_a_real_key");
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  test("rejects non-admin resend", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_viewer_resend_verify_001";
+    await seedUserWithRoleAndKey("viewer", rawKey);
+    const target = await seedUser({ emailVerified: false });
+
+    const res = await client
+      .post(`/api/v1/admin/users/${target.id}/resend-verification`)
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
+  test("returns 404 for unknown user id", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_resend_verify_404";
+    await seedUserWithRoleAndKey("admin", rawKey);
+
+    const res = await client
+      .post("/api/v1/admin/users/999999/resend-verification")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("not_found");
+  });
+
+  test("returns 503 when email is disabled", async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.MAIL_FROM_ADDRESS;
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_resend_verify_disabled";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const target = await seedUser({ emailVerified: false });
+
+    const res = await client
+      .post(`/api/v1/admin/users/${target.id}/resend-verification`)
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("email_disabled");
+  });
+
+  test("returns 403 when target user is already verified", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    resetMailerForTests();
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_resend_verify_already";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const target = await seedUser({ emailVerified: true });
+
+    const res = await client
+      .post(`/api/v1/admin/users/${target.id}/resend-verification`)
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("already_verified");
+  });
+
+  test("admin resends verification email for an unverified user", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    resetMailerForTests();
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_resend_verify_ok";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const target = await seedUser({ emailVerified: false });
+
+    const res = await client
+      .post(`/api/v1/admin/users/${target.id}/resend-verification`)
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
   });
 });
 

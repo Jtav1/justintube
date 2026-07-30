@@ -3,6 +3,7 @@ import AppLayout from './layouts/AppLayout.jsx'
 import VideoListing from './pages/VideoListing.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
+import VerifyEmailPage from './pages/VerifyEmailPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
 import UploadPage from './pages/UploadPage.jsx'
 import CreatePlaylistPage from './pages/CreatePlaylistPage.jsx'
@@ -20,6 +21,7 @@ function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/control-panel" element={<ControlPanelPage />} />
       <Route path="/reports" element={<ModReportsPage />} />
       <Route element={<AppLayout />}>

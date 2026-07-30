@@ -211,6 +211,21 @@ function UploadPage() {
   }
 
   const isAdmin = user.role === 'admin'
+  const canUpload = isAdmin || (user.uploader && user.emailVerified)
+
+  if (!isEditMode && !canUpload) {
+    return (
+      <section className="upload-page">
+        <div className="upload-card">
+          <h1>Upload</h1>
+          <p className="upload-error">
+            You need uploader access and a verified email to upload videos.
+          </p>
+        </div>
+      </section>
+    )
+  }
+
   const fileLocked = url.trim().length > 0
   const urlLocked = file != null
 

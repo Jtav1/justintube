@@ -100,6 +100,21 @@ services:
       # Seeded admin user (created once on boot when both are set)
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: password
+      # Public registration and email verification are opt-in; unset in root
+      # .env leaves both disabled, matching webapi/.env.example defaults.
+      ENABLE_ACCOUNT_REGISTRATION: ${ENABLE_ACCOUNT_REGISTRATION:-true}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
+      # ENABLE_ACCOUNT_REGISTRATION: ${ENABLE_ACCOUNT_REGISTRATION:-false}
+      # REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      # Outbound email (verification links). Email is enabled only when
+      # SMTP_HOST and MAIL_FROM_ADDRESS are both non-empty in root .env.
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-justin.tower2019@gmail.com}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-cbacroyggksjcrqf}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-justin.tower2019@gmail.com}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:${WEBVIEW_PORT:-5173}}
       # Allows the webview SPA's browser-side requests through CORS. Required
       # because the webapi image sets NODE_ENV=production, which disables
       # cross-origin requests entirely when this is unset (see

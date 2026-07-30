@@ -59,3 +59,22 @@ export async function getCurrentUser() {
     throw err
   }
 }
+
+/**
+ * Resends the email verification message to the current session's user.
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function resendVerification() {
+  const res = await apiClient.post('/api/v1/auth/resend-verification')
+  return res.data
+}
+
+/**
+ * Consumes a one-time email verification token, marking the account verified.
+ * @param {string} token
+ * @returns {Promise<object>} The verified user's public profile.
+ */
+export async function verifyEmail(token) {
+  const res = await apiClient.post('/api/v1/auth/verify-email', { token })
+  return res.data.user
+}

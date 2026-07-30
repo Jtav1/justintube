@@ -383,13 +383,16 @@ async function findVisibleUserByUsername(username) {
 }
 
 /**
- * Maps a User instance to the public channel-profile shape.
+ * Maps a User instance to the public channel-profile shape. `emailVerified`
+ * and `uploader` are only included for the owner or an admin viewer — not
+ * public info.
  *
  * @param {import('sequelize').Model} user User model instance.
- * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, bannerFilename: string|null, role: string|null}}
+ * @param {{isPrivileged?: boolean}} [options] `isPrivileged`: owner-or-admin viewer.
+ * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, bannerFilename: string|null, role: string|null, emailVerified?: boolean, uploader?: boolean}}
  *   Public-safe channel profile payload.
  */
-function serializeChannelUser(user) {
+function serializeChannelUser(user, { isPrivileged = false } = {}) {
   return {
     id: user.id,
     username: user.username,
@@ -398,6 +401,9 @@ function serializeChannelUser(user) {
     avatarFilename: user.avatarFilename ?? null,
     bannerFilename: user.bannerFilename ?? null,
     role: user.Role?.name ?? null,
+    ...(isPrivileged
+      ? { emailVerified: Boolean(user.emailVerified), uploader: Boolean(user.uploader) }
+      : {}),
   };
 }
 
@@ -570,7 +576,7 @@ export function createUsersRouter() {
         viewerUserId: req.user?.id ?? null,
         sort: sortResult.sort,
       });
-      res.status(200).json({ user: serializeChannelUser(user), videos });
+      res.status(200).json({ user: serializeChannelUser(user, { isPrivileged }), videos });
     } catch (err) {
       console.error("getUserChannel failed:", err);
       res.status(500).json({

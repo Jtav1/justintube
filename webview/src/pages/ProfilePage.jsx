@@ -3,7 +3,16 @@ import { Link, useParams } from 'react-router-dom'
 import { ArrowRight, Pencil, UserRound } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
-import { getUserChannel, updateUserProfile, updateUserBanner, deleteUserBanner, updateUserAvatar } from '../api/users.js'
+import { resendVerification } from '../api/auth.js'
+import {
+  getUserChannel,
+  updateUserProfile,
+  updateUserBanner,
+  deleteUserBanner,
+  updateUserAvatar,
+  adminResendUserVerification,
+  adminGrantUploader,
+} from '../api/users.js'
 import { listUserPlaylists } from '../api/playlists.js'
 import VideoCard from '../components/VideoCard.jsx'
 import PlaylistCard from '../components/PlaylistCard.jsx'
@@ -52,6 +61,12 @@ function ProfilePage() {
   const [bioDraft, setBioDraft] = useState('')
   const [savingField, setSavingField] = useState(false)
   const [fieldError, setFieldError] = useState(null)
+
+  const [resendingVerification, setResendingVerification] = useState(false)
+  const [resendStatus, setResendStatus] = useState(null)
+
+  const [grantingUploader, setGrantingUploader] = useState(false)
+  const [grantUploaderStatus, setGrantUploaderStatus] = useState(null)
 
   const resetKeyRef = useRef(null)
 
@@ -149,9 +164,52 @@ function ProfilePage() {
   }, [playlists])
 
   const isOwnProfile = Boolean(authUser && authUser.username === username)
+  const isAdminViewer = Boolean(authUser && authUser.role === 'admin')
   const canManageProfile = Boolean(
     authUser && (isOwnProfile || authUser.role === 'admin' || authUser.role === 'moderator'),
   )
+  const canResendVerification = Boolean(
+    (isOwnProfile || isAdminViewer) && profile?.user?.emailVerified === false,
+  )
+  const canGrantUploader = Boolean(isAdminViewer && profile?.user?.uploader === false)
+
+  async function handleResendVerification() {
+    setResendingVerification(true)
+    setResendStatus(null)
+    try {
+      if (isOwnProfile) {
+        await resendVerification()
+      } else {
+        await adminResendUserVerification(profile.user.id)
+      }
+      setResendStatus({ type: 'success', message: 'Verification email sent.' })
+    } catch (err) {
+      const code = err.response?.data?.error
+      const message =
+        code === 'email_disabled'
+          ? 'Email sending is not configured on this server.'
+          : code === 'already_verified'
+            ? 'This account is already verified.'
+            : 'Failed to send verification email.'
+      setResendStatus({ type: 'error', message })
+    } finally {
+      setResendingVerification(false)
+    }
+  }
+
+  async function handleGrantUploader() {
+    setGrantingUploader(true)
+    setGrantUploaderStatus(null)
+    try {
+      await adminGrantUploader(profile.user.id)
+      setProfile((prev) => ({ ...prev, user: { ...prev.user, uploader: true } }))
+      setGrantUploaderStatus({ type: 'success', message: 'Uploader access granted.' })
+    } catch {
+      setGrantUploaderStatus({ type: 'error', message: 'Failed to grant uploader access.' })
+    } finally {
+      setGrantingUploader(false)
+    }
+  }
 
   function startEditName() {
     setNameDraft(profile.user.displayName || '')
@@ -418,6 +476,54 @@ function ProfilePage() {
       </div>
 
       {fieldError && <p className="profile-status profile-status-error">{fieldError}</p>}
+
+      {canResendVerification && (
+        <div className="profile-verification-row">
+          <button
+            type="button"
+            className="profile-resend-verification"
+            onClick={handleResendVerification}
+            disabled={resendingVerification}
+          >
+            {resendingVerification ? 'Sending...' : 'Resend verification email'}
+          </button>
+          {resendStatus && (
+            <p
+              className={
+                resendStatus.type === 'error'
+                  ? 'profile-status profile-status-error'
+                  : 'profile-status'
+              }
+            >
+              {resendStatus.message}
+            </p>
+          )}
+        </div>
+      )}
+
+      {canGrantUploader && (
+        <div className="profile-verification-row">
+          <button
+            type="button"
+            className="profile-resend-verification"
+            onClick={handleGrantUploader}
+            disabled={grantingUploader}
+          >
+            {grantingUploader ? 'Granting...' : 'Grant uploader access'}
+          </button>
+          {grantUploaderStatus && (
+            <p
+              className={
+                grantUploaderStatus.type === 'error'
+                  ? 'profile-status profile-status-error'
+                  : 'profile-status'
+              }
+            >
+              {grantUploaderStatus.message}
+            </p>
+          )}
+        </div>
+      )}
 
       {visiblePlaylists.length > 0 && (
         <div className="profile-section">
