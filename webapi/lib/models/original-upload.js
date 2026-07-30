@@ -1,7 +1,7 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../db.js";
 import { constrainedString, timestampColumn } from "./attribute-helpers.js";
-import { RESOLUTION_VALUES } from "./constants.js";
+import { MEDIA_TYPE_VALUES, RESOLUTION_VALUES } from "./constants.js";
 
 /**
  * ORIGINAL_UPLOADS table model. One row per uploaded source media file.
@@ -33,6 +33,10 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.STRING(128),
       allowNull: true,
     },
+    mediaType: constrainedString(MEDIA_TYPE_VALUES, {
+      allowNull: false,
+      defaultValue: "video",
+    }),
     fileSizeBytes: {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: true,

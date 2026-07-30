@@ -21,8 +21,8 @@ export function createDownloadRouter() {
    */
   router.post("/", async (req, res) => {
     try {
-      const filename = await downloadUrl(req.body?.url);
-      res.status(200).json({ success: true, filename });
+      const { filename, hasVideo } = await downloadUrl(req.body?.url);
+      res.status(200).json({ success: true, filename, hasVideo });
     } catch (err) {
       if (err instanceof DownloadValidationError) {
         res.status(400).json({ success: false, error: err.message });

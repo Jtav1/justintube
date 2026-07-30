@@ -3,16 +3,21 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { originalDir } from "./media-paths.js";
+import { probeVideoDimensions } from "./probe.js";
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Format selector: best video+audio at 1080p or lower, with fallbacks.
+ * Format selector: best video+audio at 1080p or lower, with fallbacks. The
+ * final `bestaudio` alternative lets audio-only sources (no format carries a
+ * `height`) resolve instead of failing outright — `--merge-output-format`
+ * only applies when a merge actually happens, so it doesn't affect this
+ * single-stream branch.
  *
  * @type {string}
  */
-const FORMAT_SELECTOR =
-  "bv*[height<=1080]+ba/b[height<=1080]/best[height<=1080]";
+export const FORMAT_SELECTOR =
+  "bv*[height<=1080]+ba/b[height<=1080]/best[height<=1080]/bestaudio";
 
 /**
  * Error thrown for invalid client input (maps to HTTP 400).
@@ -107,10 +112,15 @@ function findStemFile(stem) {
 /**
  * Downloads a single URL with yt-dlp (≤1080p) into `MEDIA_STORAGE_DIRECTORY/original`
  * (same directory `/transcode` reads its input from) using a unix-epoch
- * basename (with a–z suffix on collision) and `--js-runtimes node`.
+ * basename (with a–z suffix on collision) and `--js-runtimes node`. Also
+ * probes the result for a video stream so callers (webapi's import handler)
+ * can classify audio-only downloads correctly regardless of container
+ * (yt-dlp's `bestaudio` fallback can land in an ambiguous container like
+ * `.webm`, which extension alone can't distinguish from a video webm).
  *
  * @param {string} url Absolute http(s) URL to download.
- * @returns {Promise<string>} Basename of the saved file (name + extension).
+ * @returns {Promise<{ filename: string, hasVideo: boolean }>} Saved basename
+ *   (name + extension) and whether a video stream was found.
  * @throws {DownloadValidationError} When `url` is invalid.
  * @throws {Error} When yt-dlp fails or the output file is missing.
  */
@@ -153,5 +163,10 @@ export async function downloadUrl(url) {
     throw new Error("yt-dlp finished but no output file was found");
   }
 
-  return filename;
+  const { videoWidth, videoHeight } = await probeVideoDimensions(
+    join(originalDir, filename),
+  );
+  const hasVideo = videoWidth != null && videoHeight != null;
+
+  return { filename, hasVideo };
 }

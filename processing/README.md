@@ -67,8 +67,14 @@ curl -X POST http://localhost:3001/download \
   -d '{"url":"https://www.youtube.com/watch?v=…"}'
 ```
 
-Success: `{ "success": true, "filename": "<epoch>.<ext>" }`  
+Success: `{ "success": true, "filename": "<epoch>.<ext>", "hasVideo": true|false }`  
 Error: `{ "success": false, "error": "…" }`
+
+`hasVideo` reflects whether ffprobe found a video stream in the downloaded file (yt-dlp's
+format selector falls back to `bestaudio` for audio-only sources). webapi prefers this
+ffprobe-based signal over sniffing the file extension, since an audio-only download can land
+in an ambiguous container (e.g. opus-in-webm) that extension alone can't distinguish from a
+video webm.
 
 ### `POST /transcode`
 

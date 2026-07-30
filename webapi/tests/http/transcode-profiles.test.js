@@ -176,6 +176,63 @@ describe("admin transcode profiles", () => {
     expect(res.body.error).toBe("invalid_body");
   });
 
+  test("create defaults mediaType to video when omitted", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_media_default";
+    await seedUserWithRoleAndKey("admin", rawKey);
+
+    const res = await client
+      .post("/api/v1/admin/transcode-profiles")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send(validCreateBody());
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("video");
+  });
+
+  test("create accepts mediaType audio", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_media_audio";
+    await seedUserWithRoleAndKey("admin", rawKey);
+
+    const res = await client
+      .post("/api/v1/admin/transcode-profiles")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send(validCreateBody({ mediaType: "audio" }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("audio");
+  });
+
+  test("rejects an invalid mediaType on create", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_bad_media";
+    await seedUserWithRoleAndKey("admin", rawKey);
+
+    const res = await client
+      .post("/api/v1/admin/transcode-profiles")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send(validCreateBody({ mediaType: "podcast" }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("PATCH updates mediaType", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_media_patch";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const profile = await seedTranscodeProfile({ mediaType: "video" });
+
+    const res = await client
+      .patch(`/api/v1/admin/transcode-profiles/${profile.id}`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ mediaType: "audio" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.mediaType).toBe("audio");
+  });
+
   test("returns 404 for unknown profile on update and delete", async () => {
     const client = createTestClient();
     const rawKey = "jt_test_admin_tp_404";

@@ -48,7 +48,7 @@ services:
   # Optional advanced search backend. Only needed when ENABLE_ADVANCED_SEARCH=true
   # on the api service below; otherwise this whole block can be commented out.
   search:
-    image: getmeili/meilisearch:v1.10
+    image: getmeili/meilisearch:v1.15.1
     container_name: justintube-search
     restart: unless-stopped
     environment:
@@ -108,12 +108,12 @@ services:
       # REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
       # Outbound email (verification links). Email is enabled only when
       # SMTP_HOST and MAIL_FROM_ADDRESS are both non-empty in root .env.
-      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-465}
-      SMTP_USERNAME: ${SMTP_USERNAME:-justin.tower2019@gmail.com}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-cbacroyggksjcrqf}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_SECURE: ${SMTP_SECURE:-true}
-      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-justin.tower2019@gmail.com}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:${WEBVIEW_PORT:-5173}}
       # Allows the webview SPA's browser-side requests through CORS. Required
       # because the webapi image sets NODE_ENV=production, which disables

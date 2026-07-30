@@ -9,6 +9,7 @@ import { requireAuth } from "../lib/auth/require-auth.js";
 import { requireUploader } from "../lib/auth/require-uploader.js";
 import {
   heightToResolution,
+  mediaTypeForExtension,
   mimeTypeForContainer,
   plannedTranscodedStoragePath,
 } from "../lib/media-meta.js";
@@ -148,6 +149,7 @@ function uploadResponseBody(upload) {
     videoId: upload.videoId,
     fileExtension: upload.fileExtension,
     mimeType: upload.mimeType,
+    mediaType: upload.mediaType,
     fileSizeBytes: upload.fileSizeBytes,
     storagePath: upload.storagePath,
     status: upload.status,
@@ -225,7 +227,9 @@ function fileVersionResponseBody(version) {
  * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
  */
 async function finalizeUploadTranscodes(upload, storedFilename) {
-  const profiles = await TranscodeProfile.findAll();
+  const profiles = await TranscodeProfile.findAll({
+    where: { mediaType: upload.mediaType },
+  });
 
   /** @type {import('sequelize').Model[]} */
   const versions = [];
@@ -279,21 +283,44 @@ async function finalizeUploadTranscodes(upload, storedFilename) {
     profile: toTranscodeProfilePayload(profiles[index]),
   }));
 
-  // A thumbnail job is always enqueued alongside any renditions (or on its
-  // own when there are zero transcode profiles) — see `THUMBNAIL_OUTPUT_EXT`.
-  const thumbnailJob = {
-    jobId: upload.videoId,
-    outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
-    kind: "thumbnail",
-    timestampSeconds:
-      upload.thumbnailTimestampTenths != null
-        ? upload.thumbnailTimestampTenths / 10
-        : null,
-  };
+  // A thumbnail job is enqueued alongside any renditions (or on its own when
+  // there are zero transcode profiles) for video uploads — see
+  // `THUMBNAIL_OUTPUT_EXT`. Audio-only uploads never get a generated
+  // thumbnail (the frontend renders a placeholder instead) and must never
+  // enter the ffmpeg transcode pipeline at all.
+  const thumbnailJob =
+    upload.mediaType === "video"
+      ? {
+          jobId: upload.videoId,
+          outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+          kind: "thumbnail",
+          timestampSeconds:
+            upload.thumbnailTimestampTenths != null
+              ? upload.thumbnailTimestampTenths / 10
+              : null,
+        }
+      : null;
+
+  const jobs = [...(thumbnailJob ? [thumbnailJob] : []), ...renditionJobs];
+
+  if (jobs.length === 0) {
+    // Nothing to transcode (audio upload with no matching audio profiles) -
+    // skip the processing round-trip entirely rather than enqueueing an
+    // empty batch.
+    await upload.update({ status: "uploaded" });
+    await upload.reload();
+    return {
+      status: 201,
+      body: {
+        ...uploadResponseBody(upload),
+        fileVersions: [],
+      },
+    };
+  }
 
   const enqueue = await requestTranscodeBatch({
     filename: storedFilename,
-    jobs: [thumbnailJob, ...renditionJobs],
+    jobs,
   });
 
   if (!enqueue.ok) {
@@ -473,6 +500,7 @@ async function uploadVideo(req, res) {
           videoId,
           fileExtension,
           mimeType: file.mimetype || null,
+          mediaType: mediaTypeForExtension(fileExtension),
           fileSizeBytes: file.size ?? null,
           storagePath,
           userId: req.user.id,
@@ -601,6 +629,17 @@ async function importVideo(req, res) {
   }
 
   const fileExtension = normalizedExtension(downloadedFilename);
+  // Prefer processing's ffprobe-based signal over extension sniffing: a
+  // yt-dlp audio-only download can land in an ambiguous container (e.g.
+  // opus-in-webm), which extension alone can't distinguish from a video
+  // webm. Fall back to extension when the field is absent (defensive, in
+  // case an older processing deployment doesn't send it yet).
+  const mediaType =
+    typeof download.body?.hasVideo === "boolean"
+      ? download.body.hasVideo
+        ? "video"
+        : "audio"
+      : mediaTypeForExtension(fileExtension);
   const videoId = await generateUniqueVideoId();
   const storedFilename = fileExtension ? `${videoId}.${fileExtension}` : videoId;
   // Relative storage path uses forward slashes for cross-platform DB consistency.
@@ -635,6 +674,7 @@ async function importVideo(req, res) {
           videoId,
           fileExtension,
           mimeType: mimeTypeForContainer(fileExtension),
+          mediaType,
           fileSizeBytes,
           storagePath,
           userId: req.user.id,

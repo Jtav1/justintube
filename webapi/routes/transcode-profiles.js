@@ -2,7 +2,7 @@ import { Router } from "express";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
-import { RESOLUTION_VALUES } from "../lib/models/constants.js";
+import { MEDIA_TYPE_VALUES, RESOLUTION_VALUES } from "../lib/models/constants.js";
 import { TranscodeProfile, User } from "../lib/models/index.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 
@@ -42,6 +42,7 @@ function parsePositiveInt(raw) {
  *   id: number,
  *   description: string|null,
  *   resolutionName: string,
+ *   mediaType: string,
  *   outputHeight: number,
  *   outputWidth: number,
  *   outputContainer: string,
@@ -57,6 +58,7 @@ function serializeTranscodeProfile(row) {
     id: row.id,
     description: row.description ?? null,
     resolutionName: row.resolutionName,
+    mediaType: row.mediaType,
     outputHeight: row.outputHeight,
     outputWidth: row.outputWidth,
     outputContainer: row.outputContainer,
@@ -112,6 +114,32 @@ function parseResolutionName(raw, required) {
     };
   }
   return { ok: true, value: resolutionName };
+}
+
+/**
+ * Parses mediaType against MEDIA_TYPE_VALUES. Defaults to "video" when
+ * required and omitted, matching the model column's default.
+ *
+ * @param {unknown} raw Body mediaType value.
+ * @param {boolean} required Whether the field is required.
+ * @returns {{ok: true, value?: string}|{ok: false, message: string}}
+ *   Parsed value or error.
+ */
+function parseMediaType(raw, required) {
+  if (raw === undefined) {
+    if (required) {
+      return { ok: true, value: "video" };
+    }
+    return { ok: true };
+  }
+  const mediaType = String(raw ?? "").trim();
+  if (!MEDIA_TYPE_VALUES.includes(mediaType)) {
+    return {
+      ok: false,
+      message: `mediaType must be one of: ${MEDIA_TYPE_VALUES.join(", ")}.`,
+    };
+  }
+  return { ok: true, value: mediaType };
 }
 
 /**
@@ -219,6 +247,19 @@ function parseTranscodeProfileBody(body, options) {
     patch.resolutionName = resolution.value;
   }
 
+  const mediaType = parseMediaType(
+    Object.prototype.hasOwnProperty.call(body, "mediaType")
+      ? body.mediaType
+      : undefined,
+    required,
+  );
+  if (!mediaType.ok) {
+    return mediaType;
+  }
+  if (mediaType.value !== undefined) {
+    patch.mediaType = mediaType.value;
+  }
+
   const height = parseOptionalPositiveInt(
     Object.prototype.hasOwnProperty.call(body, "outputHeight")
       ? body.outputHeight
@@ -311,7 +352,7 @@ function parseTranscodeProfileBody(body, options) {
     return {
       ok: false,
       message:
-        "At least one of description, resolutionName, outputHeight, outputWidth, outputContainer, videoCodec, audioCodec, or creatorUserId is required.",
+        "At least one of description, resolutionName, mediaType, outputHeight, outputWidth, outputContainer, videoCodec, audioCodec, or creatorUserId is required.",
     };
   }
 
@@ -410,6 +451,10 @@ export function createTranscodeProfilesRouter() {
    *               resolutionName:
    *                 type: string
    *                 enum: [240p, 360p, 480p, 720p, 1080p, 2kHD, 4kHD]
+   *               mediaType:
+   *                 type: string
+   *                 enum: [video, audio]
+   *                 default: video
    *               outputHeight: { type: integer, minimum: 1 }
    *               outputWidth: { type: integer, minimum: 1 }
    *               outputContainer: { type: string }
@@ -496,6 +541,10 @@ export function createTranscodeProfilesRouter() {
    *               resolutionName:
    *                 type: string
    *                 enum: [240p, 360p, 480p, 720p, 1080p, 2kHD, 4kHD]
+   *               mediaType:
+   *                 type: string
+   *                 enum: [video, audio]
+   *                 default: video
    *               outputHeight: { type: integer, minimum: 1 }
    *               outputWidth: { type: integer, minimum: 1 }
    *               outputContainer: { type: string }

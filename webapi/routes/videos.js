@@ -244,6 +244,7 @@ function parsePositiveInt(raw) {
  *   viewCount: number,
  *   uploader: {userId: number|null, username: string|null, displayName: string|null},
  *   tags: string[],
+ *   mediaType: string,
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
  *   createdAt: Date,
@@ -265,6 +266,7 @@ export function serializeVideo(upload, metadata, options = {}) {
       upload.User?.displayName,
     ),
     tags: options.tags ?? [],
+    mediaType: upload.mediaType,
     durationSeconds: upload.durationSeconds ?? null,
     thumbnailUrl: upload.VideoThumbnail
       ? `/api/v1/videos/${upload.id}/thumbnail`

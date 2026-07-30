@@ -73,7 +73,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * @typedef {object} DownloadRequestResult
  * @property {boolean} ok Whether the response status was in the 2xx range.
  * @property {number} status HTTP status code (0 when the request failed before a response).
- * @property {object|null} body Parsed JSON body (`{ success, filename }` on success).
+ * @property {object|null} body Parsed JSON body (`{ success, filename, hasVideo }` on success).
  * @property {string|null} error Human-readable error message when `ok` is false.
  */
 

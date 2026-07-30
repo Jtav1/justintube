@@ -102,8 +102,40 @@ export function mimeTypeForContainer(container) {
     webm: "video/webm",
     mkv: "video/x-matroska",
     mov: "video/quicktime",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    m4a: "audio/mp4",
+    aac: "audio/aac",
+    flac: "audio/flac",
+    ogg: "audio/ogg",
+    oga: "audio/ogg",
+    opus: "audio/opus",
   };
   return map[key] || null;
+}
+
+/**
+ * Fixed set of file extensions recognized as audio-only containers,
+ * independent of the deployment-configurable FILETYPES_ALLOWED allowlist —
+ * classification must stay deterministic regardless of what an admin has
+ * enabled for upload.
+ *
+ * @type {Set<string>}
+ */
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "opus"]);
+
+/**
+ * Classifies a file extension as an audio-only or video media type.
+ *
+ * @param {string} extension Container/extension (e.g. "mp3", "mp4"), with or without a leading dot.
+ * @returns {"audio"|"video"} "audio" for a recognized audio-only container, "video" otherwise.
+ */
+export function mediaTypeForExtension(extension) {
+  const key = String(extension || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\./, "");
+  return AUDIO_EXTENSIONS.has(key) ? "audio" : "video";
 }
 
 /**

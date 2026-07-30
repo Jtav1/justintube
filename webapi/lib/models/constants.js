@@ -26,3 +26,11 @@ export const VISIBILITY_VALUES = ["public", "private", "unlisted", "hidden"];
  * @type {number[]}
  */
 export const LIKE_VALUES = [1, -1];
+
+/**
+ * Allowed media-type labels for ORIGINAL_UPLOADS and TRANSCODE_PROFILES,
+ * distinguishing audio-only uploads from standard video uploads.
+ *
+ * @type {string[]}
+ */
+export const MEDIA_TYPE_VALUES = ["video", "audio"];

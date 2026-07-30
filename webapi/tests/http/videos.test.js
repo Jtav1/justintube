@@ -96,6 +96,7 @@ describe("Video discovery and metadata endpoints", () => {
         description: "A described clip",
         visibility: "public",
         commentsEnabled: true,
+        mediaType: "video",
       });
     });
 

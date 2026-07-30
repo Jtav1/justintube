@@ -39,6 +39,18 @@ function recipientLabel(user) {
   return user.displayName ? `${user.displayName} (${user.username})` : user.username
 }
 
+const AUDIO_EXTENSION_PATTERN = /\.(mp3|wav|m4a|aac|flac|ogg|oga|opus)$/i
+
+function isAudioFile(file) {
+  if (!file) {
+    return false
+  }
+  if (file.type) {
+    return file.type.startsWith('audio/')
+  }
+  return AUDIO_EXTENSION_PATTERN.test(file.name || '')
+}
+
 function UploadPage() {
   const { user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
@@ -228,6 +240,7 @@ function UploadPage() {
 
   const fileLocked = url.trim().length > 0
   const urlLocked = file != null
+  const selectedFileIsAudio = isAudioFile(file)
 
   function handleFileSelected(selectedFile) {
     setFile(selectedFile)
@@ -431,11 +444,11 @@ function UploadPage() {
                 onClick={() => !fileLocked && fileInputRef.current?.click()}
               >
                 <UploadCloud size={28} />
-                <p>{file ? file.name : 'Drag & drop a video, or click to choose a file'}</p>
+                <p>{file ? file.name : 'Drag & drop a video or audio file, or click to choose a file'}</p>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="video/*"
+                  accept="video/*,audio/*"
                   className="upload-dropzone-input"
                   disabled={fileLocked}
                   onChange={handleFileInputChange}
@@ -473,7 +486,13 @@ function UploadPage() {
               )}
             </div>
 
-            {!importAvailable && (
+            {selectedFileIsAudio && (
+              <p className="upload-hint">
+                Audio uploads use a standard placeholder thumbnail.
+              </p>
+            )}
+
+            {!importAvailable && !selectedFileIsAudio && (
               <div className="upload-field-group">
                 <label>Thumbnail</label>
                 <p className="upload-hint">
