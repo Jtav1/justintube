@@ -1,13 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { Pencil, UserRound } from 'lucide-react'
+import { Link, useParams } from 'react-router-dom'
+import { ArrowRight, Pencil, UserRound } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import { getUserChannel, updateUserProfile, updateUserBanner, deleteUserBanner, updateUserAvatar } from '../api/users.js'
+import { listUserPlaylists } from '../api/playlists.js'
 import VideoCard from '../components/VideoCard.jsx'
+import PlaylistCard from '../components/PlaylistCard.jsx'
 import './ProfilePage.css'
 
 const PAGE_LIMIT = 24
+const PLAYLISTS_LIMIT = 25
+
+// Must match .profile-playlists-grid's grid-template-columns/gap in
+// ProfilePage.css (repeat(auto-fill, minmax(PLAYLISTS_MIN_CARD_WIDTH, 1fr)),
+// gap: PLAYLISTS_GRID_GAP), so the row can be trimmed to exactly what fits.
+const PLAYLISTS_MIN_CARD_WIDTH = 180
+const PLAYLISTS_GRID_GAP = 10
 
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
@@ -26,6 +35,14 @@ function ProfilePage() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+
+  const [playlists, setPlaylists] = useState(null)
+  // Starts at Infinity (not 1) so nothing is trimmed before the grid has
+  // mounted and been measured - the grid only renders once visiblePlaylists
+  // is non-empty, so an initial column count of 1 would trim every playlist
+  // away and the ref (needed to measure and correct it) would never attach.
+  const [playlistsColumns, setPlaylistsColumns] = useState(Infinity)
+  const playlistsGridRef = useRef(null)
   const [bannerUploading, setBannerUploading] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
 
@@ -84,6 +101,52 @@ function ProfilePage() {
       cancelled = true
     }
   }, [username, sort, page])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPlaylists() {
+      try {
+        const data = await listUserPlaylists(username, { limit: PLAYLISTS_LIMIT })
+        if (!cancelled) {
+          setPlaylists(data.items)
+        }
+      } catch {
+        if (!cancelled) {
+          setPlaylists([])
+        }
+      }
+    }
+
+    loadPlaylists()
+
+    return () => {
+      cancelled = true
+    }
+  }, [username])
+
+  useEffect(() => {
+    const el = playlistsGridRef.current
+    if (!el) {
+      return undefined
+    }
+
+    function measure() {
+      const columns = Math.max(
+        1,
+        Math.floor(
+          (el.clientWidth + PLAYLISTS_GRID_GAP) / (PLAYLISTS_MIN_CARD_WIDTH + PLAYLISTS_GRID_GAP),
+        ),
+      )
+      setPlaylistsColumns(columns)
+    }
+
+    measure()
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [playlists])
 
   const isOwnProfile = Boolean(authUser && authUser.username === username)
   const canManageProfile = Boolean(
@@ -192,6 +255,11 @@ function ProfilePage() {
   const bannerUrl = user.bannerFilename
     ? `${apiClient.defaults.baseURL}/api/v1/users/${user.username}/banner`
     : null
+
+  const playlistsOverflowing = Boolean(playlists) && playlists.length > playlistsColumns
+  const visiblePlaylists = playlistsOverflowing
+    ? playlists.slice(0, Math.max(playlistsColumns - 1, 0))
+    : playlists ?? []
 
   return (
     <section className="profile-page">
@@ -351,7 +419,31 @@ function ProfilePage() {
 
       {fieldError && <p className="profile-status profile-status-error">{fieldError}</p>}
 
+      {visiblePlaylists.length > 0 && (
+        <div className="profile-section">
+          <h2 className="profile-section-title">Playlists</h2>
+          <div className="profile-playlists-grid" ref={playlistsGridRef}>
+            {visiblePlaylists.map((playlist) => (
+              <PlaylistCard key={playlist.id} playlist={playlist} />
+            ))}
+            {playlistsOverflowing && (
+              <Link to={`/users/${username}/playlists`} className="profile-playlists-more">
+                <span className="profile-playlists-more-thumb">
+                  <span className="profile-playlists-more-circle">
+                    <ArrowRight size={28} />
+                  </span>
+                </span>
+                <span className="profile-playlists-more-label">More...</span>
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="profile-videos-header">
+        {visiblePlaylists.length > 0 && (
+          <h2 className="profile-section-title profile-videos-title">All Videos</h2>
+        )}
         <label className="profile-sort">
           Sort by
           <select value={sort} onChange={handleSortChange}>

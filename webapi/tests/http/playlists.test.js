@@ -98,6 +98,120 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
     });
   });
 
+  describe("GET /playlists (listPlaylists)", () => {
+    test("anonymous callers see only public playlists", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-key-1");
+      await seedPlaylist({ userId: owner.id, title: "Public one", visibility: "public" });
+      await seedPlaylist({ userId: owner.id, title: "Private one", visibility: "private" });
+      await seedPlaylist({ userId: owner.id, title: "Unlisted one", visibility: "unlisted" });
+
+      const res = await client.get("/api/v1/playlists");
+
+      expect(res.status).toBe(200);
+      const names = res.body.items.map((item) => item.name);
+      expect(names).toEqual(["Public one"]);
+    });
+
+    test("authenticated callers additionally see their own playlists of any visibility", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-key-2");
+      await seedPlaylist({ userId: owner.id, title: "My private", visibility: "private" });
+      await seedPlaylist({ userId: owner.id, title: "My unlisted", visibility: "unlisted" });
+      await seedPlaylist({ userId: owner.id, title: "My hidden", visibility: "hidden" });
+
+      const res = await client
+        .get("/api/v1/playlists")
+        .set("Authorization", "Bearer list-key-2");
+
+      expect(res.status).toBe(200);
+      const names = res.body.items.map((item) => item.name).sort();
+      expect(names).toEqual(["My hidden", "My private", "My unlisted"].sort());
+    });
+
+    test("authenticated callers see another user's private playlist only with a PLAYLIST_ACCESS grant", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-key-3");
+      const grantee = await seedUserWithRoleAndKey("viewer", "list-key-4");
+      const granted = await seedPlaylist({ userId: owner.id, title: "Shared", visibility: "private" });
+      await seedPlaylist({ userId: owner.id, title: "Not shared", visibility: "private" });
+      await seedPlaylistAccess({ playlistId: granted.id, userId: grantee.id });
+
+      const res = await client
+        .get("/api/v1/playlists")
+        .set("Authorization", "Bearer list-key-4");
+
+      expect(res.status).toBe(200);
+      const names = res.body.items.map((item) => item.name);
+      expect(names).toEqual(["Shared"]);
+    });
+
+    test("excludes another user's unlisted/hidden playlists even though they're reachable by direct id", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-key-5");
+      const viewer = await seedUserWithRoleAndKey("viewer", "list-key-6");
+      const unlisted = await seedPlaylist({ userId: owner.id, title: "Unlisted", visibility: "unlisted" });
+      await seedPlaylist({ userId: owner.id, title: "Hidden", visibility: "hidden" });
+
+      const byId = await client
+        .get(`/api/v1/playlists/${unlisted.id}`)
+        .set("Authorization", "Bearer list-key-6");
+      expect(byId.status).toBe(200);
+
+      const listing = await client
+        .get("/api/v1/playlists")
+        .set("Authorization", "Bearer list-key-6");
+
+      expect(listing.status).toBe(200);
+      expect(listing.body.items).toEqual([]);
+    });
+
+    test("reports itemCount and up to 3 viewable thumbnails per playlist", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-key-7");
+      const playlist = await seedPlaylist({ userId: owner.id, title: "Stack test", visibility: "public" });
+
+      const uploadIds = [];
+      for (let i = 0; i < 4; i += 1) {
+        const upload = await seedUpload({ userId: owner.id });
+        await seedMetadata(upload.id, { title: `Video ${i}`, visibility: "public" });
+        uploadIds.push(upload.id);
+      }
+
+      for (const uploadId of uploadIds) {
+        await client
+          .post(`/api/v1/playlists/${playlist.id}/items`)
+          .set("Authorization", "Bearer list-key-7")
+          .send({ videoId: uploadId });
+      }
+
+      const res = await client.get("/api/v1/playlists");
+
+      expect(res.status).toBe(200);
+      const item = res.body.items.find((entry) => entry.id === playlist.id);
+      expect(item.itemCount).toBe(4);
+      expect(item.thumbnails).toEqual([]);
+    });
+
+    test("supports pagination via page/limit", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-key-8");
+      for (let i = 0; i < 3; i += 1) {
+        await seedPlaylist({ userId: owner.id, title: `Page playlist ${i}`, visibility: "public" });
+      }
+
+      const res = await client.get("/api/v1/playlists").query({ page: 1, limit: 2 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(2);
+      expect(res.body.page).toBe(1);
+      expect(res.body.limit).toBe(2);
+      expect(res.body.totalHits).toBe(3);
+      expect(res.body.totalPages).toBe(2);
+    });
+
+    test("rejects an invalid page/limit with 400 invalid_query", async () => {
+      const res = await client.get("/api/v1/playlists").query({ limit: 0 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_query");
+    });
+  });
+
   describe("GET /playlists/{id} (getPlaylist)", () => {
     test("returns 200 with the playlist, its items and itemCount", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "get-key-1");

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import { Home, User, ListVideo, ThumbsUp, Star, Users, ShieldCheck, MessageSquareWarning } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import './Sidebar.css'
@@ -9,15 +9,15 @@ function Sidebar({ collapsed, backgroundUrl }) {
   const navItems = [
     { key: 'home', label: 'Home', icon: Home, to: '/' },
     { key: 'profile', label: 'My Profile', icon: User, to: user ? `/users/${user.username}` : '/' },
-    { key: 'playlists', label: 'Playlists', icon: ListVideo, to: user ? `/playlists/$user.username}` : '/'},
+    { key: 'playlists', label: 'Playlists', icon: ListVideo, to: '/playlists' },
     { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : '/'},
     { key: 'featured', label: 'Featured', icon: Star, to: '/featured' },
-    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: user ? `/subscriptions/${user.username}` : '/' },
+    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: null },
     ...(user?.role === 'admin'
-      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
+      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: null }]
       : []),
-    ...((user?.role === 'moderator' || user?.role === 'admin') 
-      ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: '/reports'}]
+    ...((user?.role === 'moderator' || user?.role === 'admin')
+      ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: null }]
       : []),
   ]
 
@@ -30,10 +30,14 @@ function Sidebar({ collapsed, backgroundUrl }) {
         {navItems.map(({ key, label, icon: Icon, to }) => (
           <li key={key}>
             {to ? (
-              <Link to={to} className="sidebar-item">
+              <NavLink
+                to={to}
+                end={to === '/'}
+                className={({ isActive }) => `sidebar-item${isActive ? ' sidebar-item-active' : ''}`}
+              >
                 <Icon size={20} />
                 <span className="sidebar-label">{label}</span>
-              </Link>
+              </NavLink>
             ) : (
               <span className="sidebar-item sidebar-item-placeholder">
                 <Icon size={20} />

@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
 import UploadPage from './pages/UploadPage.jsx'
+import CreatePlaylistPage from './pages/CreatePlaylistPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
 import ControlPanelPage from './pages/AdminPanel.jsx'
 import ModReportsPage from './pages/ModReports.jsx'
@@ -26,7 +27,9 @@ function App() {
         <Route path="/video" element={<VideoPage />} />
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />
-        <Route path="/playlists/:username" element={<UserPlaylistsPage />} />
+        <Route path="/playlists/new" element={<CreatePlaylistPage />} />
+        <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
+        <Route path="/users/:username/playlists" element={<UserPlaylistsPage />} />
         <Route path="/playlists" element={<PlaylistsPage />} />
         <Route path="/liked/:username" element={<LikedVideosPage />} />
         <Route path="/featured" element={<FeaturedVideosPage />} />

@@ -1,18 +1,25 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getVideo } from '../api/videos.js'
+import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
+import { useAuth } from '../context/useAuth.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
+import PlaylistQueue from '../components/PlaylistQueue.jsx'
 import './VideoPage.css'
 
 function VideoPage() {
+  const { user } = useAuth()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
+  const playlistId = searchParams.get('list')
 
   const [video, setVideo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [playlist, setPlaylist] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -48,16 +55,69 @@ function VideoPage() {
     }
   }, [videoId])
 
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPlaylist() {
+      try {
+        const data = await getPlaylist(playlistId)
+        if (!cancelled) {
+          setPlaylist(data)
+        }
+      } catch {
+        if (!cancelled) {
+          setPlaylist(null)
+        }
+      }
+    }
+
+    if (playlistId) {
+      loadPlaylist()
+    } else {
+      setPlaylist(null)
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [playlistId])
+
+  const canEditPlaylist = Boolean(playlist && user)
+    && (String(user.id) === String(playlist.owner?.id) || user.role === 'admin')
+
+  async function handleRemoveFromPlaylist() {
+    try {
+      await removePlaylistItem(playlist.id, video.id)
+    } catch {
+      return
+    }
+    const currentIndex = playlist.items.findIndex((item) => item.videoId === videoId)
+    const nextItem = currentIndex === -1 ? null : playlist.items[currentIndex + 1]
+    setPlaylist((prev) => ({
+      ...prev,
+      itemCount: prev.itemCount - 1,
+      items: prev.items.filter((item) => item.id !== video.id),
+    }))
+    navigate(nextItem ? `/video?v=${nextItem.videoId}&list=${playlist.id}` : '/')
+  }
+
   return (
     <section className="video-page">
       {error && <p className="video-page-error">{error}</p>}
       {!loading && !error && video && (
         <div className="video-page-layout">
           <div className="video-page-main">
-            <VideoPlayer video={video} />
+            <VideoPlayer
+              video={video}
+              onRemoveFromPlaylist={canEditPlaylist ? handleRemoveFromPlaylist : undefined}
+            />
             <VideoComments video={video} />
           </div>
-          <VideoSuggested video={video} />
+          {playlist ? (
+            <PlaylistQueue playlist={playlist} currentVideoId={videoId} />
+          ) : (
+            <VideoSuggested video={video} />
+          )}
         </div>
       )}
     </section>

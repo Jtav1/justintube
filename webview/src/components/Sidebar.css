@@ -38,6 +38,16 @@ a.sidebar-item:hover {
   background: var(--accent-bg);
 }
 
+.sidebar-item-active {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.sidebar-item-active:hover {
+  background: var(--accent-bg);
+}
+
 .sidebar-item-placeholder {
   color: var(--text);
   opacity: 0.5;

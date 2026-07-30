@@ -6,6 +6,8 @@ import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
   resetTables,
   seedMetadata,
+  seedPlaylist,
+  seedPlaylistAccess,
   seedSubscription,
   seedUpload,
   seedUser,
@@ -355,6 +357,101 @@ describe("GET /users/:username/videos (listUserVideos)", () => {
     await seedUser({ username: "sort_bad_query", email: "sort_bad_query@example.com" });
     const client = createTestClient();
     const res = await client.get("/api/v1/users/sort_bad_query/videos?sort=bogus");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_query");
+  });
+});
+
+describe("GET /users/:username/playlists (listUserPlaylists)", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  test("returns 404 for an unknown username", async () => {
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users/no_such_user/playlists");
+    expect(res.status).toBe(404);
+  });
+
+  test("anonymous callers see only public playlists", async () => {
+    const owner = await seedUser({ username: "pl_owner_1", email: "pl_owner_1@example.com" });
+    await seedPlaylist({ userId: owner.id, title: "Public one", visibility: "public" });
+    await seedPlaylist({ userId: owner.id, title: "Private one", visibility: "private" });
+    await seedPlaylist({ userId: owner.id, title: "Unlisted one", visibility: "unlisted" });
+
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users/pl_owner_1/playlists");
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((item) => item.name)).toEqual(["Public one"]);
+  });
+
+  test("the owner sees their own playlists of every visibility", async () => {
+    const owner = await seedUser({ username: "pl_owner_2", email: "pl_owner_2@example.com" });
+    await seedUserApiKey(owner.id, "jt_test_pl_owner_2_key");
+    await seedPlaylist({ userId: owner.id, title: "My private", visibility: "private" });
+    await seedPlaylist({ userId: owner.id, title: "My unlisted", visibility: "unlisted" });
+    await seedPlaylist({ userId: owner.id, title: "My hidden", visibility: "hidden" });
+
+    const client = createTestClient();
+    const res = await client
+      .get("/api/v1/users/pl_owner_2/playlists")
+      .set("Authorization", "Bearer jt_test_pl_owner_2_key");
+
+    expect(res.status).toBe(200);
+    const names = res.body.items.map((item) => item.name).sort();
+    expect(names).toEqual(["My hidden", "My private", "My unlisted"].sort());
+  });
+
+  test("a non-owner viewer sees public playlists plus private playlists they hold an access grant for", async () => {
+    const owner = await seedUser({ username: "pl_grant_owner", email: "pl_grant_owner@example.com" });
+    const granted = await seedPlaylist({ userId: owner.id, title: "Shared", visibility: "private" });
+    await seedPlaylist({ userId: owner.id, title: "Not shared", visibility: "private" });
+    await seedPlaylist({ userId: owner.id, title: "Unlisted", visibility: "unlisted" });
+    await seedPlaylist({ userId: owner.id, title: "Hidden", visibility: "hidden" });
+
+    const agent = createTestAgent();
+    const { user: viewer } = await registerSession(agent, {
+      username: "pl_grant_viewer",
+      email: "pl_grant_viewer@example.com",
+    });
+    await seedPlaylistAccess({ playlistId: granted.id, userId: viewer.id });
+
+    const res = await agent.get("/api/v1/users/pl_grant_owner/playlists");
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((item) => item.name)).toEqual(["Shared"]);
+  });
+
+  test("an admin sees every visibility on another user's playlists", async () => {
+    const { queryRows } = await import("../helpers/db.js");
+    const owner = await seedUser({ username: "pl_admin_view_owner", email: "pl_admin_view_owner@example.com" });
+    await seedPlaylist({ userId: owner.id, title: "Hidden playlist", visibility: "hidden" });
+    await seedPlaylist({ userId: owner.id, title: "Private playlist", visibility: "private" });
+
+    const agent = createTestAgent();
+    const { user: admin } = await registerSession(agent, {
+      username: "pl_admin_viewer",
+      email: "pl_admin_viewer@example.com",
+    });
+    const [adminRole] = await queryRows("SELECT id FROM ROLES WHERE name = :name", { name: "admin" });
+    await queryRows("UPDATE USERS SET role_id = :roleId WHERE id = :id", {
+      roleId: adminRole.id,
+      id: admin.id,
+    });
+
+    const res = await agent.get("/api/v1/users/pl_admin_view_owner/playlists");
+    expect(res.status).toBe(200);
+    const names = res.body.items.map((item) => item.name).sort();
+    expect(names).toEqual(["Hidden playlist", "Private playlist"].sort());
+  });
+
+  test("rejects an invalid limit with 400 invalid_query", async () => {
+    await seedUser({ username: "pl_bad_query", email: "pl_bad_query@example.com" });
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users/pl_bad_query/playlists?limit=1000");
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_query");
   });

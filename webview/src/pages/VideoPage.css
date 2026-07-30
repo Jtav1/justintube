@@ -23,7 +23,8 @@
   min-width: 0;
 }
 
-.video-page-layout .video-suggested {
+.video-page-layout .video-suggested,
+.video-page-layout .playlist-queue {
   width: 25%;
   flex-shrink: 0;
 }

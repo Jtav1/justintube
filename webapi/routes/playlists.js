@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Op, col, fn } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
@@ -12,6 +13,7 @@ import {
   VideoMetadata,
   VideoThumbnail,
 } from "../lib/models/index.js";
+import { parsePagination } from "../lib/pagination.js";
 import { canViewPlaylist } from "../lib/playlist-access.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { isAdmin, isOwnerOrAdmin } from "../lib/video-access.js";
@@ -58,6 +60,14 @@ function serializePlaylist(playlist, itemCount) {
     description: playlist.description ?? null,
     visibility: playlist.visibility,
     itemCount,
+    owner: playlist.User
+      ? {
+        id: playlist.User.id,
+        username: playlist.User.username,
+        displayName: playlist.User.displayName ?? null,
+        avatarFilename: playlist.User.avatarFilename ?? null,
+      }
+      : null,
     lastAddedAt: playlist.lastAddedAt ?? null,
     createdAt: playlist.createdAt,
     updatedAt: playlist.updatedAt,
@@ -127,6 +137,97 @@ async function filterViewablePlaylistItems(items, user, role) {
     }
     return grantedUploadIds.has(upload.id);
   });
+}
+
+/**
+ * Builds the `{items, page, limit, totalHits, totalPages}` page envelope for
+ * a set of already-fetched USER_PLAYLISTS rows (with `User` included),
+ * computing each playlist's `itemCount` (a single grouped count query) and
+ * up to 3 viewable thumbnail URLs (per {@link filterViewablePlaylistItems}).
+ * Shared by `GET /playlists` and `GET /users/:username/playlists`.
+ *
+ * @param {import('sequelize').Model[]} rows USER_PLAYLISTS rows for this page (with `User` included).
+ * @param {number} count Total matching row count (pre-pagination).
+ * @param {{page: number, limit: number, user: import('sequelize').Model|null|undefined, role: import('sequelize').Model|null|undefined}} options
+ *   Pagination echo plus the requesting caller, used for per-video viewability filtering.
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ *   Paginated playlist list envelope.
+ */
+export async function buildPlaylistsPage(rows, count, { page, limit, user, role }) {
+  const playlistIds = rows.map((playlist) => playlist.id);
+
+  const counts = playlistIds.length > 0
+    ? await PlaylistItem.findAll({
+      where: { playlistId: playlistIds },
+      attributes: ["playlistId", [fn("COUNT", col("id")), "itemCount"]],
+      group: ["playlistId"],
+      raw: true,
+    })
+    : [];
+  const itemCountByPlaylistId = new Map(
+    counts.map((row) => [row.playlistId, Number(row.itemCount)]),
+  );
+
+  const thumbnailEntries = await Promise.all(
+    rows.map(async (playlist) => {
+      const items = await PlaylistItem.findAll({
+        where: { playlistId: playlist.id },
+        include: [
+          {
+            model: OriginalUpload,
+            required: true,
+            include: [
+              { model: VideoMetadata, as: "VideoMetadata", required: true },
+              { model: VideoThumbnail, required: false },
+            ],
+          },
+        ],
+        order: [
+          ["position", "ASC"],
+          ["addedAt", "DESC"],
+        ],
+        limit: 5,
+      });
+
+      const viewableItems = await filterViewablePlaylistItems(items, user, role);
+      const thumbnails = viewableItems
+        .slice(0, 3)
+        .map((item) => (item.OriginalUpload.VideoThumbnail
+          ? `/api/v1/videos/${item.OriginalUpload.id}/thumbnail`
+          : null))
+        .filter(Boolean);
+      const latestVideoId = viewableItems[0]?.OriginalUpload.videoId ?? null;
+
+      return [playlist.id, { thumbnails, latestVideoId }];
+    }),
+  );
+  const thumbnailsByPlaylistId = new Map(thumbnailEntries);
+
+  return {
+    items: rows.map((playlist) => ({
+      id: playlist.id,
+      name: playlist.title,
+      description: playlist.description ?? null,
+      visibility: playlist.visibility,
+      itemCount: itemCountByPlaylistId.get(playlist.id) ?? 0,
+      owner: playlist.User
+        ? {
+          id: playlist.User.id,
+          username: playlist.User.username,
+          displayName: playlist.User.displayName ?? null,
+          avatarFilename: playlist.User.avatarFilename ?? null,
+        }
+        : null,
+      thumbnails: thumbnailsByPlaylistId.get(playlist.id)?.thumbnails ?? [],
+      latestVideoId: thumbnailsByPlaylistId.get(playlist.id)?.latestVideoId ?? null,
+      lastAddedAt: playlist.lastAddedAt ?? null,
+      createdAt: playlist.createdAt,
+    })),
+    page,
+    limit,
+    totalHits: count,
+    totalPages: count === 0 ? 0 : Math.ceil(count / limit),
+  };
 }
 
 /**
@@ -219,6 +320,90 @@ export function createPlaylistsRouter() {
   });
 
   /**
+   * GET /playlists — listPlaylists
+   * Auth: optional. Lists playlists the caller may discover: public
+   * playlists (any owner), the caller's own playlists (any visibility), and
+   * private playlists the caller holds a PLAYLIST_ACCESS grant on. This is
+   * intentionally narrower than {@link canViewPlaylist}: another user's
+   * `unlisted`/`hidden` playlist is viewable by direct id but is not surfaced
+   * in this listing.
+   *
+   * @openapi
+   * /api/v1/playlists:
+   *   get:
+   *     tags: [Playlists]
+   *     summary: List playlists visible to the caller
+   *     operationId: listPlaylists
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
+   *     responses:
+   *       "200":
+   *         description: Paginated list of visible playlists
+   *       "400":
+   *         description: Invalid page/limit
+   */
+  router.get("/playlists", optionalAuth, async (req, res) => {
+    try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const orConditions = [{ visibility: "public" }];
+      if (req.user) {
+        orConditions.push({ userId: req.user.id });
+
+        const grants = await PlaylistAccess.findAll({
+          where: { userId: req.user.id },
+          attributes: ["playlistId"],
+        });
+        const grantedIds = grants.map((grant) => grant.playlistId);
+        if (grantedIds.length > 0) {
+          orConditions.push({ id: { [Op.in]: grantedIds }, visibility: "private" });
+        }
+      }
+
+      const { rows, count } = await UserPlaylist.findAndCountAll({
+        where: { [Op.or]: orConditions },
+        include: [{ model: User, required: false }],
+        order: [["createdAt", "DESC"]],
+        limit,
+        offset: (page - 1) * limit,
+      });
+
+      const payload = await buildPlaylistsPage(rows, count, {
+        page,
+        limit,
+        user: req.user,
+        role: req.authRole,
+      });
+      res.status(200).json(payload);
+    } catch (err) {
+      console.error("listPlaylists failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list playlists.",
+      });
+    }
+  });
+
+  /**
    * GET /playlists/:id — getPlaylist
    * Auth: optional. Returns the playlist and its items when viewable. Items
    * are additionally filtered per-video: `hidden` videos are never returned,
@@ -256,7 +441,9 @@ export function createPlaylistsRouter() {
         return;
       }
 
-      const playlist = await UserPlaylist.findByPk(id);
+      const playlist = await UserPlaylist.findByPk(id, {
+        include: [{ model: User, required: false }],
+      });
       if (!playlist) {
         sendNotFound(res);
         return;
@@ -283,7 +470,7 @@ export function createPlaylistsRouter() {
         ],
         order: [
           ["position", "ASC"],
-          ["addedAt", "ASC"],
+          ["addedAt", "DESC"],
         ],
       });
 

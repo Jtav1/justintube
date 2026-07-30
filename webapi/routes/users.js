@@ -11,9 +11,11 @@ import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
 import {
   OriginalUpload,
+  PlaylistAccess,
   Role,
   Subscription,
   User,
+  UserPlaylist,
   VideoAccess,
   VideoMetadata,
   VideoThumbnail,
@@ -22,6 +24,7 @@ import { parsePagination } from "../lib/pagination.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { isAdmin, isModeratorOrAdmin } from "../lib/video-access.js";
+import { buildPlaylistsPage } from "./playlists.js";
 import { loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
@@ -664,6 +667,113 @@ export function createUsersRouter() {
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list user's videos.",
+      });
+    }
+  });
+
+  /**
+   * Returns a paginated list of a user's playlists. `public` playlists are
+   * always included; the channel owner (or an admin) also sees their
+   * `private`/`unlisted`/`hidden` playlists; other authenticated viewers
+   * additionally see `private` playlists they hold a PLAYLIST_ACCESS grant
+   * for. `unlisted`/`hidden` playlists are never included in this listing for
+   * non-privileged viewers — same listing-vs-watch-access carve-out as
+   * `GET /playlists` and `listUserVideos`.
+   * GET /api/v1/users/:username/playlists
+   * Auth: optional — unlocks the owner's/admin's full visibility and
+   * access-granted private playlists for other authenticated viewers.
+   *
+   * @openapi
+   * /api/v1/users/{username}/playlists:
+   *   get:
+   *     tags: [Users]
+   *     summary: List a user's playlists
+   *     operationId: listUserPlaylists
+   *     parameters:
+   *       - in: path
+   *         name: username
+   *         required: true
+   *         schema:
+   *           type: string
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
+   *     responses:
+   *       "200":
+   *         description: Paginated list of the user's visible playlists
+   *       "400":
+   *         description: Invalid page/limit
+   *       "404":
+   *         description: Unknown username
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the paginated playlist list or an error response.
+   */
+  router.get("/users/:username/playlists", optionalAuth, async (req, res) => {
+    try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+
+      const user = await findVisibleUserByUsername(req.params.username);
+      if (!user) {
+        res.status(404).json({ error: "not_found", message: "Unknown username." });
+        return;
+      }
+
+      const isSelf = req.user?.id != null && Number(req.user.id) === Number(user.id);
+      const isPrivileged = isSelf || isAdmin(req.authRole);
+
+      const orConditions = isPrivileged
+        ? [{ visibility: { [Op.in]: ["public", "private", "unlisted", "hidden"] } }]
+        : [{ visibility: "public" }];
+      if (!isPrivileged && req.user) {
+        const grants = await PlaylistAccess.findAll({
+          where: { userId: req.user.id },
+          attributes: ["playlistId"],
+        });
+        const grantedIds = grants.map((grant) => grant.playlistId);
+        if (grantedIds.length > 0) {
+          orConditions.push({ id: { [Op.in]: grantedIds }, visibility: "private" });
+        }
+      }
+
+      const { page, limit } = pagination;
+      const { rows, count } = await UserPlaylist.findAndCountAll({
+        where: { userId: user.id, [Op.or]: orConditions },
+        include: [{ model: User, required: false }],
+        order: [["createdAt", "DESC"]],
+        limit,
+        offset: (page - 1) * limit,
+      });
+
+      const payload = await buildPlaylistsPage(rows, count, {
+        page,
+        limit,
+        user: req.user,
+        role: req.authRole,
+      });
+      res.status(200).json(payload);
+    } catch (err) {
+      console.error("listUserPlaylists failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list user's playlists.",
       });
     }
   });
