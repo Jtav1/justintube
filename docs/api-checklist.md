@@ -184,6 +184,7 @@ Internal (ingest server callbacks; Bearer `INTERNAL_SERVICE_TOKEN`, mirrors the 
 - [x] `GET /api/v1/admin/users` — adminListUsers
 - [x] `PATCH /api/v1/admin/users/:id` — adminUpdateUser
 - [x] `POST /api/v1/admin/users/:id/password` — adminResetUserPassword
+- [x] `POST /api/v1/admin/users/:id/resend-verification` — adminResendUserVerification
 - [x] `GET /api/v1/admin/transcode-profiles` — adminListTranscodeProfiles
 - [x] `POST /api/v1/admin/transcode-profiles` — adminCreateTranscodeProfile
 - [x] `PATCH /api/v1/admin/transcode-profiles/:id` — adminUpdateTranscodeProfile

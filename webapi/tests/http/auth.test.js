@@ -170,6 +170,22 @@ describe("auth routes", () => {
     expect(second.body.error).toBe("conflict");
   });
 
+  test("rejects registration with a malformed email", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+
+    const res = await agent
+      .post("/api/v1/auth/register")
+      .set("X-CSRF-Token", csrf)
+      .send({
+        username: "frank",
+        email: "not-an-email",
+        password: "password123",
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
   test("registration disabled returns 403", async () => {
     const previous = process.env.ENABLE_ACCOUNT_REGISTRATION;
     process.env.ENABLE_ACCOUNT_REGISTRATION = "false";

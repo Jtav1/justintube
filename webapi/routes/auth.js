@@ -11,6 +11,7 @@ import {
   emailEnabled,
   sendVerificationEmail,
 } from "../lib/email/mailer.js";
+import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import {
   csrfProtection,
   ensureCsrfToken,
@@ -245,6 +246,14 @@ export function createAuthRouter() {
         res.status(400).json({
           error: "invalid_body",
           message: "username, email, and password are required.",
+        });
+        return;
+      }
+
+      if (!isValidEmailFormat(email)) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "email must be a valid email address.",
         });
         return;
       }

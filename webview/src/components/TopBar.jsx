@@ -29,6 +29,9 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
   const avatarUrl = user
     ? `${apiClient.defaults.baseURL}/api/v1/users/${user.username}/avatar`
     : null
+  const canUpload = Boolean(
+    user && (user.role === 'admin' || (user.uploader && user.emailVerified)),
+  )
 
   return (
     <header
@@ -62,10 +65,12 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
         </form>
       </div>
       <div className="topbar-right">
-        <Link to="/upload" className="topbar-upload">
-          <Video size={18} />
-          <span>Upload</span>
-        </Link>
+        {canUpload && (
+          <Link to="/upload" className="topbar-upload">
+            <Video size={18} />
+            <span>Upload</span>
+          </Link>
+        )}
         <div className="topbar-theme" ref={themeMenuRef}>
           <button
             type="button"

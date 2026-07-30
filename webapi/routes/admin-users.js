@@ -2,9 +2,12 @@ import { Router } from "express";
 import { Op } from "sequelize";
 import { hashPassword } from "../lib/auth/password.js";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { createVerificationToken } from "../lib/auth/email-verification.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { serializeUser } from "../lib/auth/serialize-user.js";
+import { emailEnabled, sendVerificationEmail } from "../lib/email/mailer.js";
+import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import { OriginalUpload, Role, User } from "../lib/models/index.js";
 import { syncVideoIndex } from "../lib/search.js";
 
@@ -192,6 +195,13 @@ async function parseAdminUserUpdate(body) {
         ok: false,
         error: "invalid_body",
         message: "email must be at most 255 characters.",
+      };
+    }
+    if (!isValidEmailFormat(email)) {
+      return {
+        ok: false,
+        error: "invalid_body",
+        message: "email must be a valid email address.",
       };
     }
     patch.email = email;
@@ -639,6 +649,104 @@ export function createAdminUsersRouter() {
           success: false,
           error: "internal_error",
           message: "Failed to reset user password.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Resends the email verification message to a user, on an admin's behalf.
+   * POST /api/v1/admin/users/:id/resend-verification — no body.
+   * Auth: session cookie or Bearer API key; admin role required.
+   *
+   * @openapi
+   * /api/v1/admin/users/{id}/resend-verification:
+   *   post:
+   *     tags: [Admin]
+   *     summary: Resend a user's email verification message
+   *     operationId: adminResendUserVerification
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *       - name: id
+   *         in: path
+   *         required: true
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: Verification email sent
+   *       400:
+   *         description: Invalid id
+   *       401:
+   *         description: Not authenticated
+   *       403:
+   *         description: Not an admin, or email is already verified
+   *       404:
+   *         description: User not found
+   *       503:
+   *         description: Email capability disabled
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
+   */
+  router.post(
+    "/admin/users/:id/resend-verification",
+    requireAuth,
+    requireAdmin,
+    async (req, res) => {
+      try {
+        const userId = parsePositiveInt(req.params.id);
+        if (userId === null) {
+          res.status(400).json({
+            success: false,
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const user = await User.findByPk(userId);
+        if (!user) {
+          res.status(404).json({
+            success: false,
+            error: "not_found",
+            message: "User not found.",
+          });
+          return;
+        }
+
+        if (!emailEnabled()) {
+          res.status(503).json({
+            success: false,
+            error: "email_disabled",
+            message: "Email is not configured.",
+          });
+          return;
+        }
+
+        if (user.emailVerified) {
+          res.status(403).json({
+            success: false,
+            error: "already_verified",
+            message: "Email is already verified.",
+          });
+          return;
+        }
+
+        const token = await createVerificationToken(user.id);
+        await sendVerificationEmail({ to: user.email, token });
+        res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("adminResendUserVerification failed:", err);
+        res.status(500).json({
+          success: false,
+          error: "internal_error",
+          message: "Failed to resend verification email.",
         });
       }
     },

@@ -238,6 +238,33 @@
   color: #d33;
 }
 
+.profile-verification-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.profile-resend-verification {
+  font: inherit;
+  padding: 8px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.profile-resend-verification:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.profile-resend-verification:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .profile-section {
   margin-bottom: 40px;
 }

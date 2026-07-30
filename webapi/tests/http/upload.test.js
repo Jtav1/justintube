@@ -112,6 +112,19 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(res.body.error).toBe("forbidden");
   });
 
+  test("rejects an uploader-flagged user with an unverified email", async () => {
+    const unverified = await seedUser({ uploader: true, emailVerified: false });
+    await seedUserApiKey(unverified.id, "jt_test_unverified_uploader_key");
+
+    const res = await client
+      .post("/api/v1/videos/upload")
+      .set("Authorization", "Bearer jt_test_unverified_uploader_key")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
   test("accepts a valid video file and persists an ORIGINAL_UPLOADS row", async () => {
     const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
