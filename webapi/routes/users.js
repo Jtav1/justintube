@@ -4,7 +4,7 @@ import { unlink } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { Op } from "sequelize";
+import { Op, col, fn } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
@@ -486,6 +486,63 @@ async function loadUserPublicVideosPage(
 }
 
 /**
+ * Counts each user's `public` uploads, scoped to a specific set of user ids.
+ * Run as a separate query (rather than an outer-joined aggregate on the main
+ * user query) to sidestep the classic Sequelize outer-join-with-`where`
+ * pitfall, where filtering the joined table's `where` clause silently turns
+ * the join into an inner join and drops zero-count rows.
+ *
+ * @param {number[]} userIds User ids to count uploads for.
+ * @returns {Promise<Map<number, number>>} Map of userId to public upload count.
+ */
+async function loadUploadCountsByUserId(userIds) {
+  if (userIds.length === 0) {
+    return new Map();
+  }
+
+  const rows = await OriginalUpload.findAll({
+    where: { userId: { [Op.in]: userIds } },
+    include: [
+      {
+        model: VideoMetadata,
+        as: "VideoMetadata",
+        required: true,
+        attributes: [],
+        where: { visibility: "public" },
+      },
+    ],
+    attributes: ["userId", [fn("COUNT", col("OriginalUpload.id")), "uploadCount"]],
+    group: [col("OriginalUpload.user_id")],
+    raw: true,
+  });
+
+  return new Map(rows.map((row) => [row.userId, Number(row.uploadCount)]));
+}
+
+/**
+ * Maps a User instance to the trimmed users-list row shape. `emailVerified`
+ * and `uploader` are only included for an admin caller — not public info.
+ *
+ * @param {import('sequelize').Model} user User model instance.
+ * @param {{isAdminCaller?: boolean, uploadCount?: number}} [options] Serialization options.
+ * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, uploadCount: number, emailVerified?: boolean, uploader?: boolean}}
+ *   Users-list row payload.
+ */
+function serializeUserListItem(user, { isAdminCaller = false, uploadCount = 0 } = {}) {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName ?? null,
+    bio: user.bio ?? null,
+    avatarFilename: user.avatarFilename ?? null,
+    uploadCount,
+    ...(isAdminCaller
+      ? { emailVerified: Boolean(user.emailVerified), uploader: Boolean(user.uploader) }
+      : {}),
+  };
+}
+
+/**
  * Builds the public users router (mounted under `/api/v1`).
  *
  * @returns {import('express').Router} Configured users router.
@@ -493,6 +550,86 @@ async function loadUserPublicVideosPage(
 export function createUsersRouter() {
   const router = Router();
   router.use(csrfProtection);
+
+  /**
+   * Returns every non-locked user, alphabetically by username, with a public
+   * upload count. `emailVerified`/`uploader` are included only for an admin
+   * caller.
+   * GET /api/v1/users
+   * Auth: optional — unlocks `emailVerified`/`uploader` fields for admins.
+   *
+   * @openapi
+   * /api/v1/users:
+   *   get:
+   *     tags: [Users]
+   *     summary: List all users, alphabetically by username
+   *     operationId: listUsers
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
+   *     responses:
+   *       "200":
+   *         description: Paginated user list
+   *       "400":
+   *         description: Invalid page/limit
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the paginated user list or an error response.
+   */
+  router.get("/users", optionalAuth, async (req, res) => {
+    try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { rows, count } = await User.findAndCountAll({
+        include: [{ model: Role, required: false }],
+        order: [["username", "ASC"]],
+        limit,
+        offset: (page - 1) * limit,
+      });
+      const visibleRows = rows.filter((user) => user.Role?.name !== "locked");
+
+      const uploadCounts = await loadUploadCountsByUserId(visibleRows.map((user) => user.id));
+      const isAdminCaller = isAdmin(req.authRole);
+
+      res.status(200).json({
+        items: visibleRows.map((user) =>
+          serializeUserListItem(user, {
+            isAdminCaller,
+            uploadCount: uploadCounts.get(user.id) ?? 0,
+          }),
+        ),
+        page,
+        limit,
+        totalHits: count,
+        totalPages: count === 0 ? 0 : Math.ceil(count / limit),
+      });
+    } catch (err) {
+      console.error("listUsers failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list users.",
+      });
+    }
+  });
 
   /**
    * Returns a user's public channel profile plus a paginated, sortable page

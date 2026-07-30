@@ -6,6 +6,7 @@ import {
   seedMetadata,
   seedUpload,
   seedUser,
+  seedUserApiKey,
   seedVideoAccess,
   seedVideoLike,
   seedVideoThumbnail,
@@ -154,7 +155,6 @@ describe("me / account settings routes", () => {
 
   test.each([
     ["id", 999],
-    ["username", "new_username"],
     ["passwordHash", "hack"],
     ["passwordExpired", true],
     ["emailVerified", true],
@@ -205,6 +205,81 @@ describe("me / account settings routes", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("conflict");
+  });
+
+  test("PATCH /me rejects a malformed email", async () => {
+    const user = await seedUser({
+      username: "settings_bad_email",
+      email: "settings_bad_email@example.com",
+    });
+    await seedUserApiKey(user.id, "jt_test_settings_bad_email_key");
+
+    const res = await createTestClient()
+      .patch("/api/v1/me")
+      .set("Authorization", "Bearer jt_test_settings_bad_email_key")
+      .send({ email: "not-an-email" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("PATCH /me updates username; reflected on next GET", async () => {
+    const user = await seedUser({
+      username: "settings_username_before",
+      email: "settings_username_before@example.com",
+    });
+    await seedUserApiKey(user.id, "jt_test_settings_username_key");
+
+    const client = createTestClient();
+    const patch = await client
+      .patch("/api/v1/me")
+      .set("Authorization", "Bearer jt_test_settings_username_key")
+      .send({ username: "settings_username_after" });
+
+    expect(patch.status).toBe(200);
+    expect(patch.body.username).toBe("settings_username_after");
+
+    const get = await client
+      .get("/api/v1/me/settings")
+      .set("Authorization", "Bearer jt_test_settings_username_key");
+    expect(get.status).toBe(200);
+    expect(get.body.username).toBe("settings_username_after");
+  });
+
+  test("PATCH /me with a username already used by another account returns 409", async () => {
+    await seedUser({
+      username: "settings_username_taken",
+      email: "settings_username_taken@example.com",
+    });
+    const user = await seedUser({
+      username: "settings_username_conflict",
+      email: "settings_username_conflict@example.com",
+    });
+    await seedUserApiKey(user.id, "jt_test_settings_username_conflict_key");
+
+    const res = await createTestClient()
+      .patch("/api/v1/me")
+      .set("Authorization", "Bearer jt_test_settings_username_conflict_key")
+      .send({ username: "settings_username_taken" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("conflict");
+  });
+
+  test("PATCH /me rejects an empty username", async () => {
+    const user = await seedUser({
+      username: "settings_empty_username",
+      email: "settings_empty_username@example.com",
+    });
+    await seedUserApiKey(user.id, "jt_test_settings_empty_username_key");
+
+    const res = await createTestClient()
+      .patch("/api/v1/me")
+      .set("Authorization", "Bearer jt_test_settings_empty_username_key")
+      .send({ username: "   " });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
   });
 
   test("one user's PATCH does not affect another user's account", async () => {

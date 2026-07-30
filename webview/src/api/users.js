@@ -1,6 +1,17 @@
 import apiClient from './client.js'
 
 /**
+ * Fetches every non-locked user, alphabetically by username. `emailVerified`
+ * and `uploader` are only present in each item for an admin caller.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function listUsers({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/users', { params: { page, limit } })
+  return res.data
+}
+
+/**
  * Fetches a user's public channel profile plus a paginated, sortable page of
  * their videos.
  * @param {string} username

@@ -1,0 +1,36 @@
+.users-listing {
+  text-align: left;
+}
+
+.users-listing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.users-listing-empty,
+.users-listing-error {
+  text-align: center;
+  color: var(--text);
+}
+
+.users-listing-load-more {
+  display: block;
+  margin: 24px auto 0;
+  font: inherit;
+  padding: 10px 20px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.users-listing-load-more:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.users-listing-load-more:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

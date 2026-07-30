@@ -95,6 +95,7 @@ Future
 
 ### Users / channels / engagement
 
+- [x] `GET /api/v1/users` — listUsers
 - [x] `GET /api/v1/users/:username` — getUserChannel
 - [x] `GET /api/v1/users/:username/videos` — listUserVideos
 - [x] `GET /api/v1/users/:username/playlists` — listUserPlaylists
