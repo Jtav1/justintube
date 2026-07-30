@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { useTheme } from '../context/useTheme.js'
 import TopBar from '../components/TopBar.jsx'
 import Sidebar from '../components/Sidebar.jsx'
@@ -7,17 +7,31 @@ import './AppLayout.css'
 
 const SIDEBAR_COLLAPSED_KEY = 'jt.sidebarCollapsed'
 
+// Routes whose default is a collapsed sidebar, overriding the stored
+// preference, since they need the extra width (e.g. the video watch page).
+const COLLAPSED_BY_DEFAULT_ROUTES = ['/video']
+
 function readStoredCollapsed() {
   return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
 }
 
 function AppLayout() {
   const { theme } = useTheme()
-  const [collapsed, setCollapsed] = useState(readStoredCollapsed)
+  const location = useLocation()
+  const collapsedByDefault = COLLAPSED_BY_DEFAULT_ROUTES.includes(location.pathname)
+  const [collapsed, setCollapsed] = useState(() => collapsedByDefault || readStoredCollapsed())
+
+  // Only re-run when switching in/out of a collapsed-by-default route -
+  // manual toggles while staying on the same route shouldn't be undone.
+  useEffect(() => {
+    setCollapsed(collapsedByDefault || readStoredCollapsed())
+  }, [collapsedByDefault])
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed))
-  }, [collapsed])
+    if (!collapsedByDefault) {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed))
+    }
+  }, [collapsed, collapsedByDefault])
 
   function toggleSidebar() {
     setCollapsed((prev) => !prev)

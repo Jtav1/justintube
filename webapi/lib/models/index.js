@@ -1,4 +1,5 @@
 import { sequelize } from "../db.js";
+import { Comment } from "./comment.js";
 import { ContentTag } from "./content-tag.js";
 import { EmailVerificationToken } from "./email-verification-token.js";
 import { FeaturedVideo } from "./featured-video.js";
@@ -21,6 +22,7 @@ import { UserApiKey } from "./user-api-key.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
+import { UserViewHistory } from "./user-view-history.js";
 import { VideoAccess } from "./video-access.js";
 import { VideoLike } from "./video-like.js";
 import { VideoMetadata } from "./video-metadata.js";
@@ -218,6 +220,24 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
+  User.hasMany(UserViewHistory, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  UserViewHistory.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasMany(UserViewHistory, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  UserViewHistory.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
   User.hasMany(VideoAccess, {
     foreignKey: "userId",
     onDelete: "CASCADE",
@@ -242,6 +262,35 @@ function registerAssociations() {
   });
   ContentTag.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasMany(Comment, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  Comment.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(Comment, {
+    foreignKey: "userId",
+    onDelete: "SET NULL",
+  });
+  Comment.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "SET NULL",
+  });
+
+  Comment.hasMany(Comment, {
+    as: "Replies",
+    foreignKey: "parentCommentId",
+    onDelete: "CASCADE",
+  });
+  Comment.belongsTo(Comment, {
+    as: "ParentComment",
+    foreignKey: "parentCommentId",
     onDelete: "CASCADE",
   });
 
@@ -367,6 +416,7 @@ export const models = {
   VideoLike,
   VideoAccess,
   ContentTag,
+  Comment,
   FeaturedVideo,
   Subscription,
   Notification,
@@ -378,9 +428,11 @@ export const models = {
   Theme,
   VideoTransferMapping,
   VideoTransferHistory,
+  UserViewHistory,
 };
 
 export {
+  Comment,
   ContentTag,
   EmailVerificationToken,
   FeaturedVideo,
@@ -403,6 +455,7 @@ export {
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
+  UserViewHistory,
   VideoAccess,
   VideoLike,
   VideoMetadata,

@@ -30,8 +30,8 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const upload = await seedUpload();
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.uuidName}/complete`)
-      .send({ thumbnailFilename: `${upload.uuidName}.webp` });
+      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .send({ thumbnailFilename: `${upload.videoId}.webp` });
 
     expect(res.status).toBe(401);
   });
@@ -40,7 +40,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const upload = await seedUpload();
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.uuidName}/complete`)
+      .post(`/internal/thumbnails/${upload.videoId}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({});
 
@@ -48,9 +48,9 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     expect(res.body.error).toBe("invalid_body");
   });
 
-  test("returns 404 for an unknown upload uuid", async () => {
+  test("returns 404 for an unknown upload videoId", async () => {
     const res = await client
-      .post("/internal/thumbnails/00000000-0000-0000-0000-000000000000/complete")
+      .post("/internal/thumbnails/000000/complete")
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: "whatever.webp" });
 
@@ -60,17 +60,17 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
 
   test("creates a VIDEO_THUMBNAIL row on first success", async () => {
     const upload = await seedUpload();
-    const thumbnailFilename = `${upload.uuidName}.webp`;
+    const thumbnailFilename = `${upload.videoId}.webp`;
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.uuidName}/complete`)
+      .post(`/internal/thumbnails/${upload.videoId}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       success: true,
-      uploadUuid: upload.uuidName,
+      videoId: upload.videoId,
       status: "complete",
     });
 
@@ -84,17 +84,17 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
 
   test("updates the existing row instead of duplicating on re-run", async () => {
     const upload = await seedUpload();
-    const firstFilename = `${upload.uuidName}.webp`;
-    const secondFilename = `${upload.uuidName}-2.webp`;
+    const firstFilename = `${upload.videoId}.webp`;
+    const secondFilename = `${upload.videoId}-2.webp`;
 
     const first = await client
-      .post(`/internal/thumbnails/${upload.uuidName}/complete`)
+      .post(`/internal/thumbnails/${upload.videoId}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: firstFilename });
     expect(first.status).toBe(200);
 
     const second = await client
-      .post(`/internal/thumbnails/${upload.uuidName}/complete`)
+      .post(`/internal/thumbnails/${upload.videoId}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: secondFilename });
     expect(second.status).toBe(200);
@@ -110,10 +110,10 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
   test("reflects the new thumbnail in GET /videos/:id", async () => {
     const upload = await seedUpload();
     await seedMetadata(upload.id, { visibility: "public" });
-    const thumbnailFilename = `${upload.uuidName}.webp`;
+    const thumbnailFilename = `${upload.videoId}.webp`;
 
     const complete = await client
-      .post(`/internal/thumbnails/${upload.uuidName}/complete`)
+      .post(`/internal/thumbnails/${upload.videoId}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename });
     expect(complete.status).toBe(200);

@@ -136,6 +136,21 @@
   gap: 6px;
 }
 
+.upload-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.upload-checkbox input {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
 .upload-hint {
   margin: 0;
   font-size: 13px;

@@ -118,7 +118,7 @@ export async function notifyFileVersionFailed(uuid, error) {
 /**
  * Notifies the API that an upload's thumbnail was generated successfully.
  *
- * @param {string} uploadUuid ORIGINAL_UPLOADS.uuid_name (BullMQ job id for
+ * @param {string} uploadUuid ORIGINAL_UPLOADS.video_id (BullMQ job id for
  *   thumbnail jobs).
  * @param {object} metadata Completion fields.
  * @param {string} metadata.thumbnailFilename Basename written under `/media/thumbnails`.

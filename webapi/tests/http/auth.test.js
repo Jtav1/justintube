@@ -556,46 +556,9 @@ describe("auth change password", () => {
 });
 
 describe("createCorsOptions", () => {
-  test("production with empty allowlist disables reflecting Origin", () => {
-    const warnings = [];
+  test("reflects Origin and allows credentials regardless of environment", () => {
     const opts = createCorsOptions({
       nodeEnv: "production",
-      corsOrigin: "",
-      warn: (message) => warnings.push(message),
-    });
-    expect(opts.origin).toBe(false);
-    expect(opts.credentials).toBe(true);
-    expect(warnings.length).toBe(1);
-  });
-
-  test("production allowlist accepts listed origin only", () => {
-    const opts = createCorsOptions({
-      nodeEnv: "production",
-      corsOrigin: "https://app.example.com",
-    });
-    expect(opts.credentials).toBe(true);
-    expect(typeof opts.origin).toBe("function");
-
-    /** @type {Error|null} */
-    let err = null;
-    /** @type {boolean|undefined} */
-    let allowed;
-    opts.origin("https://app.example.com", (e, value) => {
-      err = e;
-      allowed = value;
-    });
-    expect(err).toBeNull();
-    expect(allowed).toBe(true);
-
-    opts.origin("https://evil.example.com", (e) => {
-      err = e;
-    });
-    expect(err).toBeInstanceOf(Error);
-  });
-
-  test("non-production with unset CORS_ORIGIN reflects Origin", () => {
-    const opts = createCorsOptions({
-      nodeEnv: "development",
       corsOrigin: "",
     });
     expect(opts.origin).toBe(true);

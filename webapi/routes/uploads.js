@@ -14,6 +14,7 @@ import {
 } from "../lib/media-meta.js";
 import { markUploadFileVersionsFailed } from "../lib/file-versions.js";
 import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, sequelize } from "../lib/models/index.js";
+import { generateUniqueVideoId } from "../lib/video-id.js";
 import {
   getProcessingHealth,
   requestDownload,
@@ -88,17 +89,21 @@ function normalizedExtension(filename) {
 
 /**
  * Multer storage engine that writes uploads to `original/` under the media
- * root using a freshly generated UUID as the filename (preserving the
+ * root using a freshly generated video id as the filename (preserving the
  * original extension).
  */
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, originalDir),
-  filename: (_req, file, cb) => {
-    const ext = normalizedExtension(file.originalname);
-    const uuid = randomUUID();
-    // Stash the UUID so the handler can reuse it for the DB record.
-    file.generatedUuid = uuid;
-    cb(null, ext ? `${uuid}.${ext}` : uuid);
+  filename: async (_req, file, cb) => {
+    try {
+      const ext = normalizedExtension(file.originalname);
+      const videoId = await generateUniqueVideoId();
+      // Stash the video id so the handler can reuse it for the DB record.
+      file.generatedVideoId = videoId;
+      cb(null, ext ? `${videoId}.${ext}` : videoId);
+    } catch (err) {
+      cb(err);
+    }
   },
 });
 
@@ -140,7 +145,7 @@ function uploadResponseBody(upload) {
   return {
     id: upload.id,
     originalFilename: upload.originalFilename,
-    uuidName: upload.uuidName,
+    videoId: upload.videoId,
     fileExtension: upload.fileExtension,
     mimeType: upload.mimeType,
     fileSizeBytes: upload.fileSizeBytes,
@@ -277,8 +282,8 @@ async function finalizeUploadTranscodes(upload, storedFilename) {
   // A thumbnail job is always enqueued alongside any renditions (or on its
   // own when there are zero transcode profiles) — see `THUMBNAIL_OUTPUT_EXT`.
   const thumbnailJob = {
-    jobId: upload.uuidName,
-    outputFilename: `${upload.uuidName}.${THUMBNAIL_OUTPUT_EXT}`,
+    jobId: upload.videoId,
+    outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
     kind: "thumbnail",
     timestampSeconds:
       upload.thumbnailTimestampTenths != null
@@ -454,7 +459,7 @@ async function uploadVideo(req, res) {
     return;
   }
 
-  const uuidName = file.generatedUuid;
+  const videoId = file.generatedVideoId;
   const fileExtension = normalizedExtension(file.originalname);
   // Relative storage path uses forward slashes for cross-platform DB consistency.
   const storagePath = `original/${file.filename}`;
@@ -465,7 +470,7 @@ async function uploadVideo(req, res) {
       const created = await OriginalUpload.create(
         {
           originalFilename: file.originalname,
-          uuidName,
+          videoId,
           fileExtension,
           mimeType: file.mimetype || null,
           fileSizeBytes: file.size ?? null,
@@ -596,8 +601,8 @@ async function importVideo(req, res) {
   }
 
   const fileExtension = normalizedExtension(downloadedFilename);
-  const uuidName = randomUUID();
-  const storedFilename = fileExtension ? `${uuidName}.${fileExtension}` : uuidName;
+  const videoId = await generateUniqueVideoId();
+  const storedFilename = fileExtension ? `${videoId}.${fileExtension}` : videoId;
   // Relative storage path uses forward slashes for cross-platform DB consistency.
   const storagePath = `original/${storedFilename}`;
 
@@ -627,7 +632,7 @@ async function importVideo(req, res) {
       const created = await OriginalUpload.create(
         {
           originalFilename: downloadedFilename,
-          uuidName,
+          videoId,
           fileExtension,
           mimeType: mimeTypeForContainer(fileExtension),
           fileSizeBytes,

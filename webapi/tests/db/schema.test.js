@@ -73,8 +73,8 @@ describe("Video-upload schema (SQLite)", () => {
     test("ORIGINAL_UPLOADS.status defaults to 'uploaded'", async () => {
       const result = await execute(
         `INSERT INTO ORIGINAL_UPLOADS
-           (original_filename, uuid_name, file_extension, storage_path)
-         VALUES ('a.mp4', 'uuid-defaults-1', 'mp4', 'uuid-defaults-1.mp4')`,
+           (original_filename, video_id, file_extension, storage_path)
+         VALUES ('a.mp4', 'defat', 'mp4', 'defat.mp4')`,
       );
       const rows = await queryRows(
         "SELECT * FROM ORIGINAL_UPLOADS WHERE id = :id",
@@ -205,9 +205,14 @@ describe("Video-upload schema (SQLite)", () => {
   });
 
   describe("UNIQUE constraints", () => {
-    test("ORIGINAL_UPLOADS.uuid_name is unique", async () => {
-      await seedUpload({ uuidName: "dupe-uuid" });
-      await expect(seedUpload({ uuidName: "dupe-uuid" })).rejects.toThrow();
+    test("ORIGINAL_UPLOADS.video_id is unique", async () => {
+      await seedUpload({ videoId: "dupeid" });
+      await expect(seedUpload({ videoId: "dupeid" })).rejects.toThrow();
+    });
+
+    test("ORIGINAL_UPLOADS.video_id is case-sensitive", async () => {
+      await seedUpload({ videoId: "aaaaaa" });
+      await expect(seedUpload({ videoId: "AAAAAA" })).resolves.toBeDefined();
     });
 
     test("VIDEO_METADATA allows only one row per upload", async () => {

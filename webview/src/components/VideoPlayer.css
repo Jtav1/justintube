@@ -1,0 +1,235 @@
+.video-player {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.video-player-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+
+.video-player-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.video-player-controls-overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 5;
+}
+
+.video-player-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+}
+
+.video-player-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.video-player-icon-btn-active {
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.video-player-quality {
+  position: relative;
+}
+
+.video-player-quality-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  padding: 4px 0;
+  z-index: 20;
+}
+
+.video-player-quality-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-h);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.video-player-quality-item:hover {
+  background: var(--accent-bg);
+}
+
+.video-player-quality-item-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.video-player-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.video-player-meta-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.video-player-avatar-link {
+  flex-shrink: 0;
+}
+
+.video-player-avatar {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--code-bg);
+}
+
+.video-player-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-h);
+}
+
+.video-player-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.video-player-title {
+  margin: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 130%;
+  color: var(--text-h);
+}
+
+.video-player-uploader {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.video-player-uploader a {
+  color: var(--text-h);
+  text-decoration: none;
+}
+
+.video-player-uploader a:hover {
+  text-decoration: underline;
+}
+
+.video-player-stats {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 300;
+  color: var(--text);
+}
+
+.video-player-visibility {
+  text-transform: capitalize;
+}
+
+.video-player-description {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.video-player-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.video-player-tags-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.video-player-tag {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--text-h);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.video-player-reactions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.video-player-reactions .video-player-icon-btn {
+  background: var(--code-bg);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.video-player-reactions .video-player-icon-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.video-player-reactions .video-player-icon-btn-like-active {
+  background: var(--accent-bg);
+  color: #1a9c3f;
+}
+
+.video-player-reactions .video-player-icon-btn-dislike-active {
+  background: var(--accent-bg);
+  color: #d32f2f;
+}
+
+.video-player-reactions .video-player-icon-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

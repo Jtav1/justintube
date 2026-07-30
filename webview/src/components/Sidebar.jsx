@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Home, User, ListVideo, ThumbsUp, Star, Users, ShieldCheck } from 'lucide-react'
+import { Home, User, ListVideo, ThumbsUp, Star, Users, ShieldCheck, MessageSquareWarning } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import './Sidebar.css'
 
@@ -8,13 +8,16 @@ function Sidebar({ collapsed, backgroundUrl }) {
 
   const navItems = [
     { key: 'home', label: 'Home', icon: Home, to: '/' },
-    { key: 'profile', label: 'My Profile', icon: User, to: user ? `/users/${user.username}` : null },
-    { key: 'playlists', label: 'Playlists', icon: ListVideo, to: '/' },
-    { key: 'liked', label: 'Liked', icon: ThumbsUp, to: '/' },
-    { key: 'featured', label: 'Featured', icon: Star, to: '/' },
-    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: '/' },
+    { key: 'profile', label: 'My Profile', icon: User, to: user ? `/users/${user.username}` : '/' },
+    { key: 'playlists', label: 'Playlists', icon: ListVideo, to: user ? `/playlists/$user.username}` : '/'},
+    { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : '/'},
+    { key: 'featured', label: 'Featured', icon: Star, to: '/featured' },
+    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: user ? `/subscriptions/${user.username}` : '/' },
     ...(user?.role === 'admin'
-      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/' }]
+      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
+      : []),
+    ...((user?.role === 'moderator' || user?.role === 'admin') 
+      ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: '/reports'}]
       : []),
   ]
 

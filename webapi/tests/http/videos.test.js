@@ -91,11 +91,67 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({
         id: upload.id,
+        videoId: upload.videoId,
         title: "Watchable",
         description: "A described clip",
         visibility: "public",
         commentsEnabled: true,
       });
+    });
+
+    test("includes featured only for admin callers", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-getvideo-featured-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Featured check", visibility: "public" });
+      await seedFeaturedVideo(upload.id);
+
+      const anonRes = await client.get(`/api/v1/videos/${upload.id}`);
+      expect(anonRes.body.featured).toBeUndefined();
+
+      await seedUserWithRoleAndKey("viewer", "viewer-getvideo-featured-key");
+      const viewerRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer viewer-getvideo-featured-key");
+      expect(viewerRes.body.featured).toBeUndefined();
+
+      const adminRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer admin-getvideo-featured-key");
+      expect(adminRes.body.featured).toBe(true);
+    });
+
+    test("returns 200 for the same video looked up by videoId", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Watchable by videoId", visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.videoId}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        id: upload.id,
+        videoId: upload.videoId,
+        title: "Watchable by videoId",
+      });
+    });
+
+    test("distinguishes videoIds that differ only in case", async () => {
+      const lower = await seedUpload({ videoId: "abcdef" });
+      await seedMetadata(lower.id, { title: "Lowercase", visibility: "public" });
+      const upper = await seedUpload({ videoId: "ABCDEF" });
+      await seedMetadata(upper.id, { title: "Uppercase", visibility: "public" });
+
+      const lowerRes = await client.get(`/api/v1/videos/${lower.videoId}`);
+      const upperRes = await client.get(`/api/v1/videos/${upper.videoId}`);
+
+      expect(lowerRes.body.title).toBe("Lowercase");
+      expect(upperRes.body.title).toBe("Uppercase");
+    });
+
+    test("returns 404 for an unknown videoId", async () => {
+      const res = await client.get("/api/v1/videos/zzzzzz");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("not_found");
     });
 
     test("returns 404 for an unknown video id", async () => {
@@ -210,8 +266,37 @@ describe("Video discovery and metadata endpoints", () => {
           fileSizeBytes: 1024,
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
         },
+        {
+          id: upload.id,
+          resolution: "original",
+          width: null,
+          height: null,
+          mimeType: "video/mp4",
+          fileSizeBytes: 2048,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+        },
       ]);
       expect(res.body.tags).toEqual([]);
+    });
+
+    test("includes an original rendition even when no complete transcodes exist", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Untranscoded", visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.renditions).toEqual([
+        {
+          id: upload.id,
+          resolution: "original",
+          width: null,
+          height: null,
+          mimeType: "video/mp4",
+          fileSizeBytes: 2048,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+        },
+      ]);
     });
 
     test("includes this video's own tags", async () => {
@@ -238,17 +323,17 @@ describe("Video discovery and metadata endpoints", () => {
         resolution: "480p",
         videoHeight: 480,
         mimeType: "video/mp4",
-        storagePath: `transcoded/${upload.uuidName}-480p.mp4`,
+        storagePath: `transcoded/${upload.videoId}-480p.mp4`,
       });
-      writeMediaFixture(`transcoded/${upload.uuidName}-480p.mp4`, smallContents);
+      writeMediaFixture(`transcoded/${upload.videoId}-480p.mp4`, smallContents);
       await seedFileVersion(upload.id, {
         status: "complete",
         resolution: "720p",
         videoHeight: 720,
         mimeType: "video/mp4",
-        storagePath: `transcoded/${upload.uuidName}-720p.mp4`,
+        storagePath: `transcoded/${upload.videoId}-720p.mp4`,
       });
-      writeMediaFixture(`transcoded/${upload.uuidName}-720p.mp4`, largeContents);
+      writeMediaFixture(`transcoded/${upload.videoId}-720p.mp4`, largeContents);
 
       const res = await client
         .get(`/api/v1/videos/${upload.id}/stream`)
@@ -275,9 +360,9 @@ describe("Video discovery and metadata endpoints", () => {
         resolution: "480p",
         videoHeight: 480,
         mimeType: "video/mp4",
-        storagePath: `transcoded/${upload.uuidName}.mp4`,
+        storagePath: `transcoded/${upload.videoId}.mp4`,
       });
-      writeMediaFixture(`transcoded/${upload.uuidName}.mp4`, contents);
+      writeMediaFixture(`transcoded/${upload.videoId}.mp4`, contents);
 
       const res = await client
         .get(`/api/v1/videos/${upload.id}/stream`)
@@ -304,17 +389,17 @@ describe("Video discovery and metadata endpoints", () => {
         resolution: "480p",
         videoHeight: 480,
         mimeType: "video/mp4",
-        storagePath: `transcoded/${upload.uuidName}-480p.mp4`,
+        storagePath: `transcoded/${upload.videoId}-480p.mp4`,
       });
-      writeMediaFixture(`transcoded/${upload.uuidName}-480p.mp4`, small);
+      writeMediaFixture(`transcoded/${upload.videoId}-480p.mp4`, small);
       await seedFileVersion(upload.id, {
         status: "complete",
         resolution: "720p",
         videoHeight: 720,
         mimeType: "video/mp4",
-        storagePath: `transcoded/${upload.uuidName}-720p.mp4`,
+        storagePath: `transcoded/${upload.videoId}-720p.mp4`,
       });
-      writeMediaFixture(`transcoded/${upload.uuidName}-720p.mp4`, large);
+      writeMediaFixture(`transcoded/${upload.videoId}-720p.mp4`, large);
 
       const res = await client
         .get(`/api/v1/videos/${upload.id}/stream?quality=480p`)
@@ -336,9 +421,9 @@ describe("Video discovery and metadata endpoints", () => {
         status: "complete",
         resolution: "480p",
         videoHeight: 480,
-        storagePath: `transcoded/${upload.uuidName}.mp4`,
+        storagePath: `transcoded/${upload.videoId}.mp4`,
       });
-      writeMediaFixture(`transcoded/${upload.uuidName}.mp4`, Buffer.from("data"));
+      writeMediaFixture(`transcoded/${upload.videoId}.mp4`, Buffer.from("data"));
 
       const res = await client.get(`/api/v1/videos/${upload.id}/stream?quality=1080p`);
 
@@ -355,15 +440,67 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(404);
     });
 
+    test("streams the original upload's file for ?quality=original", async () => {
+      const originalContents = Buffer.from("the-original-source-file");
+      const upload = await seedUpload({
+        storagePath: "original/source.mp4",
+        mimeType: "video/mp4",
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "480p",
+        videoHeight: 480,
+        storagePath: `transcoded/${upload.videoId}-480p.mp4`,
+      });
+      writeMediaFixture(`transcoded/${upload.videoId}-480p.mp4`, Buffer.from("transcoded"));
+      writeMediaFixture("original/source.mp4", originalContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/stream?quality=original`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("video/mp4");
+      expect(Buffer.compare(res.body, originalContents)).toBe(0);
+    });
+
+    test("streams the original upload's file for ?quality=original even with no complete renditions", async () => {
+      const originalContents = Buffer.from("only-the-original-exists");
+      const upload = await seedUpload({
+        storagePath: "original/only.mp4",
+        mimeType: "video/mp4",
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture("original/only.mp4", originalContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/stream?quality=original`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(Buffer.compare(res.body, originalContents)).toBe(0);
+    });
+
     test("returns 404 for a private video without access", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "stream-owner-key");
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id, { visibility: "private" });
       await seedFileVersion(upload.id, {
         status: "complete",
-        storagePath: `transcoded/${upload.uuidName}.mp4`,
+        storagePath: `transcoded/${upload.videoId}.mp4`,
       });
-      writeMediaFixture(`transcoded/${upload.uuidName}.mp4`, Buffer.from("data"));
+      writeMediaFixture(`transcoded/${upload.videoId}.mp4`, Buffer.from("data"));
 
       const res = await client.get(`/api/v1/videos/${upload.id}/stream`);
 
@@ -376,7 +513,7 @@ describe("Video discovery and metadata endpoints", () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, { visibility: "public" });
       const thumbnail = await seedVideoThumbnail(upload.id, {
-        thumbnailFilename: `${upload.uuidName}.jpg`,
+        thumbnailFilename: `${upload.videoId}.jpg`,
       });
       const contents = Buffer.from("fake-jpeg-bytes");
       writeMediaFixture(`thumbnails/${thumbnail.thumbnailFilename}`, contents);
@@ -511,6 +648,15 @@ describe("Video discovery and metadata endpoints", () => {
           fileSizeBytes: 1024,
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
         },
+        {
+          id: upload.id,
+          resolution: "original",
+          width: null,
+          height: null,
+          mimeType: "video/mp4",
+          fileSizeBytes: 2048,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+        },
       ]);
     });
   });
@@ -627,6 +773,52 @@ describe("Video discovery and metadata endpoints", () => {
       expect(ownerTitles).toContain("My hidden");
       expect(ownerTitles).not.toContain("Someone else's unlisted");
     });
+
+    test("includes the caller's own private videos and private videos they have a grant for", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-private-owner-key");
+      const grantee = await seedUserWithRoleAndKey("viewer", "list-private-grantee-key");
+      const stranger = await seedUserWithRoleAndKey("viewer", "list-private-stranger-key");
+
+      const ownPrivate = await seedUpload({
+        originalFilename: "own-private.mp4",
+        userId: owner.id,
+      });
+      await seedMetadata(ownPrivate.id, {
+        title: "My private",
+        visibility: "private",
+      });
+
+      const sharedPrivate = await seedUpload({
+        originalFilename: "shared-private.mp4",
+        userId: owner.id,
+      });
+      await seedMetadata(sharedPrivate.id, {
+        title: "Shared with grantee",
+        visibility: "private",
+      });
+      await seedVideoAccess(sharedPrivate.id, grantee.id);
+
+      const ownerRes = await client
+        .get("/api/v1/videos")
+        .set("Authorization", "Bearer list-private-owner-key");
+      const ownerTitles = ownerRes.body.items.map((item) => item.title);
+      expect(ownerTitles).toContain("My private");
+      expect(ownerTitles).toContain("Shared with grantee");
+
+      const granteeRes = await client
+        .get("/api/v1/videos")
+        .set("Authorization", "Bearer list-private-grantee-key");
+      const granteeTitles = granteeRes.body.items.map((item) => item.title);
+      expect(granteeTitles).toContain("Shared with grantee");
+      expect(granteeTitles).not.toContain("My private");
+
+      const strangerRes = await client
+        .get("/api/v1/videos")
+        .set("Authorization", "Bearer list-private-stranger-key");
+      const strangerTitles = strangerRes.body.items.map((item) => item.title);
+      expect(strangerTitles).not.toContain("My private");
+      expect(strangerTitles).not.toContain("Shared with grantee");
+    });
   });
 
   describe("GET /videos/featured and /videos/newest", () => {
@@ -741,7 +933,89 @@ describe("Video discovery and metadata endpoints", () => {
           fileSizeBytes: 1024,
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
         },
+        {
+          id: upload.id,
+          resolution: "original",
+          width: null,
+          height: null,
+          mimeType: "video/mp4",
+          fileSizeBytes: 2048,
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+        },
       ]);
+    });
+  });
+
+  describe("PUT /videos/{id}/featured (setVideoFeatured)", () => {
+    test("admins can feature and unfeature a video", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-featured-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const featureRes = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-key")
+        .send({ featured: true });
+      expect(featureRes.status).toBe(200);
+      expect(featureRes.body).toEqual({ featured: true });
+
+      let rows = await queryRows(
+        "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows).toHaveLength(1);
+
+      // Featuring an already-featured video doesn't duplicate the row.
+      await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-key")
+        .send({ featured: true });
+      rows = await queryRows(
+        "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows).toHaveLength(1);
+
+      const unfeatureRes = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-key")
+        .send({ featured: false });
+      expect(unfeatureRes.status).toBe(200);
+      expect(unfeatureRes.body).toEqual({ featured: false });
+
+      rows = await queryRows(
+        "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows).toHaveLength(0);
+    });
+
+    test("forbids moderators and viewers from setting featured status", async () => {
+      await seedUserWithRoleAndKey("moderator", "mod-featured-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer mod-featured-key")
+        .send({ featured: true });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+    });
+
+    test("rejects a non-boolean featured value", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-featured-bad-body-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-bad-body-key")
+        .send({ featured: "yes" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
     });
   });
 
@@ -849,7 +1123,7 @@ describe("Video discovery and metadata endpoints", () => {
   });
 
   describe("views and likes", () => {
-    test("increments viewCount for public videos", async () => {
+    test("increments viewCount for public videos and does not record history for anonymous viewers", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, {
         title: "Views",
@@ -865,36 +1139,111 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.viewCount).toBe(3);
+
+      const history = await queryRows(
+        "SELECT * FROM USER_VIEW_HISTORY WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(history).toHaveLength(0);
     });
 
-    test("likes and dislikes require auth and persist VIDEO_LIKES", async () => {
+    test("records USER_VIEW_HISTORY for authenticated viewers", async () => {
+      const viewer = await seedUserWithRoleAndKey("viewer", "view-key-1");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public", viewCount: 0 });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/view`)
+        .set("Authorization", "Bearer view-key-1");
+
+      expect(res.status).toBe(200);
+      expect(res.body.viewCount).toBe(1);
+
+      const history = await queryRows(
+        "SELECT * FROM USER_VIEW_HISTORY WHERE original_upload_id = :id AND user_id = :userId",
+        { id: upload.id, userId: viewer.id },
+      );
+      expect(history).toHaveLength(1);
+
+      // A second view from the same user records a second row (no dedup).
+      await client
+        .post(`/api/v1/videos/${upload.id}/view`)
+        .set("Authorization", "Bearer view-key-1");
+
+      const historyAfter = await queryRows(
+        "SELECT * FROM USER_VIEW_HISTORY WHERE original_upload_id = :id AND user_id = :userId",
+        { id: upload.id, userId: viewer.id },
+      );
+      expect(historyAfter).toHaveLength(2);
+    });
+
+    test("likes and dislikes require auth, persist VIDEO_LIKES, and toggle off on repeat", async () => {
       const viewer = await seedUserWithRoleAndKey("viewer", "like-key-1");
       const upload = await seedUpload();
       await seedMetadata(upload.id, { visibility: "public" });
+
+      const likeRow = () =>
+        queryRows(
+          "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id AND user_id = :userId",
+          { id: upload.id, userId: viewer.id },
+        );
 
       const likeRes = await client
         .post(`/api/v1/videos/${upload.id}/like`)
         .set("Authorization", "Bearer like-key-1");
       expect(likeRes.status).toBe(200);
-      expect(likeRes.body).toEqual({ liked: true });
+      expect(likeRes.body).toEqual({ liked: true, disliked: false });
 
-      const likes = await queryRows(
-        "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id AND user_id = :userId",
-        { id: upload.id, userId: viewer.id },
-      );
-      expect(likes).toHaveLength(1);
+      let rows = await likeRow();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].like_value).toBe(1);
 
+      // Switching to dislike replaces the row rather than adding a second one.
       const dislikeRes = await client
         .post(`/api/v1/videos/${upload.id}/dislike`)
         .set("Authorization", "Bearer like-key-1");
       expect(dislikeRes.status).toBe(200);
-      expect(dislikeRes.body).toEqual({ liked: false });
+      expect(dislikeRes.body).toEqual({ liked: false, disliked: true });
 
-      const after = await queryRows(
-        "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id AND user_id = :userId",
-        { id: upload.id, userId: viewer.id },
-      );
-      expect(after).toHaveLength(0);
+      rows = await likeRow();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].like_value).toBe(-1);
+
+      // Disliking again while already disliked toggles the reaction off.
+      const toggleOffRes = await client
+        .post(`/api/v1/videos/${upload.id}/dislike`)
+        .set("Authorization", "Bearer like-key-1");
+      expect(toggleOffRes.status).toBe(200);
+      expect(toggleOffRes.body).toEqual({ liked: false, disliked: false });
+
+      rows = await likeRow();
+      expect(rows).toHaveLength(0);
+    });
+
+    test("getVideo includes viewerReaction only for authenticated callers", async () => {
+      await seedUserWithRoleAndKey("viewer", "like-key-2");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const anonRes = await client.get(`/api/v1/videos/${upload.id}`);
+      expect(anonRes.status).toBe(200);
+      expect(anonRes.body.viewerReaction).toBeUndefined();
+
+      const beforeRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer like-key-2");
+      expect(beforeRes.status).toBe(200);
+      expect(beforeRes.body.viewerReaction).toBeNull();
+
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-key-2");
+
+      const afterRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer like-key-2");
+      expect(afterRes.status).toBe(200);
+      expect(afterRes.body.viewerReaction).toBe("like");
     });
   });
 

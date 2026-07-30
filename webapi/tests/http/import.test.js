@@ -154,9 +154,9 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       status: "uploaded",
       userId: uploaderUser.id,
     });
-    expect(typeof res.body.uuidName).toBe("string");
-    expect(res.body.uuidName).toHaveLength(36);
-    expect(res.body.storagePath).toBe(`original/${res.body.uuidName}.mp4`);
+    expect(typeof res.body.videoId).toBe("string");
+    expect(res.body.videoId).toHaveLength(6);
+    expect(res.body.storagePath).toBe(`original/${res.body.videoId}.mp4`);
     expect(res.body.fileVersions).toEqual([]);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -170,18 +170,18 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     const transcodePayload = JSON.parse(String(transcodeCall[1].body));
     expect(transcodePayload.jobs).toHaveLength(1);
     expect(transcodePayload.jobs[0]).toMatchObject({
-      jobId: res.body.uuidName,
-      outputFilename: `${res.body.uuidName}.webp`,
+      jobId: res.body.videoId,
+      outputFilename: `${res.body.videoId}.webp`,
       kind: "thumbnail",
       timestampSeconds: null,
     });
 
-    expect(existsSync(join(originalDir, `${res.body.uuidName}.mp4`))).toBe(true);
+    expect(existsSync(join(originalDir, `${res.body.videoId}.mp4`))).toBe(true);
     expect(existsSync(join(originalDir, "1737900000.mp4"))).toBe(false);
 
     const rows = await queryRows(
-      "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
-      { uuidName: res.body.uuidName },
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+      { videoId: res.body.videoId },
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].original_filename).toBe("1737900000.mp4");
@@ -205,8 +205,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(payload.jobs[0].timestampSeconds).toBe(12.3);
 
     const rows = await queryRows(
-      "SELECT * FROM ORIGINAL_UPLOADS WHERE uuid_name = :uuidName",
-      { uuidName: res.body.uuidName },
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+      { videoId: res.body.videoId },
     );
     expect(Number(rows[0].thumbnail_timestamp_tenths)).toBe(123);
   });
@@ -262,7 +262,7 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       (call) => call[0] === "http://processing.test:3001/transcode",
     );
     const payload = JSON.parse(String(transcodeCall[1].body));
-    expect(payload.filename).toBe(`${res.body.uuidName}.mp4`);
+    expect(payload.filename).toBe(`${res.body.videoId}.mp4`);
     // One thumbnail job + one job for the rendition profile.
     expect(payload.jobs).toHaveLength(2);
     const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
