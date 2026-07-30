@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { ImageOff, MoreVertical } from 'lucide-react'
 import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/format.js'
@@ -12,11 +13,21 @@ const TITLE_FONT_SIZE = 18
 const TITLE_FONT_WEIGHT = 500
 const TITLE_SHRINK_PX = 4
 
-function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
+function VideoCard({
+  video,
+  orientation = 'vertical',
+  hideMenu = false,
+  linkTo,
+  active = false,
+  onRemoveFromPlaylist,
+}) {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [dropdownPosition, setDropdownPosition] = useState(null)
   const menuRef = useRef(null)
+  const toggleRef = useRef(null)
+  const dropdownRef = useRef(null)
   const titleRef = useRef(null)
   const measureCanvasRef = useRef(null)
   const [titleShrunk, setTitleShrunk] = useState(false)
@@ -56,7 +67,7 @@ function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
 
   const isOwner = Boolean(user) && user.id === video.uploader?.userId
   const isModerator = user?.role === 'moderator' || user?.role === 'admin'
-  const videoPath = `/video?v=${video.videoId}`
+  const videoPath = linkTo ?? `/video?v=${video.videoId}`
 
   async function handleCopyLink() {
     setMenuOpen(false)
@@ -66,6 +77,22 @@ function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
   function closeMenu() {
     setMenuOpen(false)
     setAddMenuOpen(false)
+  }
+
+  function handleToggleMenu() {
+    if (!menuOpen) {
+      const rect = toggleRef.current.getBoundingClientRect()
+      const openUpward = window.innerHeight - rect.bottom < 220
+      setDropdownPosition({
+        right: window.innerWidth - rect.right,
+        ...(openUpward
+          ? { bottom: window.innerHeight - rect.top + 4 }
+          : { top: rect.bottom + 4 }),
+      })
+      setMenuOpen(true)
+    } else {
+      closeMenu()
+    }
   }
 
   async function handleToggleAddMenu() {
@@ -107,7 +134,9 @@ function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
     }
 
     function handleClickOutside(event) {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
+      const clickedMenu = menuRef.current?.contains(event.target)
+      const clickedDropdown = dropdownRef.current?.contains(event.target)
+      if (!clickedMenu && !clickedDropdown) {
         closeMenu()
       }
     }
@@ -116,9 +145,26 @@ function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [menuOpen])
 
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined
+    }
+
+    // The dropdown is portaled to <body> with a fixed position computed on
+    // open, so it won't track its trigger if an ancestor (e.g. the playlist
+    // queue's scrollable rail) scrolls - close it instead of leaving it
+    // floating in the wrong place.
+    function handleScroll() {
+      closeMenu()
+    }
+
+    window.addEventListener('scroll', handleScroll, true)
+    return () => window.removeEventListener('scroll', handleScroll, true)
+  }, [menuOpen])
+
   return (
     <article
-      className={`video-card video-card-${orientation}${menuOpen ? ' video-card-menu-open' : ''}`}
+      className={`video-card video-card-${orientation}${menuOpen ? ' video-card-menu-open' : ''}${active ? ' video-card-active' : ''}`}
     >
       <Link to={videoPath} className="video-card-thumb">
         {thumbnailUrl ? (
@@ -151,15 +197,20 @@ function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
         {!hideMenu && (
           <div className="video-card-menu" ref={menuRef}>
             <button
+              ref={toggleRef}
               type="button"
               className="video-card-menu-toggle"
               aria-label="Video options"
-              onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+              onClick={handleToggleMenu}
             >
               <MoreVertical size={18} />
             </button>
-            {menuOpen && (
-              <div className="video-card-menu-dropdown">
+            {menuOpen && dropdownPosition && createPortal(
+              <div
+                className="video-card-menu-dropdown"
+                ref={dropdownRef}
+                style={{ position: 'fixed', ...dropdownPosition }}
+              >
                 <button type="button" className="video-card-menu-item" onClick={handleCopyLink}>
                   Copy Link
                 </button>
@@ -207,6 +258,18 @@ function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
                     })}
                   </div>
                 )}
+                {onRemoveFromPlaylist && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={() => {
+                      closeMenu()
+                      onRemoveFromPlaylist()
+                    }}
+                  >
+                    Remove from Playlist
+                  </button>
+                )}
                 {isOwner && (
                   <button
                     type="button"
@@ -225,7 +288,8 @@ function VideoCard({ video, orientation = 'vertical', hideMenu = false }) {
                     MOD: Delist
                   </button>
                 )}
-              </div>
+              </div>,
+              document.body,
             )}
           </div>
         )}

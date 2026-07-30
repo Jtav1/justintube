@@ -60,6 +60,14 @@ function serializePlaylist(playlist, itemCount) {
     description: playlist.description ?? null,
     visibility: playlist.visibility,
     itemCount,
+    owner: playlist.User
+      ? {
+        id: playlist.User.id,
+        username: playlist.User.username,
+        displayName: playlist.User.displayName ?? null,
+        avatarFilename: playlist.User.avatarFilename ?? null,
+      }
+      : null,
     lastAddedAt: playlist.lastAddedAt ?? null,
     createdAt: playlist.createdAt,
     updatedAt: playlist.updatedAt,
@@ -176,7 +184,7 @@ export async function buildPlaylistsPage(rows, count, { page, limit, user, role 
         ],
         order: [
           ["position", "ASC"],
-          ["addedAt", "ASC"],
+          ["addedAt", "DESC"],
         ],
         limit: 5,
       });
@@ -188,8 +196,9 @@ export async function buildPlaylistsPage(rows, count, { page, limit, user, role 
           ? `/api/v1/videos/${item.OriginalUpload.id}/thumbnail`
           : null))
         .filter(Boolean);
+      const latestVideoId = viewableItems[0]?.OriginalUpload.videoId ?? null;
 
-      return [playlist.id, thumbnails];
+      return [playlist.id, { thumbnails, latestVideoId }];
     }),
   );
   const thumbnailsByPlaylistId = new Map(thumbnailEntries);
@@ -209,7 +218,8 @@ export async function buildPlaylistsPage(rows, count, { page, limit, user, role 
           avatarFilename: playlist.User.avatarFilename ?? null,
         }
         : null,
-      thumbnails: thumbnailsByPlaylistId.get(playlist.id) ?? [],
+      thumbnails: thumbnailsByPlaylistId.get(playlist.id)?.thumbnails ?? [],
+      latestVideoId: thumbnailsByPlaylistId.get(playlist.id)?.latestVideoId ?? null,
       lastAddedAt: playlist.lastAddedAt ?? null,
       createdAt: playlist.createdAt,
     })),
@@ -431,7 +441,9 @@ export function createPlaylistsRouter() {
         return;
       }
 
-      const playlist = await UserPlaylist.findByPk(id);
+      const playlist = await UserPlaylist.findByPk(id, {
+        include: [{ model: User, required: false }],
+      });
       if (!playlist) {
         sendNotFound(res);
         return;
@@ -458,7 +470,7 @@ export function createPlaylistsRouter() {
         ],
         order: [
           ["position", "ASC"],
-          ["addedAt", "ASC"],
+          ["addedAt", "DESC"],
         ],
       });
 

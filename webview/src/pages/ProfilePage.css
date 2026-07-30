@@ -10,7 +10,6 @@
   background-size: cover;
   background-position: center;
   overflow: visible;
-  margin-bottom: 24px;
 }
 
 @media (min-width: 1024px) {
@@ -171,7 +170,7 @@
   align-items: flex-start;
   gap: 8px;
   padding-left: 340px;
-  margin-bottom: 24px;
+  margin-bottom: 125px;
 }
 
 .profile-bio {
@@ -296,8 +295,14 @@
 
 .profile-videos-header {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   margin-bottom: 16px;
+}
+
+.profile-videos-title {
+  margin: 0;
+  margin-right: auto;
 }
 
 .profile-sort {
@@ -321,7 +326,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px;
-  margin-top: 50px;
+  margin-top: 10px;
 }
 
 .profile-load-more {

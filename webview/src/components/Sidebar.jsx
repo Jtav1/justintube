@@ -12,12 +12,12 @@ function Sidebar({ collapsed, backgroundUrl }) {
     { key: 'playlists', label: 'Playlists', icon: ListVideo, to: '/playlists' },
     { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : '/'},
     { key: 'featured', label: 'Featured', icon: Star, to: '/featured' },
-    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: user ? `/subscriptions/${user.username}` : '/' },
+    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: null },
     ...(user?.role === 'admin'
-      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
+      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: null }]
       : []),
-    ...((user?.role === 'moderator' || user?.role === 'admin') 
-      ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: '/reports'}]
+    ...((user?.role === 'moderator' || user?.role === 'admin')
+      ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: null }]
       : []),
   ]
 

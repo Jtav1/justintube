@@ -57,6 +57,27 @@
   margin-bottom: 8px;
 }
 
+.create-playlist-card .playlist-card {
+  margin-bottom: 8px;
+}
+
+.create-playlist-edit-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  width: 100%;
+  max-width: 1040px;
+}
+
+.create-playlist-edit-layout .create-playlist-card {
+  flex: 1 1 480px;
+}
+
+.create-playlist-edit-layout .playlist-queue {
+  width: 320px;
+  flex-shrink: 0;
+}
+
 .create-playlist-error {
   margin: 0;
   font-size: 14px;
@@ -86,5 +107,32 @@
 
 .create-playlist-submit:focus-visible {
   outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.create-playlist-delete {
+  font: inherit;
+  margin-top: 4px;
+  padding: 10px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  color: #d33;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.3s, background 0.3s;
+}
+
+.create-playlist-delete:hover:not(:disabled) {
+  background: rgba(221, 51, 51, 0.1);
+  border-color: #d33;
+}
+
+.create-playlist-delete:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.create-playlist-delete:focus-visible {
+  outline: 2px solid #d33;
   outline-offset: 2px;
 }

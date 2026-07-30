@@ -35,6 +35,50 @@ export async function createPlaylist({ name, description, visibility }) {
 }
 
 /**
+ * Gets a single playlist and every video item within it (newest-added-first),
+ * filtered to what the current viewer may see.
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+export async function getPlaylist(id) {
+  const res = await apiClient.get(`/api/v1/playlists/${id}`)
+  return res.data
+}
+
+/**
+ * Updates a playlist's metadata. Owner or admin only.
+ * @param {number|string} id
+ * @param {{ name?: string, description?: string|null, visibility?: string }} updates
+ * @returns {Promise<object>}
+ */
+export async function updatePlaylist(id, { name, description, visibility }) {
+  const res = await apiClient.patch(`/api/v1/playlists/${id}`, { name, description, visibility })
+  return res.data
+}
+
+/**
+ * Deletes a playlist. Owner or admin only. Cascades to the playlist's items
+ * and access grants server-side.
+ * @param {number|string} id
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function deletePlaylist(id) {
+  const res = await apiClient.delete(`/api/v1/playlists/${id}`)
+  return res.data
+}
+
+/**
+ * Removes a video from a playlist. Owner or admin only. Idempotent.
+ * @param {number|string} playlistId
+ * @param {number} videoId Numeric OriginalUpload id (not the public videoId).
+ * @returns {Promise<{itemCount: number}>}
+ */
+export async function removePlaylistItem(playlistId, videoId) {
+  const res = await apiClient.delete(`/api/v1/playlists/${playlistId}/items/${videoId}`)
+  return res.data
+}
+
+/**
  * Adds a video to a playlist. Usable by the playlist owner or a moderator/admin.
  * @param {number} playlistId
  * @param {number} videoId Numeric OriginalUpload id (not the public videoId).

@@ -1,9 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Pencil, Repeat, Settings2, ThumbsDown, ThumbsUp, UserRound } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import {
+  ListMinus,
+  ListPlus,
+  Pencil,
+  Repeat,
+  Settings2,
+  ThumbsDown,
+  ThumbsUp,
+  UserRound,
+} from 'lucide-react'
 import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
 import { dislikeVideo, likeVideo, recordView } from '../api/videos.js'
+import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { useAuth } from '../context/useAuth.js'
 import './VideoPlayer.css'
 
@@ -29,8 +39,9 @@ function pickDefaultRendition(renditions) {
   )
 }
 
-function VideoPlayer({ video }) {
+function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const renditions = video.renditions ?? []
   const [selectedRendition, setSelectedRendition] = useState(() => pickDefaultRendition(renditions))
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false)
@@ -39,8 +50,16 @@ function VideoPlayer({ video }) {
   const [reactionPending, setReactionPending] = useState(false)
   const [avatarFailed, setAvatarFailed] = useState(false)
 
+  const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
+  const [myPlaylists, setMyPlaylists] = useState(null)
+  const [playlistsLoading, setPlaylistsLoading] = useState(false)
+  const [playlistsError, setPlaylistsError] = useState(null)
+  const [addStatus, setAddStatus] = useState({})
+
   const videoRef = useRef(null)
   const qualityMenuRef = useRef(null)
+  const playlistMenuRef = useRef(null)
+  const playlistDropdownRef = useRef(null)
   const resumeStateRef = useRef(null)
   const viewRecordedRef = useRef(false)
   const titleRef = useRef(null)
@@ -98,6 +117,60 @@ function VideoPlayer({ video }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [qualityMenuOpen])
+
+  useEffect(() => {
+    if (!playlistMenuOpen) {
+      return undefined
+    }
+
+    function handleClickOutside(event) {
+      if (playlistMenuRef.current && !playlistMenuRef.current.contains(event.target)) {
+        setPlaylistMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [playlistMenuOpen])
+
+  useEffect(() => {
+    if (playlistMenuOpen) {
+      playlistDropdownRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [playlistMenuOpen])
+
+  async function handleTogglePlaylistMenu() {
+    const opening = !playlistMenuOpen
+    setPlaylistMenuOpen(opening)
+    if (opening && myPlaylists === null && !playlistsLoading) {
+      setPlaylistsLoading(true)
+      setPlaylistsError(null)
+      try {
+        const data = await listMyPlaylists({ limit: 99 })
+        setMyPlaylists(data.items)
+      } catch {
+        setPlaylistsError('Failed to load your playlists.')
+      } finally {
+        setPlaylistsLoading(false)
+      }
+    }
+  }
+
+  function handleCreateNewPlaylist() {
+    setPlaylistMenuOpen(false)
+    navigate(`/playlists/new?videoId=${video.id}`)
+  }
+
+  async function handleAddToExistingPlaylist(playlistId) {
+    setAddStatus((prev) => ({ ...prev, [playlistId]: 'adding' }))
+    try {
+      await addVideoToPlaylist(playlistId, video.id)
+      setPlaylistMenuOpen(false)
+    } catch (err) {
+      const conflict = err?.response?.status === 409
+      setAddStatus((prev) => ({ ...prev, [playlistId]: conflict ? 'conflict' : 'error' }))
+    }
+  }
 
   function handleSelectQuality(rendition) {
     const el = videoRef.current
@@ -268,6 +341,68 @@ function VideoPlayer({ video }) {
             >
               <Pencil size={18} />
             </Link>
+          )}
+          <div className="video-player-add-to-playlist" ref={playlistMenuRef}>
+            <button
+              type="button"
+              className={`video-player-icon-btn${playlistMenuOpen ? ' video-player-icon-btn-active' : ''}`}
+              aria-label="Add to playlist"
+              disabled={!user}
+              onClick={handleTogglePlaylistMenu}
+            >
+              <ListPlus size={18} />
+            </button>
+            {playlistMenuOpen && (
+              <div className="video-player-playlist-dropdown" ref={playlistDropdownRef}>
+                <button
+                  type="button"
+                  className="video-player-playlist-item video-player-playlist-item-create"
+                  onClick={handleCreateNewPlaylist}
+                >
+                  Create New Playlist
+                </button>
+                {playlistsLoading && (
+                  <p className="video-player-playlist-note">Loading your playlists...</p>
+                )}
+                {playlistsError && (
+                  <p className="video-player-playlist-note video-player-playlist-note-error">
+                    {playlistsError}
+                  </p>
+                )}
+                {!playlistsLoading && myPlaylists && myPlaylists.length === 0 && (
+                  <p className="video-player-playlist-note">
+                    You don&apos;t have any playlists yet.
+                  </p>
+                )}
+                {myPlaylists?.map((playlist) => {
+                  const status = addStatus[playlist.id]
+                  return (
+                    <button
+                      key={playlist.id}
+                      type="button"
+                      className="video-player-playlist-item"
+                      disabled={status === 'adding'}
+                      onClick={() => handleAddToExistingPlaylist(playlist.id)}
+                    >
+                      {playlist.title}
+                      {status === 'adding' && ' — Adding...'}
+                      {status === 'conflict' && ' — Already added'}
+                      {status === 'error' && ' — Failed, try again'}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          {onRemoveFromPlaylist && (
+            <button
+              type="button"
+              className="video-player-icon-btn"
+              aria-label="Remove from playlist"
+              onClick={onRemoveFromPlaylist}
+            >
+              <ListMinus size={18} />
+            </button>
           )}
           <button
             type="button"

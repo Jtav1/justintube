@@ -28,6 +28,7 @@ function App() {
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/playlists/new" element={<CreatePlaylistPage />} />
+        <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
         <Route path="/users/:username/playlists" element={<UserPlaylistsPage />} />
         <Route path="/playlists" element={<PlaylistsPage />} />
         <Route path="/liked/:username" element={<LikedVideosPage />} />

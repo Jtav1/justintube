@@ -37,7 +37,11 @@ function ProfilePage() {
   const [error, setError] = useState(null)
 
   const [playlists, setPlaylists] = useState(null)
-  const [playlistsColumns, setPlaylistsColumns] = useState(1)
+  // Starts at Infinity (not 1) so nothing is trimmed before the grid has
+  // mounted and been measured - the grid only renders once visiblePlaylists
+  // is non-empty, so an initial column count of 1 would trim every playlist
+  // away and the ref (needed to measure and correct it) would never attach.
+  const [playlistsColumns, setPlaylistsColumns] = useState(Infinity)
   const playlistsGridRef = useRef(null)
   const [bannerUploading, setBannerUploading] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
@@ -437,6 +441,9 @@ function ProfilePage() {
       )}
 
       <div className="profile-videos-header">
+        {visiblePlaylists.length > 0 && (
+          <h2 className="profile-section-title profile-videos-title">All Videos</h2>
+        )}
         <label className="profile-sort">
           Sort by
           <select value={sort} onChange={handleSortChange}>
