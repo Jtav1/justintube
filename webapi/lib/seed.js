@@ -97,7 +97,7 @@ const SEEDED_THEMES = [
     color2: "FFFFFF",
     color3: "6B6375",
     color4: "08060D",
-    color5: "AA3BFF",
+    color5: "378bfa",
   },
   {
     name: "Dark",
@@ -106,7 +106,7 @@ const SEEDED_THEMES = [
     color2: "16171D",
     color3: "9CA3AF",
     color4: "F3F4F6",
-    color5: "C084FC",
+    color5: "2e62ff",
   },
 ];
 
@@ -175,5 +175,54 @@ export async function seedAdminUser() {
 
   if (created) {
     console.log(`[api]: seeded admin user "${username}"`);
+  }
+}
+
+/**
+ * The standard non-admin demo accounts seeded on boot, for local development
+ * and testing. All share the password "password".
+ *
+ * @type {Array<{username: string, role: string}>}
+ */
+const DEFAULT_DEMO_USERS = [
+  { username: "User1", role: "viewer" },
+  { username: "User2", role: "viewer" },
+  { username: "Mod1", role: "moderator" },
+];
+
+/**
+ * Ensures the standard non-admin demo accounts (User1, User2, Mod1) exist,
+ * each with the password "password". Creates accounts on first run only;
+ * does not overwrite password or role on later startups. Idempotent via
+ * findOrCreate, safe to call on every boot.
+ *
+ * @returns {Promise<void>} Resolves once demo user seeding has been attempted.
+ */
+export async function seedDemoUsers() {
+  for (const { username, role } of DEFAULT_DEMO_USERS) {
+    const userRole = await Role.findOne({ where: { name: role } });
+    if (!userRole) {
+      console.warn(`[api]: ${role} role missing; skipping demo user "${username}" seed.`);
+      continue;
+    }
+
+    const passwordHash = await hashPassword("password");
+    const [, created] = await User.findOrCreate({
+      where: { username },
+      defaults: {
+        username,
+        email: `${username.toLowerCase()}@localhost`,
+        displayName: username,
+        passwordHash,
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
+        uploader: true,
+        roleId: userRole.id,
+      },
+    });
+
+    if (created) {
+      console.log(`[api]: seeded demo user "${username}"`);
+    }
   }
 }

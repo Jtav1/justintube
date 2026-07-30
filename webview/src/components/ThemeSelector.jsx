@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom'
 import { Check } from 'lucide-react'
 import { useTheme } from '../context/useTheme.js'
 import './ThemeSelector.css'
@@ -48,9 +47,9 @@ function ThemeSelector() {
           </button>
         ))}
       </div>
-      <Link to="/themes/edit" className="theme-selector-edit-link">
-        Edit Themes
-      </Link>
+      <button type="button" className="theme-selector-edit-link" disabled>
+        Edit Themes (Coming soon)
+      </button>
     </div>
   )
 }

@@ -122,15 +122,6 @@
   box-sizing: border-box;
 }
 
-/* Distinguished-comment colors are fixed regardless of light/dark theme. */
-.video-comments-item-mod {
-  background: #e3f6e8;
-}
-
-.video-comments-item-admin {
-  background: #fbe4e2;
-}
-
 .video-comments-avatar-link {
   flex-shrink: 0;
 }
@@ -153,6 +144,7 @@
 
 .video-comments-item-body {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 4px;
   min-width: 0;

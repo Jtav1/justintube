@@ -82,6 +82,9 @@ function VideoSuggested({ video }) {
       {!loading && suggestions.length === 0 && (
         <p className="video-suggested-empty">No suggestions available.</p>
       )}
+      {!loading && suggestions.length !== 0 && (
+        <p className="video-suggested-title">Suggested Videos</p>
+      )}
       <div className="video-suggested-list">
         {suggestions.map((item) => (
           <VideoCard key={item.id} video={item} orientation="horizontal" />

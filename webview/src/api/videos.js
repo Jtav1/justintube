@@ -50,6 +50,17 @@ export async function getNewestVideos() {
 }
 
 /**
+ * Lists videos the current user has liked (that they can still view), newest
+ * like first. Requires authentication.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function getMyLikes({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/me/likes', { params: { page, limit } })
+  return res.data
+}
+
+/**
  * Uploads a video file, creating an ORIGINAL_UPLOADS row (private by
  * default, with a default title derived from the filename). Callers should
  * follow up with updateVideo to set the real title/description/visibility/tags.
@@ -87,6 +98,17 @@ export async function setVideoAccess(id, usernames) {
 }
 
 /**
+ * Sets or clears a video's featured status. Admin only.
+ * @param {number} id
+ * @param {boolean} featured
+ * @returns {Promise<{featured: boolean}>}
+ */
+export async function setVideoFeatured(id, featured) {
+  const res = await apiClient.put(`/api/v1/videos/${id}/featured`, { featured })
+  return res.data
+}
+
+/**
  * Imports a video from a remote URL via the processing service, creating an
  * ORIGINAL_UPLOADS row the same way uploadVideoFile does.
  * @param {string} url
@@ -118,6 +140,39 @@ export async function updateVideoThumbnail(id, file) {
   const formData = new FormData()
   formData.append('file', file)
   const res = await apiClient.post(`/api/v1/videos/${id}/thumbnail`, formData)
+  return res.data
+}
+
+/**
+ * Likes a video, toggling the reaction off if already liked (replaces any
+ * existing dislike).
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{liked: boolean, disliked: boolean}>}
+ */
+export async function likeVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/like`)
+  return res.data
+}
+
+/**
+ * Dislikes a video, toggling the reaction off if already disliked (replaces
+ * any existing like).
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{liked: boolean, disliked: boolean}>}
+ */
+export async function dislikeVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/dislike`)
+  return res.data
+}
+
+/**
+ * Records a view: increments the video's view count (all viewers), and, when
+ * the caller is authenticated, adds a row to their watch history.
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{viewCount: number}>}
+ */
+export async function recordView(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/view`)
   return res.data
 }
 

@@ -137,6 +137,8 @@
 
 .video-player-title {
   margin: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
   font-size: 20px;
   font-weight: 600;
   line-height: 130%;
@@ -176,6 +178,29 @@
   white-space: pre-wrap;
 }
 
+.video-player-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.video-player-tags-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.video-player-tag {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--text-h);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .video-player-reactions {
   display: flex;
   align-items: center;
@@ -186,6 +211,7 @@
 .video-player-reactions .video-player-icon-btn {
   background: var(--code-bg);
   color: var(--text);
+  text-decoration: none;
 }
 
 .video-player-reactions .video-player-icon-btn:hover {
@@ -193,7 +219,17 @@
   color: var(--text-h);
 }
 
-.video-player-reactions .video-player-icon-btn-active {
+.video-player-reactions .video-player-icon-btn-like-active {
   background: var(--accent-bg);
-  color: var(--accent);
+  color: #1a9c3f;
+}
+
+.video-player-reactions .video-player-icon-btn-dislike-active {
+  background: var(--accent-bg);
+  color: #d32f2f;
+}
+
+.video-player-reactions .video-player-icon-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }

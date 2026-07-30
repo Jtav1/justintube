@@ -12,6 +12,7 @@ import UserPlaylistsPage from './pages/UserPlaylists.jsx'
 import PlaylistsPage from './pages/Playlists.jsx'
 import FeaturedVideosPage from './pages/FeaturedVideos.jsx'
 import SubscriptionsPage from './pages/UserSubscriptions.jsx'
+import LikedVideosPage from './pages/LikedVideos.jsx'
 
 function App() {
   return (
@@ -27,7 +28,7 @@ function App() {
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/playlists/:username" element={<UserPlaylistsPage />} />
         <Route path="/playlists" element={<PlaylistsPage />} />
-        <Route path="/liked/:username" element={<UserPlaylistsPage />} />
+        <Route path="/liked/:username" element={<LikedVideosPage />} />
         <Route path="/featured" element={<FeaturedVideosPage />} />
         <Route path="/subscriptions" element={<SubscriptionsPage />} />
       </Route>

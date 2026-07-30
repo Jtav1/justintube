@@ -22,6 +22,7 @@ import { UserApiKey } from "./user-api-key.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
+import { UserViewHistory } from "./user-view-history.js";
 import { VideoAccess } from "./video-access.js";
 import { VideoLike } from "./video-like.js";
 import { VideoMetadata } from "./video-metadata.js";
@@ -219,6 +220,24 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
+  User.hasMany(UserViewHistory, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  UserViewHistory.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasMany(UserViewHistory, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  UserViewHistory.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
   User.hasMany(VideoAccess, {
     foreignKey: "userId",
     onDelete: "CASCADE",
@@ -409,6 +428,7 @@ export const models = {
   Theme,
   VideoTransferMapping,
   VideoTransferHistory,
+  UserViewHistory,
 };
 
 export {
@@ -435,6 +455,7 @@ export {
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
+  UserViewHistory,
   VideoAccess,
   VideoLike,
   VideoMetadata,

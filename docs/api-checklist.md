@@ -50,6 +50,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `GET /api/v1/videos/:id/thumbnail` — getVideoThumbnail
 - [x] `POST /api/v1/videos/:id/thumbnail` — updateVideoThumbnail
 - [x] `POST /api/v1/videos/:id/delist` — delistVideo
+- [x] `PUT /api/v1/videos/:id/featured` — setVideoFeatured
 - [x] `GET /api/v1/videos/:id/access` — listVideoAccess
 - [x] `PUT /api/v1/videos/:id/access` — setVideoAccess
 - [x] `POST /api/v1/videos/:id/view` — recordVideoView

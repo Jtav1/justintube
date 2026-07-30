@@ -27,7 +27,7 @@ function VideoPage() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load video.')
+          setError('Failed to load video. Does this video exist?.')
         }
       } finally {
         if (!cancelled) {

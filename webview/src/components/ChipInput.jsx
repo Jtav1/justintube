@@ -22,6 +22,7 @@ function ChipInput({
   suggestions,
   onSelectSuggestion,
   suggestionsLoading,
+  inputMaxLength,
 }) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const wrapRef = useRef(null)
@@ -89,6 +90,7 @@ function ChipInput({
           onKeyDown={handleKeyDown}
           onFocus={() => hasSuggestionMode && setDropdownOpen(true)}
           placeholder={chips.length === 0 ? placeholder : ''}
+          maxLength={inputMaxLength}
         />
       </div>
       {showDropdown && (

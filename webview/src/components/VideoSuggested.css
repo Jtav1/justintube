@@ -13,7 +13,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(5 * 92px + 4 * 8px);
+  max-height: calc(10 * 92px + 4 * 8px); /* roughly the height of like 12 video cards lol the 92 is old */
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -24,4 +24,9 @@
 
 .video-suggested-list .video-card-title {
   font-size: 14px;
+}
+
+.video-suggested-title {
+  font-size: 18px;
+  font-weight: 500;
 }

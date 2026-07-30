@@ -6,6 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import { Op, literal } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
 import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
@@ -18,6 +19,7 @@ import {
   OriginalUpload,
   Subscription,
   User,
+  UserViewHistory,
   VideoAccess,
   VideoLike,
   VideoMetadata,
@@ -76,7 +78,8 @@ const allowedThumbnailExtensions = new Set(
  *
  * @type {number}
  */
-const maxThumbnailSizeBytes = Number(process.env.MAX_THUMBNAIL_SIZE_BYTES) || 5 * 1024 * 1024;
+const maxThumbnailSizeBytes =
+  Number(process.env.MAX_THUMBNAIL_SIZE_BYTES) || 5 * 1024 * 1024;
 
 /**
  * Normalizes a file's extension to a lowercase value without the leading dot.
@@ -226,6 +229,11 @@ function parsePositiveInt(raw) {
  *   can select between (single-video routes only — `getVideo`, `updateVideo`,
  *   `delistVideo` — omitted elsewhere to keep list/search responses
  *   lightweight).
+ * @param {"like"|"dislike"|null} [options.viewerReaction] The requesting user's current
+ *   reaction, when known. Only attached when explicitly passed (i.e. when the caller looked
+ *   it up for an authenticated viewer) — omitted from the payload entirely otherwise.
+ * @param {boolean} [options.featured] Whether the video is in FEATURED_VIDEOS. Only attached
+ *   when explicitly passed (admin callers on `getVideo`) — omitted otherwise.
  * @returns {{
  *   id: number,
  *   videoId: string,
@@ -251,7 +259,11 @@ export function serializeVideo(upload, metadata, options = {}) {
     visibility: metadata.visibility,
     commentsEnabled: Boolean(metadata.commentsEnabled),
     viewCount: Number(metadata.viewCount ?? 0),
-    uploader: serializeUserRef(upload.userId, upload.User?.username, upload.User?.displayName),
+    uploader: serializeUserRef(
+      upload.userId,
+      upload.User?.username,
+      upload.User?.displayName,
+    ),
     tags: options.tags ?? [],
     durationSeconds: upload.durationSeconds ?? null,
     thumbnailUrl: upload.VideoThumbnail
@@ -262,6 +274,12 @@ export function serializeVideo(upload, metadata, options = {}) {
   };
   if (options.renditions) {
     payload.renditions = options.renditions;
+  }
+  if (options.viewerReaction !== undefined) {
+    payload.viewerReaction = options.viewerReaction;
+  }
+  if (options.featured !== undefined) {
+    payload.featured = options.featured;
   }
   return payload;
 }
@@ -318,7 +336,8 @@ function serializeFileVersion(originalUploadId, version) {
     width: version.videoWidth,
     height: version.videoHeight,
     mimeType: version.mimeType ?? null,
-    fileSizeBytes: version.fileSizeBytes != null ? Number(version.fileSizeBytes) : null,
+    fileSizeBytes:
+      version.fileSizeBytes != null ? Number(version.fileSizeBytes) : null,
     streamUrl,
   };
 }
@@ -347,7 +366,8 @@ function serializeOriginalRendition(upload) {
     width: upload.videoWidth,
     height: upload.videoHeight,
     mimeType: upload.mimeType ?? null,
-    fileSizeBytes: upload.fileSizeBytes != null ? Number(upload.fileSizeBytes) : null,
+    fileSizeBytes:
+      upload.fileSizeBytes != null ? Number(upload.fileSizeBytes) : null,
     streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
   };
 }
@@ -366,7 +386,9 @@ async function loadRenditions(upload) {
     where: { originalUploadId: upload.id, status: "complete" },
     order: [["videoHeight", "ASC"]],
   });
-  const renditions = completeVersions.map((version) => serializeFileVersion(upload.id, version));
+  const renditions = completeVersions.map((version) =>
+    serializeFileVersion(upload.id, version),
+  );
   renditions.push(serializeOriginalRendition(upload));
   return renditions;
 }
@@ -392,7 +414,11 @@ function serializeComment(comment) {
     id: comment.id,
     originalUploadId: comment.originalUploadId,
     parentCommentId: comment.parentCommentId ?? null,
-    author: serializeUserRef(comment.userId, comment.User?.username, comment.User?.displayName),
+    author: serializeUserRef(
+      comment.userId,
+      comment.User?.username,
+      comment.User?.displayName,
+    ),
     body: comment.body,
     distinguishedMod: Boolean(comment.distinguishedMod),
     distinguishedAdmin: Boolean(comment.distinguishedAdmin),
@@ -420,6 +446,34 @@ async function loadUploadWithMetadata(id) {
     return null;
   }
   return { upload, metadata: upload.VideoMetadata };
+}
+
+/**
+ * Sets the caller's reaction (like/dislike) on a video, toggling off if the same reaction is
+ * already recorded. At most one VIDEO_LIKES row exists per (userId, originalUploadId); this
+ * always replaces or removes that row rather than ever storing more than one.
+ *
+ * @param {number} originalUploadId ORIGINAL_UPLOADS id being reacted to.
+ * @param {number} userId Reacting user's id.
+ * @param {1|-1} value 1 for like, -1 for dislike.
+ * @returns {Promise<{liked: boolean, disliked: boolean}>} Resulting reaction state.
+ */
+async function toggleVideoReaction(originalUploadId, userId, value) {
+  const existing = await VideoLike.findOne({
+    where: { originalUploadId, userId },
+  });
+
+  if (existing && existing.likeValue === value) {
+    await existing.destroy();
+    return { liked: false, disliked: false };
+  }
+
+  if (existing) {
+    await existing.destroy();
+  }
+  await VideoLike.create({ originalUploadId, userId, likeValue: value });
+
+  return { liked: value === 1, disliked: value === -1 };
 }
 
 /**
@@ -516,7 +570,9 @@ async function listPublicVideos(options = {}) {
   if (options.viewerUserId) {
     visibilityOr.push({
       userId: options.viewerUserId,
-      "$VideoMetadata.visibility$": { [Op.in]: ["unlisted", "hidden", "private"] },
+      "$VideoMetadata.visibility$": {
+        [Op.in]: ["unlisted", "hidden", "private"],
+      },
     });
 
     const grants = await VideoAccess.findAll({
@@ -546,7 +602,9 @@ async function listPublicVideos(options = {}) {
     order: options.order || [["id", "ASC"]],
   });
 
-  const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+  const tagsByUploadId = await loadTagsByUploadId(
+    rows.map((upload) => upload.id),
+  );
   return rows.map((upload) =>
     serializeVideo(upload, upload.VideoMetadata, {
       tags: tagsByUploadId.get(upload.id) || [],
@@ -722,13 +780,11 @@ function parseUpdateVideoBody(body) {
     patch.commentsEnabled = commentsEnabled.value;
   }
 
-  if (
-    Object.keys(patch).length === 0 &&
-    tags.value === undefined
-  ) {
+  if (Object.keys(patch).length === 0 && tags.value === undefined) {
     return {
       ok: false,
-      message: "At least one of title, description, visibility, commentsEnabled, or tags is required.",
+      message:
+        "At least one of title, description, visibility, commentsEnabled, or tags is required.",
     };
   }
 
@@ -757,7 +813,10 @@ function parseAccessBody(body) {
   for (const item of body.usernames) {
     const username = String(item ?? "").trim();
     if (!username) {
-      return { ok: false, message: "usernames entries must be non-empty strings." };
+      return {
+        ok: false,
+        message: "usernames entries must be non-empty strings.",
+      };
     }
     const key = username.toLowerCase();
     if (seen.has(key)) {
@@ -791,7 +850,10 @@ function parseCreateCommentBody(body) {
     return { ok: false, message: "body is required." };
   }
   if (text.length > MAX_COMMENT_LENGTH) {
-    return { ok: false, message: `body must be at most ${MAX_COMMENT_LENGTH} characters.` };
+    return {
+      ok: false,
+      message: `body must be at most ${MAX_COMMENT_LENGTH} characters.`,
+    };
   }
 
   const result = { ok: true, body: text };
@@ -799,7 +861,10 @@ function parseCreateCommentBody(body) {
   if (body.parentCommentId !== undefined) {
     const parentCommentId = Number(body.parentCommentId);
     if (!Number.isInteger(parentCommentId) || parentCommentId < 1) {
-      return { ok: false, message: "parentCommentId must be a positive integer." };
+      return {
+        ok: false,
+        message: "parentCommentId must be a positive integer.",
+      };
     }
     result.parentCommentId = parentCommentId;
   }
@@ -844,7 +909,10 @@ function parseUpdateCommentBody(body) {
       return { ok: false, message: "body must be a non-empty string." };
     }
     if (text.length > MAX_COMMENT_LENGTH) {
-      return { ok: false, message: `body must be at most ${MAX_COMMENT_LENGTH} characters.` };
+      return {
+        ok: false,
+        message: `body must be at most ${MAX_COMMENT_LENGTH} characters.`,
+      };
     }
     patch.body = text;
   }
@@ -866,7 +934,8 @@ function parseUpdateCommentBody(body) {
   if (Object.keys(patch).length === 0) {
     return {
       ok: false,
-      message: "At least one of body, distinguishedMod, or distinguishedAdmin is required.",
+      message:
+        "At least one of body, distinguishedMod, or distinguishedAdmin is required.",
     };
   }
 
@@ -899,7 +968,9 @@ export function createVideosRouter() {
   router.get("/videos", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
-        order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        order: [
+          [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
+        ],
         viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
@@ -960,7 +1031,9 @@ export function createVideosRouter() {
   router.get("/videos/newest", optionalAuth, async (req, res) => {
     try {
       const items = await listPublicVideos({
-        order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        order: [
+          [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
+        ],
         viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
@@ -977,7 +1050,10 @@ export function createVideosRouter() {
    * GET /videos/:id — getVideo
    * Auth: optional. Private requires owner, grant, or admin. Accepts either
    * the numeric id or the video's public videoId (see `videoId` on the
-   * response payload) — the video page link uses the videoId.
+   * response payload) — the video page link uses the videoId. When the
+   * caller is authenticated, the payload includes `viewerReaction`
+   * ("like"/"dislike"/null) reflecting their current vote. When the caller is
+   * an admin, the payload also includes `featured` (boolean).
    *
    * @openapi
    * /api/v1/videos/{id}:
@@ -1016,17 +1092,33 @@ export function createVideosRouter() {
       const renditions = await loadRenditions(upload);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
 
-      res.status(200).json(
-        serializeVideo(upload, metadata, {
-          tags: tagsByUploadId.get(upload.id) || [],
-          renditions,
-        }),
-      );
+      const serializeOptions = {
+        tags: tagsByUploadId.get(upload.id) || [],
+        renditions,
+      };
+      if (req.user) {
+        const viewerLike = await VideoLike.findOne({
+          where: { originalUploadId: upload.id, userId: req.user.id },
+        });
+        serializeOptions.viewerReaction = viewerLike
+          ? viewerLike.likeValue === 1
+            ? "like"
+            : "dislike"
+          : null;
+      }
+      if (req.authRole?.name === "admin") {
+        const featuredRow = await FeaturedVideo.findOne({
+          where: { originalUploadId: upload.id },
+        });
+        serializeOptions.featured = Boolean(featuredRow);
+      }
+
+      res.status(200).json(serializeVideo(upload, metadata, serializeOptions));
     } catch (err) {
       console.error("getVideo failed:", err);
       res.status(500).json({
         error: "internal_error",
-        message: "Failed to load video.",
+        message: "Failed to load video. Does this video exist?",
       });
     }
   });
@@ -1097,7 +1189,12 @@ export function createVideosRouter() {
 
       if (requestedQuality === "original") {
         const absolutePath = resolveMediaPath(upload.storagePath);
-        await streamFileWithRangeSupport(req, res, absolutePath, upload.mimeType);
+        await streamFileWithRangeSupport(
+          req,
+          res,
+          absolutePath,
+          upload.mimeType,
+        );
         return;
       }
 
@@ -1123,7 +1220,12 @@ export function createVideosRouter() {
       }
 
       const absolutePath = resolveMediaPath(version.storagePath);
-      await streamFileWithRangeSupport(req, res, absolutePath, version.mimeType);
+      await streamFileWithRangeSupport(
+        req,
+        res,
+        absolutePath,
+        version.mimeType,
+      );
     } catch (err) {
       console.error("getVideoStream failed:", err);
       if (!res.headersSent) {
@@ -1266,7 +1368,9 @@ export function createVideosRouter() {
         const id = parsePositiveInt(req.params.id);
         if (id == null) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
+            await unlink(join(thumbnailsDir, req.file.filename)).catch(
+              () => {},
+            );
           }
           res.status(400).json({
             error: "invalid_id",
@@ -1278,7 +1382,9 @@ export function createVideosRouter() {
         const loaded = await loadUploadWithMetadata(id);
         if (!loaded) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
+            await unlink(join(thumbnailsDir, req.file.filename)).catch(
+              () => {},
+            );
           }
           sendNotFound(res);
           return;
@@ -1287,16 +1393,21 @@ export function createVideosRouter() {
         const { upload } = loaded;
         if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
+            await unlink(join(thumbnailsDir, req.file.filename)).catch(
+              () => {},
+            );
           }
           res.status(403).json({
             error: "forbidden",
-            message: "Only the owner or an admin can update this video's thumbnail.",
+            message:
+              "Only the owner or an admin can update this video's thumbnail.",
           });
           return;
         }
         if (!req.file) {
-          res.status(400).json({ error: "invalid_body", message: "file is required." });
+          res
+            .status(400)
+            .json({ error: "invalid_body", message: "file is required." });
           return;
         }
 
@@ -1316,7 +1427,9 @@ export function createVideosRouter() {
 
         syncVideoIndex(upload.id);
 
-        res.status(200).json({ thumbnailUrl: `/api/v1/videos/${upload.id}/thumbnail` });
+        res
+          .status(200)
+          .json({ thumbnailUrl: `/api/v1/videos/${upload.id}/thumbnail` });
       } catch (err) {
         if (req.file) {
           await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
@@ -1582,6 +1695,91 @@ export function createVideosRouter() {
   );
 
   /**
+   * PUT /videos/:id/featured — setVideoFeatured
+   * Auth: required. Admin only. Adds or removes the video from FEATURED_VIDEOS.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/featured:
+   *   put:
+   *     tags: [Videos]
+   *     summary: Set or clear a video's featured status
+   *     operationId: setVideoFeatured
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [featured]
+   *             properties:
+   *               featured:
+   *                 type: boolean
+   *     responses:
+   *       "200":
+   *         description: Updated featured status
+   *       "403":
+   *         description: Not an admin
+   */
+  router.put(
+    "/videos/:id/featured",
+    requireAuth,
+    requireAdmin,
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+        if (typeof req.body?.featured !== "boolean") {
+          res.status(400).json({
+            error: "invalid_body",
+            message: "featured must be a boolean.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        if (req.body.featured) {
+          await FeaturedVideo.findOrCreate({
+            where: { originalUploadId: loaded.upload.id },
+          });
+        } else {
+          await FeaturedVideo.destroy({
+            where: { originalUploadId: loaded.upload.id },
+          });
+        }
+
+        res.status(200).json({ featured: req.body.featured });
+      } catch (err) {
+        console.error("setVideoFeatured failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to update featured status.",
+        });
+      }
+    },
+  );
+
+  /**
    * GET /videos/:id/access — listVideoAccess
    * Auth: required. Owner or admin.
    *
@@ -1636,7 +1834,11 @@ export function createVideosRouter() {
 
       res.status(200).json({
         items: grants.map((grant) =>
-          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+          serializeUserRef(
+            grant.userId,
+            grant.User.username,
+            grant.User.displayName,
+          ),
         ),
       });
     } catch (err) {
@@ -1713,7 +1915,8 @@ export function createVideosRouter() {
       if (metadata.visibility !== "private") {
         res.status(400).json({
           error: "invalid_state",
-          message: "Video access can only be managed while the video is private.",
+          message:
+            "Video access can only be managed while the video is private.",
         });
         return;
       }
@@ -1763,7 +1966,11 @@ export function createVideosRouter() {
 
       res.status(200).json({
         items: grants.map((grant) =>
-          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+          serializeUserRef(
+            grant.userId,
+            grant.User.username,
+            grant.User.displayName,
+          ),
         ),
       });
     } catch (err) {
@@ -1777,7 +1984,8 @@ export function createVideosRouter() {
 
   /**
    * POST /videos/:id/view — recordVideoView
-   * Auth: optional. Requires canView. Increments viewCount.
+   * Auth: optional. Requires canView. Increments viewCount for every viewer; when
+   * authenticated, also inserts a USER_VIEW_HISTORY row for the caller.
    *
    * @openapi
    * /api/v1/videos/{id}/view:
@@ -1822,6 +2030,14 @@ export function createVideosRouter() {
 
       await metadata.increment("viewCount");
       await metadata.reload();
+
+      if (req.user) {
+        await UserViewHistory.create({
+          originalUploadId: upload.id,
+          userId: req.user.id,
+        });
+      }
+
       res.status(200).json({ viewCount: Number(metadata.viewCount) });
     } catch (err) {
       console.error("recordVideoView failed:", err);
@@ -1834,13 +2050,15 @@ export function createVideosRouter() {
 
   /**
    * POST /videos/:id/like — likeVideo
-   * Auth: required. Requires canView. Upserts like row.
+   * Auth: required. Requires canView. Sets the caller's reaction to "like",
+   * replacing any existing dislike; calling again while already liked clears
+   * the reaction (toggle).
    *
    * @openapi
    * /api/v1/videos/{id}/like:
    *   post:
    *     tags: [Videos]
-   *     summary: Like a video
+   *     summary: Like a video (toggles off if already liked)
    *     operationId: likeVideo
    *     security:
    *       - cookieAuth: []
@@ -1854,7 +2072,16 @@ export function createVideosRouter() {
    *           type: integer
    *     responses:
    *       "200":
-   *         description: Like recorded
+   *         description: Resulting reaction state
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 liked:
+   *                   type: boolean
+   *                 disliked:
+   *                   type: boolean
    */
   router.post("/videos/:id/like", requireAuth, async (req, res) => {
     try {
@@ -1880,21 +2107,9 @@ export function createVideosRouter() {
         return;
       }
 
-      const existing = await VideoLike.findOne({
-        where: {
-          originalUploadId: upload.id,
-          userId: req.user.id,
-        },
-      });
-      if (!existing) {
-        await VideoLike.create({
-          originalUploadId: upload.id,
-          userId: req.user.id,
-          likeValue: 1,
-        });
-      }
+      const result = await toggleVideoReaction(upload.id, req.user.id, 1);
 
-      res.status(200).json({ liked: true });
+      res.status(200).json(result);
     } catch (err) {
       console.error("likeVideo failed:", err);
       res.status(500).json({
@@ -1906,13 +2121,15 @@ export function createVideosRouter() {
 
   /**
    * POST /videos/:id/dislike — dislikeVideo
-   * Auth: required. Requires canView. Deletes like row.
+   * Auth: required. Requires canView. Sets the caller's reaction to
+   * "dislike", replacing any existing like; calling again while already
+   * disliked clears the reaction (toggle).
    *
    * @openapi
    * /api/v1/videos/{id}/dislike:
    *   post:
    *     tags: [Videos]
-   *     summary: Remove a like (dislike)
+   *     summary: Dislike a video (toggles off if already disliked)
    *     operationId: dislikeVideo
    *     security:
    *       - cookieAuth: []
@@ -1926,7 +2143,16 @@ export function createVideosRouter() {
    *           type: integer
    *     responses:
    *       "200":
-   *         description: Like cleared
+   *         description: Resulting reaction state
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 liked:
+   *                   type: boolean
+   *                 disliked:
+   *                   type: boolean
    */
   router.post("/videos/:id/dislike", requireAuth, async (req, res) => {
     try {
@@ -1952,14 +2178,9 @@ export function createVideosRouter() {
         return;
       }
 
-      await VideoLike.destroy({
-        where: {
-          originalUploadId: upload.id,
-          userId: req.user.id,
-        },
-      });
+      const result = await toggleVideoReaction(upload.id, req.user.id, -1);
 
-      res.status(200).json({ liked: false });
+      res.status(200).json(result);
     } catch (err) {
       console.error("dislikeVideo failed:", err);
       res.status(500).json({
@@ -2028,11 +2249,16 @@ export function createVideosRouter() {
 
       const parsed = parseCreateCommentBody(req.body);
       if (!parsed.ok) {
-        res.status(400).json({ error: "invalid_body", message: parsed.message });
+        res
+          .status(400)
+          .json({ error: "invalid_body", message: parsed.message });
         return;
       }
 
-      if (parsed.distinguishedMod !== undefined && !isModeratorOrAdmin(req.authRole)) {
+      if (
+        parsed.distinguishedMod !== undefined &&
+        !isModeratorOrAdmin(req.authRole)
+      ) {
         res.status(403).json({
           error: "forbidden",
           message: "Only a moderator or admin may set distinguishedMod.",
@@ -2048,7 +2274,9 @@ export function createVideosRouter() {
       }
 
       if (!metadata.commentsEnabled) {
-        const selfDistinguished = parsed.distinguishedMod === true || parsed.distinguishedAdmin === true;
+        const selfDistinguished =
+          parsed.distinguishedMod === true ||
+          parsed.distinguishedAdmin === true;
         if (!selfDistinguished) {
           res.status(403).json({
             error: "comments_disabled",
@@ -2063,7 +2291,8 @@ export function createVideosRouter() {
         if (!parentComment || parentComment.originalUploadId !== upload.id) {
           res.status(400).json({
             error: "invalid_parent_comment",
-            message: "parentCommentId does not refer to a comment on this video.",
+            message:
+              "parentCommentId does not refer to a comment on this video.",
           });
           return;
         }
@@ -2188,78 +2417,90 @@ export function createVideosRouter() {
    *       "404":
    *         description: Video or comment not found
    */
-  router.patch("/videos/:id/comments/:commentId", requireAuth, async (req, res) => {
-    try {
-      const id = parsePositiveInt(req.params.id);
-      const commentId = parsePositiveInt(req.params.commentId);
-      if (id == null || commentId == null) {
-        res.status(400).json({
-          error: "invalid_id",
-          message: "id and commentId must be positive integers.",
+  router.patch(
+    "/videos/:id/comments/:commentId",
+    requireAuth,
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        const commentId = parsePositiveInt(req.params.commentId);
+        if (id == null || commentId == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id and commentId must be positive integers.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload, metadata } = loaded;
+        const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
+        if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+          sendNotFound(res);
+          return;
+        }
+
+        const comment = await Comment.findByPk(commentId);
+        if (!comment || comment.originalUploadId !== upload.id) {
+          sendNotFound(res);
+          return;
+        }
+
+        const parsed = parseUpdateCommentBody(req.body);
+        if (!parsed.ok) {
+          res
+            .status(400)
+            .json({ error: "invalid_body", message: parsed.message });
+          return;
+        }
+
+        const { patch } = parsed;
+        if (
+          patch.body !== undefined &&
+          Number(req.user.id) !== Number(comment.userId)
+        ) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only the comment's author may edit its body.",
+          });
+          return;
+        }
+        if (
+          patch.distinguishedMod !== undefined &&
+          !isModeratorOrAdmin(req.authRole)
+        ) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only a moderator or admin may set distinguishedMod.",
+          });
+          return;
+        }
+        if (patch.distinguishedAdmin !== undefined && !isAdmin(req.authRole)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only an admin may set distinguishedAdmin.",
+          });
+          return;
+        }
+
+        await comment.update(patch);
+        await comment.reload({ include: [{ model: User, required: false }] });
+
+        res.status(200).json(serializeComment(comment));
+      } catch (err) {
+        console.error("updateComment failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to update comment.",
         });
-        return;
       }
-
-      const loaded = await loadUploadWithMetadata(id);
-      if (!loaded) {
-        sendNotFound(res);
-        return;
-      }
-
-      const { upload, metadata } = loaded;
-      const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
-      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
-        sendNotFound(res);
-        return;
-      }
-
-      const comment = await Comment.findByPk(commentId);
-      if (!comment || comment.originalUploadId !== upload.id) {
-        sendNotFound(res);
-        return;
-      }
-
-      const parsed = parseUpdateCommentBody(req.body);
-      if (!parsed.ok) {
-        res.status(400).json({ error: "invalid_body", message: parsed.message });
-        return;
-      }
-
-      const { patch } = parsed;
-      if (patch.body !== undefined && Number(req.user.id) !== Number(comment.userId)) {
-        res.status(403).json({
-          error: "forbidden",
-          message: "Only the comment's author may edit its body.",
-        });
-        return;
-      }
-      if (patch.distinguishedMod !== undefined && !isModeratorOrAdmin(req.authRole)) {
-        res.status(403).json({
-          error: "forbidden",
-          message: "Only a moderator or admin may set distinguishedMod.",
-        });
-        return;
-      }
-      if (patch.distinguishedAdmin !== undefined && !isAdmin(req.authRole)) {
-        res.status(403).json({
-          error: "forbidden",
-          message: "Only an admin may set distinguishedAdmin.",
-        });
-        return;
-      }
-
-      await comment.update(patch);
-      await comment.reload({ include: [{ model: User, required: false }] });
-
-      res.status(200).json(serializeComment(comment));
-    } catch (err) {
-      console.error("updateComment failed:", err);
-      res.status(500).json({
-        error: "internal_error",
-        message: "Failed to update comment.",
-      });
-    }
-  });
+    },
+  );
 
   /**
    * DELETE /videos/:id/comments/:commentId — deleteComment
@@ -2296,60 +2537,64 @@ export function createVideosRouter() {
    *       "404":
    *         description: Video or comment not found
    */
-  router.delete("/videos/:id/comments/:commentId", requireAuth, async (req, res) => {
-    try {
-      const id = parsePositiveInt(req.params.id);
-      const commentId = parsePositiveInt(req.params.commentId);
-      if (id == null || commentId == null) {
-        res.status(400).json({
-          error: "invalid_id",
-          message: "id and commentId must be positive integers.",
+  router.delete(
+    "/videos/:id/comments/:commentId",
+    requireAuth,
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        const commentId = parsePositiveInt(req.params.commentId);
+        if (id == null || commentId == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id and commentId must be positive integers.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload, metadata } = loaded;
+        const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
+        if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+          sendNotFound(res);
+          return;
+        }
+
+        const comment = await Comment.findByPk(commentId);
+        if (!comment || comment.originalUploadId !== upload.id) {
+          sendNotFound(res);
+          return;
+        }
+
+        const isOwner = Number(req.user.id) === Number(comment.userId);
+        const canDelete =
+          isOwner ||
+          isAdmin(req.authRole) ||
+          (isModeratorOrAdmin(req.authRole) && !comment.distinguishedAdmin);
+        if (!canDelete) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Not authorized to delete this comment.",
+          });
+          return;
+        }
+
+        await comment.destroy();
+        res.status(204).send();
+      } catch (err) {
+        console.error("deleteComment failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to delete comment.",
         });
-        return;
       }
-
-      const loaded = await loadUploadWithMetadata(id);
-      if (!loaded) {
-        sendNotFound(res);
-        return;
-      }
-
-      const { upload, metadata } = loaded;
-      const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
-      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
-        sendNotFound(res);
-        return;
-      }
-
-      const comment = await Comment.findByPk(commentId);
-      if (!comment || comment.originalUploadId !== upload.id) {
-        sendNotFound(res);
-        return;
-      }
-
-      const isOwner = Number(req.user.id) === Number(comment.userId);
-      const canDelete =
-        isOwner ||
-        isAdmin(req.authRole) ||
-        (isModeratorOrAdmin(req.authRole) && !comment.distinguishedAdmin);
-      if (!canDelete) {
-        res.status(403).json({
-          error: "forbidden",
-          message: "Not authorized to delete this comment.",
-        });
-        return;
-      }
-
-      await comment.destroy();
-      res.status(204).send();
-    } catch (err) {
-      console.error("deleteComment failed:", err);
-      res.status(500).json({
-        error: "internal_error",
-        message: "Failed to delete comment.",
-      });
-    }
-  });
+    },
+  );
 
   /**
    * GET /tags — listTags
@@ -2370,7 +2615,10 @@ export function createVideosRouter() {
       const rows = await ContentTag.findAll({
         attributes: [
           "tag",
-          [literal("COUNT(DISTINCT `ContentTag`.`original_upload_id`)"), "videoCount"],
+          [
+            literal("COUNT(DISTINCT `ContentTag`.`original_upload_id`)"),
+            "videoCount",
+          ],
         ],
         include: [
           {
@@ -2447,7 +2695,9 @@ export function createVideosRouter() {
             where: { tag },
           },
         ],
-        order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        order: [
+          [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
+        ],
         viewerUserId: req.user?.id ?? null,
       });
       res.status(200).json({ items });
@@ -2493,7 +2743,9 @@ export function createVideosRouter() {
 
       const items = await listPublicVideos({
         uploadWhere: { userId: { [Op.in]: channelIds } },
-        order: [[{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"]],
+        order: [
+          [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
+        ],
         viewerUserId: req.user.id,
       });
       res.status(200).json({ items });

@@ -258,9 +258,10 @@ function VideoComments({ video }) {
       <div className="video-comments-list">
         {displayOrder.map((comment) => {
           const indentDepth = Math.min(comment.depth, MAX_INDENT_DEPTH)
+          const marginLeft = (indentDepth - 1) * INDENT_PX
           const style = {
-            marginLeft: (indentDepth - 1) * INDENT_PX,
-            width: comment.depth >= MAX_INDENT_DEPTH + 1 ? '50%' : '100%',
+            marginLeft,
+            width: comment.depth >= MAX_INDENT_DEPTH + 1 ? '50%' : `calc(100% - ${marginLeft}px)`,
           }
           const authorName = comment.author?.displayName || comment.author?.username
 

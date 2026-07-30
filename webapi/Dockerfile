@@ -15,15 +15,15 @@ WORKDIR /app
 ENV NODE_ENV=production
 EXPOSE 3000
 
-# Copy installed dependencies from builder
-COPY --from=builder /app/node_modules ./node_modules
-COPY . .
-
 # Run as non-root; shared volume mount points for media + yt-dlp handoff
 RUN addgroup -g 1001 -S app \
   && adduser -u 1001 -S app -G app \
   && mkdir -p /media /data/shared \
-  && chown -R app:app /app /media /data/shared
+  && chown -R app:app /media /data/shared
+
+# Copy installed dependencies from builder, setting ownership as files are laid down
+COPY --from=builder --chown=app:app /app/node_modules ./node_modules
+COPY --chown=app:app . .
 USER app
 
 CMD ["node", "index.js"]

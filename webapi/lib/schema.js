@@ -4,6 +4,7 @@ import { models, NotificationType } from "./models/index.js";
 import {
   seedReferenceData,
   seedAdminUser,
+  seedDemoUsers,
   seedThemes,
   seedNotificationTypes,
 } from "./seed.js";
@@ -622,6 +623,7 @@ export async function ensureSchema() {
 
   await seedReferenceData();
   await seedAdminUser();
+  await seedDemoUsers();
   await seedThemes();
   await syncSessionStore();
 }

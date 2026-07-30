@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { UploadCloud } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import {
@@ -7,8 +7,10 @@ import {
   importVideoUrl,
   updateVideo,
   setVideoAccess,
+  setVideoFeatured,
   getImportStatus,
   updateVideoThumbnail,
+  getVideo,
 } from '../api/videos.js'
 import { searchUsers } from '../api/users.js'
 import ChipInput from '../components/ChipInput.jsx'
@@ -24,6 +26,15 @@ const VISIBILITY_OPTIONS = [
 const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
 const IMPORT_STATUS_POLL_MS = 30000
 
+// Mirrors webapi's VIDEO_METADATA.title / .description and CONTENT_TAGS.tag
+// column limits (see webapi/lib/models/video-metadata.js,
+// webapi/lib/models/content-tag.js, and MAX_TAGS/MAX_TAG_LENGTH in
+// webapi/routes/videos.js) so the form can't submit values the API would reject.
+const MAX_TITLE_LENGTH = 255
+const MAX_DESCRIPTION_LENGTH = 65535
+const MAX_TAG_LENGTH = 255
+const MAX_TAGS = 50
+
 function recipientLabel(user) {
   return user.displayName ? `${user.displayName} (${user.username})` : user.username
 }
@@ -31,8 +42,16 @@ function recipientLabel(user) {
 function UploadPage() {
   const { user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const fileInputRef = useRef(null)
   const thumbnailInputRef = useRef(null)
+
+  const editVideoId = searchParams.get('v')
+  const isEditMode = Boolean(editVideoId)
+  const [editUpload, setEditUpload] = useState(null)
+  const [editLoading, setEditLoading] = useState(isEditMode)
+  const [editError, setEditError] = useState(null)
+  const [editForbidden, setEditForbidden] = useState(false)
 
   const [file, setFile] = useState(null)
   const [dragActive, setDragActive] = useState(false)
@@ -41,6 +60,7 @@ function UploadPage() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState('public')
+  const [featured, setFeatured] = useState(false)
 
   const [tagInput, setTagInput] = useState('')
   const [tags, setTags] = useState([])
@@ -62,6 +82,55 @@ function UploadPage() {
   }, [authLoading, user, navigate])
 
   useEffect(() => {
+    if (!isEditMode || authLoading || !user) {
+      return undefined
+    }
+
+    let cancelled = false
+
+    async function loadForEdit() {
+      setEditLoading(true)
+      setEditError(null)
+      setEditForbidden(false)
+      try {
+        const video = await getVideo(editVideoId)
+        if (cancelled) {
+          return
+        }
+        const canEdit = user.role === 'admin' || video.uploader?.userId === user.id
+        if (!canEdit) {
+          setEditForbidden(true)
+          return
+        }
+        setEditUpload(video)
+        setTitle(video.title ?? '')
+        setDescription(video.description ?? '')
+        setVisibility(video.visibility ?? 'public')
+        setTags(video.tags ?? [])
+        setFeatured(Boolean(video.featured))
+      } catch {
+        if (!cancelled) {
+          setEditError('Failed to load this video.')
+        }
+      } finally {
+        if (!cancelled) {
+          setEditLoading(false)
+        }
+      }
+    }
+
+    loadForEdit()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isEditMode, editVideoId, authLoading, user])
+
+  useEffect(() => {
+    if (isEditMode) {
+      return undefined
+    }
+
     let cancelled = false
 
     async function checkImportStatus() {
@@ -86,7 +155,7 @@ function UploadPage() {
       cancelled = true
       clearInterval(interval)
     }
-  }, [])
+  }, [isEditMode])
 
   const recipientSearchActive = visibility === 'private' && recipientQuery.trim().length > 0
 
@@ -115,6 +184,33 @@ function UploadPage() {
     return null
   }
 
+  if (isEditMode && editLoading) {
+    return null
+  }
+
+  if (isEditMode && editForbidden) {
+    return (
+      <section className="upload-page">
+        <div className="upload-card">
+          <h1>Edit Video</h1>
+          <p className="upload-error">You don't have permission to edit this video.</p>
+        </div>
+      </section>
+    )
+  }
+
+  if (isEditMode && editError) {
+    return (
+      <section className="upload-page">
+        <div className="upload-card">
+          <h1>Edit Video</h1>
+          <p className="upload-error">{editError}</p>
+        </div>
+      </section>
+    )
+  }
+
+  const isAdmin = user.role === 'admin'
   const fileLocked = url.trim().length > 0
   const urlLocked = file != null
 
@@ -164,12 +260,15 @@ function UploadPage() {
   function addTagFromInput(rawText) {
     const parts = rawText
       .split(',')
-      .map((part) => part.trim())
+      .map((part) => part.trim().slice(0, MAX_TAG_LENGTH))
       .filter(Boolean)
     if (parts.length === 0) {
       return
     }
-    setTags((prev) => [...prev, ...parts.filter((part) => !prev.includes(part))])
+    setTags((prev) => {
+      const additions = parts.filter((part) => !prev.includes(part))
+      return [...prev, ...additions].slice(0, MAX_TAGS)
+    })
     setTagInput('')
   }
 
@@ -191,8 +290,9 @@ function UploadPage() {
     setRecipients((prev) => prev.filter((r) => r.userId !== Number(userId)))
   }
 
-  const submitDisabled =
-    (!file && url.trim().length === 0) || title.trim().length === 0 || submitting
+  const submitDisabled = isEditMode
+    ? title.trim().length === 0 || submitting
+    : (!file && url.trim().length === 0) || title.trim().length === 0 || submitting
 
   function handleFormKeyDown(event) {
     if (event.key !== 'Enter') {
@@ -220,17 +320,21 @@ function UploadPage() {
     setSubmitError(null)
 
     let createdId
-    try {
-      const uploaded = file ? await uploadVideoFile(file) : await importVideoUrl(url.trim())
-      createdId = uploaded.id
-    } catch {
-      setSubmitError(
-        file
-          ? 'Failed to upload the file. Please try again.'
-          : 'Failed to import the video from that URL. Please try again.',
-      )
-      setSubmitting(false)
-      return
+    if (isEditMode) {
+      createdId = editUpload.id
+    } else {
+      try {
+        const uploaded = file ? await uploadVideoFile(file) : await importVideoUrl(url.trim())
+        createdId = uploaded.id
+      } catch {
+        setSubmitError(
+          file
+            ? 'Failed to upload the file. Please try again.'
+            : 'Failed to import the video from that URL. Please try again.',
+        )
+        setSubmitting(false)
+        return
+      }
     }
 
     try {
@@ -242,8 +346,10 @@ function UploadPage() {
       })
     } catch {
       setSubmitError(
-        `Your video was uploaded but its details could not be saved. ` +
-          `You can edit it from your profile to finish setting it up.`,
+        isEditMode
+          ? 'Failed to save your changes. Please try again.'
+          : `Your video was uploaded but its details could not be saved. ` +
+              `You can edit it from your profile to finish setting it up.`,
       )
       setSubmitting(false)
       return
@@ -278,100 +384,116 @@ function UploadPage() {
       }
     }
 
+    if (isAdmin) {
+      try {
+        await setVideoFeatured(createdId, featured)
+      } catch {
+        setSubmitError(
+          'Your video was saved, but its featured status could not be updated.',
+        )
+        setSubmitting(false)
+        return
+      }
+    }
+
     setSubmitting(false)
-    navigate(`/users/${user.username}`)
+    navigate(isEditMode ? `/video?v=${editVideoId}` : `/users/${user.username}`)
   }
 
   return (
     <section className="upload-page">
       <form className="upload-card" onSubmit={handleSubmit} onKeyDown={handleFormKeyDown}>
-        <h1>Upload</h1>
+        <h1>{isEditMode ? 'Edit Video' : 'Upload'}</h1>
 
-        <div className="upload-source-row">
-          <div
-            className={`upload-dropzone${fileLocked ? ' upload-dropzone-disabled' : ''}${dragActive ? ' upload-dropzone-active' : ''}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => !fileLocked && fileInputRef.current?.click()}
-          >
-            <UploadCloud size={28} />
-            <p>{file ? file.name : 'Drag & drop a video, or click to choose a file'}</p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              className="upload-dropzone-input"
-              disabled={fileLocked}
-              onChange={handleFileInputChange}
-            />
-            {file && (
-              <button
-                type="button"
-                className="upload-dropzone-clear"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setFile(null)
-                }}
+        {!isEditMode && (
+          <>
+            <div className="upload-source-row">
+              <div
+                className={`upload-dropzone${fileLocked ? ' upload-dropzone-disabled' : ''}${dragActive ? ' upload-dropzone-active' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => !fileLocked && fileInputRef.current?.click()}
               >
-                Clear
-              </button>
-            )}
-          </div>
-
-          {importAvailable && (
-            <>
-              <div className="upload-or">or</div>
-
-              <div className="upload-url-field">
-                <label htmlFor="upload-url">Import from URL</label>
+                <UploadCloud size={28} />
+                <p>{file ? file.name : 'Drag & drop a video, or click to choose a file'}</p>
                 <input
-                  id="upload-url"
-                  type="text"
-                  value={url}
-                  onChange={(event) => setUrl(event.target.value)}
-                  disabled={urlLocked}
-                  placeholder="https://..."
+                  ref={fileInputRef}
+                  type="file"
+                  accept="video/*"
+                  className="upload-dropzone-input"
+                  disabled={fileLocked}
+                  onChange={handleFileInputChange}
                 />
+                {file && (
+                  <button
+                    type="button"
+                    className="upload-dropzone-clear"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setFile(null)
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-            </>
-          )}
-        </div>
 
-        {!importAvailable && (
-          <div className="upload-field-group">
-            <label>Thumbnail</label>
-            <p className="upload-hint">
-              Automatic thumbnail generation is unavailable right now — you can upload one manually
-              instead.
-            </p>
-            <div
-              className="upload-thumbnail-picker"
-              onClick={() => thumbnailInputRef.current?.click()}
-            >
-              <UploadCloud size={20} />
-              <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
-              <input
-                ref={thumbnailInputRef}
-                type="file"
-                accept="image/*"
-                className="upload-dropzone-input"
-                onChange={handleThumbnailInputChange}
-              />
-              {thumbnailFile && (
-                <button
-                  type="button"
-                  className="upload-dropzone-clear"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    setThumbnailFile(null)
-                  }}
-                >
-                  Clear
-                </button>
+              {importAvailable && (
+                <>
+                  <div className="upload-or">or</div>
+
+                  <div className="upload-url-field">
+                    <label htmlFor="upload-url">Import from URL</label>
+                    <input
+                      id="upload-url"
+                      type="text"
+                      value={url}
+                      onChange={(event) => setUrl(event.target.value)}
+                      disabled={urlLocked}
+                      placeholder="https://..."
+                    />
+                  </div>
+                </>
               )}
             </div>
-          </div>
+
+            {!importAvailable && (
+              <div className="upload-field-group">
+                <label>Thumbnail</label>
+                <p className="upload-hint">
+                  Automatic thumbnail generation is unavailable right now — you can upload one
+                  manually instead.
+                </p>
+                <div
+                  className="upload-thumbnail-picker"
+                  onClick={() => thumbnailInputRef.current?.click()}
+                >
+                  <UploadCloud size={20} />
+                  <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
+                  <input
+                    ref={thumbnailInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="upload-dropzone-input"
+                    onChange={handleThumbnailInputChange}
+                  />
+                  {thumbnailFile && (
+                    <button
+                      type="button"
+                      className="upload-dropzone-clear"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setThumbnailFile(null)
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         <label htmlFor="upload-title">Title</label>
@@ -380,6 +502,7 @@ function UploadPage() {
           type="text"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
+          maxLength={MAX_TITLE_LENGTH}
           required
         />
 
@@ -389,6 +512,7 @@ function UploadPage() {
           rows={3}
           value={description}
           onChange={(event) => setDescription(event.target.value)}
+          maxLength={MAX_DESCRIPTION_LENGTH}
         />
 
         <label htmlFor="upload-visibility">Visibility</label>
@@ -403,6 +527,17 @@ function UploadPage() {
             </option>
           ))}
         </select>
+
+        {isAdmin && (
+          <label className="upload-checkbox">
+            <input
+              type="checkbox"
+              checked={featured}
+              onChange={(event) => setFeatured(event.target.checked)}
+            />
+            Featured
+          </label>
+        )}
 
         {visibility === 'private' && (
           <div className="upload-field-group">
@@ -436,13 +571,20 @@ function UploadPage() {
             onInputChange={setTagInput}
             onAddFreeform={addTagFromInput}
             placeholder="Add tags (comma or Enter)"
+            inputMaxLength={MAX_TAG_LENGTH}
           />
         </div>
 
         {submitError && <p className="upload-error">{submitError}</p>}
 
         <button type="submit" className="upload-submit" disabled={submitDisabled}>
-          {submitting ? 'Uploading...' : 'Upload'}
+          {isEditMode
+            ? submitting
+              ? 'Saving...'
+              : 'Save Changes'
+            : submitting
+              ? 'Uploading...'
+              : 'Upload'}
         </button>
       </form>
     </section>

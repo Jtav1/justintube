@@ -99,6 +99,27 @@ describe("Video discovery and metadata endpoints", () => {
       });
     });
 
+    test("includes featured only for admin callers", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-getvideo-featured-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Featured check", visibility: "public" });
+      await seedFeaturedVideo(upload.id);
+
+      const anonRes = await client.get(`/api/v1/videos/${upload.id}`);
+      expect(anonRes.body.featured).toBeUndefined();
+
+      await seedUserWithRoleAndKey("viewer", "viewer-getvideo-featured-key");
+      const viewerRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer viewer-getvideo-featured-key");
+      expect(viewerRes.body.featured).toBeUndefined();
+
+      const adminRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer admin-getvideo-featured-key");
+      expect(adminRes.body.featured).toBe(true);
+    });
+
     test("returns 200 for the same video looked up by videoId", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, { title: "Watchable by videoId", visibility: "public" });
@@ -925,6 +946,79 @@ describe("Video discovery and metadata endpoints", () => {
     });
   });
 
+  describe("PUT /videos/{id}/featured (setVideoFeatured)", () => {
+    test("admins can feature and unfeature a video", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-featured-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const featureRes = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-key")
+        .send({ featured: true });
+      expect(featureRes.status).toBe(200);
+      expect(featureRes.body).toEqual({ featured: true });
+
+      let rows = await queryRows(
+        "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows).toHaveLength(1);
+
+      // Featuring an already-featured video doesn't duplicate the row.
+      await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-key")
+        .send({ featured: true });
+      rows = await queryRows(
+        "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows).toHaveLength(1);
+
+      const unfeatureRes = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-key")
+        .send({ featured: false });
+      expect(unfeatureRes.status).toBe(200);
+      expect(unfeatureRes.body).toEqual({ featured: false });
+
+      rows = await queryRows(
+        "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows).toHaveLength(0);
+    });
+
+    test("forbids moderators and viewers from setting featured status", async () => {
+      await seedUserWithRoleAndKey("moderator", "mod-featured-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer mod-featured-key")
+        .send({ featured: true });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+    });
+
+    test("rejects a non-boolean featured value", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-featured-bad-body-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client
+        .put(`/api/v1/videos/${upload.id}/featured`)
+        .set("Authorization", "Bearer admin-featured-bad-body-key")
+        .send({ featured: "yes" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+  });
+
   describe("video access grants", () => {
     test("owner can set and list access by username", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "owner-access-key");
@@ -1029,7 +1123,7 @@ describe("Video discovery and metadata endpoints", () => {
   });
 
   describe("views and likes", () => {
-    test("increments viewCount for public videos", async () => {
+    test("increments viewCount for public videos and does not record history for anonymous viewers", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, {
         title: "Views",
@@ -1045,36 +1139,111 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.viewCount).toBe(3);
+
+      const history = await queryRows(
+        "SELECT * FROM USER_VIEW_HISTORY WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(history).toHaveLength(0);
     });
 
-    test("likes and dislikes require auth and persist VIDEO_LIKES", async () => {
+    test("records USER_VIEW_HISTORY for authenticated viewers", async () => {
+      const viewer = await seedUserWithRoleAndKey("viewer", "view-key-1");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public", viewCount: 0 });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/view`)
+        .set("Authorization", "Bearer view-key-1");
+
+      expect(res.status).toBe(200);
+      expect(res.body.viewCount).toBe(1);
+
+      const history = await queryRows(
+        "SELECT * FROM USER_VIEW_HISTORY WHERE original_upload_id = :id AND user_id = :userId",
+        { id: upload.id, userId: viewer.id },
+      );
+      expect(history).toHaveLength(1);
+
+      // A second view from the same user records a second row (no dedup).
+      await client
+        .post(`/api/v1/videos/${upload.id}/view`)
+        .set("Authorization", "Bearer view-key-1");
+
+      const historyAfter = await queryRows(
+        "SELECT * FROM USER_VIEW_HISTORY WHERE original_upload_id = :id AND user_id = :userId",
+        { id: upload.id, userId: viewer.id },
+      );
+      expect(historyAfter).toHaveLength(2);
+    });
+
+    test("likes and dislikes require auth, persist VIDEO_LIKES, and toggle off on repeat", async () => {
       const viewer = await seedUserWithRoleAndKey("viewer", "like-key-1");
       const upload = await seedUpload();
       await seedMetadata(upload.id, { visibility: "public" });
+
+      const likeRow = () =>
+        queryRows(
+          "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id AND user_id = :userId",
+          { id: upload.id, userId: viewer.id },
+        );
 
       const likeRes = await client
         .post(`/api/v1/videos/${upload.id}/like`)
         .set("Authorization", "Bearer like-key-1");
       expect(likeRes.status).toBe(200);
-      expect(likeRes.body).toEqual({ liked: true });
+      expect(likeRes.body).toEqual({ liked: true, disliked: false });
 
-      const likes = await queryRows(
-        "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id AND user_id = :userId",
-        { id: upload.id, userId: viewer.id },
-      );
-      expect(likes).toHaveLength(1);
+      let rows = await likeRow();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].like_value).toBe(1);
 
+      // Switching to dislike replaces the row rather than adding a second one.
       const dislikeRes = await client
         .post(`/api/v1/videos/${upload.id}/dislike`)
         .set("Authorization", "Bearer like-key-1");
       expect(dislikeRes.status).toBe(200);
-      expect(dislikeRes.body).toEqual({ liked: false });
+      expect(dislikeRes.body).toEqual({ liked: false, disliked: true });
 
-      const after = await queryRows(
-        "SELECT * FROM VIDEO_LIKES WHERE original_upload_id = :id AND user_id = :userId",
-        { id: upload.id, userId: viewer.id },
-      );
-      expect(after).toHaveLength(0);
+      rows = await likeRow();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].like_value).toBe(-1);
+
+      // Disliking again while already disliked toggles the reaction off.
+      const toggleOffRes = await client
+        .post(`/api/v1/videos/${upload.id}/dislike`)
+        .set("Authorization", "Bearer like-key-1");
+      expect(toggleOffRes.status).toBe(200);
+      expect(toggleOffRes.body).toEqual({ liked: false, disliked: false });
+
+      rows = await likeRow();
+      expect(rows).toHaveLength(0);
+    });
+
+    test("getVideo includes viewerReaction only for authenticated callers", async () => {
+      await seedUserWithRoleAndKey("viewer", "like-key-2");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const anonRes = await client.get(`/api/v1/videos/${upload.id}`);
+      expect(anonRes.status).toBe(200);
+      expect(anonRes.body.viewerReaction).toBeUndefined();
+
+      const beforeRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer like-key-2");
+      expect(beforeRes.status).toBe(200);
+      expect(beforeRes.body.viewerReaction).toBeNull();
+
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-key-2");
+
+      const afterRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer like-key-2");
+      expect(afterRes.status).toBe(200);
+      expect(afterRes.body.viewerReaction).toBe("like");
     });
   });
 

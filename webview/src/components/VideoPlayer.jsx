@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Repeat, Settings2, ThumbsDown, ThumbsUp, UserRound } from 'lucide-react'
+import { Pencil, Repeat, Settings2, ThumbsDown, ThumbsUp, UserRound } from 'lucide-react'
 import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
+import { dislikeVideo, likeVideo, recordView } from '../api/videos.js'
+import { useAuth } from '../context/useAuth.js'
 import './VideoPlayer.css'
+
+// Must match .video-player-title's font-size/font-weight in VideoPlayer.css.
+const TITLE_FONT_SIZE = 20
+const TITLE_FONT_WEIGHT = 600
+const TITLE_SHRINK_PX = 4
 
 /**
  * Picks the default rendition to play: the highest non-"original" resolution
@@ -23,25 +30,59 @@ function pickDefaultRendition(renditions) {
 }
 
 function VideoPlayer({ video }) {
+  const { user } = useAuth()
   const renditions = video.renditions ?? []
   const [selectedRendition, setSelectedRendition] = useState(() => pickDefaultRendition(renditions))
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false)
   const [loop, setLoop] = useState(false)
-  const [reaction, setReaction] = useState(null)
+  const [reaction, setReaction] = useState(video.viewerReaction ?? null)
+  const [reactionPending, setReactionPending] = useState(false)
   const [avatarFailed, setAvatarFailed] = useState(false)
 
   const videoRef = useRef(null)
   const qualityMenuRef = useRef(null)
   const resumeStateRef = useRef(null)
+  const viewRecordedRef = useRef(false)
+  const titleRef = useRef(null)
+  const measureCanvasRef = useRef(null)
+  const [titleShrunk, setTitleShrunk] = useState(false)
+
+  useEffect(() => {
+    const el = titleRef.current
+    if (!el) {
+      return undefined
+    }
+
+    function measure() {
+      const canvas = measureCanvasRef.current ?? (measureCanvasRef.current = document.createElement('canvas'))
+      const ctx = canvas.getContext('2d')
+      const fontFamily = getComputedStyle(el).fontFamily
+      ctx.font = `${TITLE_FONT_WEIGHT} ${TITLE_FONT_SIZE}px ${fontFamily}`
+      const naturalWidth = ctx.measureText(video.title ?? '').width
+      setTitleShrunk(naturalWidth > el.clientWidth)
+    }
+
+    measure()
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [video.title])
 
   const streamUrl = selectedRendition
     ? `${apiClient.defaults.baseURL}${selectedRendition.streamUrl}`
     : null
 
+  const canEdit = Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
+
   const uploaderName = video.uploader?.displayName || video.uploader?.username
   const avatarUrl = video.uploader?.username
     ? `${apiClient.defaults.baseURL}/api/v1/users/${video.uploader.username}/avatar`
     : null
+
+  useEffect(() => {
+    viewRecordedRef.current = false
+  }, [video.id])
 
   useEffect(() => {
     if (!qualityMenuOpen) {
@@ -82,6 +123,44 @@ function VideoPlayer({ video }) {
 
   const memoizedSrc = useMemo(() => streamUrl, [streamUrl])
 
+  function handleFirstPlay() {
+    if (viewRecordedRef.current) {
+      return
+    }
+    viewRecordedRef.current = true
+    recordView(video.id).catch((err) => console.error('Failed to record view:', err))
+  }
+
+  async function handleLike() {
+    if (!user || reactionPending) {
+      return
+    }
+    setReactionPending(true)
+    try {
+      const result = await likeVideo(video.id)
+      setReaction(result.liked ? 'like' : result.disliked ? 'dislike' : null)
+    } catch (err) {
+      console.error('Failed to like video:', err)
+    } finally {
+      setReactionPending(false)
+    }
+  }
+
+  async function handleDislike() {
+    if (!user || reactionPending) {
+      return
+    }
+    setReactionPending(true)
+    try {
+      const result = await dislikeVideo(video.id)
+      setReaction(result.liked ? 'like' : result.disliked ? 'dislike' : null)
+    } catch (err) {
+      console.error('Failed to dislike video:', err)
+    } finally {
+      setReactionPending(false)
+    }
+  }
+
   return (
     <div className="video-player">
       <div className="video-player-frame">
@@ -92,6 +171,7 @@ function VideoPlayer({ video }) {
           controls
           loop={loop}
           onLoadedMetadata={handleLoadedMetadata}
+          onPlay={handleFirstPlay}
         />
         <div className="video-player-controls-overlay">
           <div className="video-player-quality" ref={qualityMenuRef}>
@@ -149,7 +229,13 @@ function VideoPlayer({ video }) {
             )}
           </Link>
           <div className="video-player-text">
-            <h1 className="video-player-title">{video.title}</h1>
+            <h1
+              className="video-player-title"
+              ref={titleRef}
+              style={titleShrunk ? { fontSize: TITLE_FONT_SIZE - TITLE_SHRINK_PX } : undefined}
+            >
+              {video.title}
+            </h1>
             <p className="video-player-uploader">
               <Link to={`/users/${video.uploader?.username}`}>{uploaderName}</Link>
             </p>
@@ -160,25 +246,46 @@ function VideoPlayer({ video }) {
             {video.description && (
               <p className="video-player-description">{video.description}</p>
             )}
+            {video.tags?.length > 0 && (
+              <div className="video-player-tags">
+                <span className="video-player-tags-label">Tags: </span>
+                {video.tags.map((tag) => (
+                  <span key={tag} className="video-player-tag">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="video-player-reactions">
+          {canEdit && (
+            <Link
+              to={`/upload?v=${video.videoId}`}
+              className="video-player-icon-btn"
+              aria-label="Edit video"
+            >
+              <Pencil size={18} />
+            </Link>
+          )}
           <button
             type="button"
-            className={`video-player-icon-btn${reaction === 'like' ? ' video-player-icon-btn-active' : ''}`}
+            className={`video-player-icon-btn${reaction === 'like' ? ' video-player-icon-btn-like-active' : ''}`}
             aria-label="Like"
             aria-pressed={reaction === 'like'}
-            onClick={() => setReaction((prev) => (prev === 'like' ? null : 'like'))}
+            disabled={!user || reactionPending}
+            onClick={handleLike}
           >
             <ThumbsUp size={18} />
           </button>
           <button
             type="button"
-            className={`video-player-icon-btn${reaction === 'dislike' ? ' video-player-icon-btn-active' : ''}`}
+            className={`video-player-icon-btn${reaction === 'dislike' ? ' video-player-icon-btn-dislike-active' : ''}`}
             aria-label="Dislike"
             aria-pressed={reaction === 'dislike'}
-            onClick={() => setReaction((prev) => (prev === 'dislike' ? null : 'dislike'))}
+            disabled={!user || reactionPending}
+            onClick={handleDislike}
           >
             <ThumbsDown size={18} />
           </button>

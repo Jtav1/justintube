@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { fetchCsrfToken } from '../api/auth.js'
 import { useAuth } from '../context/useAuth.js'
 import './AuthForm.css'
 
@@ -18,6 +19,10 @@ function LoginPage() {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetchCsrfToken()
+  }, [])
 
   async function handleSubmit(event) {
     event.preventDefault()
