@@ -9,6 +9,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   UserRound,
+  VideoOff,
 } from 'lucide-react'
 import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
@@ -43,6 +44,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const { user } = useAuth()
   const navigate = useNavigate()
   const renditions = video.renditions ?? []
+  const isAudio = video.mediaType === 'audio'
   const [selectedRendition, setSelectedRendition] = useState(() => pickDefaultRendition(renditions))
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false)
   const [loop, setLoop] = useState(false)
@@ -236,43 +238,61 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
 
   return (
     <div className="video-player">
-      <div className="video-player-frame">
-        <video
-          ref={videoRef}
-          key={memoizedSrc}
-          src={memoizedSrc}
-          controls
-          loop={loop}
-          onLoadedMetadata={handleLoadedMetadata}
-          onPlay={handleFirstPlay}
-        />
-        <div className="video-player-controls-overlay">
-          <div className="video-player-quality" ref={qualityMenuRef}>
-            <button
-              type="button"
-              className={`video-player-icon-btn${qualityMenuOpen ? ' video-player-icon-btn-active' : ''}`}
-              aria-label="Select video quality"
-              onClick={() => setQualityMenuOpen((prev) => !prev)}
-            >
-              <Settings2 size={18} />
-            </button>
-            {qualityMenuOpen && (
-              <div className="video-player-quality-dropdown">
-                {renditions.map((rendition) => (
-                  <button
-                    key={rendition.streamUrl}
-                    type="button"
-                    className={`video-player-quality-item${
-                      rendition === selectedRendition ? ' video-player-quality-item-active' : ''
-                    }`}
-                    onClick={() => handleSelectQuality(rendition)}
-                  >
-                    {rendition.resolution}
-                  </button>
-                ))}
-              </div>
-            )}
+      <div className={`video-player-frame${isAudio ? ' video-player-frame-audio' : ''}`}>
+        {isAudio ? (
+          <div className="video-player-audio-frame">
+            <VideoOff size={64} className="video-player-audio-icon" />
+            <audio
+              ref={videoRef}
+              key={memoizedSrc}
+              src={memoizedSrc}
+              controls
+              loop={loop}
+              className="video-player-audio-element"
+              onLoadedMetadata={handleLoadedMetadata}
+              onPlay={handleFirstPlay}
+            />
           </div>
+        ) : (
+          <video
+            ref={videoRef}
+            key={memoizedSrc}
+            src={memoizedSrc}
+            controls
+            loop={loop}
+            onLoadedMetadata={handleLoadedMetadata}
+            onPlay={handleFirstPlay}
+          />
+        )}
+        <div className="video-player-controls-overlay">
+          {renditions.length > 0 && (
+            <div className="video-player-quality" ref={qualityMenuRef}>
+              <button
+                type="button"
+                className={`video-player-icon-btn${qualityMenuOpen ? ' video-player-icon-btn-active' : ''}`}
+                aria-label="Select video quality"
+                onClick={() => setQualityMenuOpen((prev) => !prev)}
+              >
+                <Settings2 size={18} />
+              </button>
+              {qualityMenuOpen && (
+                <div className="video-player-quality-dropdown">
+                  {renditions.map((rendition) => (
+                    <button
+                      key={rendition.streamUrl}
+                      type="button"
+                      className={`video-player-quality-item${
+                        rendition === selectedRendition ? ' video-player-quality-item-active' : ''
+                      }`}
+                      onClick={() => handleSelectQuality(rendition)}
+                    >
+                      {rendition.resolution}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <button
             type="button"
             className={`video-player-icon-btn${loop ? ' video-player-icon-btn-active' : ''}`}

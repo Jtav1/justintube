@@ -214,6 +214,74 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     });
   });
 
+  test("classifies an uploaded audio file as mediaType audio and never contacts processing", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .attach("file", Buffer.from("id3-ish"), "clip.mp3");
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("audio");
+    expect(res.body.fileVersions).toEqual([]);
+    // No audio transcode profiles are configured by default, so there's
+    // nothing to send to processing at all - not even a thumbnail job.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const rows = await queryRows(
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+      { videoId: res.body.videoId },
+    );
+    expect(rows[0].media_type).toBe("audio");
+
+    const thumbRows = await queryRows(
+      "SELECT * FROM VIDEO_THUMBNAIL WHERE original_upload_id = :id",
+      { id: res.body.id },
+    );
+    expect(thumbRows).toHaveLength(0);
+  });
+
+  test("classifies an uploaded video file as mediaType video", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("video");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("only applies audio-flagged transcode profiles to an audio upload", async () => {
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedTranscodeProfile({ resolutionName: "720p", mediaType: "video" });
+    await seedTranscodeProfile({
+      resolutionName: "240p",
+      mediaType: "audio",
+      outputContainer: "m4a",
+      videoCodec: "none",
+      audioCodec: "aac",
+    });
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .attach("file", Buffer.from("id3-ish"), "clip.mp3");
+
+    expect(res.status).toBe(201);
+    expect(res.body.fileVersions).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    // Only the rendition job for the audio-flagged profile - no thumbnail job.
+    expect(payload.jobs).toHaveLength(1);
+    expect(payload.jobs[0].kind).toBe("rendition");
+  });
+
   test("persists thumbnailTimestamp and forwards it to processing as seconds", async () => {
     const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;

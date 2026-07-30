@@ -89,15 +89,23 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
    * profiles.
    *
    * @param {string} downloadedFilename Filename processing "downloaded".
+   * @param {boolean} [hasVideo] When provided, included in the mocked
+   *   `/download` response (processing's ffprobe-based signal). Omitted by
+   *   default so existing tests keep exercising the extension-based
+   *   classification fallback.
    * @returns {jest.Mock} Mock matching the `globalThis.fetch` contract.
    */
-  function downloadThenAcceptAllJobsFetchMock(downloadedFilename) {
+  function downloadThenAcceptAllJobsFetchMock(downloadedFilename, hasVideo) {
     return jest.fn(async (url, options) => {
       if (url === "http://processing.test:3001/download") {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ success: true, filename: downloadedFilename }),
+          json: async () => ({
+            success: true,
+            filename: downloadedFilename,
+            ...(hasVideo !== undefined ? { hasVideo } : {}),
+          }),
         };
       }
       const body = JSON.parse(String(options.body));
@@ -199,6 +207,58 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].original_filename).toBe("1737900000.mp4");
     expect(rows[0].status).toBe("uploaded");
+  });
+
+  test("classifies an audio-only download (hasVideo: false) as mediaType audio and skips the thumbnail job", async () => {
+    writeDownloadedFixture("1737900001.m4a");
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900001.m4a", false);
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/track/abc" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("audio");
+    expect(res.body.fileVersions).toEqual([]);
+    // No audio transcode profiles configured by default, and audio uploads
+    // never get a thumbnail job, so there's nothing left to send at all.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/download");
+
+    const rows = await queryRows(
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+      { videoId: res.body.videoId },
+    );
+    expect(rows[0].media_type).toBe("audio");
+  });
+
+  test("trusts hasVideo: true over an ambiguous container extension", async () => {
+    // A .webm can be video or audio-only; hasVideo: true should win over any
+    // extension-based guess.
+    writeDownloadedFixture("1737900003.webm");
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900003.webm", true);
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/watch?v=abc" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("video");
+  });
+
+  test("falls back to extension-based classification when hasVideo is absent", async () => {
+    writeDownloadedFixture("1737900004.mp3");
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900004.mp3");
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/track/abc" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("audio");
   });
 
   test("persists thumbnailTimestamp and forwards it to processing as seconds", async () => {

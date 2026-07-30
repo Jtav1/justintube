@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
-import { ImageOff, MoreVertical } from 'lucide-react'
+import { ImageOff, MoreVertical, VideoOff } from 'lucide-react'
 import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/format.js'
 import { useAuth } from '../context/useAuth.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
@@ -171,7 +171,7 @@ function VideoCard({
           <img src={thumbnailUrl} alt="" loading="lazy" />
         ) : (
           <div className="video-card-thumb-placeholder">
-            <ImageOff size={28} />
+            {video.mediaType === 'audio' ? <VideoOff size={28} /> : <ImageOff size={28} />}
           </div>
         )}
         {video.durationSeconds != null && (

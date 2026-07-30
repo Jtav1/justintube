@@ -224,6 +224,16 @@ async function ensureSqliteMissingColumns() {
       column: "thumbnail_timestamp_tenths",
       ddl: "`thumbnail_timestamp_tenths` INTEGER UNSIGNED NULL",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "media_type",
+      ddl: "`media_type` VARCHAR(16) NOT NULL DEFAULT 'video'",
+    },
+    {
+      table: "TRANSCODE_PROFILES",
+      column: "media_type",
+      ddl: "`media_type` VARCHAR(16) NOT NULL DEFAULT 'video'",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {
