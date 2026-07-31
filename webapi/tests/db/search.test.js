@@ -52,7 +52,13 @@ const mockIndexHandle = {
   updateSortableAttributes: jest.fn().mockImplementation(mockSettingsUpdate),
 };
 const mockIndex = jest.fn(() => mockIndexHandle);
-const mockCreateIndex = jest.fn().mockResolvedValue({});
+const mockCreateIndex = jest.fn().mockImplementation(mockSettingsUpdate);
+/**
+ * By default simulates "index not found" (real Meilisearch shape: a rejected
+ * promise with `err.cause.code === "index_not_found"`), so `ensure*Configured`
+ * takes the create-index branch unless a test overrides this per-call.
+ */
+const mockGetIndex = jest.fn().mockRejectedValue({ cause: { code: "index_not_found" } });
 
 // Must run before any (static or dynamic) import of "meilisearch" or
 // lib/search.js — this suite dynamically imports lib/search.js in beforeAll
@@ -60,6 +66,7 @@ const mockCreateIndex = jest.fn().mockResolvedValue({});
 jest.unstable_mockModule("meilisearch", () => ({
   Meilisearch: jest.fn().mockImplementation(() => ({
     createIndex: mockCreateIndex,
+    getIndex: mockGetIndex,
     index: mockIndex,
   })),
 }));

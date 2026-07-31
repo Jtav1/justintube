@@ -1,0 +1,180 @@
+# Deployment
+
+Production-readiness notes for running the whole stack via the root
+[`docker-compose.yml`](../docker-compose.yml). See each service's own README
+for local (non-compose) dev instructions.
+
+## 1. Overview / architecture
+
+Six services, one Docker network:
+
+| Service | Role | Reachable at |
+| --- | --- | --- |
+| `db` | MySQL 8.4 | `db:3306` (internal only) |
+| `redis` | BullMQ job queue backing store | `redis:6379` (internal only) |
+| `search` | Meilisearch, used when `ENABLE_ADVANCED_SEARCH=true` | `search:7700` (internal only) |
+| `webapi` | Public API (`/api/v1`), internal callback API (`/internal`) | published on `PORT` (default 3000) |
+| `processing` | yt-dlp downloads + ffmpeg transcodes, BullMQ worker | internal only, called by `webapi` |
+| `webview` | React SPA served by nginx | published on `WEBVIEW_PORT` (default 5173) |
+
+`webapi` and `processing` authenticate each other's callbacks with a shared
+`INTERNAL_SERVICE_TOKEN` Bearer token. `webview` talks to `webapi` directly
+from the browser (cross-origin), not through an nginx proxy.
+
+## 2. TLS (external, not included in this stack)
+
+Nothing in this repo terminates TLS. Deploy behind an operator-managed
+reverse proxy or cloud load balancer that terminates HTTPS and forwards
+plain HTTP to `webapi` (port `PORT`) and `webview` (port `WEBVIEW_PORT`).
+
+Set `TRUST_PROXY` to match your proxy topology — `1` (the default) trusts
+one hop, which is correct for a single fronting proxy/load balancer. This
+affects secure cookies, `req.secure`, and rate-limit IP attribution in
+`webapi`. Get this wrong and sessions/cookies can misbehave even though TLS
+itself works fine.
+
+## 3. Quick start (production)
+
+```bash
+cp .env.example .env
+# edit .env: fill in every REQUIRED secret, set PUBLIC_APP_URL/CORS_ORIGIN/
+# VITE_API_BASE_URL to your real hostname(s)
+docker compose up -d --build
+docker compose ps   # wait for db/redis/search/webapi/processing to show healthy
+```
+
+`docker compose up` fails immediately with a clear error naming the missing
+variable if any `REQUIRED` value in `.env.example` is left blank — there is
+no silent fallback to a weak default secret.
+
+## 4. Secrets checklist
+
+| Var | Used by | Generate with |
+| --- | --- | --- |
+| `MYSQL_ROOT_PASSWORD` | `db` | `openssl rand -hex 32` |
+| `MYSQL_PASSWORD` | `db`, `webapi` | `openssl rand -hex 32` |
+| `MEILI_MASTER_KEY` | `search`, `webapi` | `openssl rand -hex 32` |
+| `INTERNAL_SERVICE_TOKEN` | `webapi`, `processing` | `openssl rand -hex 32` |
+| `REDIS_PASSWORD` | `redis`, `processing` | `openssl rand -hex 32` |
+| `SESSION_SECRET` | `webapi` (cookie signing) | `openssl rand -hex 32` |
+
+Rotate any of these that were ever set to an example/weak value before going
+live. Do not commit `.env` — it's gitignored at the repo root.
+
+## 5. Network exposure
+
+`db`, `redis`, and `search` publish **no host ports** by default — they're
+only reachable on the internal compose network (`db:3306`, `redis:6379`,
+`search:7700`). This is deliberate: there's no reason a database, job queue,
+or search index needs to be reachable from outside the Docker host.
+
+If you want local host access for tooling (a DB GUI, RedisInsight, the
+Meilisearch dashboard), add a gitignored `docker-compose.override.yml`
+(Compose merges this automatically, no extra flags needed):
+
+```yaml
+# docker-compose.override.yml
+services:
+  db:
+    ports:
+      - "3306:3306"
+  redis:
+    ports:
+      - "6379:6379"
+  search:
+    ports:
+      - "7700:7700"
+```
+
+Note `redis` requires `--requirepass` (wired from `REDIS_PASSWORD`) and
+`AUTH`; most Redis GUIs will prompt for a password.
+
+## 6. CORS configuration
+
+`CORS_ORIGIN` is a comma-separated allowlist of browser origins allowed to
+make credentialed requests. If it's set, only those origins are allowed
+(everything else is rejected by the `cors` middleware). If it's left blank:
+outside production, requests are reflected (dev convenience); in production
+(`NODE_ENV=production`, which the `webapi` image always sets), cross-origin
+requests are **rejected entirely**. Since the webview talks to the API
+cross-origin from the browser, `CORS_ORIGIN` must be set to your real
+webview origin(s) in production or the frontend will fail to authenticate.
+
+## 7. Admin & demo accounts
+
+`ADMIN_USERNAME`/`ADMIN_PASSWORD` seed a single admin account on first boot
+(idempotent — won't overwrite on later boots). Leave both blank to skip
+creating one; you can promote or create an admin another way instead.
+
+`SEED_DEMO_USERS` (default `false` in this compose file) controls three
+extra demo accounts (`User1`, `User2`, `Mod1`), all sharing the password
+`"password"`, one of which is a moderator. **Never enable this in a real
+deployment.**
+
+## 8. API docs exposure
+
+`ENABLE_API_DOCS` (default `false` here) controls whether `GET /docs`
+(Scalar UI) and `GET /openapi.json` are mounted at all. Keep this `false` in
+production unless you specifically want your full API schema public.
+
+## 9. `VITE_API_BASE_URL` / image rebuild requirement
+
+Vite bakes `VITE_API_BASE_URL` into the webview's JS bundle at `docker build`
+time (it's a build `ARG`, not something read at container start). There is
+no runtime config-injection mechanism in this stack. Practically: if you
+change the API's public URL, or promote the same build to a different
+environment with a different API origin, you must rebuild the `webview`
+image (`docker compose build webview`) — changing the env var alone and
+restarting the container does nothing.
+
+## 10. Redis auth
+
+`redis` requires a password (`REDIS_PASSWORD`, wired via `--requirepass`).
+`processing` is the only other service that talks to Redis directly and
+picks up the same var. There's no TLS between `processing` and `redis` in
+this stack — both run on the internal compose network only.
+
+## 11. yt-dlp version pinning
+
+`processing/Dockerfile` pins `yt-dlp` and `yt-dlp-ejs` to specific versions
+rather than installing latest on every image rebuild, for build
+reproducibility. Tradeoff: yt-dlp ships frequent fixes for site-extraction
+breakage (sites change their pages, yt-dlp has to keep up), so a pinned
+version can start failing to download from a given site over time. Bump the
+pins in `processing/Dockerfile` deliberately when that happens, rather than
+switching back to always-latest.
+
+## 12. Health checks & startup ordering
+
+`db`, `redis`, `search`, `webapi`, and `processing` all have Docker
+`healthcheck:` blocks. `webapi` waits for `db` and `processing` to report
+healthy before starting; `webview` waits for `webapi`. `docker compose ps`
+shows each service's health status — expect a `starting` → `healthy`
+transition over the first ~15-30 seconds per service.
+
+## 13. Explicitly out of scope
+
+- **TLS termination** — assumed external (see §2).
+- **Secrets management/vaulting** — `.env` is a plain file; for a real
+  production deployment, consider Docker secrets, an external secrets
+  manager, or your platform's native secret store instead of a `.env` file
+  on disk.
+- **Backups** — `db-data`, `media-data`, and `search-data` are named Docker
+  volumes with no automated backup. Back them up yourself.
+- **Log aggregation / monitoring** — services log to stdout/stderr only
+  (`docker compose logs`); no shipping to an external log/metrics system is
+  configured.
+- **CI/CD deploy automation** — the GitHub Actions workflows in
+  `.github/workflows/` build, sign, and publish images; they do not deploy
+  anywhere. Deploying a new image to your environment is a manual step.
+- **Horizontal scaling** — `processing` runs one transcode job at a time by
+  design (`concurrency: 1`); running multiple `processing` replicas isn't
+  tested or documented here.
+
+## 14. Known constraints
+
+- The webview's Content-Security-Policy leaves `connect-src` permissive
+  (`'self' *'`) rather than scoped to the real API origin, because
+  `VITE_API_BASE_URL` is only known at image build time and nginx can't see
+  it statically without added templating machinery. Every other CSP
+  directive is strict.

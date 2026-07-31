@@ -27,6 +27,21 @@ export function createApp() {
   const app = express();
   const openApiDocument = loadOpenApiDocument();
 
+  // Trust one hop of reverse proxy by default (secure cookies, req.secure,
+  // and rate-limit IPs all depend on this behind a fronting LB/proxy).
+  // Override TRUST_PROXY to match your actual proxy topology - a numeric
+  // string is treated as a hop count, anything else (e.g. "loopback", a
+  // CIDR list) is passed through to Express as-is.
+  const trustProxyEnv = process.env.TRUST_PROXY;
+  app.set(
+    "trust proxy",
+    trustProxyEnv === undefined
+      ? 1
+      : /^\d+$/.test(trustProxyEnv.trim())
+        ? Number(trustProxyEnv)
+        : trustProxyEnv,
+  );
+
   app.use(
     helmet({
       contentSecurityPolicy: false,
@@ -75,57 +90,66 @@ export function createApp() {
     res.json({ status: "ok" });
   });
 
-  /**
-   * Serves the loaded OpenAPI document as JSON.
-   * GET /openapi.json — no body. Auth: none.
-   *
-   * @openapi
-   * /openapi.json:
-   *   get:
-   *     tags: [Service]
-   *     summary: OpenAPI document
-   *     operationId: openApiJson
-   *     responses:
-   *       200:
-   *         description: OpenAPI 3 document generated via swagger-jsdoc
-   *
-   * @param {import('express').Request} _req Incoming request (unused).
-   * @param {import('express').Response} res Express response.
-   * @returns {void} Sends the OpenAPI document object.
-   */
-  app.get("/openapi.json", (_req, res) => {
-    res.json(openApiDocument);
-  });
+  // Publicly exposes the full API schema/UI - on by default outside
+  // production, off in production unless explicitly enabled.
+  const docsEnabled =
+    String(
+      process.env.ENABLE_API_DOCS ?? (process.env.NODE_ENV !== "production"),
+    ).toLowerCase() === "true";
 
-  /**
-   * Serves the Scalar API reference UI for `/openapi.json`.
-   * GET /docs — no body. Auth: none.
-   *
-   * @openapi
-   * /docs:
-   *   get:
-   *     tags: [Service]
-   *     summary: Scalar API reference UI
-   *     operationId: docs
-   *     responses:
-   *       200:
-   *         description: HTML page embedding Scalar API Reference
-   *         content:
-   *           text/html:
-   *             schema:
-   *               type: string
-   */
-  app.use(
-    "/docs",
-    apiReference({
-      url: "/openapi.json",
-      theme: "default",
-      pageTitle: "Justintube API",
-      agent: {
-        disabled: true,
-      },
-    }),
-  );
+  if (docsEnabled) {
+    /**
+     * Serves the loaded OpenAPI document as JSON.
+     * GET /openapi.json — no body. Auth: none.
+     *
+     * @openapi
+     * /openapi.json:
+     *   get:
+     *     tags: [Service]
+     *     summary: OpenAPI document
+     *     operationId: openApiJson
+     *     responses:
+     *       200:
+     *         description: OpenAPI 3 document generated via swagger-jsdoc
+     *
+     * @param {import('express').Request} _req Incoming request (unused).
+     * @param {import('express').Response} res Express response.
+     * @returns {void} Sends the OpenAPI document object.
+     */
+    app.get("/openapi.json", (_req, res) => {
+      res.json(openApiDocument);
+    });
+
+    /**
+     * Serves the Scalar API reference UI for `/openapi.json`.
+     * GET /docs — no body. Auth: none.
+     *
+     * @openapi
+     * /docs:
+     *   get:
+     *     tags: [Service]
+     *     summary: Scalar API reference UI
+     *     operationId: docs
+     *     responses:
+     *       200:
+     *         description: HTML page embedding Scalar API Reference
+     *         content:
+     *           text/html:
+     *             schema:
+     *               type: string
+     */
+    app.use(
+      "/docs",
+      apiReference({
+        url: "/openapi.json",
+        theme: "default",
+        pageTitle: "Justintube API",
+        agent: {
+          disabled: true,
+        },
+      }),
+    );
+  }
 
   app.use("/internal", createInternalFileVersionsRouter());
   app.use("/internal", createInternalLivestreamsRouter());

@@ -1,4 +1,5 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { timingSafeStringEqual } from "./timing-safe-equal.js";
 
 /**
  * HTTP methods that mutate state and therefore require a CSRF token for
@@ -42,22 +43,6 @@ export function rotateCsrfToken(req) {
 }
 
 /**
- * Constant-time comparison of two CSRF token strings.
- *
- * @param {string} expected Token stored in the session.
- * @param {string} provided Token from the X-CSRF-Token header.
- * @returns {boolean} True when tokens match.
- */
-function tokensMatch(expected, provided) {
-  const left = Buffer.from(String(expected || ""), "utf8");
-  const right = Buffer.from(String(provided || ""), "utf8");
-  if (left.length === 0 || left.length !== right.length) {
-    return false;
-  }
-  return timingSafeEqual(left, right);
-}
-
-/**
  * Express middleware that enforces the synchronizer CSRF token for unsafe
  * methods when the client is not presenting an API-key Bearer token.
  *
@@ -81,7 +66,7 @@ export function csrfProtection(req, res, next) {
 
   const expected = req.session?.csrfToken;
   const provided = String(req.headers["x-csrf-token"] || "");
-  if (!expected || !tokensMatch(expected, provided)) {
+  if (!expected || !timingSafeStringEqual(expected, provided)) {
     res.status(403).json({
       error: "csrf_invalid",
       message: "Valid X-CSRF-Token header required.",
