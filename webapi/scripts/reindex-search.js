@@ -1,42 +1,20 @@
-import { OriginalUpload, VideoMetadata } from "../lib/models/index.js";
-import { advancedSearchEnabled, syncVideoIndex } from "../lib/search.js";
+import { runSearchReindex } from "../lib/search-reindex.js";
 
 /**
- * Bulk-(re)indexes every eligible (ready + public) video into Meilisearch.
- * Meilisearch-only: the default basic backend has no persistent index to go
- * stale, it rebuilds automatically from the database. Used for initial
- * rollout (the Meilisearch index starts empty) and disaster recovery
- * (rebuilding after the Meilisearch volume is wiped). Run with
- * `npm run reindex-search` (add `--env-file=.env` if env vars aren't already
- * exported in the shell).
+ * On-demand trigger for the same nightly reindex logic `startSearchReindexCron`
+ * schedules (`lib/search-reindex.js`) — syncs every `searchIndexStatus:
+ * "pending"` video, playlist, and user into Meilisearch and marks each
+ * `"indexed"`. A no-op (with a log line) when `ENABLE_ADVANCED_SEARCH` isn't
+ * set to `true`, since the default in-process backend never uses this status
+ * column. Useful right after deploying this feature, or for disaster
+ * recovery after wiping the Meilisearch volume, without waiting for the
+ * scheduled run. Run with `npm run reindex-search` (add `--env-file=.env` if
+ * env vars aren't already exported in the shell).
  *
- * @returns {Promise<void>} Resolves once every eligible video has been synced.
+ * @returns {Promise<void>} Resolves once the reindex attempt completes.
  */
 async function main() {
-  if (!advancedSearchEnabled()) {
-    console.error(
-      "ENABLE_ADVANCED_SEARCH is not set to true; nothing to do.",
-    );
-    process.exit(1);
-  }
-
-  const uploads = await OriginalUpload.findAll({
-    where: { status: "ready" },
-    include: [
-      {
-        model: VideoMetadata,
-        as: "VideoMetadata",
-        required: true,
-        where: { visibility: "public" },
-      },
-    ],
-    attributes: ["id"],
-  });
-
-  console.log(`Reindexing ${uploads.length} eligible video(s)...`);
-  for (const upload of uploads) {
-    await syncVideoIndex(upload.id);
-  }
+  await runSearchReindex();
   console.log("Done.");
 }
 

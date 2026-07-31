@@ -7,6 +7,7 @@ import {
   jest,
   test,
 } from "@jest/globals";
+import { OriginalUpload } from "../../lib/models/index.js";
 import {
   resetTables,
   seedContentTag,
@@ -30,13 +31,25 @@ const mockSearch = jest.fn().mockResolvedValue({
   totalHits: 0,
   totalPages: 0,
 });
+/**
+ * Real Meilisearch settings-update calls return a Promise decorated with a
+ * `.waitTask()` method (see webapi/lib/search/meilisearch.js's comment on
+ * `ensureIndexConfigured`) — mirror that shape so mocked calls can be chained
+ * the same way the production code chains them.
+ *
+ * @returns {Promise<object> & {waitTask: () => Promise<object>}} A settings-update mock result.
+ */
+function mockSettingsUpdate() {
+  return Object.assign(Promise.resolve({}), { waitTask: jest.fn().mockResolvedValue({}) });
+}
+
 const mockIndexHandle = {
   addDocuments: mockAddDocuments,
   deleteDocument: mockDeleteDocument,
   search: mockSearch,
-  updateSearchableAttributes: jest.fn().mockResolvedValue({}),
-  updateFilterableAttributes: jest.fn().mockResolvedValue({}),
-  updateSortableAttributes: jest.fn().mockResolvedValue({}),
+  updateSearchableAttributes: jest.fn().mockImplementation(mockSettingsUpdate),
+  updateFilterableAttributes: jest.fn().mockImplementation(mockSettingsUpdate),
+  updateSortableAttributes: jest.fn().mockImplementation(mockSettingsUpdate),
 };
 const mockIndex = jest.fn(() => mockIndexHandle);
 const mockCreateIndex = jest.fn().mockResolvedValue({});
@@ -110,7 +123,7 @@ describe("Search indexing (lib/search.js)", () => {
       expect(searchLib.advancedSearchEnabled()).toBe(true);
     });
 
-    test("syncVideoIndex upserts a ready + public video", async () => {
+    test("syncVideoIndex defers a ready + public video: marks it pending instead of contacting Meilisearch", async () => {
       const user = await seedUser({ username: "alice" });
       const upload = await seedUpload({ status: "ready", userId: user.id });
       await seedMetadata(upload.id, { title: "Cats", visibility: "public" });
@@ -118,19 +131,25 @@ describe("Search indexing (lib/search.js)", () => {
 
       await searchLib.syncVideoIndex(upload.id);
 
-      expect(mockAddDocuments).toHaveBeenCalledTimes(1);
-      const [docs] = mockAddDocuments.mock.calls[0];
-      expect(docs[0]).toMatchObject({
-        id: upload.id,
-        title: "Cats",
-        visibility: "public",
-        username: "alice",
-        tags: ["cats"],
-      });
+      expect(mockAddDocuments).not.toHaveBeenCalled();
       expect(mockDeleteDocument).not.toHaveBeenCalled();
+      const reloaded = await OriginalUpload.findByPk(upload.id);
+      expect(reloaded.searchIndexStatus).toBe("pending");
     });
 
-    test("syncVideoIndex deletes when the video is private", async () => {
+    test("syncVideoIndex defers a public video even if it never went through transcoding (status isn't 'ready')", async () => {
+      const upload = await seedUpload({ status: "processing" });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      await searchLib.syncVideoIndex(upload.id);
+
+      expect(mockAddDocuments).not.toHaveBeenCalled();
+      expect(mockDeleteDocument).not.toHaveBeenCalled();
+      const reloaded = await OriginalUpload.findByPk(upload.id);
+      expect(reloaded.searchIndexStatus).toBe("pending");
+    });
+
+    test("syncVideoIndex removes immediately (does not defer) when the video is private", async () => {
       const upload = await seedUpload({ status: "ready" });
       await seedMetadata(upload.id, { visibility: "private" });
 
@@ -140,17 +159,7 @@ describe("Search indexing (lib/search.js)", () => {
       expect(mockAddDocuments).not.toHaveBeenCalled();
     });
 
-    test("syncVideoIndex deletes when the video isn't ready yet", async () => {
-      const upload = await seedUpload({ status: "processing" });
-      await seedMetadata(upload.id, { visibility: "public" });
-
-      await searchLib.syncVideoIndex(upload.id);
-
-      expect(mockDeleteDocument).toHaveBeenCalledWith(upload.id);
-      expect(mockAddDocuments).not.toHaveBeenCalled();
-    });
-
-    test("syncVideoIndex deletes when metadata doesn't exist yet", async () => {
+    test("syncVideoIndex removes immediately when metadata doesn't exist yet", async () => {
       const upload = await seedUpload({ status: "ready" });
 
       await searchLib.syncVideoIndex(upload.id);

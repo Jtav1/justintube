@@ -39,6 +39,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `GET /api/v1/search/suggest` — searchSuggest
 - [x] `GET /api/v1/search` — searchVideos
 - [x] `GET /api/v1/search/users` — searchUsers
+- [x] `GET /api/v1/search/advanced` — searchAdvanced
 - [x] `GET /api/v1/videos` — listVideos
 - [x] `GET /api/v1/videos/featured` — listFeaturedVideos
 - [x] `GET /api/v1/videos/newest` — listNewestVideos

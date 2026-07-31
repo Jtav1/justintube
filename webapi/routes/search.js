@@ -1,9 +1,18 @@
 import { Router } from "express";
 import { Op } from "sequelize";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
-import { Role, User } from "../lib/models/index.js";
-import { advancedSearchEnabled, searchVideos, suggestVideos } from "../lib/search.js";
+import { Role, User, UserPlaylist } from "../lib/models/index.js";
+import {
+  advancedSearchEnabled,
+  searchPlaylistsAdvanced,
+  searchUsersAdvanced,
+  searchVideos,
+  searchVideosAdvanced,
+  suggestVideos,
+} from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { buildPlaylistsPage } from "./playlists.js";
+import { loadUploadCountsByUserId, serializeUserListItem } from "./users.js";
 
 /**
  * Maximum page size for GET /search.
@@ -20,11 +29,27 @@ const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
 
 /**
- * Fixed suggestion count for GET /search/suggest.
+ * Default suggestion count for GET /search/suggest.
  *
  * @type {number}
  */
 const SUGGEST_LIMIT = 8;
+
+/**
+ * Maximum suggestion count for GET /search/suggest.
+ *
+ * @type {number}
+ */
+const SUGGEST_MAX_LIMIT = 15;
+
+/**
+ * Default/maximum per-type result counts for GET /search/advanced. No
+ * pagination in v1 — these caps just keep the combined results page from
+ * growing unbounded.
+ *
+ * @type {{video: number, playlist: number, user: number}}
+ */
+const ADVANCED_LIMITS = { video: 24, playlist: 12, user: 8 };
 
 /**
  * Default result count for GET /search/users.
@@ -189,6 +214,76 @@ function parseUserSearchQuery(query) {
 }
 
 /**
+ * Parses and validates GET /search/suggest query params.
+ *
+ * @param {import('express').Request['query']} query Raw Express query object.
+ * @returns {{ok: true, q: string, limit: number}|{ok: false, message: string}}
+ *   Parsed params or a validation error.
+ */
+function parseSuggestQuery(query) {
+  const q = typeof query.q === "string" ? query.q.trim() : "";
+
+  const limitRaw = query.limit === undefined ? SUGGEST_LIMIT : Number(query.limit);
+  if (!Number.isInteger(limitRaw) || limitRaw < 1) {
+    return { ok: false, message: "limit must be a positive integer." };
+  }
+  if (limitRaw > SUGGEST_MAX_LIMIT) {
+    return { ok: false, message: `limit must be at most ${SUGGEST_MAX_LIMIT}.` };
+  }
+
+  return { ok: true, q, limit: limitRaw };
+}
+
+/**
+ * Parses and validates GET /search/advanced query params.
+ *
+ * @param {import('express').Request['query']} query Raw Express query object.
+ * @returns {{ok: true, q: string, videoLimit: number, playlistLimit: number, userLimit: number}
+ *   |{ok: false, message: string}} Parsed params or a validation error.
+ */
+function parseAdvancedSearchQuery(query) {
+  const q = typeof query.q === "string" ? query.q.trim() : "";
+
+  /**
+   * @param {unknown} raw Raw query value.
+   * @param {number} max Maximum allowed value (also the default).
+   * @param {string} label Field name, for error messages.
+   * @returns {{ok: true, value: number}|{ok: false, message: string}} Parsed limit.
+   */
+  function parseLimit(raw, max, label) {
+    const value = raw === undefined ? max : Number(raw);
+    if (!Number.isInteger(value) || value < 1) {
+      return { ok: false, message: `${label} must be a positive integer.` };
+    }
+    if (value > max) {
+      return { ok: false, message: `${label} must be at most ${max}.` };
+    }
+    return { ok: true, value };
+  }
+
+  const videoLimit = parseLimit(query.videoLimit, ADVANCED_LIMITS.video, "videoLimit");
+  if (!videoLimit.ok) {
+    return videoLimit;
+  }
+  const playlistLimit = parseLimit(query.playlistLimit, ADVANCED_LIMITS.playlist, "playlistLimit");
+  if (!playlistLimit.ok) {
+    return playlistLimit;
+  }
+  const userLimit = parseLimit(query.userLimit, ADVANCED_LIMITS.user, "userLimit");
+  if (!userLimit.ok) {
+    return userLimit;
+  }
+
+  return {
+    ok: true,
+    q,
+    videoLimit: videoLimit.value,
+    playlistLimit: playlistLimit.value,
+    userLimit: userLimit.value,
+  };
+}
+
+/**
  * Maps a raw Meilisearch hit to the public search result DTO.
  *
  * @param {object} hit Document as stored in the `videos` index.
@@ -197,6 +292,7 @@ function parseUserSearchQuery(query) {
 function serializeHit(hit) {
   return {
     id: hit.id,
+    videoId: hit.videoId,
     title: hit.title,
     // The search index stores an unset description as "" (empty string), not
     // null/undefined, so `?? null` alone would never fire here — `|| null`
@@ -398,28 +494,157 @@ export function createSearchRouter() {
    *         required: false
    *         schema:
    *           type: string
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 15
+   *           default: 8
    *     responses:
    *       200:
    *         description: Suggested matches
+   *       400:
+   *         description: Invalid query
    *       500:
    *         description: Search failed unexpectedly
    *       503:
    *         description: Search backend unreachable (advanced search enabled but Meilisearch is down)
    */
   router.get("/search/suggest", optionalAuth, async (req, res) => {
-    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const parsed = parseSuggestQuery(req.query);
+    if (!parsed.ok) {
+      res.status(400).json({ error: "invalid_query", message: parsed.message });
+      return;
+    }
 
     try {
-      const result = await suggestVideos(q, SUGGEST_LIMIT);
+      const result = await suggestVideos(parsed.q, parsed.limit);
       res.status(200).json({
         items: (result.hits || []).map((hit) => ({
           id: hit.id,
+          videoId: hit.videoId,
           title: hit.title,
           uploader: serializeUserRef(hit.userId, hit.username, hit.displayName),
         })),
       });
     } catch (err) {
       handleSearchError(res, err, "searchSuggest");
+    }
+  });
+
+  /**
+   * GET /search/advanced — searchAdvanced
+   * Auth: optional. Combined search across public videos, public playlists
+   * (including their contained videos' titles/tags), and non-locked users,
+   * with fuzzy ("close match") tolerance. Powers the search-results page.
+   *
+   * @openapi
+   * /api/v1/search/advanced:
+   *   get:
+   *     tags: [Search]
+   *     summary: Combined fuzzy search across videos, playlists, and users
+   *     operationId: searchAdvanced
+   *     parameters:
+   *       - name: q
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: string
+   *       - name: videoLimit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 24
+   *           default: 24
+   *       - name: playlistLimit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 12
+   *           default: 12
+   *       - name: userLimit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 8
+   *           default: 8
+   *     responses:
+   *       200:
+   *         description: Combined video/playlist/user matches
+   *       400:
+   *         description: Invalid query
+   *       500:
+   *         description: Search failed unexpectedly
+   *       503:
+   *         description: Search backend unreachable (advanced search enabled but Meilisearch is down)
+   */
+  router.get("/search/advanced", optionalAuth, async (req, res) => {
+    const parsed = parseAdvancedSearchQuery(req.query);
+    if (!parsed.ok) {
+      res.status(400).json({ error: "invalid_query", message: parsed.message });
+      return;
+    }
+
+    if (!parsed.q) {
+      res.status(200).json({ videos: [], playlists: [], users: [] });
+      return;
+    }
+
+    try {
+      const [videoResult, playlistResult, userResult] = await Promise.all([
+        searchVideosAdvanced({ q: parsed.q, limit: parsed.videoLimit }),
+        searchPlaylistsAdvanced({ q: parsed.q, limit: parsed.playlistLimit }),
+        searchUsersAdvanced({ q: parsed.q, limit: parsed.userLimit }),
+      ]);
+
+      const videos = (videoResult.hits || []).map(serializeHit);
+
+      const playlistHits = playlistResult.hits || [];
+      const playlistIds = playlistHits.map((hit) => hit.id);
+      const playlistRows = playlistIds.length > 0
+        ? await UserPlaylist.findAll({
+          where: { id: playlistIds },
+          include: [{ model: User, required: false }],
+        })
+        : [];
+      const playlistRowById = new Map(playlistRows.map((row) => [row.id, row]));
+      const orderedPlaylistRows = playlistIds
+        .map((id) => playlistRowById.get(id))
+        .filter(Boolean);
+      const playlistsPage = await buildPlaylistsPage(orderedPlaylistRows, orderedPlaylistRows.length, {
+        page: 1,
+        limit: Math.max(orderedPlaylistRows.length, 1),
+        user: req.user,
+        role: req.authRole,
+      });
+
+      const userHits = userResult.hits || [];
+      const userIds = userHits.map((hit) => hit.id);
+      const userRows = userIds.length > 0
+        ? await User.findAll({ where: { id: userIds } })
+        : [];
+      const userRowById = new Map(userRows.map((row) => [row.id, row]));
+      const uploadCounts = await loadUploadCountsByUserId(userIds);
+      const users = userIds
+        .map((id) => userRowById.get(id))
+        .filter(Boolean)
+        .map((user) => serializeUserListItem(user, { uploadCount: uploadCounts.get(user.id) ?? 0 }));
+
+      res.status(200).json({
+        videos,
+        playlists: playlistsPage.items,
+        users,
+      });
+    } catch (err) {
+      handleSearchError(res, err, "searchAdvanced");
     }
   });
 

@@ -22,6 +22,7 @@ import {
 } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
+import { syncPlaylistIndex, syncUserIndex } from "../lib/search.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { isAdmin, isModeratorOrAdmin } from "../lib/video-access.js";
 import { buildPlaylistsPage } from "./playlists.js";
@@ -495,7 +496,7 @@ async function loadUserPublicVideosPage(
  * @param {number[]} userIds User ids to count uploads for.
  * @returns {Promise<Map<number, number>>} Map of userId to public upload count.
  */
-async function loadUploadCountsByUserId(userIds) {
+export async function loadUploadCountsByUserId(userIds) {
   if (userIds.length === 0) {
     return new Map();
   }
@@ -528,7 +529,7 @@ async function loadUploadCountsByUserId(userIds) {
  * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, uploadCount: number, emailVerified?: boolean, uploader?: boolean}}
  *   Users-list row payload.
  */
-function serializeUserListItem(user, { isAdminCaller = false, uploadCount = 0 } = {}) {
+export function serializeUserListItem(user, { isAdminCaller = false, uploadCount = 0 } = {}) {
   return {
     id: user.id,
     username: user.username,
@@ -1776,6 +1777,18 @@ export function createUsersRouter() {
       }
 
       await targetUser.update(parsed.updates);
+
+      if (Object.prototype.hasOwnProperty.call(parsed.updates, "displayName")) {
+        syncUserIndex(targetUser.id);
+        const playlists = await UserPlaylist.findAll({
+          where: { userId: targetUser.id, visibility: "public" },
+          attributes: ["id"],
+        });
+        for (const playlist of playlists) {
+          syncPlaylistIndex(playlist.id);
+        }
+      }
+
       res.status(200).json({
         id: targetUser.id,
         username: targetUser.username,

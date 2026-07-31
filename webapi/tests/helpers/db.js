@@ -216,6 +216,27 @@ export async function seedPlaylistAccess(overrides = {}) {
 }
 
 /**
+ * Inserts a PLAYLIST_ITEMS row linking a video into a playlist.
+ *
+ * @param {number} playlistId Owning USER_PLAYLISTS id.
+ * @param {number} originalUploadId Id of the linked ORIGINAL_UPLOADS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {number|null} [overrides.position] Manual sort position.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded item's id and values.
+ */
+export async function seedPlaylistItem(playlistId, originalUploadId, overrides = {}) {
+  const record = {
+    playlistId,
+    originalUploadId,
+    position: null,
+    ...overrides,
+  };
+
+  const row = await PlaylistItem.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
  * Inserts a FILE_VERSIONS row (a transcoded variant) for an existing upload.
  *
  * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
