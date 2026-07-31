@@ -284,6 +284,11 @@
   color: var(--text-h);
   font-size: 13px;
   white-space: nowrap;
+  text-decoration: none;
+}
+
+.video-player-tag:hover {
+  background: var(--border);
 }
 
 .video-player-reactions {
