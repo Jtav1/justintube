@@ -343,9 +343,13 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               <div className="video-player-tags">
                 <span className="video-player-tags-label">Tags: </span>
                 {video.tags.map((tag) => (
-                  <span key={tag} className="video-player-tag">
+                  <Link
+                    key={tag}
+                    to={`/search?q=${encodeURIComponent(tag)}`}
+                    className="video-player-tag"
+                  >
                     {tag}
-                  </span>
+                  </Link>
                 ))}
               </div>
             )}

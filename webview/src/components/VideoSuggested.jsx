@@ -22,8 +22,9 @@ function shuffle(items) {
 
 /**
  * Suggested-videos rail shown alongside the video player. Prefers videos
- * sharing the current video's top tags, then fills any remaining slots with
- * a random selection from every video the viewer can access.
+ * matching any of the current video's first few tags (searched individually
+ * and merged), then fills any remaining slots with a random selection from
+ * every video the viewer can access.
  * @param {{video: object}} props The currently-playing video (from getVideo).
  */
 function VideoSuggested({ video }) {
@@ -40,17 +41,21 @@ function VideoSuggested({ video }) {
 
       const topTags = (video.tags ?? []).slice(0, TOP_TAG_COUNT)
       if (topTags.length > 0) {
-        try {
-          const tagMatches = await searchVideos({ tags: topTags, limit: TARGET_COUNT })
-          for (const item of tagMatches.items ?? []) {
+        const tagSearches = await Promise.allSettled(
+          topTags.map((tag) => searchVideos({ tags: [tag], limit: TARGET_COUNT })),
+        )
+        for (const outcome of tagSearches) {
+          if (outcome.status !== 'fulfilled') {
+            // One tag's search failed (e.g. search backend unavailable) -
+            // skip it and keep the others.
+            continue
+          }
+          for (const item of outcome.value.items ?? []) {
             if (!seenIds.has(item.id)) {
               seenIds.add(item.id)
               results.push(item)
             }
           }
-        } catch {
-          // Tag-based search failed (e.g. search backend unavailable) - fall
-          // through to the random fallback below.
         }
       }
 
