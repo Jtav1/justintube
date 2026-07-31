@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
+  EyeOff,
+  Link as LinkIcon,
   ListMinus,
   ListPlus,
   Pencil,
@@ -13,7 +15,7 @@ import {
 } from 'lucide-react'
 import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
-import { dislikeVideo, likeVideo, recordView } from '../api/videos.js'
+import { delistVideo, dislikeVideo, likeVideo, recordView } from '../api/videos.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { useAuth } from '../context/useAuth.js'
 import './VideoPlayer.css'
@@ -51,6 +53,9 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const [reaction, setReaction] = useState(video.viewerReaction ?? null)
   const [reactionPending, setReactionPending] = useState(false)
   const [avatarFailed, setAvatarFailed] = useState(false)
+  const [delisted, setDelisted] = useState(false)
+  const [delistPending, setDelistPending] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -95,6 +100,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     : null
 
   const canEdit = Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
+  const isModerator = Boolean(user) && (user.role === 'moderator' || user.role === 'admin')
 
   const uploaderName = video.uploader?.displayName || video.uploader?.username
   const avatarUrl = video.uploader?.username
@@ -236,6 +242,27 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     }
   }
 
+  async function handleDelist() {
+    if (delistPending || delisted) {
+      return
+    }
+    setDelistPending(true)
+    try {
+      await delistVideo(video.id)
+      setDelisted(true)
+    } catch (err) {
+      console.error('Failed to delist video:', err)
+    } finally {
+      setDelistPending(false)
+    }
+  }
+
+  async function handleCopyLink() {
+    await navigator.clipboard.writeText(`${window.location.origin}/video?v=${video.videoId}`)
+    setLinkCopied(true)
+    setTimeout(() => setLinkCopied(false), 1500)
+  }
+
   return (
     <div className="video-player">
       <div className={`video-player-frame${isAudio ? ' video-player-frame-audio' : ''}`}>
@@ -366,6 +393,25 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               <Pencil size={18} />
             </Link>
           )}
+          {isModerator && (
+            <button
+              type="button"
+              className="video-player-icon-btn"
+              aria-label={delisted ? 'Video delisted' : 'Delist video'}
+              disabled={delistPending || delisted}
+              onClick={handleDelist}
+            >
+              <EyeOff size={18} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="video-player-icon-btn"
+            aria-label={linkCopied ? 'Link copied' : 'Copy video link'}
+            onClick={handleCopyLink}
+          >
+            <LinkIcon size={18} />
+          </button>
           <div className="video-player-add-to-playlist" ref={playlistMenuRef}>
             <button
               type="button"
