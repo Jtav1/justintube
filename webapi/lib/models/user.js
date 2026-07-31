@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../db.js";
-import { timestampColumn } from "./attribute-helpers.js";
+import { constrainedString, timestampColumn } from "./attribute-helpers.js";
+import { SEARCH_INDEX_STATUS_VALUES } from "./constants.js";
 
 /**
  * USERS table model. One row per account; local accounts store a bcrypt hash in
@@ -74,6 +75,10 @@ export const User = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
     },
+    searchIndexStatus: constrainedString(SEARCH_INDEX_STATUS_VALUES, {
+      allowNull: false,
+      defaultValue: "pending",
+    }),
     createdAt: timestampColumn("created_at"),
     updatedAt: timestampColumn("updated_at"),
   },

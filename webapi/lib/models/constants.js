@@ -34,3 +34,14 @@ export const LIKE_VALUES = [1, -1];
  * @type {string[]}
  */
 export const MEDIA_TYPE_VALUES = ["video", "audio"];
+
+/**
+ * Allowed search-index sync states for ORIGINAL_UPLOADS/USER_PLAYLISTS/USERS.
+ * "pending" means the row needs to be (re)synced by the next Meilisearch
+ * reindex run (see lib/search-reindex.js); "indexed" means it was already
+ * synced and hasn't changed since. Not used by the default in-process search
+ * backend, which stays instantly consistent on every mutation.
+ *
+ * @type {string[]}
+ */
+export const SEARCH_INDEX_STATUS_VALUES = ["pending", "indexed"];

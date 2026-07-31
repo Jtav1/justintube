@@ -9,6 +9,7 @@ import { createCorsOptions } from "./lib/auth/cors.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
 import { ensureSchema } from "./lib/schema.js";
+import { startSearchReindexCron } from "./lib/search-reindex.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
@@ -172,6 +173,15 @@ async function start() {
   } catch (err) {
     console.error(
       "Failed to start transcode reconcile cron:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  try {
+    await startSearchReindexCron();
+  } catch (err) {
+    console.error(
+      "Failed to start search reindex cron:",
       err instanceof Error ? err.message : err,
     );
   }

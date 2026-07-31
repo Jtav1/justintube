@@ -59,14 +59,14 @@ describe("Search indexing (lib/search/basic.js, the default backend)", () => {
     expect(result.hits.map((h) => h.id)).not.toContain(upload.id);
   });
 
-  test("syncVideoIndex excludes a video that isn't ready yet", async () => {
+  test("syncVideoIndex includes a public video even if it never went through transcoding (status isn't 'ready')", async () => {
     const upload = await seedUpload({ status: "processing" });
     await seedMetadata(upload.id, { title: "Still Processing", visibility: "public" });
 
     await syncVideoIndex(upload.id);
 
     const result = await searchVideos({ q: "Processing", page: 1, limit: 20 });
-    expect(result.hits.map((h) => h.id)).not.toContain(upload.id);
+    expect(result.hits.map((h) => h.id)).toContain(upload.id);
   });
 
   test("syncVideoIndex excludes a video with no metadata yet", async () => {
