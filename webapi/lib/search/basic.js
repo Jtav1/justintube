@@ -1,5 +1,12 @@
 import MiniSearch from "minisearch";
-import { loadAllEligibleDocuments, loadEligibleDocument } from "./document.js";
+import {
+  loadAllEligibleDocuments,
+  loadAllEligiblePlaylistDocuments,
+  loadAllEligibleUserDocuments,
+  loadEligibleDocument,
+  loadEligiblePlaylistDocument,
+  loadEligibleUserDocument,
+} from "./document.js";
 
 /**
  * MiniSearch full-text fields. `tagsText` (not `tags`) is indexed — MiniSearch
@@ -21,6 +28,7 @@ const FIELDS = ["title", "description", "tagsText", "username", "displayName"];
  * @type {string[]}
  */
 const STORE_FIELDS = [
+  "videoId",
   "title",
   "description",
   "tags",
@@ -241,6 +249,30 @@ export async function suggestVideos(q, limit = 8) {
 }
 
 /**
+ * Runs a fuzzy ("close match") video search for the advanced/combined search
+ * flow. Unlike `searchVideos`, this tolerates typos (`fuzzy: 0.2`, MiniSearch's
+ * edit-distance-relative-to-term-length option) — the plain `/search` endpoint
+ * intentionally stays exact/prefix so its existing behavior doesn't change.
+ *
+ * @param {object} params Search parameters.
+ * @param {string} [params.q] Free-text query.
+ * @param {number} params.limit Maximum results to return.
+ * @returns {Promise<{hits: object[]}>} Matching video documents.
+ */
+export async function searchVideosAdvanced({ q, limit }) {
+  await ensureBuilt();
+  if (!q) {
+    return { hits: [] };
+  }
+  const hits = index.search(q, {
+    prefix: true,
+    fuzzy: 0.2,
+    filter: (result) => matchesFilters(result, {}),
+  });
+  return { hits: hits.slice(0, limit) };
+}
+
+/**
  * Discards the in-process index so it rebuilds from the database on next use.
  * For tests only: `resetTables()` wipes rows directly, bypassing the sync
  * hooks that would otherwise keep this index consistent.
@@ -250,4 +282,332 @@ export async function suggestVideos(q, limit = 8) {
 export function resetBasicIndexForTests() {
   index = null;
   buildPromise = null;
+  playlistIndex = null;
+  playlistBuildPromise = null;
+  userIndex = null;
+  userBuildPromise = null;
+}
+
+/**
+ * MiniSearch full-text fields for playlist documents. `contentText` (not
+ * `contentTitles`/`contentTags`) is indexed — same synthetic-field trick as
+ * `tagsText` above, so tokenizing playlist content doesn't corrupt the stored
+ * `contentTitles`/`contentTags` arrays (which aren't stored at all here,
+ * since nothing downstream needs them back — see `PLAYLIST_STORE_FIELDS`).
+ *
+ * @type {string[]}
+ */
+const PLAYLIST_FIELDS = ["title", "description", "username", "displayName", "contentText"];
+
+/**
+ * Fields copied verbatim into every playlist search result.
+ *
+ * @type {string[]}
+ */
+const PLAYLIST_STORE_FIELDS = [
+  "title",
+  "description",
+  "userId",
+  "username",
+  "displayName",
+  "visibility",
+  "itemCount",
+  "createdAt",
+  "updatedAt",
+];
+
+/** @type {MiniSearch|null} */
+let playlistIndex = null;
+
+/** @type {Promise<void>|null} */
+let playlistBuildPromise = null;
+
+/**
+ * Builds a fresh, empty MiniSearch index configured for playlist documents.
+ *
+ * @private
+ * @returns {MiniSearch} Empty configured index.
+ */
+function createPlaylistIndex() {
+  return new MiniSearch({
+    idField: "id",
+    fields: PLAYLIST_FIELDS,
+    storeFields: PLAYLIST_STORE_FIELDS,
+  });
+}
+
+/**
+ * Adds the synthetic `contentText` field MiniSearch tokenizes for
+ * playlist-content matching (contained videos' titles/tags).
+ *
+ * @private
+ * @param {object} doc Document in `loadEligiblePlaylistDocument` shape.
+ * @returns {object} Document ready to pass to `playlistIndex.add()`.
+ */
+function toIndexedPlaylistDocument(doc) {
+  return {
+    ...doc,
+    contentText: [...(doc.contentTitles || []), ...(doc.contentTags || [])].join(" "),
+  };
+}
+
+/**
+ * Lazily builds the in-process playlist index from the database on first use.
+ *
+ * @private
+ * @returns {Promise<void>} Resolves once the index is ready.
+ */
+async function ensurePlaylistBuilt() {
+  if (playlistIndex) {
+    return;
+  }
+  if (!playlistBuildPromise) {
+    playlistBuildPromise = (async () => {
+      const docs = await loadAllEligiblePlaylistDocuments();
+      const newIndex = createPlaylistIndex();
+      for (const doc of docs) {
+        newIndex.add(toIndexedPlaylistDocument(doc));
+      }
+      playlistIndex = newIndex;
+    })().finally(() => {
+      playlistBuildPromise = null;
+    });
+  }
+  await playlistBuildPromise;
+}
+
+/**
+ * Inserts or updates a document in the playlist index.
+ *
+ * @private
+ * @param {object} doc Document in `loadEligiblePlaylistDocument` shape.
+ * @returns {void}
+ */
+function upsertPlaylist(doc) {
+  if (playlistIndex.has(doc.id)) {
+    playlistIndex.discard(doc.id);
+  }
+  playlistIndex.add(toIndexedPlaylistDocument(doc));
+}
+
+/**
+ * Upserts or removes a playlist's search document based on current
+ * eligibility. Never throws — errors are caught and logged.
+ *
+ * @param {number} playlistId USER_PLAYLISTS id to sync.
+ * @returns {Promise<void>} Resolves once the sync attempt completes.
+ */
+export async function syncPlaylistIndex(playlistId) {
+  try {
+    await ensurePlaylistBuilt();
+    const doc = await loadEligiblePlaylistDocument(playlistId);
+    if (doc) {
+      upsertPlaylist(doc);
+    } else if (playlistIndex.has(playlistId)) {
+      playlistIndex.discard(playlistId);
+    }
+  } catch (err) {
+    console.error(`[search:basic] syncPlaylistIndex(${playlistId}) failed:`, err);
+  }
+}
+
+/**
+ * Removes a playlist's search document outright. Never throws.
+ *
+ * @param {number} playlistId USER_PLAYLISTS id to remove.
+ * @returns {Promise<void>} Resolves once the removal attempt completes.
+ */
+export async function removePlaylistDocument(playlistId) {
+  try {
+    await ensurePlaylistBuilt();
+    if (playlistIndex.has(playlistId)) {
+      playlistIndex.discard(playlistId);
+    }
+  } catch (err) {
+    console.error(`[search:basic] removePlaylistDocument(${playlistId}) failed:`, err);
+  }
+}
+
+/**
+ * Runs a full-text playlist search against the in-process index (prefix,
+ * exact — parity with `searchVideos`, not currently used by v1 UI but kept
+ * symmetrical/available).
+ *
+ * @param {object} params Search parameters.
+ * @param {string} [params.q] Free-text query.
+ * @param {string} [params.sort] Sort clause, e.g. "createdAt:desc".
+ * @param {number} params.page 1-indexed page number.
+ * @param {number} params.limit Page size.
+ * @returns {Promise<{hits: object[], page: number, hitsPerPage: number, totalHits: number, totalPages: number}>}
+ */
+export async function searchPlaylists({ q, sort, page, limit }) {
+  await ensurePlaylistBuilt();
+  const query = q ? q : MiniSearch.wildcard;
+  let hits = playlistIndex.search(query, { prefix: true });
+
+  if (sort && SORTERS[sort]) {
+    hits = [...hits].sort(SORTERS[sort]);
+  } else if (!q) {
+    hits = [...hits].sort(SORTERS["createdAt:desc"]);
+  }
+
+  const totalHits = hits.length;
+  const totalPages = Math.max(1, Math.ceil(totalHits / limit));
+  const start = (page - 1) * limit;
+
+  return {
+    hits: hits.slice(start, start + limit),
+    page,
+    hitsPerPage: limit,
+    totalHits,
+    totalPages,
+  };
+}
+
+/**
+ * Runs a fuzzy ("close match") playlist search for the advanced/combined
+ * search flow, matching on title/description/owner/content.
+ *
+ * @param {object} params Search parameters.
+ * @param {string} [params.q] Free-text query.
+ * @param {number} params.limit Maximum results to return.
+ * @returns {Promise<{hits: object[]}>} Matching playlist documents.
+ */
+export async function searchPlaylistsAdvanced({ q, limit }) {
+  await ensurePlaylistBuilt();
+  if (!q) {
+    return { hits: [] };
+  }
+  const hits = playlistIndex.search(q, { prefix: true, fuzzy: 0.2 });
+  return { hits: hits.slice(0, limit) };
+}
+
+/**
+ * Fields indexed for user documents (search-matching only — rendering fields
+ * like bio/avatar/uploadCount are hydrated from the database after search).
+ *
+ * @type {string[]}
+ */
+const USER_FIELDS = ["username", "displayName"];
+
+/**
+ * Fields copied verbatim into every user search result.
+ *
+ * @type {string[]}
+ */
+const USER_STORE_FIELDS = ["username", "displayName"];
+
+/** @type {MiniSearch|null} */
+let userIndex = null;
+
+/** @type {Promise<void>|null} */
+let userBuildPromise = null;
+
+/**
+ * Builds a fresh, empty MiniSearch index configured for user documents.
+ *
+ * @private
+ * @returns {MiniSearch} Empty configured index.
+ */
+function createUserIndex() {
+  return new MiniSearch({
+    idField: "id",
+    fields: USER_FIELDS,
+    storeFields: USER_STORE_FIELDS,
+  });
+}
+
+/**
+ * Lazily builds the in-process user index from the database on first use.
+ *
+ * @private
+ * @returns {Promise<void>} Resolves once the index is ready.
+ */
+async function ensureUserBuilt() {
+  if (userIndex) {
+    return;
+  }
+  if (!userBuildPromise) {
+    userBuildPromise = (async () => {
+      const docs = await loadAllEligibleUserDocuments();
+      const newIndex = createUserIndex();
+      for (const doc of docs) {
+        newIndex.add(doc);
+      }
+      userIndex = newIndex;
+    })().finally(() => {
+      userBuildPromise = null;
+    });
+  }
+  await userBuildPromise;
+}
+
+/**
+ * Inserts or updates a document in the user index.
+ *
+ * @private
+ * @param {object} doc Document in `loadEligibleUserDocument` shape.
+ * @returns {void}
+ */
+function upsertUser(doc) {
+  if (userIndex.has(doc.id)) {
+    userIndex.discard(doc.id);
+  }
+  userIndex.add(doc);
+}
+
+/**
+ * Upserts or removes a user's search document based on current eligibility
+ * (excluded once locked). Never throws — errors are caught and logged.
+ *
+ * @param {number} userId USERS id to sync.
+ * @returns {Promise<void>} Resolves once the sync attempt completes.
+ */
+export async function syncUserIndex(userId) {
+  try {
+    await ensureUserBuilt();
+    const doc = await loadEligibleUserDocument(userId);
+    if (doc) {
+      upsertUser(doc);
+    } else if (userIndex.has(userId)) {
+      userIndex.discard(userId);
+    }
+  } catch (err) {
+    console.error(`[search:basic] syncUserIndex(${userId}) failed:`, err);
+  }
+}
+
+/**
+ * Removes a user's search document outright. Never throws.
+ *
+ * @param {number} userId USERS id to remove.
+ * @returns {Promise<void>} Resolves once the removal attempt completes.
+ */
+export async function removeUserDocument(userId) {
+  try {
+    await ensureUserBuilt();
+    if (userIndex.has(userId)) {
+      userIndex.discard(userId);
+    }
+  } catch (err) {
+    console.error(`[search:basic] removeUserDocument(${userId}) failed:`, err);
+  }
+}
+
+/**
+ * Runs a fuzzy ("close match") username/display-name search for the
+ * advanced/combined search flow.
+ *
+ * @param {object} params Search parameters.
+ * @param {string} [params.q] Free-text query.
+ * @param {number} params.limit Maximum results to return.
+ * @returns {Promise<{hits: object[]}>} Matching user documents.
+ */
+export async function searchUsersAdvanced({ q, limit }) {
+  await ensureUserBuilt();
+  if (!q) {
+    return { hits: [] };
+  }
+  const hits = userIndex.search(q, { prefix: true, fuzzy: 0.2 });
+  return { hits: hits.slice(0, limit) };
 }

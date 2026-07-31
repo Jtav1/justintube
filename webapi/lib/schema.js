@@ -234,6 +234,21 @@ async function ensureSqliteMissingColumns() {
       column: "media_type",
       ddl: "`media_type` VARCHAR(16) NOT NULL DEFAULT 'video'",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "search_index_status",
+      ddl: "`search_index_status` VARCHAR(16) NOT NULL DEFAULT 'pending'",
+    },
+    {
+      table: "USER_PLAYLISTS",
+      column: "search_index_status",
+      ddl: "`search_index_status` VARCHAR(16) NOT NULL DEFAULT 'pending'",
+    },
+    {
+      table: "USERS",
+      column: "search_index_status",
+      ddl: "`search_index_status` VARCHAR(16) NOT NULL DEFAULT 'pending'",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

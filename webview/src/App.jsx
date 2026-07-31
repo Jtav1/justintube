@@ -14,6 +14,7 @@ import UserPlaylistsPage from './pages/UserPlaylists.jsx'
 import PlaylistsPage from './pages/Playlists.jsx'
 import FeaturedVideosPage from './pages/FeaturedVideos.jsx'
 import UsersListPage from './pages/UsersList.jsx'
+import SearchResultsPage from './pages/SearchResults.jsx'
 import AccountSettingsPage from './pages/AccountSettings.jsx'
 import SubscriptionsPage from './pages/UserSubscriptions.jsx'
 import LikedVideosPage from './pages/LikedVideos.jsx'
@@ -38,6 +39,7 @@ function App() {
         <Route path="/liked/:username" element={<LikedVideosPage />} />
         <Route path="/featured" element={<FeaturedVideosPage />} />
         <Route path="/users" element={<UsersListPage />} />
+        <Route path="/search" element={<SearchResultsPage />} />
         <Route path="/settings" element={<AccountSettingsPage />} />
         <Route path="/subscriptions" element={<SubscriptionsPage />} />
       </Route>

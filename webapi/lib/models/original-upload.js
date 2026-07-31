@@ -1,7 +1,7 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../db.js";
 import { constrainedString, timestampColumn } from "./attribute-helpers.js";
-import { MEDIA_TYPE_VALUES, RESOLUTION_VALUES } from "./constants.js";
+import { MEDIA_TYPE_VALUES, RESOLUTION_VALUES, SEARCH_INDEX_STATUS_VALUES } from "./constants.js";
 
 /**
  * ORIGINAL_UPLOADS table model. One row per uploaded source media file.
@@ -76,6 +76,10 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
     },
+    searchIndexStatus: constrainedString(SEARCH_INDEX_STATUS_VALUES, {
+      allowNull: false,
+      defaultValue: "pending",
+    }),
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

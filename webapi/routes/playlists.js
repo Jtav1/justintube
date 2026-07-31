@@ -15,6 +15,7 @@ import {
 } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
 import { canViewPlaylist } from "../lib/playlist-access.js";
+import { removePlaylistDocument, syncPlaylistIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { isAdmin, isOwnerOrAdmin } from "../lib/video-access.js";
 import { loadTagsByUploadId, serializeVideo } from "./videos.js";
@@ -308,6 +309,7 @@ export function createPlaylistsRouter() {
         description,
         visibility,
       });
+      syncPlaylistIndex(playlist.id);
 
       res.status(201).json(serializePlaylist(playlist, 0));
     } catch (err) {
@@ -580,6 +582,7 @@ export function createPlaylistsRouter() {
       }
 
       await playlist.update(updates);
+      syncPlaylistIndex(playlist.id);
 
       const itemCount = await PlaylistItem.count({ where: { playlistId: playlist.id } });
       res.status(200).json(serializePlaylist(playlist, itemCount));
@@ -647,6 +650,7 @@ export function createPlaylistsRouter() {
       }
 
       await playlist.destroy();
+      removePlaylistDocument(id);
       res.status(200).json({ success: true });
     } catch (err) {
       console.error("deletePlaylist failed:", err);
@@ -758,6 +762,7 @@ export function createPlaylistsRouter() {
       }
 
       await playlist.update({ lastAddedAt: new Date() });
+      syncPlaylistIndex(playlist.id);
 
       const itemCount = await PlaylistItem.count({ where: { playlistId: playlist.id } });
       res.status(200).json({ itemCount });
@@ -831,6 +836,7 @@ export function createPlaylistsRouter() {
       await PlaylistItem.destroy({
         where: { playlistId: playlist.id, originalUploadId: videoId },
       });
+      syncPlaylistIndex(playlist.id);
 
       const itemCount = await PlaylistItem.count({ where: { playlistId: playlist.id } });
       res.status(200).json({ itemCount });

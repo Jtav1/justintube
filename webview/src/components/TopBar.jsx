@@ -1,17 +1,41 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Menu, Palette, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
+import SearchAutocomplete from './SearchAutocomplete.jsx'
 import ThemeSelector from './ThemeSelector.jsx'
 import './TopBar.css'
 
 function TopBar({ onToggleSidebar, backgroundUrl }) {
   const { user, logout } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
+  const [query, setQuery] = useState('')
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const themeMenuRef = useRef(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef(null)
+
+  // Keeps the search box in sync with the URL only on the results page -
+  // elsewhere it's free local state that starts empty on navigation. Adjusted
+  // during render (not an effect) per https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  const [syncedSearchKey, setSyncedSearchKey] = useState(null)
+  const searchKey = location.pathname === '/search' ? searchParams.get('q') ?? '' : null
+  if (searchKey !== null && searchKey !== syncedSearchKey) {
+    setSyncedSearchKey(searchKey)
+    setQuery(searchKey)
+  }
+
+  function handleSearchSubmit(event) {
+    event.preventDefault()
+    const trimmed = query.trim()
+    if (!trimmed) {
+      return
+    }
+    navigate(`/search?q=${encodeURIComponent(trimmed)}`)
+  }
 
   useEffect(() => {
     if (!themeMenuOpen) {
@@ -69,13 +93,8 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
         </Link>
       </div>
       <div className="topbar-center">
-        <form className="topbar-search" onSubmit={(event) => event.preventDefault()}>
-          <input
-            type="text"
-            className="topbar-search-input"
-            placeholder="Search"
-            aria-label="Search"
-          />
+        <form className="topbar-search" onSubmit={handleSearchSubmit}>
+          <SearchAutocomplete value={query} onChange={setQuery} />
           <button type="submit" className="topbar-search-button" aria-label="Search">
             <Search size={18} />
           </button>

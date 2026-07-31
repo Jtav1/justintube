@@ -1,0 +1,39 @@
+.search-results {
+  text-align: left;
+}
+
+.search-results-title {
+  margin: 0 0 20px;
+  font-family: var(--heading);
+  font-size: 20px;
+  color: var(--text-h);
+}
+
+.search-results-section {
+  margin-bottom: 40px;
+}
+
+.search-results-section-title {
+  margin: 0 0 16px;
+  font-family: var(--heading);
+  font-size: 20px;
+  color: var(--text-h);
+}
+
+.search-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.search-results-users-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.search-results-empty,
+.search-results-error {
+  text-align: center;
+  color: var(--text);
+}

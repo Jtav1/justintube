@@ -1,5 +1,9 @@
 import { Meilisearch } from "meilisearch";
-import { loadEligibleDocument } from "./document.js";
+import {
+  loadEligibleDocument,
+  loadEligiblePlaylistDocument,
+  loadEligibleUserDocument,
+} from "./document.js";
 
 /**
  * Meilisearch index name for video documents.
@@ -8,11 +12,31 @@ import { loadEligibleDocument } from "./document.js";
  */
 const INDEX_NAME = process.env.MEILI_INDEX_NAME || "videos";
 
+/**
+ * Meilisearch index name for playlist documents.
+ *
+ * @type {string}
+ */
+const PLAYLIST_INDEX_NAME = process.env.MEILI_PLAYLIST_INDEX_NAME || "playlists";
+
+/**
+ * Meilisearch index name for user documents.
+ *
+ * @type {string}
+ */
+const USER_INDEX_NAME = process.env.MEILI_USER_INDEX_NAME || "users";
+
 /** @type {import("meilisearch").Meilisearch|null} */
 let cachedClient = null;
 
 /** @type {boolean} */
 let indexEnsured = false;
+
+/** @type {boolean} */
+let playlistIndexEnsured = false;
+
+/** @type {boolean} */
+let userIndexEnsured = false;
 
 /**
  * Returns a lazily created Meilisearch client from env vars.
@@ -44,38 +68,44 @@ async function ensureIndexConfigured() {
   const client = getClient();
   await client.createIndex(INDEX_NAME, { primaryKey: "id" }).catch(() => {});
   const index = client.index(INDEX_NAME);
-  await index.updateSearchableAttributes([
-    "title",
-    "description",
-    "tags",
-    "username",
-    "displayName",
+  // Settings updates only enqueue a task server-side; awaiting the call alone
+  // just confirms the enqueue, not that Meilisearch has applied it yet. A
+  // search immediately afterward (e.g. right after a fresh boot) can 400 with
+  // "not filterable" if it races ahead of the task. `.waitTask()` (attached
+  // by the client to the returned promise) blocks until the task finishes.
+  await Promise.all([
+    index.updateSearchableAttributes([
+      "title",
+      "description",
+      "tags",
+      "username",
+      "displayName",
+    ]).waitTask(),
+    index.updateFilterableAttributes(["visibility", "userId", "tags", "username"]).waitTask(),
+    index.updateSortableAttributes(["createdAt", "viewCount"]).waitTask(),
   ]);
-  await index.updateFilterableAttributes(["visibility", "userId", "tags", "username"]);
-  await index.updateSortableAttributes(["createdAt", "viewCount"]);
   indexEnsured = true;
 }
 
 /**
  * Upserts or removes a video's search document based on current eligibility.
- * Never throws — errors are caught and logged so a Meilisearch outage never
- * breaks a write request.
+ * Throws on failure — unlike the other functions in this file, this one is
+ * called exclusively by `lib/search-reindex.js`'s nightly batch, which needs
+ * a real exception to know a row's sync failed and should stay `"pending"`
+ * for retry on the next run (its own per-row try/catch provides the safety
+ * net that write-path callers elsewhere get from catching internally).
  *
  * @param {number} originalUploadId ORIGINAL_UPLOADS id to sync.
- * @returns {Promise<void>} Resolves once the sync attempt completes.
+ * @returns {Promise<void>} Resolves once the sync completes.
  */
 export async function syncVideoIndex(originalUploadId) {
-  try {
-    await ensureIndexConfigured();
-    const doc = await loadEligibleDocument(originalUploadId);
-    const index = getClient().index(INDEX_NAME);
-    if (doc) {
-      await index.addDocuments([doc]);
-    } else {
-      await index.deleteDocument(originalUploadId);
-    }
-  } catch (err) {
-    console.error(`[search:meilisearch] syncVideoIndex(${originalUploadId}) failed:`, err);
+  await ensureIndexConfigured();
+  const doc = await loadEligibleDocument(originalUploadId);
+  const index = getClient().index(INDEX_NAME);
+  if (doc) {
+    await index.addDocuments([doc]);
+  } else {
+    await index.deleteDocument(originalUploadId);
   }
 }
 
@@ -141,6 +171,166 @@ export async function suggestVideos(q, limit = 8) {
     .search(q || "", {
       filter: "visibility = public",
       limit,
-      attributesToRetrieve: ["id", "title", "userId", "username", "displayName"],
+      attributesToRetrieve: ["id", "videoId", "title", "userId", "username", "displayName"],
     });
+}
+
+/**
+ * Lazily creates and configures the playlist index. Safe to call repeatedly.
+ *
+ * @private
+ * @returns {Promise<void>} Resolves once the index is ready.
+ */
+async function ensurePlaylistIndexConfigured() {
+  if (playlistIndexEnsured) {
+    return;
+  }
+  const client = getClient();
+  await client.createIndex(PLAYLIST_INDEX_NAME, { primaryKey: "id" }).catch(() => {});
+  const index = client.index(PLAYLIST_INDEX_NAME);
+  // See the matching comment in ensureIndexConfigured() above for why these
+  // are awaited via .waitTask() rather than just awaiting the enqueue call.
+  await Promise.all([
+    index.updateSearchableAttributes([
+      "title",
+      "description",
+      "username",
+      "displayName",
+      "contentText",
+    ]).waitTask(),
+    index.updateFilterableAttributes(["visibility", "userId"]).waitTask(),
+    index.updateSortableAttributes(["createdAt"]).waitTask(),
+  ]);
+  playlistIndexEnsured = true;
+}
+
+/**
+ * Upserts or removes a playlist's search document based on current
+ * eligibility. Throws on failure — same rationale as `syncVideoIndex` above
+ * (exclusively called by `lib/search-reindex.js`'s nightly batch).
+ *
+ * @param {number} playlistId USER_PLAYLISTS id to sync.
+ * @returns {Promise<void>} Resolves once the sync completes.
+ */
+export async function syncPlaylistIndex(playlistId) {
+  await ensurePlaylistIndexConfigured();
+  const doc = await loadEligiblePlaylistDocument(playlistId);
+  const index = getClient().index(PLAYLIST_INDEX_NAME);
+  if (doc) {
+    await index.addDocuments([
+      {
+        ...doc,
+        contentText: [...(doc.contentTitles || []), ...(doc.contentTags || [])].join(" "),
+      },
+    ]);
+  } else {
+    await index.deleteDocument(playlistId);
+  }
+}
+
+/**
+ * Removes a playlist's search document outright. Never throws.
+ *
+ * @param {number} playlistId USER_PLAYLISTS id to remove.
+ * @returns {Promise<void>} Resolves once the removal attempt completes.
+ */
+export async function removePlaylistDocument(playlistId) {
+  try {
+    await getClient().index(PLAYLIST_INDEX_NAME).deleteDocument(playlistId);
+  } catch (err) {
+    console.error(`[search:meilisearch] removePlaylistDocument(${playlistId}) failed:`, err);
+  }
+}
+
+/**
+ * Runs a full-text playlist search against Meilisearch (typo tolerance is
+ * always on for this backend, so this call also serves the advanced/combined
+ * search flow — no separate "advanced" variant is needed here).
+ *
+ * @param {object} params Search parameters.
+ * @param {string} [params.q] Free-text query.
+ * @param {string} [params.sort] Meilisearch sort clause, e.g. "createdAt:desc".
+ * @param {number} params.page 1-indexed page number.
+ * @param {number} params.limit Page size.
+ * @returns {Promise<import("meilisearch").SearchResponse>} Raw Meilisearch response.
+ */
+export async function searchPlaylists({ q, sort, page, limit }) {
+  await ensurePlaylistIndexConfigured();
+  return getClient()
+    .index(PLAYLIST_INDEX_NAME)
+    .search(q || "", {
+      filter: "visibility = public",
+      sort: sort ? [sort] : undefined,
+      page,
+      hitsPerPage: limit,
+    });
+}
+
+/**
+ * Lazily creates and configures the user index. Safe to call repeatedly.
+ *
+ * @private
+ * @returns {Promise<void>} Resolves once the index is ready.
+ */
+async function ensureUserIndexConfigured() {
+  if (userIndexEnsured) {
+    return;
+  }
+  const client = getClient();
+  await client.createIndex(USER_INDEX_NAME, { primaryKey: "id" }).catch(() => {});
+  const index = client.index(USER_INDEX_NAME);
+  // See the matching comment in ensureIndexConfigured() above for why this is
+  // awaited via .waitTask() rather than just awaiting the enqueue call.
+  await index.updateSearchableAttributes(["username", "displayName"]).waitTask();
+  userIndexEnsured = true;
+}
+
+/**
+ * Upserts or removes a user's search document based on current eligibility
+ * (excluded once locked). Throws on failure — same rationale as
+ * `syncVideoIndex` above (exclusively called by `lib/search-reindex.js`'s
+ * nightly batch).
+ *
+ * @param {number} userId USERS id to sync.
+ * @returns {Promise<void>} Resolves once the sync completes.
+ */
+export async function syncUserIndex(userId) {
+  await ensureUserIndexConfigured();
+  const doc = await loadEligibleUserDocument(userId);
+  const index = getClient().index(USER_INDEX_NAME);
+  if (doc) {
+    await index.addDocuments([doc]);
+  } else {
+    await index.deleteDocument(userId);
+  }
+}
+
+/**
+ * Removes a user's search document outright. Never throws.
+ *
+ * @param {number} userId USERS id to remove.
+ * @returns {Promise<void>} Resolves once the removal attempt completes.
+ */
+export async function removeUserDocument(userId) {
+  try {
+    await getClient().index(USER_INDEX_NAME).deleteDocument(userId);
+  } catch (err) {
+    console.error(`[search:meilisearch] removeUserDocument(${userId}) failed:`, err);
+  }
+}
+
+/**
+ * Runs a full-text user search against Meilisearch (typo tolerance always
+ * on, serves the advanced/combined search flow directly).
+ *
+ * @param {object} params Search parameters.
+ * @param {string} [params.q] Free-text query.
+ * @param {number} params.limit Maximum results to return.
+ * @returns {Promise<import("meilisearch").SearchResponse>} Raw Meilisearch response.
+ */
+export async function searchUsers({ q, limit }) {
+  await ensureUserIndexConfigured();
+  return getClient()
+    .index(USER_INDEX_NAME)
+    .search(q || "", { limit });
 }

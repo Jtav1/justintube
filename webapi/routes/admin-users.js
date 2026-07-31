@@ -8,8 +8,8 @@ import { requireAuth } from "../lib/auth/require-auth.js";
 import { serializeUser } from "../lib/auth/serialize-user.js";
 import { emailEnabled, sendVerificationEmail } from "../lib/email/mailer.js";
 import { isValidEmailFormat } from "../lib/email/validate-email.js";
-import { OriginalUpload, Role, User } from "../lib/models/index.js";
-import { syncVideoIndex } from "../lib/search.js";
+import { OriginalUpload, Role, User, UserPlaylist } from "../lib/models/index.js";
+import { removeUserDocument, syncPlaylistIndex, syncUserIndex, syncVideoIndex } from "../lib/search.js";
 
 /**
  * Minimum accepted password length for admin password resets.
@@ -112,6 +112,24 @@ async function resyncUserVideoIndex(userId) {
   });
   for (const upload of uploads) {
     syncVideoIndex(upload.id);
+  }
+}
+
+/**
+ * Re-syncs search documents for all of a user's public playlists after a
+ * username/displayName change, since eligible playlist documents embed those
+ * fields too. Fire-and-forget, same contract as `resyncUserVideoIndex`.
+ *
+ * @param {number} userId Owning USERS id whose playlists need re-indexing.
+ * @returns {Promise<void>} Resolves once every playlist has been (re)synced.
+ */
+async function resyncUserPlaylistIndex(userId) {
+  const playlists = await UserPlaylist.findAll({
+    where: { userId, visibility: "public" },
+    attributes: ["id"],
+  });
+  for (const playlist of playlists) {
+    syncPlaylistIndex(playlist.id);
   }
 }
 
@@ -517,6 +535,7 @@ export function createAdminUsersRouter() {
           Object.prototype.hasOwnProperty.call(parsed.patch, "displayName")
         ) {
           resyncUserVideoIndex(userId);
+          resyncUserPlaylistIndex(userId);
         }
 
         if (parsed.role) {
@@ -532,6 +551,14 @@ export function createAdminUsersRouter() {
           await user.reload({
             include: [{ model: Role, required: false }],
           });
+        }
+
+        // Role changes (including into/out of "locked") flip search
+        // eligibility, so re-sync/remove the user document either way.
+        if (user.Role?.name === "locked") {
+          removeUserDocument(userId);
+        } else {
+          syncUserIndex(userId);
         }
 
         res.status(200).json(serializeAdminUser(user));
