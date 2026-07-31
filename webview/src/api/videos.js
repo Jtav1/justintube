@@ -109,6 +109,16 @@ export async function setVideoFeatured(id, featured) {
 }
 
 /**
+ * Delists a video, setting its visibility to "unlisted". Moderator/admin only.
+ * @param {number} id
+ * @returns {Promise<object>}
+ */
+export async function delistVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/delist`)
+  return res.data
+}
+
+/**
  * Imports a video from a remote URL via the processing service, creating an
  * ORIGINAL_UPLOADS row the same way uploadVideoFile does.
  * @param {string} url
