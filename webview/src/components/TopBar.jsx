@@ -65,7 +65,38 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
           <Menu size={20} />
         </button>
         <Link to="/" className="topbar-title">
-          Justintube
+          <svg
+            className="topbar-logo"
+            width="150"
+            height="34"
+            viewBox="0 0 180 40"
+            xmlns="http://www.w3.org/2000/svg"
+            role="img"
+            aria-label="Justintube"
+          >
+            <g fill="none" stroke="#0b3d91" strokeWidth="2" strokeLinejoin="round">
+              <rect x="2" y="9" width="30" height="22" rx="5" />
+              <path d="M32 16.5 L44 11 V29 L32 23.5 Z" />
+            </g>
+            <path
+              d="M14 14 L24 20 L14 26 Z"
+              fill="none"
+              stroke="#000"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+            <text
+              x="52"
+              y="27"
+              fontFamily="Verdana, Geneva, sans-serif"
+              fontSize="19"
+              fontWeight="bold"
+              fontStyle="normal"
+              fill="currentColor"
+            >
+              Justintube
+            </text>
+          </svg>
         </Link>
       </div>
       <div className="topbar-center">
