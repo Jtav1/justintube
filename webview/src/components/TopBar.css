@@ -37,11 +37,14 @@
 }
 
 .topbar-title {
-  font-family: var(--heading);
-  font-weight: 600;
-  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
   color: var(--text-h);
   text-decoration: none;
+}
+
+.topbar-logo {
+  display: block;
 }
 
 .topbar-center {
