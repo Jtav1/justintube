@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="40" viewBox="0 0 180 40">
+  <g fill="#7ec8e3" stroke="#0b3d91" stroke-width="2" stroke-linejoin="round">
+    <rect x="2" y="9" width="30" height="22" rx="5"/>
+    <path d="M32 16.5 L44 11 V29 L32 23.5 Z"/>
+  </g>
+  <path d="M14 14 L24 20 L14 26 Z" fill="none" stroke="currentcolor" stroke-width="2" stroke-linejoin="round"/>
+  <text x="52" y="27" font-family="Verdana, Geneva, sans-serif" font-size="19" font-weight="bold" font-style="normal" fill="currentColor">Justintube</text>
+</svg>
