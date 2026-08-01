@@ -6,11 +6,11 @@ This software is a collaborative effort between myself (Justin) and a few friend
 
 ## Why
 
-I (Justin) have been hosting a MediaCMS instance for a long time for myself and friends to use for fun, but I find it lacking in a few ways and I've always wanted to tackle developing one specifically tailored to our needs instead of maintained by someone else. Plus I'm tired of keeping it updated.
+I (Justin) have been hosting a different app instance for a long time for myself and friends to use for fun, but I find it lacking in a few ways and I've always wanted to tackle developing one specifically tailored to our needs instead of maintained by someone else. Plus I'm tired of keeping it updated.
 
-Quick shout out to them though, https://mediacms.io/ https://github.com/mediacms-io/mediacms if you are looking at this project you will probably be better served by MediaCMS until I remove this warning. However Justintube is not a fork and shares zero code or ideas with them - I'm not patient enough to bother doing that lol
+Quick shout out to them though, https://mediacms.io/ https://github.com/mediacms-io/mediacms if you are looking at this project you will probably be better served by MediaCMS at least for now :) . **This IS NOT a fork and borrows ZERO CODE OR NOVEL IDEAS from that project** - I'm not patient enough to bother doing that lol. My only inspiration was wanting my own home grown youtube-like site. 
 
-## What it will do
+## What it will do the rest of this is AI Generated I am not typing allat
 
 - **Video platform basics** — upload (including yt-dlp URL import as a bonus/stretch goal feature), FFmpeg transcoding to multiple resolutions with configurable hardware acceleration (also a bonus feature), tagging, search with typeahead suggestions, subscriptions, likes, playlists, watch history, and notifications.
 - **Access control** — email-verified accounts with optional SSO linking (another bonus feature), RBAC roles (Admin / Moderator / Uploader / Viewer / Locked), and per-video visibility (public, private with grants, hidden, unlisted).
