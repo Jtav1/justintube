@@ -23,16 +23,18 @@ export const TRANSCODE_QUEUE_NAME = "transcode";
 /**
  * Builds an ioredis-compatible connection options object for BullMQ.
  *
- * @param {object} [overrides] Optional host/port overrides for tests.
+ * @param {object} [overrides] Optional host/port/password overrides for tests.
  * @param {string} [overrides.host] Redis hostname.
  * @param {number} [overrides.port] Redis port.
- * @returns {{ host: string, port: number, maxRetriesPerRequest: null }}
+ * @param {string} [overrides.password] Redis auth password.
+ * @returns {{ host: string, port: number, password: string|undefined, maxRetriesPerRequest: null }}
  *   Connection options suitable for Queue and Worker constructors.
  */
 export function createRedisConnection(overrides = {}) {
   return {
     host: overrides.host || process.env.REDIS_HOST || "127.0.0.1",
     port: Number(overrides.port || process.env.REDIS_PORT || 6379),
+    password: overrides.password || process.env.REDIS_PASSWORD || undefined,
     // Required by BullMQ so blocking commands are not buffered for retries.
     maxRetriesPerRequest: null,
   };
@@ -52,6 +54,10 @@ export function createTranscodeQueue(connection) {
       // Keep completed/failed jobs in Redis so GET /transcode/:jobId works.
       removeOnComplete: false,
       removeOnFail: false,
+      // Retry transient failures (network blips, momentary ffmpeg/yt-dlp
+      // errors) instead of failing permanently on the first attempt.
+      attempts: Number(process.env.TRANSCODE_JOB_ATTEMPTS) || 3,
+      backoff: { type: "exponential", delay: 5000 },
     },
   });
 }

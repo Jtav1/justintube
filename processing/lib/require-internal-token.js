@@ -1,3 +1,5 @@
+import { timingSafeStringEqual } from "./timing-safe-equal.js";
+
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
  * This service is meant to be reachable only from `webapi` over the private
@@ -25,7 +27,7 @@ export function requireInternalToken(req, res, next) {
   const header = String(req.headers.authorization || "");
   const match = /^Bearer\s+(.+)$/i.exec(header);
   const provided = match ? match[1].trim() : "";
-  if (!provided || provided !== expected) {
+  if (!timingSafeStringEqual(expected, provided)) {
     res.status(401).json({
       success: false,
       error: "unauthorized",

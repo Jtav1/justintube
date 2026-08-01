@@ -26,12 +26,13 @@ Requires **Node.js 20+** (developed against Node 24; recommended). The Web API c
 ### Running the entire project
 
 ```bash
-docker compose up -d
+cp .env.example .env   # fill in required secrets - see docs/deployment.md
+docker compose up -d --build
 ```
 
 That should work; if it didn't then I have lost my way.
 
-Compose brings up Redis, the processing service, and the API (shared media volume). See [processing/README.md](processing/README.md) for download/transcode details.
+Compose brings up MySQL, Redis, Meilisearch, the processing service, the API, and the web view (shared media volume). `docker compose up` will refuse to start if a required secret in `.env` is left blank. See [processing/README.md](processing/README.md) for download/transcode details, and [docs/deployment.md](docs/deployment.md) for production hardening notes (TLS assumptions, secrets, network exposure, etc.).
 
 ### (DEV) Running the Web API by itself
 
@@ -78,8 +79,8 @@ tbd
 | ---- | ---- |
 | [`webapi/`](webapi/) | Public Web API (Express, Sequelize, sessions / API keys) |
 | [`processing/`](processing/) | yt-dlp downloads + BullMQ/ffmpeg transcodes |
-| [`docs/`](docs/) | Product notes, API checklist, [code standards](docs/code-standards.md) |
-| [`docker-compose.yml`](docker-compose.yml) | Redis + API + processing stack |
+| [`docs/`](docs/) | Product notes, API checklist, [code standards](docs/code-standards.md), [deployment](docs/deployment.md) |
+| [`docker-compose.yml`](docker-compose.yml) | Full stack: MySQL, Redis, Meilisearch, API, processing, web view |
 
 ## License
 

@@ -191,10 +191,28 @@ const DEFAULT_DEMO_USERS = [
 ];
 
 /**
+ * Whether `seedDemoUsers()` should run. Independent of `seedAdminUser()`'s
+ * env-gate since these accounts (including a "Mod1" moderator) all share the
+ * well-known password "password" and must never appear in production unless
+ * explicitly requested. Defaults on outside production, off in production;
+ * `SEED_DEMO_USERS` overrides either direction.
+ *
+ * @returns {boolean} True when demo users should be seeded.
+ */
+export function shouldSeedDemoUsers() {
+  const flag = process.env.SEED_DEMO_USERS;
+  if (flag !== undefined) {
+    return String(flag).toLowerCase() === "true";
+  }
+  return process.env.NODE_ENV !== "production";
+}
+
+/**
  * Ensures the standard non-admin demo accounts (User1, User2, Mod1) exist,
  * each with the password "password". Creates accounts on first run only;
  * does not overwrite password or role on later startups. Idempotent via
- * findOrCreate, safe to call on every boot.
+ * findOrCreate, safe to call on every boot. Callers should gate this behind
+ * `shouldSeedDemoUsers()`.
  *
  * @returns {Promise<void>} Resolves once demo user seeding has been attempted.
  */
