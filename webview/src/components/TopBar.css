@@ -254,3 +254,58 @@
 .topbar-login:hover {
   background: var(--accent-border);
 }
+
+/* Placed at the end of the file so these rules win the cascade over the
+   unconditional declarations above (same specificity, later source order). */
+@media (max-width: 640px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: 'left . right' 'search search search';
+    row-gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .topbar-left {
+    grid-area: left;
+    gap: 8px;
+  }
+
+  .topbar-center {
+    grid-area: search;
+    padding: 0;
+  }
+
+  .topbar-right {
+    grid-area: right;
+    gap: 4px;
+  }
+
+  .topbar-search {
+    max-width: none;
+  }
+
+  .topbar-logo {
+    width: 110px;
+    height: auto;
+  }
+
+  .topbar-upload span,
+  .topbar-username {
+    display: none;
+  }
+
+  .topbar-upload {
+    padding: 6px 8px;
+  }
+
+  .topbar-logout {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+
+  .topbar-login {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+}

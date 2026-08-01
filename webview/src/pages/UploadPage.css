@@ -6,6 +6,12 @@
   box-sizing: border-box;
 }
 
+@media (max-width: 640px) {
+  .upload-page {
+    padding: 12px;
+  }
+}
+
 .upload-card {
   display: flex;
   flex-direction: column;
@@ -53,10 +59,22 @@
   }
 }
 
+@media (max-width: 640px) {
+  .upload-card {
+    padding: 16px;
+  }
+}
+
 .upload-source-row {
   display: flex;
   align-items: stretch;
   gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .upload-source-row {
+    flex-direction: column;
+  }
 }
 
 .upload-dropzone {

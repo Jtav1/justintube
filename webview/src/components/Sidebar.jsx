@@ -25,7 +25,7 @@ function GithubIcon({ size = 20, title }) {
   )
 }
 
-function Sidebar({ collapsed, backgroundUrl }) {
+function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
   const { user } = useAuth()
   const location = useLocation()
 
@@ -69,6 +69,7 @@ function Sidebar({ collapsed, backgroundUrl }) {
                   const active = isActiveOverride ? isActiveOverride(isActive) : isActive
                   return `sidebar-item${active ? ' sidebar-item-active' : ''}`
                 }}
+                onClick={onNavigate}
               >
                 <Icon size={20} />
                 <span className="sidebar-label">{label}</span>

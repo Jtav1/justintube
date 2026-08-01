@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { useTheme } from '../context/useTheme.js'
 import apiClient from '../api/client.js'
+import { useIsMobile } from '../lib/viewport.js'
 import TopBar from '../components/TopBar.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import './AppLayout.css'
@@ -30,11 +31,13 @@ function readStoredCollapsed() {
 function AppLayout() {
   const { theme } = useTheme()
   const location = useLocation()
-  const collapsedByDefault = COLLAPSED_BY_DEFAULT_ROUTES.includes(location.pathname)
+  const isMobile = useIsMobile()
+  const collapsedByDefault = COLLAPSED_BY_DEFAULT_ROUTES.includes(location.pathname) || isMobile
   const [collapsed, setCollapsed] = useState(() => collapsedByDefault || readStoredCollapsed())
 
-  // Only re-run when switching in/out of a collapsed-by-default route -
-  // manual toggles while staying on the same route shouldn't be undone.
+  // Only re-run when switching in/out of a collapsed-by-default route (or
+  // crossing the mobile breakpoint) - manual toggles while staying put
+  // shouldn't be undone.
   useEffect(() => {
     setCollapsed(collapsedByDefault || readStoredCollapsed())
   }, [collapsedByDefault])
@@ -49,6 +52,10 @@ function AppLayout() {
     setCollapsed((prev) => !prev)
   }
 
+  function closeSidebar() {
+    setCollapsed(true)
+  }
+
   const viewBackgroundUrl = resolveThemeImageUrl(theme?.images?.viewBackgroundUrl)
 
   return (
@@ -61,7 +68,11 @@ function AppLayout() {
         <Sidebar
           collapsed={collapsed}
           backgroundUrl={resolveThemeImageUrl(theme?.images?.sidebarBackgroundUrl)}
+          onNavigate={isMobile ? closeSidebar : undefined}
         />
+        {isMobile && !collapsed && (
+          <div className="app-layout-backdrop" onClick={closeSidebar} />
+        )}
         <main
           className="app-layout-content"
           style={viewBackgroundUrl ? { backgroundImage: `url(${viewBackgroundUrl})` } : undefined}

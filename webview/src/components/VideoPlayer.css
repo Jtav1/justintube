@@ -25,6 +25,15 @@
   aspect-ratio: auto;
 }
 
+@media (max-width: 640px) {
+  .video-player-frame {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+    border-radius: 0;
+  }
+}
+
 .video-player-audio-frame {
   display: flex;
   flex-direction: column;
@@ -184,6 +193,16 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .video-player-meta {
+    flex-direction: column;
+  }
+
+  .video-player-reactions {
+    flex-wrap: wrap;
+  }
 }
 
 .video-player-meta-main {
