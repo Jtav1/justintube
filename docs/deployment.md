@@ -177,10 +177,10 @@ transition over the first ~15-30 seconds per service.
 
 ## 14. Known constraints
 
-- The webview's Content-Security-Policy leaves `connect-src` and `img-src`
-  permissive (`'self' *`) rather than scoped to the real API origin.
-  `img-src` needs this because banners/avatars are served cross-origin from
-  the API. `API_BASE_URL` is now known at container start (see §9), so
-  `nginx.conf` could in principle template both directives to that exact
-  origin, but doing so isn't implemented here. Every other CSP directive is
-  strict.
+- The webview's Content-Security-Policy leaves `connect-src`, `img-src`, and
+  `media-src` permissive (`'self' *`) rather than scoped to the real API
+  origin. `img-src` and `media-src` need this because banners/avatars and
+  video streams are served cross-origin from the API. `API_BASE_URL` is now
+  known at container start (see §9), so `nginx.conf` could in principle
+  template all three directives to that exact origin, but doing so isn't
+  implemented here. Every other CSP directive is strict.
