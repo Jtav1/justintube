@@ -45,6 +45,10 @@
   }
 }
 
+.verify-email-card p {
+  text-align: center;
+}
+
 .auth-error {
   margin: 0;
   font-size: 14px;

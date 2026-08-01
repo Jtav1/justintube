@@ -80,7 +80,7 @@ function VerifyEmailPage() {
 
   return (
     <section id="auth-center">
-      <div className="auth-card">
+      <div className="auth-card verify-email-card">
         <h1>Verify email</h1>
         {status === 'verifying' && <p>Verifying your email...</p>}
         {status === 'success' && (

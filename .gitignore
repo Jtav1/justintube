@@ -5,6 +5,7 @@
 .env.*
 !.env.example
 docker-compose.override.yml
+docker-compose-prod.yml
 
 .cursor/
 

@@ -90,6 +90,18 @@ export function createApp() {
     res.json({ status: "ok" });
   });
 
+  /**
+   * Serves a robots.txt that disallows crawling of this service entirely.
+   * GET /robots.txt — no body. Auth: none.
+   *
+   * @param {import('express').Request} _req Incoming request (unused).
+   * @param {import('express').Response} res Express response.
+   * @returns {void} Sends a plain-text robots.txt body.
+   */
+  app.get("/robots.txt", (_req, res) => {
+    res.type("text/plain").send("User-agent: *\nDisallow: /\n");
+  });
+
   // Publicly exposes the full API schema/UI - on by default outside
   // production, off in production unless explicitly enabled.
   const docsEnabled =

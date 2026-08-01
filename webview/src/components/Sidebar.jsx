@@ -39,9 +39,9 @@ function Sidebar({ collapsed, backgroundUrl }) {
 
   const navItems = [
     { key: 'home', label: 'Home', icon: Home, to: '/', end: true },
-    { key: 'profile', label: 'My Profile', icon: User, to: ownProfilePath || '/' },
+    { key: 'profile', label: 'My Profile', icon: User, to: ownProfilePath },
     { key: 'playlists', label: 'Playlists', icon: ListVideo, to: '/playlists' },
-    { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : '/'},
+    { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : null },
     { key: 'featured', label: 'Featured', icon: Star, to: '/featured' },
     { key: 'users', label: 'Users', icon: UsersRound, to: '/users', isActiveOverride: (isActive) => isActive && !isOwnProfilePath },
     { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: null },
@@ -85,7 +85,7 @@ function Sidebar({ collapsed, backgroundUrl }) {
       <div className="sidebar-footer">
         <hr className="sidebar-footer-divider" />
         <div className="sidebar-footer-row">
-          <span className="sidebar-footer-text">Justintube v{packageJson.version}</span>
+          <span className="sidebar-footer-text">Justintube v1.0.0-alpha</span>
         </div>
         <div className="sidebar-footer-row">
           <div className="sidebar-footer-links">
