@@ -25,6 +25,11 @@ function VideoPage() {
     let cancelled = false
 
     async function load() {
+      if (!videoId) {
+        setLoading(false)
+        setError('No video specified.')
+        return
+      }
       setLoading(true)
       setError(null)
       try {
@@ -43,12 +48,7 @@ function VideoPage() {
       }
     }
 
-    if (videoId) {
-      load()
-    } else {
-      setLoading(false)
-      setError('No video specified.')
-    }
+    load()
 
     return () => {
       cancelled = true
@@ -59,6 +59,10 @@ function VideoPage() {
     let cancelled = false
 
     async function loadPlaylist() {
+      if (!playlistId) {
+        setPlaylist(null)
+        return
+      }
       try {
         const data = await getPlaylist(playlistId)
         if (!cancelled) {
@@ -71,11 +75,7 @@ function VideoPage() {
       }
     }
 
-    if (playlistId) {
-      loadPlaylist()
-    } else {
-      setPlaylist(null)
-    }
+    loadPlaylist()
 
     return () => {
       cancelled = true
