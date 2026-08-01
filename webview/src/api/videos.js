@@ -65,11 +65,18 @@ export async function getMyLikes({ page, limit } = {}) {
  * default, with a default title derived from the filename). Callers should
  * follow up with updateVideo to set the real title/description/visibility/tags.
  * @param {File} file
+ * @param {{ skipThumbnail?: boolean }} [options] `skipThumbnail` skips the
+ *   processing service's auto-generated thumbnail — pass this when the
+ *   caller is about to upload a custom one via updateVideoThumbnail, so it
+ *   can't be overwritten by a later-arriving auto-generated thumbnail.
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
  */
-export async function uploadVideoFile(file) {
+export async function uploadVideoFile(file, { skipThumbnail = false } = {}) {
   const formData = new FormData()
   formData.append('file', file)
+  if (skipThumbnail) {
+    formData.append('skipThumbnail', 'true')
+  }
   const res = await apiClient.post('/api/v1/videos/upload', formData)
   return res.data
 }
@@ -122,10 +129,14 @@ export async function delistVideo(id) {
  * Imports a video from a remote URL via the processing service, creating an
  * ORIGINAL_UPLOADS row the same way uploadVideoFile does.
  * @param {string} url
+ * @param {{ skipThumbnail?: boolean }} [options] `skipThumbnail` skips the
+ *   processing service's auto-generated thumbnail — pass this when the
+ *   caller is about to upload a custom one via updateVideoThumbnail, so it
+ *   can't be overwritten by a later-arriving auto-generated thumbnail.
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
  */
-export async function importVideoUrl(url) {
-  const res = await apiClient.post('/api/v1/videos/import', { url })
+export async function importVideoUrl(url, { skipThumbnail = false } = {}) {
+  const res = await apiClient.post('/api/v1/videos/import', { url, skipThumbnail })
   return res.data
 }
 

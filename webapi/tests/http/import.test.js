@@ -297,6 +297,25 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  test("skipThumbnail omits the thumbnail job, keeping any rendition jobs", async () => {
+    await seedTranscodeProfile({ resolutionName: "720p", mediaType: "video" });
+    writeDownloadedFixture("1737900003.mp4");
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900003.mp4");
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/watch?v=abc", skipThumbnail: true });
+
+    expect(res.status).toBe(201);
+    const transcodeCall = fetchMock.mock.calls.find(
+      (call) => call[0] === "http://processing.test:3001/transcode",
+    );
+    const payload = JSON.parse(String(transcodeCall[1].body));
+    expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
+    expect(payload.jobs).toHaveLength(1);
+  });
+
   test("rejects a non-numeric thumbnailTimestamp with 400 invalid_body", async () => {
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock;
