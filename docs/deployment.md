@@ -37,8 +37,8 @@ itself works fine.
 
 ```bash
 cp .env.example .env
-# edit .env: fill in every REQUIRED secret, set PUBLIC_APP_URL/CORS_ORIGIN/
-# API_BASE_URL to your real hostname(s)
+# edit .env: fill in every REQUIRED secret, set PUBLIC_APP_URL/PUBLIC_API_URL/
+# CORS_ORIGIN/API_BASE_URL to your real hostname(s)
 docker compose up -d --build
 docker compose ps   # wait for db/redis/search/webapi/processing to show healthy
 ```
@@ -131,6 +131,17 @@ promoted across environments with different API origins.
 only read by `npm run dev` for local non-Docker development — see
 `webview/README.md`.)
 
+`PUBLIC_API_URL` is the analogous var for `webapi` itself: read server-side
+(not injected into any container's config.js) to build absolute
+`og:image`/`og:video`/`twitter:player` URLs for the link-unfurl route
+(`GET /api/v1/videos/:id/unfurl`) and its companion embeddable player page
+(`GET /api/v1/videos/:id/player`) — those URLs are fetched directly by
+external bots (Slack, Discord, Twitter, etc.) over the public internet, so
+they can't be relative paths or the Docker-internal `webapi:3000` hostname.
+It typically equals `API_BASE_URL`'s value. Set it to an `https://` host to
+enable Twitter/X Player Card inline video playback — over `http://` the
+unfurl page falls back to a rich card with a thumbnail only, no inline play.
+
 ## 10. Redis auth
 
 `redis` requires a password (`REDIS_PASSWORD`, wired via `--requirepass`).
@@ -184,3 +195,21 @@ transition over the first ~15-30 seconds per service.
   known at container start (see §9), so `nginx.conf` could in principle
   template all three directives to that exact origin, but doing so isn't
   implemented here. Every other CSP directive is strict.
+- **Link-unfurl: hardcoded internal proxy address.** `webview/nginx.conf`
+  proxies bot requests to `http://webapi:3000` — the Docker Compose service
+  DNS name. This only works when `webview` and `webapi` share a Docker
+  network (true of both `docker-compose.yml` and `docker-compose-prod.yml`
+  as shipped). Any topology where they don't share a network (webview
+  behind a CDN/static host, webapi on a different host/orchestrator) breaks
+  the proxy outright.
+- **Link-unfurl: User-Agent sniffing is best-effort.** The bot detection in
+  `webview/nginx.conf` matches known, documented UA substrings (Slackbot,
+  Twitterbot, Discordbot, etc.). Apple's iMessage link-preview fetcher in
+  particular does not send a single stable, documented User-Agent, so
+  iMessage previews may not always be recognized.
+- **Link-unfurl: Twitter/X Player Cards are HTTPS-only** and historically
+  require a one-time Card Validator run
+  (https://cards-dev.twitter.com/validator) against a live URL before Player
+  Cards render for a new domain — an operational step outside this repo's
+  scope. Until `PUBLIC_API_URL` is set to a real `https://` host, the unfurl
+  page falls back to a `summary_large_image` card (no inline playback).
