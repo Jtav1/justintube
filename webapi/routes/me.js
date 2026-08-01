@@ -22,7 +22,7 @@ import {
 import { parsePagination } from "../lib/pagination.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { canViewVideo } from "../lib/video-access.js";
-import { loadTagsByUploadId, serializeVideo } from "./videos.js";
+import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
  * Absolute path to the directory where avatar images are stored
@@ -488,12 +488,15 @@ export function createMeRouter() {
         offset: (page - 1) * limit,
       });
 
-      const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+      const uploadIds = rows.map((upload) => upload.id);
+      const tagsByUploadId = await loadTagsByUploadId(uploadIds);
+      const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
 
       res.status(200).json({
         items: rows.map((upload) =>
           serializeVideo(upload, upload.VideoMetadata, {
             tags: tagsByUploadId.get(upload.id) || [],
+            ...reactionCountsByUploadId.get(upload.id),
           }),
         ),
         page,
@@ -600,14 +603,15 @@ export function createMeRouter() {
       const totalHits = visibleLikes.length;
       const offset = (page - 1) * limit;
       const pageLikes = visibleLikes.slice(offset, offset + limit);
-      const tagsByUploadId = await loadTagsByUploadId(
-        pageLikes.map((like) => like.OriginalUpload.id),
-      );
+      const likedUploadIds = pageLikes.map((like) => like.OriginalUpload.id);
+      const tagsByUploadId = await loadTagsByUploadId(likedUploadIds);
+      const reactionCountsByUploadId = await loadReactionCountsByUploadId(likedUploadIds);
 
       res.status(200).json({
         items: pageLikes.map((like) =>
           serializeVideo(like.OriginalUpload, like.OriginalUpload.VideoMetadata, {
             tags: tagsByUploadId.get(like.OriginalUpload.id) || [],
+            ...reactionCountsByUploadId.get(like.OriginalUpload.id),
           }),
         ),
         page,

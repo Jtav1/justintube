@@ -26,7 +26,7 @@ import { syncPlaylistIndex, syncUserIndex } from "../lib/search.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { isAdmin, isModeratorOrAdmin } from "../lib/video-access.js";
 import { buildPlaylistsPage } from "./playlists.js";
-import { loadTagsByUploadId, serializeVideo } from "./videos.js";
+import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
  * Absolute path to the directory where banner images are stored
@@ -471,12 +471,15 @@ async function loadUserPublicVideosPage(
     subQuery: false,
   });
 
-  const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+  const uploadIds = rows.map((upload) => upload.id);
+  const tagsByUploadId = await loadTagsByUploadId(uploadIds);
+  const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
 
   return {
     items: rows.map((upload) =>
       serializeVideo(upload, upload.VideoMetadata, {
         tags: tagsByUploadId.get(upload.id) || [],
+        ...reactionCountsByUploadId.get(upload.id),
       }),
     ),
     page,

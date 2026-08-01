@@ -6,6 +6,7 @@ import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/form
 import { useAuth } from '../context/useAuth.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import apiClient from '../api/client.js'
+import ReactionScore from './ReactionScore.jsx'
 import './VideoCard.css'
 
 // Must match .video-card-title's font-size/font-weight in VideoCard.css.
@@ -20,6 +21,7 @@ function VideoCard({
   linkTo,
   active = false,
   onRemoveFromPlaylist,
+  showReactionScore = true,
 }) {
   const { user } = useAuth()
   const navigate = useNavigate()

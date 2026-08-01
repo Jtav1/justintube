@@ -18,6 +18,7 @@ import apiClient from '../api/client.js'
 import { delistVideo, dislikeVideo, likeVideo, recordView } from '../api/videos.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { useAuth } from '../context/useAuth.js'
+import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
 
 // Must match .video-player-title's font-size/font-weight in VideoPlayer.css.
@@ -52,6 +53,12 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const [loop, setLoop] = useState(false)
   const [reaction, setReaction] = useState(video.viewerReaction ?? null)
   const [reactionPending, setReactionPending] = useState(false)
+  const [reactionDelta, setReactionDelta] = useState({ likeCount: 0, dislikeCount: 0 })
+  const [reactionDeltaVideoId, setReactionDeltaVideoId] = useState(video.id)
+  if (video.id !== reactionDeltaVideoId) {
+    setReactionDeltaVideoId(video.id)
+    setReactionDelta({ likeCount: 0, dislikeCount: 0 })
+  }
   const [avatarFailed, setAvatarFailed] = useState(false)
   const [delisted, setDelisted] = useState(false)
   const [delistPending, setDelistPending] = useState(false)
@@ -212,6 +219,17 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     recordView(video.id).catch((err) => console.error('Failed to record view:', err))
   }
 
+  function applyReactionDelta(previousReaction, nextReaction) {
+    setReactionDelta((prev) => ({
+      likeCount: prev.likeCount
+        + (nextReaction === 'like' ? 1 : 0)
+        - (previousReaction === 'like' ? 1 : 0),
+      dislikeCount: prev.dislikeCount
+        + (nextReaction === 'dislike' ? 1 : 0)
+        - (previousReaction === 'dislike' ? 1 : 0),
+    }))
+  }
+
   async function handleLike() {
     if (!user || reactionPending) {
       return
@@ -219,7 +237,9 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     setReactionPending(true)
     try {
       const result = await likeVideo(video.id)
-      setReaction(result.liked ? 'like' : result.disliked ? 'dislike' : null)
+      const nextReaction = result.liked ? 'like' : result.disliked ? 'dislike' : null
+      applyReactionDelta(reaction, nextReaction)
+      setReaction(nextReaction)
     } catch (err) {
       console.error('Failed to like video:', err)
     } finally {
@@ -234,7 +254,9 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     setReactionPending(true)
     try {
       const result = await dislikeVideo(video.id)
-      setReaction(result.liked ? 'like' : result.disliked ? 'dislike' : null)
+      const nextReaction = result.liked ? 'like' : result.disliked ? 'dislike' : null
+      applyReactionDelta(reaction, nextReaction)
+      setReaction(nextReaction)
     } catch (err) {
       console.error('Failed to dislike video:', err)
     } finally {
@@ -474,26 +496,34 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               <ListMinus size={18} />
             </button>
           )}
-          <button
-            type="button"
-            className={`video-player-icon-btn${reaction === 'like' ? ' video-player-icon-btn-like-active' : ''}`}
-            aria-label="Like"
-            aria-pressed={reaction === 'like'}
-            disabled={!user || reactionPending}
-            onClick={handleLike}
-          >
-            <ThumbsUp size={18} />
-          </button>
-          <button
-            type="button"
-            className={`video-player-icon-btn${reaction === 'dislike' ? ' video-player-icon-btn-dislike-active' : ''}`}
-            aria-label="Dislike"
-            aria-pressed={reaction === 'dislike'}
-            disabled={!user || reactionPending}
-            onClick={handleDislike}
-          >
-            <ThumbsDown size={18} />
-          </button>
+          <div className="video-player-reaction-group">
+            <div className="video-player-reaction-buttons">
+              <button
+                type="button"
+                className={`video-player-icon-btn${reaction === 'like' ? ' video-player-icon-btn-like-active' : ''}`}
+                aria-label="Like"
+                aria-pressed={reaction === 'like'}
+                disabled={!user || reactionPending}
+                onClick={handleLike}
+              >
+                <ThumbsUp size={18} />
+              </button>
+              <button
+                type="button"
+                className={`video-player-icon-btn${reaction === 'dislike' ? ' video-player-icon-btn-dislike-active' : ''}`}
+                aria-label="Dislike"
+                aria-pressed={reaction === 'dislike'}
+                disabled={!user || reactionPending}
+                onClick={handleDislike}
+              >
+                <ThumbsDown size={18} />
+              </button>
+            </div>
+            <ReactionScore
+              likeCount={(video.likeCount ?? 0) + reactionDelta.likeCount}
+              dislikeCount={(video.dislikeCount ?? 0) + reactionDelta.dislikeCount}
+            />
+          </div>
         </div>
       </div>
     </div>

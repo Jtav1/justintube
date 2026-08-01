@@ -2,13 +2,16 @@ import { Op } from "sequelize";
 import rateLimit from "express-rate-limit";
 import { Router } from "express";
 import { hashPassword, verifyPassword } from "../lib/auth/password.js";
+import { listAdminEmails } from "../lib/auth/admin-notifications.js";
 import {
   createVerificationToken,
   EmailVerificationError,
   verifyEmailToken,
 } from "../lib/auth/email-verification.js";
 import {
+  adminNewUserNotificationsEnabled,
   emailEnabled,
+  sendNewUserAdminNotification,
   sendVerificationEmail,
 } from "../lib/email/mailer.js";
 import { isValidEmailFormat } from "../lib/email/validate-email.js";
@@ -132,6 +135,32 @@ async function sendUserVerificationEmail(user) {
     await sendVerificationEmail({ to: user.email, token });
   } catch (err) {
     console.error("Failed to send verification email:", err);
+  }
+}
+
+/**
+ * Notifies every admin with an email address once a user completes email
+ * verification. Gated by ENABLE_ADMIN_NEW_USER_NOTIFICATIONS (in addition to
+ * email being configured); best-effort — logs and swallows errors so a
+ * notification failure never affects the verifying user's response.
+ *
+ * @private
+ * @param {import('sequelize').Model} newUser Newly verified user (id, username, email).
+ * @returns {Promise<void>} Resolves when send completes or fails gracefully.
+ */
+async function notifyAdminsOfNewUser(newUser) {
+  if (!adminNewUserNotificationsEnabled() || !emailEnabled()) {
+    return;
+  }
+
+  try {
+    const adminEmails = await listAdminEmails();
+    if (adminEmails.length === 0) {
+      return;
+    }
+    await sendNewUserAdminNotification({ adminEmails, newUser });
+  } catch (err) {
+    console.error("Failed to send new-user admin notification:", err);
   }
 }
 
@@ -520,6 +549,7 @@ export function createAuthRouter() {
       }
 
       const user = await verifyEmailToken(token);
+      await notifyAdminsOfNewUser(user);
       const role = user.Role || null;
       res.json({ user: serializeUser(user, role) });
     } catch (err) {
