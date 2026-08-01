@@ -18,10 +18,30 @@
   }
 }
 
+@media (max-width: 640px) {
+  .profile-banner {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-height: 0;
+    padding: 12px;
+    gap: 12px;
+    box-sizing: border-box;
+  }
+}
+
 .profile-avatar-wrap {
   position: absolute;
   left: 20px;
   bottom: -150px;
+}
+
+@media (max-width: 640px) {
+  .profile-avatar-wrap {
+    position: relative;
+    left: auto;
+    bottom: auto;
+  }
 }
 
 .profile-avatar {
@@ -94,6 +114,14 @@
   background: rgba(0, 0, 0, 0.45);
 }
 
+@media (max-width: 640px) {
+  .profile-name-row {
+    position: static;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
 .profile-username {
   margin: 0;
   font-family: var(--heading);
@@ -107,6 +135,12 @@
 .profile-username-role {
   font-weight: 400;
   color: #cdd0d6;
+}
+
+@media (max-width: 640px) {
+  .profile-username {
+    font-size: 20px;
+  }
 }
 
 .profile-role-select {
@@ -195,6 +229,13 @@
   padding-left: 340px;
   margin-bottom: 125px;
   padding-top: 5px;
+}
+
+@media (max-width: 640px) {
+  .profile-bio-row {
+    padding-left: 0;
+    margin-bottom: 24px;
+  }
 }
 
 .profile-bio {

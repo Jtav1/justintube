@@ -5,6 +5,7 @@
   width: 100%;
   margin: 0;
   padding: 16px;
+  box-sizing: border-box;
 }
 
 .video-page-error {
@@ -27,4 +28,16 @@
 .video-page-layout .playlist-queue {
   width: 25%;
   flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .video-page-layout {
+    flex-direction: column;
+  }
+
+  .video-page-main,
+  .video-page-layout .video-suggested,
+  .video-page-layout .playlist-queue {
+    width: 100%;
+  }
 }
