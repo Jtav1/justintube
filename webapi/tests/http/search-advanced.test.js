@@ -5,7 +5,7 @@ import {
   syncUserIndex,
   syncVideoIndex,
 } from "../../lib/search.js";
-import { createTestClient } from "../helpers/app.js";
+import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
   resetTables,
   seedMetadata,
@@ -15,7 +15,33 @@ import {
   seedUser,
   setupSchema,
 } from "../helpers/db.js";
-import { Role } from "../../lib/models/index.js";
+import { Role, User } from "../../lib/models/index.js";
+
+/**
+ * Registers a new viewer account then promotes it to admin directly in the
+ * DB (there is no public "become admin" endpoint).
+ *
+ * @returns {Promise<{agent: import('supertest').SuperAgentTest}>}
+ */
+async function registerAdminSession() {
+  const agent = createTestAgent();
+  const csrfRes = await agent.get("/api/v1/auth/csrf");
+  const registerRes = await agent
+    .post("/api/v1/auth/register")
+    .set("X-CSRF-Token", csrfRes.body.csrfToken)
+    .send({
+      username: "search_advanced_admin",
+      email: "search_advanced_admin@example.com",
+      password: "password123",
+      displayName: "search_advanced_admin",
+    });
+  expect(registerRes.status).toBe(201);
+
+  const adminRole = await Role.findOne({ where: { name: "admin" } });
+  await User.update({ roleId: adminRole.id }, { where: { id: registerRes.body.user.id } });
+
+  return { agent };
+}
 
 /**
  * HTTP contract tests for GET /search/advanced (the combined video/playlist/
@@ -145,7 +171,7 @@ describe("GET /search/advanced", () => {
     expect(res.body).toEqual({ videos: [], playlists: [], users: [] });
   });
 
-  test("locked users never appear in users[]", async () => {
+  test("locked users don't appear in users[] for an anonymous caller", async () => {
     const lockedRole = await Role.findOne({ where: { name: "locked" } });
     const user = await seedUser({
       username: "locked_user",
@@ -158,6 +184,50 @@ describe("GET /search/advanced", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.users.map((u) => u.id)).not.toContain(user.id);
+  });
+
+  test("locked users don't appear in users[] for a non-admin authenticated caller", async () => {
+    const lockedRole = await Role.findOne({ where: { name: "locked" } });
+    const user = await seedUser({
+      username: "locked_user_viewer",
+      displayName: "Locked Person Viewer",
+      roleId: lockedRole.id,
+    });
+    await syncUserIndex(user.id);
+
+    const agent = createTestAgent();
+    const csrfRes = await agent.get("/api/v1/auth/csrf");
+    await agent
+      .post("/api/v1/auth/register")
+      .set("X-CSRF-Token", csrfRes.body.csrfToken)
+      .send({
+        username: "plain_search_viewer",
+        email: "plain_search_viewer@example.com",
+        password: "password123",
+        displayName: "plain_search_viewer",
+      });
+
+    const res = await agent.get("/api/v1/search/advanced?q=Locked");
+
+    expect(res.status).toBe(200);
+    expect(res.body.users.map((u) => u.id)).not.toContain(user.id);
+  });
+
+  test("locked users appear in users[] for an admin caller, with their role included", async () => {
+    const lockedRole = await Role.findOne({ where: { name: "locked" } });
+    const user = await seedUser({
+      username: "locked_user_admin_view",
+      displayName: "Locked Person Admin View",
+      roleId: lockedRole.id,
+    });
+    await syncUserIndex(user.id);
+
+    const { agent } = await registerAdminSession();
+    const res = await agent.get("/api/v1/search/advanced?q=Locked");
+
+    expect(res.status).toBe(200);
+    const hit = res.body.users.find((u) => u.id === user.id);
+    expect(hit).toMatchObject({ role: "locked" });
   });
 });
 
