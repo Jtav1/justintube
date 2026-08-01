@@ -136,6 +136,7 @@ services:
       BANNER_FILETYPES_ALLOWED: ${BANNER_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
       THEME_IMAGE_FILETYPES_ALLOWED: ${THEME_IMAGE_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:${WEBVIEW_PORT:-5173}}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:${PORT:-3000}}
       # Allows the webview SPA's browser-side requests through CORS. Required
       # because the webapi image sets NODE_ENV=production, which disables
       # cross-origin requests entirely when this is unset (see

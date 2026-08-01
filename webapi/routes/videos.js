@@ -396,6 +396,312 @@ async function loadRenditions(upload) {
 }
 
 /**
+ * Resolves webapi's own externally-reachable origin (no trailing slash),
+ * for building absolute `og:image`/`og:video` URLs in the link-unfurl HTML
+ * route — bots fetch those URLs directly over the public internet, so
+ * relative paths and the Docker-internal `webapi:3000` hostname are both
+ * unusable there.
+ *
+ * @returns {string} Origin, e.g. "https://api.example.com".
+ */
+function publicApiOrigin() {
+  const configured = String(process.env.PUBLIC_API_URL || "")
+    .trim()
+    .replace(/\/$/, "");
+  if (configured) {
+    return configured;
+  }
+  return `http://localhost:${process.env.PORT || 3000}`;
+}
+
+/**
+ * Resolves the webview's externally-reachable origin (no trailing slash),
+ * for building the canonical `og:url` back to the video's real shareable page.
+ *
+ * @returns {string} Origin, e.g. "https://justintube.example.com".
+ */
+function publicAppOrigin() {
+  const configured = String(process.env.PUBLIC_APP_URL || "")
+    .trim()
+    .replace(/\/$/, "");
+  if (configured) {
+    return configured;
+  }
+  return "http://localhost:5173";
+}
+
+/**
+ * Escapes a value for safe embedding in HTML text nodes and
+ * `content="..."` attribute values. Title/description/uploader name are
+ * user-controlled and this is the only place webapi renders raw user text
+ * as HTML rather than JSON.
+ *
+ * @param {*} value Value to escape (stringified first).
+ * @returns {string} HTML-escaped string.
+ */
+function escapeHtml(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c],
+  );
+}
+
+/**
+ * Picks the smallest-resolution rendition (by height) from a
+ * `loadRenditions` result, comparing across both transcoded FILE_VERSIONS
+ * entries and the trailing "original" entry. The original is always last in
+ * that array regardless of its actual height, so this cannot assume
+ * position `[0]` is smallest.
+ *
+ * @param {object[]} renditions Result of `loadRenditions`.
+ * @returns {object|null} Smallest-by-height rendition, the first entry when
+ *   none have a known height, or null when the array is empty.
+ */
+function pickSmallestRendition(renditions) {
+  const withHeight = renditions.filter(
+    (r) => typeof r.height === "number" && r.height > 0,
+  );
+  if (withHeight.length > 0) {
+    return withHeight.reduce((smallest, r) =>
+      r.height < smallest.height ? r : smallest,
+    );
+  }
+  return renditions[0] ?? null;
+}
+
+/**
+ * Builds the `og:description` text: the video's description (if any) plus a
+ * trailing "By <uploader> - Uploaded <date>" line. OG/Twitter have no
+ * dedicated author/upload-date meta tags for video content, and unfurl
+ * renderers display `og:description` verbatim, so this is the practical way
+ * to surface that info. Truncated to 300 characters.
+ *
+ * @param {import('sequelize').Model} metadata VIDEO_METADATA row.
+ * @param {string|null} uploaderLabel Display name or username, if any.
+ * @param {string|null} uploadedAt ISO date string (YYYY-MM-DD), if any.
+ * @returns {string} Description text.
+ */
+function buildUnfurlDescription(metadata, uploaderLabel, uploadedAt) {
+  const parts = [];
+  if (metadata.description) {
+    parts.push(metadata.description.trim());
+  }
+  const meta = [
+    uploaderLabel ? `By ${uploaderLabel}` : null,
+    uploadedAt ? `Uploaded ${uploadedAt}` : null,
+  ]
+    .filter(Boolean)
+    .join(" - ");
+  if (meta) {
+    parts.push(meta);
+  }
+  const joined = parts.join(" -- ");
+  return joined.length > 300 ? `${joined.slice(0, 297)}...` : joined;
+}
+
+/**
+ * Sends the generic, existence-masking fallback page for the unfurl route —
+ * used for both "video does not exist" and "caller cannot view it", so
+ * neither case is distinguishable from the response body (mirrors
+ * `sendNotFound`'s masking property for the JSON API).
+ *
+ * @param {import('express').Response} res Express response.
+ * @returns {void}
+ */
+function sendUnfurlFallback(res) {
+  res
+    .status(404)
+    .type("html")
+    .send(
+      '<!doctype html><html><head><meta charset="utf-8">' +
+        "<title>Justintube</title>" +
+        '<meta property="og:site_name" content="Justintube">' +
+        '<meta property="og:title" content="Justintube">' +
+        '<meta property="og:description" content="Video not found or unavailable.">' +
+        "</head><body></body></html>",
+    );
+}
+
+/**
+ * Sends the generic fallback page for the player route — same
+ * existence-masking property as `sendUnfurlFallback`, covering "does not
+ * exist", "cannot view", "audio-only" (no video to embed), and "no usable
+ * rendition" with one indistinguishable response.
+ *
+ * @param {import('express').Response} res Express response.
+ * @returns {void}
+ */
+function sendPlayerFallback(res) {
+  res
+    .status(404)
+    .type("html")
+    .send(
+      '<!doctype html><html><head><meta charset="utf-8">' +
+        "<title>Justintube</title></head><body></body></html>",
+    );
+}
+
+/**
+ * Renders the minimal, iframe-embeddable HTML page a Twitter/X Player Card
+ * loads via `twitter:player` — a bare `<video>` element sized to fill
+ * whatever iframe the embedder renders it in, not a redirect to the raw
+ * stream URL (Player Card expects an HTML document with a player UI, not a
+ * bare video byte stream).
+ *
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS row.
+ * @param {object} smallest Rendition reference from `pickSmallestRendition`.
+ * @returns {string} Full HTML document.
+ */
+function renderPlayerHtml(upload, smallest) {
+  const src = `${publicApiOrigin()}${smallest.streamUrl}`;
+  return (
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    `<title>${escapeHtml(upload.videoId)}</title>` +
+    "<style>html,body{margin:0;height:100%;background:#000}" +
+    "video{width:100%;height:100%;object-fit:contain}</style>" +
+    "</head><body>" +
+    `<video src="${escapeHtml(src)}" controls playsinline preload="metadata"></video>` +
+    "</body></html>"
+  );
+}
+
+/**
+ * Renders the link-unfurl HTML page: Open Graph + Twitter Card meta tags
+ * describing the video (title, author, upload date, thumbnail, and an
+ * embedded copy of its smallest-resolution rendition) for chat-app/social
+ * link-preview bots, which do not execute JS and never see the SPA's
+ * client-rendered content. `twitter:card` is `"player"` (full inline
+ * playback) only when `publicApiOrigin()` is HTTPS — Twitter/X will not
+ * validate an `http://` player page — otherwise falls back to
+ * `"summary_large_image"` (rich card, no inline play).
+ *
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS row (with User, VideoThumbnail included).
+ * @param {import('sequelize').Model} metadata VIDEO_METADATA row.
+ * @param {object[]} renditions Result of `loadRenditions(upload)`.
+ * @returns {string} Full HTML document.
+ */
+function renderUnfurlHtml(upload, metadata, renditions) {
+  const apiOrigin = publicApiOrigin();
+  const appOrigin = publicAppOrigin();
+  const uploaderLabel =
+    upload.User?.displayName || upload.User?.username || null;
+  const uploadedAt = metadata.createdAt
+    ? new Date(metadata.createdAt).toISOString().slice(0, 10)
+    : null;
+  const title = metadata.title || "Justintube";
+  const description = buildUnfurlDescription(metadata, uploaderLabel, uploadedAt);
+  const pageUrl = `${appOrigin}/video?v=${encodeURIComponent(upload.videoId)}`;
+  const isVideo = upload.mediaType === "video";
+  const smallest = pickSmallestRendition(renditions);
+
+  const tags = [
+    '<meta property="og:site_name" content="Justintube">',
+    `<meta property="og:type" content="${isVideo ? "video.other" : "website"}">`,
+    `<meta property="og:title" content="${escapeHtml(title)}">`,
+    `<meta property="og:description" content="${escapeHtml(description)}">`,
+    `<meta property="og:url" content="${escapeHtml(pageUrl)}">`,
+    `<meta name="description" content="${escapeHtml(description)}">`,
+    `<link rel="canonical" href="${escapeHtml(pageUrl)}">`,
+  ];
+
+  if (uploaderLabel) {
+    tags.push(`<meta name="author" content="${escapeHtml(uploaderLabel)}">`);
+  }
+
+  if (upload.VideoThumbnail) {
+    const imageUrl = `${apiOrigin}/api/v1/videos/${upload.id}/thumbnail`;
+    tags.push(`<meta property="og:image" content="${escapeHtml(imageUrl)}">`);
+    tags.push(
+      `<meta property="og:image:secure_url" content="${escapeHtml(imageUrl)}">`,
+    );
+    tags.push(`<meta name="twitter:image" content="${escapeHtml(imageUrl)}">`);
+  }
+
+  let twitterCard = "summary";
+  if (isVideo && smallest?.streamUrl) {
+    const videoUrl = `${apiOrigin}${smallest.streamUrl}`;
+    const videoType = smallest.mimeType || "video/mp4";
+    tags.push(`<meta property="og:video" content="${escapeHtml(videoUrl)}">`);
+    tags.push(
+      `<meta property="og:video:secure_url" content="${escapeHtml(videoUrl)}">`,
+    );
+    tags.push(
+      `<meta property="og:video:type" content="${escapeHtml(videoType)}">`,
+    );
+    if (smallest.width != null && smallest.height != null) {
+      tags.push(
+        `<meta property="og:video:width" content="${smallest.width}">`,
+      );
+      tags.push(
+        `<meta property="og:video:height" content="${smallest.height}">`,
+      );
+    }
+
+    twitterCard = "summary_large_image";
+    if (apiOrigin.startsWith("https://")) {
+      twitterCard = "player";
+      const playerUrl = `${apiOrigin}/api/v1/videos/${upload.id}/player`;
+      const width = smallest.width || upload.videoWidth || 480;
+      const height = smallest.height || upload.videoHeight || 270;
+      tags.push(
+        `<meta name="twitter:player" content="${escapeHtml(playerUrl)}">`,
+      );
+      tags.push(`<meta name="twitter:player:width" content="${width}">`);
+      tags.push(`<meta name="twitter:player:height" content="${height}">`);
+      tags.push(
+        `<meta name="twitter:player:stream" content="${escapeHtml(videoUrl)}">`,
+      );
+      tags.push(
+        `<meta name="twitter:player:stream:content_type" content="${escapeHtml(videoType)}">`,
+      );
+    }
+  } else if (!isVideo && smallest?.streamUrl) {
+    const audioUrl = `${apiOrigin}${smallest.streamUrl}`;
+    tags.push(`<meta property="og:audio" content="${escapeHtml(audioUrl)}">`);
+    tags.push(
+      `<meta property="og:audio:type" content="${escapeHtml(smallest.mimeType || "audio/mpeg")}">`,
+    );
+  }
+
+  tags.push(`<meta name="twitter:card" content="${twitterCard}">`);
+  tags.push(`<meta name="twitter:title" content="${escapeHtml(title)}">`);
+  tags.push(
+    `<meta name="twitter:description" content="${escapeHtml(description)}">`,
+  );
+  if (uploaderLabel) {
+    tags.push('<meta name="twitter:label1" content="Uploader">');
+    tags.push(
+      `<meta name="twitter:data1" content="${escapeHtml(uploaderLabel)}">`,
+    );
+  }
+  if (uploadedAt) {
+    tags.push('<meta name="twitter:label2" content="Uploaded">');
+    tags.push(
+      `<meta name="twitter:data2" content="${escapeHtml(uploadedAt)}">`,
+    );
+  }
+
+  return (
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    `<title>${escapeHtml(title)} - Justintube</title>` +
+    tags.join("") +
+    "</head><body>" +
+    `<h1>${escapeHtml(title)}</h1>` +
+    (uploaderLabel ? `<p>By ${escapeHtml(uploaderLabel)}</p>` : "") +
+    (description ? `<p>${escapeHtml(description)}</p>` : "") +
+    "</body></html>"
+  );
+}
+
+/**
  * Serializes a COMMENTS row for API responses.
  *
  * @param {import('sequelize').Model} comment Comment instance (expects `User` preloaded).
@@ -1122,6 +1428,140 @@ export function createVideosRouter() {
         error: "internal_error",
         message: "Failed to load video. Does this video exist?",
       });
+    }
+  });
+
+  /**
+   * GET /videos/:id/unfurl — getVideoUnfurl
+   * Auth: optional. Returns an HTML document with Open Graph / Twitter Card
+   * meta tags describing the video (title, author, upload date, thumbnail,
+   * and an embedded copy of its smallest-resolution rendition) for chat-app
+   * link-unfurl bots, which do not execute JS and never see the SPA's
+   * client-rendered `/video?v=` page. Existence-masking: returns the same
+   * generic 404 HTML whether the video truly doesn't exist or the caller
+   * just cannot view it.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/unfurl:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Get an Open Graph / Twitter Card unfurl page for a video
+   *     operationId: getVideoUnfurl
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Numeric video id or its public videoId.
+   *     responses:
+   *       "200":
+   *         description: HTML document with unfurl meta tags
+   *         content:
+   *           text/html:
+   *             schema:
+   *               type: string
+   *       "404":
+   *         description: Generic HTML fallback (video not found or inaccessible)
+   *         content:
+   *           text/html:
+   *             schema:
+   *               type: string
+   */
+  router.get("/videos/:id/unfurl", optionalAuth, async (req, res) => {
+    try {
+      const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
+      if (!loaded) {
+        sendUnfurlFallback(res);
+        return;
+      }
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendUnfurlFallback(res);
+        return;
+      }
+      const renditions = await loadRenditions(upload);
+      res
+        .status(200)
+        .set("Cache-Control", "public, max-age=300")
+        .type("html")
+        .send(renderUnfurlHtml(upload, metadata, renditions));
+    } catch (err) {
+      console.error("getVideoUnfurl failed:", err);
+      sendUnfurlFallback(res);
+    }
+  });
+
+  /**
+   * GET /videos/:id/player — getVideoPlayer
+   * Auth: optional. Returns a minimal, iframe-embeddable HTML page for a
+   * single video's smallest-resolution rendition — the target of
+   * `twitter:player` in the unfurl page, so Twitter/X's Player Card can play
+   * the video inline. Not reachable through `webview`; this is an absolute
+   * `webapi` URL fetched directly by Twitter's card-rendering service.
+   * Audio-only uploads 404 (no video to embed).
+   *
+   * @openapi
+   * /api/v1/videos/{id}/player:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Get an iframe-embeddable video player page (for Twitter/X Player Cards)
+   *     operationId: getVideoPlayer
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Numeric video id or its public videoId.
+   *     responses:
+   *       "200":
+   *         description: HTML document with an embedded video player
+   *         content:
+   *           text/html:
+   *             schema:
+   *               type: string
+   *       "404":
+   *         description: Generic HTML fallback (not found, inaccessible, or audio-only)
+   *         content:
+   *           text/html:
+   *             schema:
+   *               type: string
+   */
+  router.get("/videos/:id/player", optionalAuth, async (req, res) => {
+    try {
+      const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
+      if (!loaded || loaded.upload.mediaType !== "video") {
+        sendPlayerFallback(res);
+        return;
+      }
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendPlayerFallback(res);
+        return;
+      }
+      const renditions = await loadRenditions(upload);
+      const smallest = pickSmallestRendition(renditions);
+      if (!smallest?.streamUrl) {
+        sendPlayerFallback(res);
+        return;
+      }
+      // Twitter (and any other iframe embedder) must be allowed to frame
+      // this response — helmet's default frameguard middleware (applied
+      // globally in webapi/index.js) sends X-Frame-Options: SAMEORIGIN,
+      // which blocks that. Override on this route only; nothing else in
+      // webapi is meant to be iframed.
+      res.removeHeader("X-Frame-Options");
+      res.setHeader(
+        "Content-Security-Policy",
+        "frame-ancestors https://twitter.com https://x.com https://*.twimg.com https://cards-frame.twitter.com",
+      );
+      res.status(200).type("html").send(renderPlayerHtml(upload, smallest));
+    } catch (err) {
+      console.error("getVideoPlayer failed:", err);
+      sendPlayerFallback(res);
     }
   });
 
