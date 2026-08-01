@@ -38,7 +38,7 @@ itself works fine.
 ```bash
 cp .env.example .env
 # edit .env: fill in every REQUIRED secret, set PUBLIC_APP_URL/CORS_ORIGIN/
-# VITE_API_BASE_URL to your real hostname(s)
+# API_BASE_URL to your real hostname(s)
 docker compose up -d --build
 docker compose ps   # wait for db/redis/search/webapi/processing to show healthy
 ```
@@ -117,15 +117,19 @@ deployment.**
 (Scalar UI) and `GET /openapi.json` are mounted at all. Keep this `false` in
 production unless you specifically want your full API schema public.
 
-## 9. `VITE_API_BASE_URL` / image rebuild requirement
+## 9. `API_BASE_URL` is injected at container start, not baked in
 
-Vite bakes `VITE_API_BASE_URL` into the webview's JS bundle at `docker build`
-time (it's a build `ARG`, not something read at container start). There is
-no runtime config-injection mechanism in this stack. Practically: if you
-change the API's public URL, or promote the same build to a different
-environment with a different API origin, you must rebuild the `webview`
-image (`docker compose build webview`) — changing the env var alone and
-restarting the container does nothing.
+`webview`'s Docker image contains no baked-in API URL. At container start,
+`webview/docker-entrypoint.sh` writes the `API_BASE_URL` env var into a
+`/config.js` file served alongside the app bundle; `index.html` loads it
+before the bundle, and `src/api/client.js` reads it off
+`window.__RUNTIME_CONFIG__`. Changing `API_BASE_URL` and restarting the
+container (no rebuild) is sufficient, and the same published image can be
+promoted across environments with different API origins.
+
+(`VITE_API_BASE_URL` still exists as a separate, Vite-only env var, but it's
+only read by `npm run dev` for local non-Docker development — see
+`webview/README.md`.)
 
 ## 10. Redis auth
 
@@ -174,7 +178,7 @@ transition over the first ~15-30 seconds per service.
 ## 14. Known constraints
 
 - The webview's Content-Security-Policy leaves `connect-src` permissive
-  (`'self' *'`) rather than scoped to the real API origin, because
-  `VITE_API_BASE_URL` is only known at image build time and nginx can't see
-  it statically without added templating machinery. Every other CSP
-  directive is strict.
+  (`'self' *'`) rather than scoped to the real API origin. `API_BASE_URL` is
+  now known at container start (see §9), so `nginx.conf` could in principle
+  template `connect-src` to that exact origin, but doing so isn't
+  implemented here. Every other CSP directive is strict.

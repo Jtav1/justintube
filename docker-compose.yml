@@ -183,13 +183,16 @@ services:
   webview:
     build:
       context: ./webview
-      args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000}
     container_name: justintube-webview
     restart: unless-stopped
     depends_on:
       webapi:
         condition: service_healthy
+    environment:
+      # Runtime-injected at container start (see webview/docker-entrypoint.sh)
+      # - no image rebuild needed to change this or to promote the same image
+      # across environments.
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:3000}
     ports:
       - "${WEBVIEW_PORT:-5173}:8080"
 

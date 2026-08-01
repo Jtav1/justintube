@@ -17,10 +17,14 @@ npm install
 Important env vars
 | Variable | Purpose |
 | -------- | ------- |
-| `VITE_API_BASE_URL` |  API URL (default `localhost:3000`) |
+| `VITE_API_BASE_URL` | API URL used by `npm run dev` (default `localhost:3000`) |
 
-Vite only exposes `VITE_`-prefixed vars to client code, and bakes them in at build time (not read
-at container runtime).
+`VITE_API_BASE_URL` only applies to the Vite dev server — Vite bakes `VITE_`-prefixed vars into
+the bundle at build time, so it can't vary per deployment. The Docker image instead reads the API
+origin at container **start** from a plain `API_BASE_URL` env var: `docker-entrypoint.sh` writes
+it into `/config.js`, which `index.html` loads before the app bundle, and `src/api/client.js`
+reads it off `window.__RUNTIME_CONFIG__`. This means the same built image works across
+environments — no rebuild needed to point it at a different API.
 
 ## Commands
 
@@ -43,5 +47,5 @@ src/
   pages/        route-level views (VideoListing, VideoPage, UploadPage, ProfilePage, AdminPanel, ...)
 ```
 
-Talks to the `webapi` service (see [`../webapi`](../webapi)) via `VITE_API_BASE_URL`; routing is
-handled by `react-router-dom`.
+Talks to the `webapi` service (see [`../webapi`](../webapi)) via `VITE_API_BASE_URL` (dev) /
+`API_BASE_URL` (Docker); routing is handled by `react-router-dom`.
