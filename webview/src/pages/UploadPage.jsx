@@ -352,7 +352,9 @@ function UploadPage() {
       createdId = editUpload.id
     } else {
       try {
-        const uploaded = file ? await uploadVideoFile(file) : await importVideoUrl(url.trim())
+        const uploaded = file
+          ? await uploadVideoFile(file, { skipThumbnail: Boolean(thumbnailFile) })
+          : await importVideoUrl(url.trim(), { skipThumbnail: Boolean(thumbnailFile) })
         createdId = uploaded.id
       } catch {
         setSubmitError(
@@ -488,47 +490,47 @@ function UploadPage() {
 
             {selectedFileIsAudio && (
               <p className="upload-hint">
-                Audio uploads use a standard placeholder thumbnail.
+                Audio uploads use a standard placeholder thumbnail unless you upload one below.
               </p>
-            )}
-
-            {!importAvailable && !selectedFileIsAudio && (
-              <div className="upload-field-group">
-                <label>Thumbnail</label>
-                <p className="upload-hint">
-                  Automatic thumbnail generation is unavailable right now — you can upload one
-                  manually instead.
-                </p>
-                <div
-                  className="upload-thumbnail-picker"
-                  onClick={() => thumbnailInputRef.current?.click()}
-                >
-                  <UploadCloud size={20} />
-                  <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
-                  <input
-                    ref={thumbnailInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="upload-dropzone-input"
-                    onChange={handleThumbnailInputChange}
-                  />
-                  {thumbnailFile && (
-                    <button
-                      type="button"
-                      className="upload-dropzone-clear"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setThumbnailFile(null)
-                      }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
             )}
           </>
         )}
+
+        <div className="upload-field-group">
+          <label>Thumbnail</label>
+          {!isEditMode && !importAvailable && (
+            <p className="upload-hint">
+              Automatic thumbnail generation is unavailable right now — you can upload one
+              manually instead.
+            </p>
+          )}
+          <div
+            className="upload-thumbnail-picker"
+            onClick={() => thumbnailInputRef.current?.click()}
+          >
+            <UploadCloud size={20} />
+            <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
+            <input
+              ref={thumbnailInputRef}
+              type="file"
+              accept="image/*"
+              className="upload-dropzone-input"
+              onChange={handleThumbnailInputChange}
+            />
+            {thumbnailFile && (
+              <button
+                type="button"
+                className="upload-dropzone-clear"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setThumbnailFile(null)
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
 
         <label htmlFor="upload-title">Title</label>
         <input

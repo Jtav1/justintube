@@ -224,9 +224,13 @@ function fileVersionResponseBody(version) {
  * @private
  * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
  * @param {string} storedFilename Basename of the source file under `original/`.
+ * @param {{ skipThumbnail?: boolean }} [options] `skipThumbnail` omits the
+ *   auto-generated thumbnail job — set when the caller is about to upload a
+ *   custom thumbnail, to avoid the processing service's result racing with
+ *   (and overwriting) it.
  * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
  */
-async function finalizeUploadTranscodes(upload, storedFilename) {
+async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail = false } = {}) {
   const profiles = await TranscodeProfile.findAll({
     where: { mediaType: upload.mediaType },
   });
@@ -287,9 +291,10 @@ async function finalizeUploadTranscodes(upload, storedFilename) {
   // there are zero transcode profiles) for video uploads — see
   // `THUMBNAIL_OUTPUT_EXT`. Audio-only uploads never get a generated
   // thumbnail (the frontend renders a placeholder instead) and must never
-  // enter the ffmpeg transcode pipeline at all.
+  // enter the ffmpeg transcode pipeline at all. `skipThumbnail` opts out
+  // too, when the caller is supplying its own thumbnail image instead.
   const thumbnailJob =
-    upload.mediaType === "video"
+    upload.mediaType === "video" && !skipThumbnail
       ? {
           jobId: upload.videoId,
           outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
@@ -452,6 +457,17 @@ function parseThumbnailTimestampTenths(raw) {
 }
 
 /**
+ * Parses the optional `skipThumbnail` field. Multipart requests deliver it as
+ * a string ("true"/"1"); JSON requests may send a real boolean.
+ *
+ * @param {unknown} raw Raw `skipThumbnail` value from the request.
+ * @returns {boolean} Whether the auto-generated thumbnail job should be skipped.
+ */
+function parseSkipThumbnail(raw) {
+  return raw === true || raw === "true" || raw === "1";
+}
+
+/**
  * Express handler for raw video upload.
  * POST /api/v1/videos/upload — multipart form field `file` (single).
  * Auth: required, uploader flag (or admin). Handler runs after `requireAuth`
@@ -485,6 +501,8 @@ async function uploadVideo(req, res) {
     });
     return;
   }
+
+  const skipThumbnail = parseSkipThumbnail(req.body?.skipThumbnail);
 
   const videoId = file.generatedVideoId;
   const fileExtension = normalizedExtension(file.originalname);
@@ -527,7 +545,7 @@ async function uploadVideo(req, res) {
     return;
   }
 
-  const result = await finalizeUploadTranscodes(upload, file.filename);
+  const result = await finalizeUploadTranscodes(upload, file.filename, { skipThumbnail });
   res.status(result.status).json(result.body);
 }
 
@@ -595,6 +613,8 @@ async function importVideo(req, res) {
     });
     return;
   }
+
+  const skipThumbnail = parseSkipThumbnail(req.body?.skipThumbnail);
 
   const download = await requestDownload(url);
   if (!download.ok) {
@@ -701,7 +721,7 @@ async function importVideo(req, res) {
     return;
   }
 
-  const result = await finalizeUploadTranscodes(upload, storedFilename);
+  const result = await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
   res.status(result.status).json(result.body);
 }
 
@@ -778,6 +798,13 @@ export function createUploadRouter() {
    *                   Optional timestamp (seconds, may be fractional) to grab the
    *                   auto-generated thumbnail frame from. Omitted, or past the
    *                   video's actual duration, picks a random timestamp instead.
+   *               skipThumbnail:
+   *                 type: boolean
+   *                 description: >
+   *                   When true, don't enqueue a processing-generated
+   *                   thumbnail. Set this when the caller is about to upload
+   *                   a custom thumbnail via POST /videos/{id}/thumbnail, to
+   *                   avoid the auto-generated one overwriting it.
    *     responses:
    *       201:
    *         description: Upload recorded
@@ -833,6 +860,13 @@ export function createUploadRouter() {
    *                   Optional timestamp (seconds, may be fractional) to grab the
    *                   auto-generated thumbnail frame from. Omitted, or past the
    *                   video's actual duration, picks a random timestamp instead.
+   *               skipThumbnail:
+   *                 type: boolean
+   *                 description: >
+   *                   When true, don't enqueue a processing-generated
+   *                   thumbnail. Set this when the caller is about to upload
+   *                   a custom thumbnail via POST /videos/{id}/thumbnail, to
+   *                   avoid the auto-generated one overwriting it.
    *     responses:
    *       201:
    *         description: Video downloaded and recorded

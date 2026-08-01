@@ -324,6 +324,22 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(res.body.error).toBe("invalid_body");
   });
 
+  test("skipThumbnail omits the thumbnail job, keeping any rendition jobs", async () => {
+    await seedTranscodeProfile({ resolutionName: "720p", mediaType: "video" });
+    const fetchMock = acceptAllJobsFetchMock();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .field("skipThumbnail", "true")
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
+    expect(payload.jobs).toHaveLength(1);
+  });
+
   test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
     const profileA = await seedTranscodeProfile({
       outputHeight: 720,
