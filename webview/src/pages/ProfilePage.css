@@ -171,6 +171,7 @@
   gap: 8px;
   padding-left: 340px;
   margin-bottom: 125px;
+  padding-top: 5px;
 }
 
 .profile-bio {
@@ -219,6 +220,7 @@
 }
 
 .profile-inline-edit-bio {
+  padding-top: 10px;
   flex-direction: column;
   align-items: stretch;
 }
