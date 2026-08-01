@@ -572,12 +572,43 @@ describe("auth change password", () => {
 });
 
 describe("createCorsOptions", () => {
-  test("reflects Origin and allows credentials regardless of environment", () => {
-    const opts = createCorsOptions({
-      nodeEnv: "production",
-      corsOrigin: "",
-    });
+  test("rejects cross-origin requests in production when CORS_ORIGIN is unset", () => {
+    const opts = createCorsOptions({ nodeEnv: "production", corsOrigin: "" });
+    expect(opts.origin).toBe(false);
+    expect(opts.credentials).toBe(true);
+  });
+
+  test("reflects Origin outside production when CORS_ORIGIN is unset", () => {
+    const opts = createCorsOptions({ nodeEnv: "development", corsOrigin: "" });
     expect(opts.origin).toBe(true);
     expect(opts.credentials).toBe(true);
+  });
+
+  test("only allows allowlisted origins when CORS_ORIGIN is set", () => {
+    const opts = createCorsOptions({
+      nodeEnv: "production",
+      corsOrigin: "https://app.example.com, https://other.example.com",
+    });
+    expect(opts.credentials).toBe(true);
+    expect(typeof opts.origin).toBe("function");
+
+    let allowResult;
+    opts.origin("https://app.example.com", (err, allow) => {
+      allowResult = [err, allow];
+    });
+    expect(allowResult).toEqual([null, true]);
+
+    let denyResult;
+    opts.origin("https://evil.example.com", (err, allow) => {
+      denyResult = [err, allow];
+    });
+    expect(denyResult[0]).toBeInstanceOf(Error);
+    expect(denyResult[1]).toBeUndefined();
+
+    let noOriginResult;
+    opts.origin(undefined, (err, allow) => {
+      noOriginResult = [err, allow];
+    });
+    expect(noOriginResult).toEqual([null, true]);
   });
 });

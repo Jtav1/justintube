@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { notImplemented } from "./stubs.js";
+import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
 
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
@@ -25,7 +26,7 @@ function requireInternalToken(req, res, next) {
   const header = String(req.headers.authorization || "");
   const match = /^Bearer\s+(.+)$/i.exec(header);
   const provided = match ? match[1].trim() : "";
-  if (!provided || provided !== expected) {
+  if (!timingSafeStringEqual(expected, provided)) {
     res.status(401).json({
       error: "unauthorized",
       message: "Valid internal service token required.",

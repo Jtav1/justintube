@@ -1,6 +1,11 @@
 
 .DS_Store
 
+.env
+.env.*
+!.env.example
+docker-compose.override.yml
+
 .cursor/
 
 docs/MediaCMS Ref Feature List.md

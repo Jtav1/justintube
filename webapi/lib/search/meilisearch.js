@@ -55,6 +55,28 @@ function getClient() {
 }
 
 /**
+ * Checks whether a Meilisearch index already exists, so callers can avoid
+ * re-issuing `createIndex` (which enqueues a task that fails server-side
+ * with "Index already exists" rather than rejecting the initiating call).
+ *
+ * @private
+ * @param {import("meilisearch").Meilisearch} client Meilisearch client.
+ * @param {string} indexName Index UID to check.
+ * @returns {Promise<boolean>} True if the index already exists.
+ */
+async function indexExists(client, indexName) {
+  try {
+    await client.getIndex(indexName);
+    return true;
+  } catch (err) {
+    if (err?.cause?.code === "index_not_found") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
  * Lazily creates and configures the video index (searchable/filterable/sortable
  * attributes). Safe to call repeatedly; only does work once per process.
  *
@@ -66,7 +88,9 @@ async function ensureIndexConfigured() {
     return;
   }
   const client = getClient();
-  await client.createIndex(INDEX_NAME, { primaryKey: "id" }).catch(() => {});
+  if (!(await indexExists(client, INDEX_NAME))) {
+    await client.createIndex(INDEX_NAME, { primaryKey: "id" }).waitTask();
+  }
   const index = client.index(INDEX_NAME);
   // Settings updates only enqueue a task server-side; awaiting the call alone
   // just confirms the enqueue, not that Meilisearch has applied it yet. A
@@ -186,7 +210,9 @@ async function ensurePlaylistIndexConfigured() {
     return;
   }
   const client = getClient();
-  await client.createIndex(PLAYLIST_INDEX_NAME, { primaryKey: "id" }).catch(() => {});
+  if (!(await indexExists(client, PLAYLIST_INDEX_NAME))) {
+    await client.createIndex(PLAYLIST_INDEX_NAME, { primaryKey: "id" }).waitTask();
+  }
   const index = client.index(PLAYLIST_INDEX_NAME);
   // See the matching comment in ensureIndexConfigured() above for why these
   // are awaited via .waitTask() rather than just awaiting the enqueue call.
@@ -277,7 +303,9 @@ async function ensureUserIndexConfigured() {
     return;
   }
   const client = getClient();
-  await client.createIndex(USER_INDEX_NAME, { primaryKey: "id" }).catch(() => {});
+  if (!(await indexExists(client, USER_INDEX_NAME))) {
+    await client.createIndex(USER_INDEX_NAME, { primaryKey: "id" }).waitTask();
+  }
   const index = client.index(USER_INDEX_NAME);
   // See the matching comment in ensureIndexConfigured() above for why this is
   // awaited via .waitTask() rather than just awaiting the enqueue call.
