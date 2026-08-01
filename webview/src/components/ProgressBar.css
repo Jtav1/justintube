@@ -1,0 +1,43 @@
+.progress-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-bar-label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.progress-bar-track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--accent-bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.progress-bar-indeterminate .progress-bar-fill {
+  position: absolute;
+  top: 0;
+  width: 40%;
+  animation: progress-bar-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-bar-sweep {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}

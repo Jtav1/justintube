@@ -108,7 +108,7 @@ describe("GET /api/v1/users (listUsers)", () => {
     expect(row.uploadCount).toBe(0);
   });
 
-  test("omits emailVerified/uploader for an anonymous caller", async () => {
+  test("omits emailVerified/uploader/role for an anonymous caller", async () => {
     await seedUser({ username: "anon_view_user", email: "anon_view_user@example.com" });
 
     const client = createTestClient();
@@ -117,9 +117,10 @@ describe("GET /api/v1/users (listUsers)", () => {
     const row = res.body.items.find((u) => u.username === "anon_view_user");
     expect(row.emailVerified).toBeUndefined();
     expect(row.uploader).toBeUndefined();
+    expect(row.role).toBeUndefined();
   });
 
-  test("omits emailVerified/uploader for a non-admin authenticated caller", async () => {
+  test("omits emailVerified/uploader/role for a non-admin authenticated caller", async () => {
     await seedUser({
       username: "viewer_target_user",
       email: "viewer_target_user@example.com",
@@ -136,9 +137,10 @@ describe("GET /api/v1/users (listUsers)", () => {
     const row = res.body.items.find((u) => u.username === "viewer_target_user");
     expect(row.emailVerified).toBeUndefined();
     expect(row.uploader).toBeUndefined();
+    expect(row.role).toBeUndefined();
   });
 
-  test("includes emailVerified/uploader for an admin caller", async () => {
+  test("includes emailVerified/uploader/role for an admin caller", async () => {
     await seedUser({
       username: "admin_view_target_user",
       email: "admin_view_target_user@example.com",
@@ -161,7 +163,7 @@ describe("GET /api/v1/users (listUsers)", () => {
     const res = await agent.get("/api/v1/users");
     expect(res.status).toBe(200);
     const row = res.body.items.find((u) => u.username === "admin_view_target_user");
-    expect(row).toMatchObject({ emailVerified: false, uploader: true });
+    expect(row).toMatchObject({ emailVerified: false, uploader: true, role: "viewer" });
   });
 
   test("rejects an invalid page parameter", async () => {

@@ -11,9 +11,11 @@ import {
   getImportStatus,
   updateVideoThumbnail,
   getVideo,
+  getVideoProcessingStatus,
 } from '../api/videos.js'
 import { searchUsers } from '../api/users.js'
 import ChipInput from '../components/ChipInput.jsx'
+import ProgressBar from '../components/ProgressBar.jsx'
 import './UploadPage.css'
 
 const VISIBILITY_OPTIONS = [
@@ -25,6 +27,11 @@ const VISIBILITY_OPTIONS = [
 
 const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
 const IMPORT_STATUS_POLL_MS = 30000
+const PROCESSING_POLL_MS = 2000
+// Statuses GET /videos/:id/processing-status can return that mean there's
+// nothing left to wait on — "uploaded" covers the zero-transcode-job case
+// (e.g. an audio upload with no matching audio profiles).
+const TERMINAL_UPLOAD_STATUSES = new Set(['ready', 'partial', 'failed', 'uploaded'])
 
 // Mirrors webapi's VIDEO_METADATA.title / .description and CONTENT_TAGS.tag
 // column limits (see webapi/lib/models/video-metadata.js,
@@ -86,6 +93,14 @@ function UploadPage() {
   const [submitError, setSubmitError] = useState(null)
 
   const [importAvailable, setImportAvailable] = useState(true)
+
+  // Set once creation succeeds (file upload or URL import); drives the
+  // processing-status poll below and switches the page from the form to a
+  // progress panel. Ephemeral by design — a refresh loses this, but the
+  // upload/import itself keeps running server-side regardless.
+  const [uploadPercent, setUploadPercent] = useState(null)
+  const [trackingId, setTrackingId] = useState(null)
+  const [processingStatus, setProcessingStatus] = useState(null)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -168,6 +183,38 @@ function UploadPage() {
       clearInterval(interval)
     }
   }, [isEditMode])
+
+  useEffect(() => {
+    if (!trackingId) {
+      return undefined
+    }
+
+    let cancelled = false
+    let interval
+
+    async function poll() {
+      try {
+        const data = await getVideoProcessingStatus(trackingId)
+        if (cancelled) {
+          return
+        }
+        setProcessingStatus(data)
+        if (TERMINAL_UPLOAD_STATUSES.has(data.status)) {
+          clearInterval(interval)
+        }
+      } catch {
+        // Transient network/server hiccup — the next tick retries.
+      }
+    }
+
+    poll()
+    interval = setInterval(poll, PROCESSING_POLL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [trackingId])
 
   const recipientSearchActive = visibility === 'private' && recipientQuery.trim().length > 0
 
@@ -353,7 +400,14 @@ function UploadPage() {
     } else {
       try {
         const uploaded = file
-          ? await uploadVideoFile(file, { skipThumbnail: Boolean(thumbnailFile) })
+          ? await uploadVideoFile(file, {
+              skipThumbnail: Boolean(thumbnailFile),
+              onUploadProgress: (event) => {
+                if (event.total) {
+                  setUploadPercent(Math.round((event.loaded / event.total) * 100))
+                }
+              },
+            })
           : await importVideoUrl(url.trim(), { skipThumbnail: Boolean(thumbnailFile) })
         createdId = uploaded.id
       } catch {
@@ -365,6 +419,7 @@ function UploadPage() {
         setSubmitting(false)
         return
       }
+      setUploadPercent(null)
     }
 
     try {
@@ -427,7 +482,59 @@ function UploadPage() {
     }
 
     setSubmitting(false)
-    navigate(isEditMode ? `/video?v=${editVideoId}` : `/users/${user.username}`)
+
+    if (isEditMode) {
+      navigate(`/video?v=${editVideoId}`)
+      return
+    }
+
+    // Creation + setup succeeded — hand off to the processing-status poller
+    // (below) instead of navigating immediately, so the download/transcode
+    // progress bar is actually visible instead of the page unmounting out
+    // from under it.
+    setTrackingId(createdId)
+  }
+
+  if (trackingId) {
+    const status = processingStatus?.status ?? 'downloading'
+    const fileVersions = processingStatus?.fileVersions ?? []
+    const transcodePercent = fileVersions.length > 0
+      ? Math.round(
+          (fileVersions.filter((v) => v.status === 'complete').length / fileVersions.length) * 100,
+        )
+      : null
+    const isTerminal = TERMINAL_UPLOAD_STATUSES.has(status)
+
+    return (
+      <section className="upload-page">
+        <div className="upload-card">
+          <h1>Upload</h1>
+          {status === 'downloading' && (
+            <ProgressBar indeterminate label="Downloading..." />
+          )}
+          {status === 'processing' && (
+            transcodePercent != null
+              ? <ProgressBar value={transcodePercent} label={`Processing (${transcodePercent}%)...`} />
+              : <ProgressBar indeterminate label="Processing..." />
+          )}
+          {status === 'failed' && (
+            <p className="upload-error">
+              {processingStatus?.statusMessage || 'This import failed. Please try again.'}
+            </p>
+          )}
+          {isTerminal && status !== 'failed' && <p>Your video is ready.</p>}
+          {isTerminal && (
+            <button
+              type="button"
+              className="upload-submit"
+              onClick={() => navigate(`/users/${user.username}`)}
+            >
+              Go to your channel
+            </button>
+          )}
+        </div>
+      </section>
+    )
   }
 
   return (
@@ -610,6 +717,10 @@ function UploadPage() {
             inputMaxLength={MAX_TAG_LENGTH}
           />
         </div>
+
+        {uploadPercent != null && (
+          <ProgressBar value={uploadPercent} label={`Uploading (${uploadPercent}%)...`} />
+        )}
 
         {submitError && <p className="upload-error">{submitError}</p>}
 

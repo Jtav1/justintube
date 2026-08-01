@@ -250,6 +250,11 @@ async function ensureSqliteMissingColumns() {
       column: "search_index_status",
       ddl: "`search_index_status` VARCHAR(16) NOT NULL DEFAULT 'pending'",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "status_message",
+      ddl: "`status_message` VARCHAR(255) NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

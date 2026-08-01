@@ -6,19 +6,28 @@ import {
   queryRows,
   resetTables,
   seedTranscodeProfile,
+  seedUpload,
   seedUser,
   seedUserApiKey,
   setupSchema,
 } from "../helpers/db.js";
-import { originalDir } from "../../routes/uploads.js";
+import { continueImport, originalDir } from "../../routes/uploads.js";
+import { OriginalUpload } from "../../lib/models/index.js";
 
 /**
- * HTTP contract tests for the URL-import endpoint (`POST /videos/import`).
- * The route asks processing to download the URL via yt-dlp into the shared
- * `original/` media directory, then reuses the same FILE_VERSIONS /
- * transcode-enqueue path as `POST /videos/upload`. Tests simulate the
- * processing side effect (the downloaded file landing in `original/`) by
- * writing a fixture there before mocking the `/download` response.
+ * HTTP contract + unit tests for the URL-import flow (`POST /videos/import`
+ * plus `continueImport`, the background continuation it kicks off).
+ *
+ * `POST /videos/import` only creates a placeholder ORIGINAL_UPLOADS/
+ * VIDEO_METADATA row (status "downloading") and responds immediately — the
+ * actual yt-dlp download, rename, and transcode-enqueue happen afterward in
+ * `continueImport`, called without awaiting it (fire-and-forget) so the
+ * client's HTTP request never blocks on yt-dlp. Most scenario coverage below
+ * therefore calls `continueImport` directly (seeding a "downloading"
+ * placeholder row first, mirroring what the route creates) rather than
+ * racing the fire-and-forget call through the HTTP layer — deterministic,
+ * and avoids a background promise from one test still running (and possibly
+ * throwing on a row `resetTables()` already deleted) during the next test.
  * Requires an authenticated user with the `uploader` flag (or admin).
  */
 describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
@@ -79,6 +88,27 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
    */
   function importRequest() {
     return client.post("/api/v1/videos/import").set("Authorization", `Bearer ${uploaderKey}`);
+  }
+
+  /**
+   * Seeds a placeholder ORIGINAL_UPLOADS/VIDEO_METADATA-less row matching
+   * what `importVideo` creates before handing off to `continueImport` — a
+   * real Sequelize instance (not the plain-object shape `seedUpload`
+   * returns), since `continueImport` calls `.update()` on it directly.
+   *
+   * @param {object} [overrides] Passed through to `seedUpload`.
+   * @returns {Promise<import('sequelize').Model>} The placeholder row.
+   */
+  async function seedDownloadingUpload(overrides = {}) {
+    const seeded = await seedUpload({
+      originalFilename: "",
+      fileExtension: "",
+      storagePath: "",
+      status: "downloading",
+      userId: uploaderUser?.id ?? null,
+      ...overrides,
+    });
+    return OriginalUpload.findByPk(seeded.id);
   }
 
   /**
@@ -159,217 +189,6 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(res.body.error).toBe("forbidden");
   });
 
-  test("downloads a video from a URL and persists an ORIGINAL_UPLOADS row", async () => {
-    writeDownloadedFixture("1737900000.mp4");
-    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900000.mp4");
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc" });
-
-    expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({
-      originalFilename: "1737900000.mp4",
-      fileExtension: "mp4",
-      status: "uploaded",
-      userId: uploaderUser.id,
-    });
-    expect(typeof res.body.videoId).toBe("string");
-    expect(res.body.videoId).toHaveLength(6);
-    expect(res.body.storagePath).toBe(`original/${res.body.videoId}.mp4`);
-    expect(res.body.fileVersions).toEqual([]);
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/download");
-    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    expect(payload.url).toBe("https://example.com/watch?v=abc");
-
-    const transcodeCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "http://processing.test:3001/transcode",
-    );
-    const transcodePayload = JSON.parse(String(transcodeCall[1].body));
-    expect(transcodePayload.jobs).toHaveLength(1);
-    expect(transcodePayload.jobs[0]).toMatchObject({
-      jobId: res.body.videoId,
-      outputFilename: `${res.body.videoId}.webp`,
-      kind: "thumbnail",
-      timestampSeconds: null,
-    });
-
-    expect(existsSync(join(originalDir, `${res.body.videoId}.mp4`))).toBe(true);
-    expect(existsSync(join(originalDir, "1737900000.mp4"))).toBe(false);
-
-    const rows = await queryRows(
-      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
-      { videoId: res.body.videoId },
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].original_filename).toBe("1737900000.mp4");
-    expect(rows[0].status).toBe("uploaded");
-  });
-
-  test("classifies an audio-only download (hasVideo: false) as mediaType audio and skips the thumbnail job", async () => {
-    writeDownloadedFixture("1737900001.m4a");
-    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900001.m4a", false);
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/track/abc" });
-
-    expect(res.status).toBe(201);
-    expect(res.body.mediaType).toBe("audio");
-    expect(res.body.fileVersions).toEqual([]);
-    // No audio transcode profiles configured by default, and audio uploads
-    // never get a thumbnail job, so there's nothing left to send at all.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/download");
-
-    const rows = await queryRows(
-      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
-      { videoId: res.body.videoId },
-    );
-    expect(rows[0].media_type).toBe("audio");
-  });
-
-  test("trusts hasVideo: true over an ambiguous container extension", async () => {
-    // A .webm can be video or audio-only; hasVideo: true should win over any
-    // extension-based guess.
-    writeDownloadedFixture("1737900003.webm");
-    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900003.webm", true);
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc" });
-
-    expect(res.status).toBe(201);
-    expect(res.body.mediaType).toBe("video");
-  });
-
-  test("falls back to extension-based classification when hasVideo is absent", async () => {
-    writeDownloadedFixture("1737900004.mp3");
-    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900004.mp3");
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/track/abc" });
-
-    expect(res.status).toBe(201);
-    expect(res.body.mediaType).toBe("audio");
-  });
-
-  test("persists thumbnailTimestamp and forwards it to processing as seconds", async () => {
-    writeDownloadedFixture("1737900002.mp4");
-    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900002.mp4");
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: 12.34 });
-
-    expect(res.status).toBe(201);
-    const transcodeCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "http://processing.test:3001/transcode",
-    );
-    const payload = JSON.parse(String(transcodeCall[1].body));
-    expect(payload.jobs[0].timestampSeconds).toBe(12.3);
-
-    const rows = await queryRows(
-      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
-      { videoId: res.body.videoId },
-    );
-    expect(Number(rows[0].thumbnail_timestamp_tenths)).toBe(123);
-  });
-
-  test("rejects a negative thumbnailTimestamp with 400 invalid_body", async () => {
-    const fetchMock = jest.fn();
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: -5 });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toBe("invalid_body");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  test("skipThumbnail omits the thumbnail job, keeping any rendition jobs", async () => {
-    await seedTranscodeProfile({ resolutionName: "720p", mediaType: "video" });
-    writeDownloadedFixture("1737900003.mp4");
-    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900003.mp4");
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc", skipThumbnail: true });
-
-    expect(res.status).toBe(201);
-    const transcodeCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "http://processing.test:3001/transcode",
-    );
-    const payload = JSON.parse(String(transcodeCall[1].body));
-    expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
-    expect(payload.jobs).toHaveLength(1);
-  });
-
-  test("rejects a non-numeric thumbnailTimestamp with 400 invalid_body", async () => {
-    const fetchMock = jest.fn();
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: "soon" });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toBe("invalid_body");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
-    writeDownloadedFixture("1737900001.mp4");
-    const profile = await seedTranscodeProfile({
-      outputHeight: 720,
-      outputWidth: 1280,
-      outputContainer: "mp4",
-      videoCodec: "h264",
-      audioCodec: "aac",
-    });
-
-    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900001.mp4");
-    globalThis.fetch = fetchMock;
-
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=xyz" });
-
-    expect(res.status).toBe(201);
-    expect(res.body.status).toBe("processing");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    const transcodeCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "http://processing.test:3001/transcode",
-    );
-    const payload = JSON.parse(String(transcodeCall[1].body));
-    expect(payload.filename).toBe(`${res.body.videoId}.mp4`);
-    // One thumbnail job + one job for the rendition profile.
-    expect(payload.jobs).toHaveLength(2);
-    const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
-    expect(renditionJob.profile.id).toBe(profile.id);
-
-    expect(res.body.fileVersions).toHaveLength(1);
-    expect(res.body.fileVersions[0].status).toBe("processing");
-
-    const versionRows = await queryRows(
-      "SELECT * FROM FILE_VERSIONS WHERE original_upload_id = :id",
-      { id: res.body.id },
-    );
-    expect(versionRows).toHaveLength(1);
-  });
-
   test("returns 400 invalid_body when url is missing", async () => {
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock;
@@ -395,48 +214,346 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("returns 502 import_download_failed when processing fails to download", async () => {
-    globalThis.fetch = jest.fn(async () => ({
-      ok: false,
-      status: 500,
-      json: async () => ({ success: false, error: "yt-dlp failed" }),
-    }));
+  test("rejects a negative thumbnailTimestamp with 400 invalid_body", async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: -5 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("rejects a non-numeric thumbnailTimestamp with 400 invalid_body", async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await importRequest()
+      .send({ url: "https://example.com/watch?v=abc", thumbnailTimestamp: "soon" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("responds immediately with a downloading placeholder, then finishes in the background", async () => {
+    writeDownloadedFixture("1737900000.mp4");
+    const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900000.mp4");
+    globalThis.fetch = fetchMock;
 
     await seedUploaderCreds();
     const res = await importRequest()
       .send({ url: "https://example.com/watch?v=abc" });
 
-    expect(res.status).toBe(502);
-    expect(res.body.error).toBe("import_download_failed");
-    expect(res.body.message).toBe("yt-dlp failed");
+    // The fast path: no network/DB work beyond creating the placeholder row.
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      originalFilename: "",
+      fileExtension: "",
+      storagePath: "",
+      status: "downloading",
+      statusMessage: null,
+      userId: uploaderUser.id,
+    });
+    expect(typeof res.body.videoId).toBe("string");
+    expect(res.body.videoId).toHaveLength(6);
+    expect(res.body.fileVersions).toEqual([]);
+
+    // Let the fire-and-forget continueImport() call settle before the test
+    // (and afterEach's resetTables()) moves on, so it can't race a later test.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const rows = await queryRows(
+      "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+      { videoId: res.body.videoId },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].original_filename).toBe("1737900000.mp4");
+    expect(rows[0].status).toBe("uploaded");
+    expect(existsSync(join(originalDir, `${res.body.videoId}.mp4`))).toBe(true);
+    expect(existsSync(join(originalDir, "1737900000.mp4"))).toBe(false);
   });
 
-  test("returns 503 processing_unavailable when processing is unreachable", async () => {
-    globalThis.fetch = jest.fn(async () => {
-      throw new Error("fetch failed");
+  describe("continueImport", () => {
+    test("downloads, renames, and finalizes a video with no transcode profiles", async () => {
+      writeDownloadedFixture("1737900010.mp4");
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900010.mp4");
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+      await upload.reload();
+
+      expect(upload.originalFilename).toBe("1737900010.mp4");
+      expect(upload.fileExtension).toBe("mp4");
+      expect(upload.status).toBe("uploaded");
+      expect(upload.storagePath).toBe(`original/${upload.videoId}.mp4`);
+      expect(existsSync(join(originalDir, `${upload.videoId}.mp4`))).toBe(true);
+      expect(existsSync(join(originalDir, "1737900010.mp4"))).toBe(false);
+
+      // /download, then /transcode for the auto-generated thumbnail job
+      // (video uploads always get one regardless of transcode profiles).
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/download");
+      const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+      expect(payload.url).toBe("https://example.com/watch?v=abc");
     });
 
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc" });
+    test("classifies an audio-only download (hasVideo: false) as mediaType audio and skips the thumbnail job", async () => {
+      writeDownloadedFixture("1737900011.m4a");
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900011.m4a", false);
+      globalThis.fetch = fetchMock;
 
-    expect(res.status).toBe(503);
-    expect(res.body.error).toBe("processing_unavailable");
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/track/abc", {});
+      await upload.reload();
+
+      expect(upload.mediaType).toBe("audio");
+      // No audio transcode profiles configured by default, and audio uploads
+      // never get a thumbnail job, so there's nothing left to send at all.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    test("trusts hasVideo: true over an ambiguous container extension", async () => {
+      // A .webm can be video or audio-only; hasVideo: true should win over
+      // any extension-based guess.
+      writeDownloadedFixture("1737900012.webm");
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900012.webm", true);
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+      await upload.reload();
+
+      expect(upload.mediaType).toBe("video");
+    });
+
+    test("falls back to extension-based classification when hasVideo is absent", async () => {
+      writeDownloadedFixture("1737900013.mp3");
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900013.mp3");
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/track/abc", {});
+      await upload.reload();
+
+      expect(upload.mediaType).toBe("audio");
+    });
+
+    test("forwards thumbnailTimestamp to processing as seconds", async () => {
+      writeDownloadedFixture("1737900014.mp4");
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900014.mp4");
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      // Mirrors what importVideo persists on the placeholder row up front —
+      // thumbnailTimestampTenths is set at creation time, before the download.
+      const upload = await seedDownloadingUpload({ thumbnailTimestampTenths: 123 });
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+
+      const transcodeCall = fetchMock.mock.calls.find(
+        (call) => call[0] === "http://processing.test:3001/transcode",
+      );
+      const payload = JSON.parse(String(transcodeCall[1].body));
+      expect(payload.jobs[0].timestampSeconds).toBe(12.3);
+    });
+
+    test("skipThumbnail omits the thumbnail job, keeping any rendition jobs", async () => {
+      await seedTranscodeProfile({ resolutionName: "720p", mediaType: "video" });
+      writeDownloadedFixture("1737900015.mp4");
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900015.mp4");
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", { skipThumbnail: true });
+
+      const transcodeCall = fetchMock.mock.calls.find(
+        (call) => call[0] === "http://processing.test:3001/transcode",
+      );
+      const payload = JSON.parse(String(transcodeCall[1].body));
+      expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
+      expect(payload.jobs).toHaveLength(1);
+    });
+
+    test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
+      writeDownloadedFixture("1737900016.mp4");
+      const profile = await seedTranscodeProfile({
+        outputHeight: 720,
+        outputWidth: 1280,
+        outputContainer: "mp4",
+        videoCodec: "h264",
+        audioCodec: "aac",
+      });
+
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900016.mp4");
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=xyz", {});
+      await upload.reload();
+
+      expect(upload.status).toBe("processing");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      const transcodeCall = fetchMock.mock.calls.find(
+        (call) => call[0] === "http://processing.test:3001/transcode",
+      );
+      const payload = JSON.parse(String(transcodeCall[1].body));
+      expect(payload.filename).toBe(`${upload.videoId}.mp4`);
+      // One thumbnail job + one job for the rendition profile.
+      expect(payload.jobs).toHaveLength(2);
+      const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
+      expect(renditionJob.profile.id).toBe(profile.id);
+
+      const versionRows = await queryRows(
+        "SELECT * FROM FILE_VERSIONS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(versionRows).toHaveLength(1);
+      expect(versionRows[0].status).toBe("processing");
+    });
+
+    test("marks the row failed with a statusMessage when processing fails to download", async () => {
+      globalThis.fetch = jest.fn(async () => ({
+        ok: false,
+        status: 500,
+        json: async () => ({ success: false, error: "yt-dlp failed" }),
+      }));
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+      await upload.reload();
+
+      expect(upload.status).toBe("failed");
+      expect(upload.statusMessage).toBe("yt-dlp failed");
+    });
+
+    test("marks the row failed when processing is unreachable", async () => {
+      globalThis.fetch = jest.fn(async () => {
+        throw new Error("fetch failed");
+      });
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+      await upload.reload();
+
+      expect(upload.status).toBe("failed");
+      expect(upload.statusMessage).toBe("fetch failed");
+    });
+
+    test("marks the row failed when the downloaded file is missing on disk", async () => {
+      // No fixture written: processing claims success but the file isn't there.
+      globalThis.fetch = jest.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, filename: "does-not-exist.mp4" }),
+      }));
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+      await upload.reload();
+
+      expect(upload.status).toBe("failed");
+      expect(upload.statusMessage).toBe("The video was downloaded but could not be stored.");
+    });
+  });
+});
+
+describe("GET /videos/:id/processing-status", () => {
+  /** @type {ReturnType<typeof createTestClient>} */
+  let client;
+  /** @type {{id: number} & Record<string, unknown>} */
+  let owner;
+  const ownerKey = "jt_test_processing_status_owner_key";
+
+  beforeAll(async () => {
+    await setupSchema();
+    client = createTestClient();
   });
 
-  test("returns 500 import_persist_failed when the downloaded file is missing on disk", async () => {
-    // No fixture written: processing claims success but the file isn't there.
-    globalThis.fetch = jest.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true, filename: "does-not-exist.mp4" }),
-    }));
+  afterEach(async () => {
+    await resetTables();
+  });
 
-    await seedUploaderCreds();
-    const res = await importRequest()
-      .send({ url: "https://example.com/watch?v=abc" });
+  async function seedOwner() {
+    owner = await seedUser({ uploader: true, emailVerified: true });
+    await seedUserApiKey(owner.id, ownerKey);
+  }
 
-    expect(res.status).toBe(500);
-    expect(res.body.error).toBe("import_persist_failed");
+  test("returns status, statusMessage, and file-version summaries for the owner", async () => {
+    await seedOwner();
+    const seeded = await seedUpload({
+      userId: owner.id,
+      status: "failed",
+      statusMessage: "The processing service rejected the URL.",
+    });
+
+    const res = await client
+      .get(`/api/v1/videos/${seeded.id}/processing-status`)
+      .set("Authorization", `Bearer ${ownerKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      status: "failed",
+      statusMessage: "The processing service rejected the URL.",
+      fileVersions: [],
+    });
+  });
+
+  test("returns 403 for a user who doesn't own the upload", async () => {
+    await seedOwner();
+    const seeded = await seedUpload({ userId: owner.id });
+
+    const other = await seedUser({ uploader: true, emailVerified: true });
+    await seedUserApiKey(other.id, "jt_test_processing_status_other_key");
+
+    const res = await client
+      .get(`/api/v1/videos/${seeded.id}/processing-status`)
+      .set("Authorization", "Bearer jt_test_processing_status_other_key");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
+  test("returns 404 for a missing upload id", async () => {
+    await seedOwner();
+
+    const res = await client
+      .get("/api/v1/videos/999999/processing-status")
+      .set("Authorization", `Bearer ${ownerKey}`);
+
+    expect(res.status).toBe(404);
+  });
+
+  test("requires authentication", async () => {
+    await seedOwner();
+    const seeded = await seedUpload({ userId: owner.id });
+
+    const res = await client.get(`/api/v1/videos/${seeded.id}/processing-status`);
+
+    expect(res.status).toBe(401);
   });
 });

@@ -26,7 +26,7 @@ import { syncPlaylistIndex, syncUserIndex } from "../lib/search.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { isAdmin, isModeratorOrAdmin } from "../lib/video-access.js";
 import { buildPlaylistsPage } from "./playlists.js";
-import { loadTagsByUploadId, serializeVideo } from "./videos.js";
+import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
  * Absolute path to the directory where banner images are stored
@@ -471,12 +471,15 @@ async function loadUserPublicVideosPage(
     subQuery: false,
   });
 
-  const tagsByUploadId = await loadTagsByUploadId(rows.map((upload) => upload.id));
+  const uploadIds = rows.map((upload) => upload.id);
+  const tagsByUploadId = await loadTagsByUploadId(uploadIds);
+  const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
 
   return {
     items: rows.map((upload) =>
       serializeVideo(upload, upload.VideoMetadata, {
         tags: tagsByUploadId.get(upload.id) || [],
+        ...reactionCountsByUploadId.get(upload.id),
       }),
     ),
     page,
@@ -521,12 +524,13 @@ export async function loadUploadCountsByUserId(userIds) {
 }
 
 /**
- * Maps a User instance to the trimmed users-list row shape. `emailVerified`
- * and `uploader` are only included for an admin caller — not public info.
+ * Maps a User instance to the trimmed users-list row shape. `emailVerified`,
+ * `uploader`, and `role` are only included for an admin caller — not public
+ * info.
  *
- * @param {import('sequelize').Model} user User model instance.
+ * @param {import('sequelize').Model} user User model instance (with Role included).
  * @param {{isAdminCaller?: boolean, uploadCount?: number}} [options] Serialization options.
- * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, uploadCount: number, emailVerified?: boolean, uploader?: boolean}}
+ * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, uploadCount: number, emailVerified?: boolean, uploader?: boolean, role?: string|null}}
  *   Users-list row payload.
  */
 export function serializeUserListItem(user, { isAdminCaller = false, uploadCount = 0 } = {}) {
@@ -538,7 +542,11 @@ export function serializeUserListItem(user, { isAdminCaller = false, uploadCount
     avatarFilename: user.avatarFilename ?? null,
     uploadCount,
     ...(isAdminCaller
-      ? { emailVerified: Boolean(user.emailVerified), uploader: Boolean(user.uploader) }
+      ? {
+          emailVerified: Boolean(user.emailVerified),
+          uploader: Boolean(user.uploader),
+          role: user.Role?.name ?? null,
+        }
       : {}),
   };
 }
@@ -554,10 +562,10 @@ export function createUsersRouter() {
 
   /**
    * Returns every non-locked user, alphabetically by username, with a public
-   * upload count. `emailVerified`/`uploader` are included only for an admin
-   * caller.
+   * upload count. `emailVerified`/`uploader`/`role` are included only for an
+   * admin caller.
    * GET /api/v1/users
-   * Auth: optional — unlocks `emailVerified`/`uploader` fields for admins.
+   * Auth: optional — unlocks `emailVerified`/`uploader`/`role` fields for admins.
    *
    * @openapi
    * /api/v1/users:

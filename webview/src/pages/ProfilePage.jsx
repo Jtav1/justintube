@@ -12,8 +12,10 @@ import {
   updateUserAvatar,
   adminResendUserVerification,
   adminGrantUploader,
+  adminUpdateUserRole,
 } from '../api/users.js'
 import { listUserPlaylists } from '../api/playlists.js'
+import { USER_ROLES } from '../lib/roles.js'
 import VideoCard from '../components/VideoCard.jsx'
 import PlaylistCard from '../components/PlaylistCard.jsx'
 import './ProfilePage.css'
@@ -67,6 +69,9 @@ function ProfilePage() {
 
   const [grantingUploader, setGrantingUploader] = useState(false)
   const [grantUploaderStatus, setGrantUploaderStatus] = useState(null)
+
+  const [updatingRole, setUpdatingRole] = useState(false)
+  const [roleUpdateError, setRoleUpdateError] = useState(null)
 
   const resetKeyRef = useRef(null)
 
@@ -208,6 +213,19 @@ function ProfilePage() {
       setGrantUploaderStatus({ type: 'error', message: 'Failed to grant uploader access.' })
     } finally {
       setGrantingUploader(false)
+    }
+  }
+
+  async function handleRoleChange(role) {
+    setUpdatingRole(true)
+    setRoleUpdateError(null)
+    try {
+      const updated = await adminUpdateUserRole(profile.user.id, role)
+      setProfile((prev) => ({ ...prev, user: { ...prev.user, role: updated.role } }))
+    } catch {
+      setRoleUpdateError('Failed to update role.')
+    } finally {
+      setUpdatingRole(false)
     }
   }
 
@@ -415,8 +433,26 @@ function ProfilePage() {
                 {user.displayName && (
                   <span className="profile-username-handle"> ({user.username})</span>
                 )}
-                {user.role && <span className="profile-username-role"> - role: {user.role}</span>}
+                {!isAdminViewer && user.role && (
+                  <span className="profile-username-role"> - role: {user.role}</span>
+                )}
               </h1>
+              {isAdminViewer && (
+                <label className="profile-role-select">
+                  Role
+                  <select
+                    value={user.role ?? ''}
+                    disabled={updatingRole}
+                    onChange={(event) => handleRoleChange(event.target.value)}
+                  >
+                    {USER_ROLES.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {canManageProfile && (
                 <button
                   type="button"
@@ -476,6 +512,7 @@ function ProfilePage() {
       </div>
 
       {fieldError && <p className="profile-status profile-status-error">{fieldError}</p>}
+      {roleUpdateError && <p className="profile-status profile-status-error">{roleUpdateError}</p>}
 
       {canResendVerification && (
         <div className="profile-verification-row">

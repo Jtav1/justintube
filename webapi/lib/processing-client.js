@@ -16,6 +16,19 @@ const PROCESSING_API_URL = (
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
+ * Timeout for the `/download` call specifically, in milliseconds. Unlike
+ * every other processing call (synchronous, near-instant), a real yt-dlp
+ * download can take minutes — `POST /videos/import` no longer blocks the
+ * client's HTTP request on this (see `continueImport` in routes/uploads.js),
+ * so it's safe to let it run far longer than the default. Override via
+ * DOWNLOAD_REQUEST_TIMEOUT_MS.
+ *
+ * @type {number}
+ */
+const DOWNLOAD_REQUEST_TIMEOUT_MS =
+  Number(process.env.DOWNLOAD_REQUEST_TIMEOUT_MS) || 15 * 60_000;
+
+/**
  * Profile fields accepted by `POST /transcode` on the processing service.
  *
  * @typedef {object} TranscodeProfilePayload
@@ -84,6 +97,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * @param {object} [options] Request options.
  * @param {string} [options.method] HTTP method (default POST).
  * @param {object|null} [options.body] JSON body (null for no body).
+ * @param {number} [options.timeoutMs] Request timeout override (default `REQUEST_TIMEOUT_MS`).
  * @returns {Promise<{ ok: boolean, status: number, body: object|null, error: string|null }>}
  *   Normalized HTTP outcome.
  */
@@ -96,7 +110,7 @@ async function processingFetch(path, options = {}) {
     /** @type {RequestInit} */
     const init = {
       method,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(options.timeoutMs || REQUEST_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${process.env.INTERNAL_SERVICE_TOKEN || ""}`,
       },
@@ -169,6 +183,7 @@ export async function requestDownload(url) {
   return processingFetch("/download", {
     method: "POST",
     body: { url },
+    timeoutMs: DOWNLOAD_REQUEST_TIMEOUT_MS,
   });
 }
 

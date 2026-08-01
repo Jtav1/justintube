@@ -1246,6 +1246,39 @@ describe("Video discovery and metadata endpoints", () => {
       expect(afterRes.status).toBe(200);
       expect(afterRes.body.viewerReaction).toBe("like");
     });
+
+    test("likeCount and dislikeCount reflect aggregate VIDEO_LIKES across getVideo and listVideos", async () => {
+      await seedUserWithRoleAndKey("viewer", "count-key-1");
+      await seedUserWithRoleAndKey("viewer", "count-key-2");
+      await seedUserWithRoleAndKey("viewer", "count-key-3");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Counted", visibility: "public" });
+
+      const zeroRes = await client.get(`/api/v1/videos/${upload.id}`);
+      expect(zeroRes.body.likeCount).toBe(0);
+      expect(zeroRes.body.dislikeCount).toBe(0);
+
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer count-key-1");
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer count-key-2");
+      await client
+        .post(`/api/v1/videos/${upload.id}/dislike`)
+        .set("Authorization", "Bearer count-key-3");
+
+      const getRes = await client.get(`/api/v1/videos/${upload.id}`);
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.likeCount).toBe(2);
+      expect(getRes.body.dislikeCount).toBe(1);
+
+      const listRes = await client.get("/api/v1/videos");
+      expect(listRes.status).toBe(200);
+      const listed = listRes.body.items.find((item) => item.id === upload.id);
+      expect(listed.likeCount).toBe(2);
+      expect(listed.dislikeCount).toBe(1);
+    });
   });
 
   describe("tags", () => {

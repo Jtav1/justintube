@@ -365,6 +365,40 @@ describe("auth verify-email", () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("already_verified");
   });
+
+  test("verifying email still succeeds when admin new-user notifications are enabled", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    process.env.ENABLE_ADMIN_NEW_USER_NOTIFICATIONS = "true";
+    resetMailerForTests();
+
+    try {
+      const adminRole = await Role.findOne({ where: { name: "admin" } });
+      await seedUser({
+        roleId: adminRole.id,
+        email: "admin@example.com",
+        emailVerified: true,
+      });
+
+      const user = await seedUser({ emailVerified: false });
+      const { rawToken } = await seedEmailVerificationToken(user.id);
+
+      const agent = createTestAgent();
+      const csrf = await fetchCsrf(agent);
+      const res = await agent
+        .post("/api/v1/auth/verify-email")
+        .set("X-CSRF-Token", csrf)
+        .send({ token: rawToken });
+
+      expect(res.status).toBe(200);
+      expect(res.body.user).toMatchObject({ id: user.id, emailVerified: true });
+    } finally {
+      delete process.env.SMTP_HOST;
+      delete process.env.MAIL_FROM_ADDRESS;
+      delete process.env.ENABLE_ADMIN_NEW_USER_NOTIFICATIONS;
+      resetMailerForTests();
+    }
+  });
 });
 
 describe("auth resend-verification", () => {

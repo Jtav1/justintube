@@ -4,7 +4,7 @@ import { unlink } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { Op, literal } from "sequelize";
+import { Op, col, fn, literal } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
@@ -234,6 +234,10 @@ function parsePositiveInt(raw) {
  *   it up for an authenticated viewer) — omitted from the payload entirely otherwise.
  * @param {boolean} [options.featured] Whether the video is in FEATURED_VIDEOS. Only attached
  *   when explicitly passed (admin callers on `getVideo`) — omitted otherwise.
+ * @param {number} [options.likeCount] Total VIDEO_LIKES rows with likeValue 1. Defaults to 0
+ *   when not passed — callers should batch-load via {@link loadReactionCountsByUploadId}.
+ * @param {number} [options.dislikeCount] Total VIDEO_LIKES rows with likeValue -1. Defaults to
+ *   0 when not passed — callers should batch-load via {@link loadReactionCountsByUploadId}.
  * @returns {{
  *   id: number,
  *   videoId: string,
@@ -247,6 +251,8 @@ function parsePositiveInt(raw) {
  *   mediaType: string,
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
+ *   likeCount: number,
+ *   dislikeCount: number,
  *   createdAt: Date,
  *   updatedAt: Date
  * }} Public video payload.
@@ -271,6 +277,8 @@ export function serializeVideo(upload, metadata, options = {}) {
     thumbnailUrl: upload.VideoThumbnail
       ? `/api/v1/videos/${upload.id}/thumbnail`
       : null,
+    likeCount: options.likeCount ?? 0,
+    dislikeCount: options.dislikeCount ?? 0,
     createdAt: metadata.createdAt,
     updatedAt: metadata.updatedAt,
   };
@@ -307,6 +315,38 @@ export async function loadTagsByUploadId(originalUploadIds) {
     const list = map.get(row.originalUploadId) || [];
     list.push(row.tag);
     map.set(row.originalUploadId, list);
+  }
+  return map;
+}
+
+/**
+ * Batch-loads VIDEO_LIKES aggregate counts for a set of uploads, grouped by
+ * originalUploadId and likeValue. Used so every `serializeVideo` call site
+ * can attach `likeCount`/`dislikeCount` without an N+1 query per video.
+ *
+ * @param {number[]} originalUploadIds Upload ids to load reaction counts for.
+ * @returns {Promise<Map<number, {likeCount: number, dislikeCount: number}>>}
+ *   Upload id → its like/dislike totals.
+ */
+export async function loadReactionCountsByUploadId(originalUploadIds) {
+  const map = new Map();
+  if (originalUploadIds.length === 0) {
+    return map;
+  }
+  const rows = await VideoLike.findAll({
+    where: { originalUploadId: { [Op.in]: originalUploadIds } },
+    attributes: ["originalUploadId", "likeValue", [fn("COUNT", col("id")), "count"]],
+    group: ["originalUploadId", "likeValue"],
+    raw: true,
+  });
+  for (const row of rows) {
+    const entry = map.get(row.originalUploadId) || { likeCount: 0, dislikeCount: 0 };
+    if (Number(row.likeValue) === 1) {
+      entry.likeCount = Number(row.count);
+    } else if (Number(row.likeValue) === -1) {
+      entry.dislikeCount = Number(row.count);
+    }
+    map.set(row.originalUploadId, entry);
   }
   return map;
 }
@@ -910,12 +950,13 @@ async function listPublicVideos(options = {}) {
     order: options.order || [["id", "ASC"]],
   });
 
-  const tagsByUploadId = await loadTagsByUploadId(
-    rows.map((upload) => upload.id),
-  );
+  const uploadIds = rows.map((upload) => upload.id);
+  const tagsByUploadId = await loadTagsByUploadId(uploadIds);
+  const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
   return rows.map((upload) =>
     serializeVideo(upload, upload.VideoMetadata, {
       tags: tagsByUploadId.get(upload.id) || [],
+      ...reactionCountsByUploadId.get(upload.id),
     }),
   );
 }
@@ -1399,10 +1440,12 @@ export function createVideosRouter() {
 
       const renditions = await loadRenditions(upload);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+      const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
 
       const serializeOptions = {
         tags: tagsByUploadId.get(upload.id) || [],
         renditions,
+        ...reactionCountsByUploadId.get(upload.id),
       };
       if (req.user) {
         const viewerLike = await VideoLike.findOne({
@@ -1986,11 +2029,13 @@ export function createVideosRouter() {
 
       const renditions = await loadRenditions(upload);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+      const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
 
       res.status(200).json(
         serializeVideo(upload, metadata, {
           tags: tagsByUploadId.get(upload.id) || [],
           renditions,
+          ...reactionCountsByUploadId.get(upload.id),
         }),
       );
     } catch (err) {
@@ -2119,11 +2164,13 @@ export function createVideosRouter() {
 
         const renditions = await loadRenditions(upload);
         const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+        const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
 
         res.status(200).json(
           serializeVideo(upload, metadata, {
             tags: tagsByUploadId.get(upload.id) || [],
             renditions,
+            ...reactionCountsByUploadId.get(upload.id),
           }),
         );
       } catch (err) {
@@ -2288,6 +2335,83 @@ export function createVideosRouter() {
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list video access.",
+      });
+    }
+  });
+
+  /**
+   * GET /videos/:id/processing-status — getVideoProcessingStatus
+   * Auth: required. Owner or admin. Lightweight polling endpoint the upload
+   * page uses to drive the upload/import progress bar (download phase via
+   * `status`, transcode phase via complete-vs-total `fileVersions`) without
+   * re-fetching the full video payload.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/processing-status:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Get an upload's download/transcode progress
+   *     operationId: getVideoProcessingStatus
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Upload status plus per-file-version transcode status
+   *       "403":
+   *         description: Not the owner or an admin
+   *       "404":
+   *         description: Not found
+   */
+  router.get("/videos/:id/processing-status", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const upload = await OriginalUpload.findByPk(id);
+      if (!upload) {
+        sendNotFound(res);
+        return;
+      }
+      if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the owner or an admin can view import/processing status.",
+        });
+        return;
+      }
+
+      const versions = await FileVersion.findAll({
+        where: { originalUploadId: upload.id },
+        order: [["id", "ASC"]],
+      });
+
+      res.status(200).json({
+        status: upload.status,
+        statusMessage: upload.statusMessage ?? null,
+        fileVersions: versions.map((v) => ({
+          id: v.id,
+          resolution: v.resolution,
+          status: v.status,
+        })),
+      });
+    } catch (err) {
+      console.error("getVideoProcessingStatus failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to load processing status.",
       });
     }
   });

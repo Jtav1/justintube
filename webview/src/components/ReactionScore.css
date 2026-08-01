@@ -1,0 +1,21 @@
+.reaction-score {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.reaction-score-like {
+  color: #1a9c3f;
+}
+
+.reaction-score-dislike {
+  color: #d32f2f;
+}
+
+.reaction-score-separator {
+  color: var(--text);
+  opacity: 0.5;
+}

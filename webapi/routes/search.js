@@ -2,6 +2,7 @@ import { Router } from "express";
 import { Op } from "sequelize";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { Role, User, UserPlaylist } from "../lib/models/index.js";
+import { isAdmin } from "../lib/video-access.js";
 import {
   advancedSearchEnabled,
   searchPlaylistsAdvanced,
@@ -537,8 +538,9 @@ export function createSearchRouter() {
   /**
    * GET /search/advanced — searchAdvanced
    * Auth: optional. Combined search across public videos, public playlists
-   * (including their contained videos' titles/tags), and non-locked users,
-   * with fuzzy ("close match") tolerance. Powers the search-results page.
+   * (including their contained videos' titles/tags), and users, with fuzzy
+   * ("close match") tolerance. Locked users are only visible to admin
+   * callers. Powers the search-results page.
    *
    * @openapi
    * /api/v1/search/advanced:
@@ -599,10 +601,19 @@ export function createSearchRouter() {
     }
 
     try {
+      const isAdminCaller = isAdmin(req.authRole);
+      // Locked users are indexed like anyone else and only filtered out of
+      // the response below for non-admins, so overfetch hits for them -
+      // otherwise a locked user occupying a top-N slot would silently crowd
+      // out a real, visible match instead of just being dropped.
+      const userSearchLimit = isAdminCaller
+        ? parsed.userLimit
+        : Math.max(parsed.userLimit * 4, 40);
+
       const [videoResult, playlistResult, userResult] = await Promise.all([
         searchVideosAdvanced({ q: parsed.q, limit: parsed.videoLimit }),
         searchPlaylistsAdvanced({ q: parsed.q, limit: parsed.playlistLimit }),
-        searchUsersAdvanced({ q: parsed.q, limit: parsed.userLimit }),
+        searchUsersAdvanced({ q: parsed.q, limit: userSearchLimit }),
       ]);
 
       const videos = (videoResult.hits || []).map(serializeHit);
@@ -629,14 +640,18 @@ export function createSearchRouter() {
       const userHits = userResult.hits || [];
       const userIds = userHits.map((hit) => hit.id);
       const userRows = userIds.length > 0
-        ? await User.findAll({ where: { id: userIds } })
+        ? await User.findAll({ where: { id: userIds }, include: [{ model: Role, required: false }] })
         : [];
       const userRowById = new Map(userRows.map((row) => [row.id, row]));
-      const uploadCounts = await loadUploadCountsByUserId(userIds);
-      const users = userIds
+      const visibleUserRows = userIds
         .map((id) => userRowById.get(id))
         .filter(Boolean)
-        .map((user) => serializeUserListItem(user, { uploadCount: uploadCounts.get(user.id) ?? 0 }));
+        .filter((user) => isAdminCaller || user.Role?.name !== "locked")
+        .slice(0, parsed.userLimit);
+      const uploadCounts = await loadUploadCountsByUserId(visibleUserRows.map((user) => user.id));
+      const users = visibleUserRows.map((user) =>
+        serializeUserListItem(user, { isAdminCaller, uploadCount: uploadCounts.get(user.id) ?? 0 }),
+      );
 
       res.status(200).json({
         videos,

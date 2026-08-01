@@ -179,6 +179,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .video-card-menu-item:hover {

@@ -153,6 +153,7 @@ function uploadResponseBody(upload) {
     fileSizeBytes: upload.fileSizeBytes,
     storagePath: upload.storagePath,
     status: upload.status,
+    statusMessage: upload.statusMessage ?? null,
     userId: upload.userId,
     videoWidth: upload.videoWidth,
     videoHeight: upload.videoHeight,
@@ -174,6 +175,46 @@ function defaultTitleFromFilename(originalFilename) {
   const ext = extname(originalFilename);
   const stripped = ext ? originalFilename.slice(0, -ext.length) : originalFilename;
   return stripped.trim() || originalFilename;
+}
+
+/**
+ * Derives a placeholder title for an in-progress URL import. Shown only
+ * until the frontend's immediate follow-up `updateVideo` call overwrites it
+ * with the user's actual title — the same way `defaultTitleFromFilename`'s
+ * output is immediately overwritten for direct uploads today.
+ *
+ * @private
+ * @param {string} url Already-validated absolute http(s) URL.
+ * @returns {string} Non-empty placeholder title.
+ */
+function defaultImportTitle(url) {
+  try {
+    return `Importing from ${new URL(url).hostname}`;
+  } catch {
+    return "Importing…";
+  }
+}
+
+/**
+ * Maps a failed `requestDownload` outcome to a human-readable message for
+ * `ORIGINAL_UPLOADS.statusMessage`, preserving the same status-code
+ * distinctions the old synchronous `importVideo` used to reflect directly in
+ * its HTTP response (400 = rejected URL, 0 = processing unreachable, other =
+ * generic download failure).
+ *
+ * @private
+ * @param {import('../lib/processing-client.js').DownloadRequestResult} download
+ *   Failed (`ok: false`) result from `requestDownload`.
+ * @returns {string} Message suitable for display to the uploading user.
+ */
+function describeDownloadFailure(download) {
+  if (download.status === 400) {
+    return download.error || "The processing service rejected the URL.";
+  }
+  if (download.status === 0) {
+    return download.error || "The processing service is unreachable.";
+  }
+  return download.error || "Failed to download the video from the provided URL.";
 }
 
 /**
@@ -615,88 +656,27 @@ async function importVideo(req, res) {
   }
 
   const skipThumbnail = parseSkipThumbnail(req.body?.skipThumbnail);
-
-  const download = await requestDownload(url);
-  if (!download.ok) {
-    if (download.status === 400) {
-      res.status(400).json({
-        error: "invalid_body",
-        message: download.error || "The processing service rejected the URL.",
-      });
-      return;
-    }
-    if (download.status === 0) {
-      res.status(503).json({
-        error: "processing_unavailable",
-        message: download.error || "The processing service is unreachable.",
-      });
-      return;
-    }
-    res.status(502).json({
-      error: "import_download_failed",
-      message: download.error || "Failed to download the video from the provided URL.",
-    });
-    return;
-  }
-
-  const downloadedFilename = download.body?.filename;
-  if (typeof downloadedFilename !== "string" || !downloadedFilename) {
-    res.status(502).json({
-      error: "import_download_failed",
-      message: "The processing service did not return a downloaded filename.",
-    });
-    return;
-  }
-
-  const fileExtension = normalizedExtension(downloadedFilename);
-  // Prefer processing's ffprobe-based signal over extension sniffing: a
-  // yt-dlp audio-only download can land in an ambiguous container (e.g.
-  // opus-in-webm), which extension alone can't distinguish from a video
-  // webm. Fall back to extension when the field is absent (defensive, in
-  // case an older processing deployment doesn't send it yet).
-  const mediaType =
-    typeof download.body?.hasVideo === "boolean"
-      ? download.body.hasVideo
-        ? "video"
-        : "audio"
-      : mediaTypeForExtension(fileExtension);
   const videoId = await generateUniqueVideoId();
-  const storedFilename = fileExtension ? `${videoId}.${fileExtension}` : videoId;
-  // Relative storage path uses forward slashes for cross-platform DB consistency.
-  const storagePath = `original/${storedFilename}`;
-
-  try {
-    await rename(
-      join(originalDir, downloadedFilename),
-      join(originalDir, storedFilename),
-    );
-  } catch (err) {
-    res.status(500).json({
-      error: "import_persist_failed",
-      message: "The video was downloaded but could not be stored.",
-    });
-    return;
-  }
-
-  let fileSizeBytes = null;
-  try {
-    fileSizeBytes = statSync(join(originalDir, storedFilename)).size;
-  } catch {
-    // Leave fileSizeBytes null if the stat somehow fails right after rename.
-  }
 
   let upload;
   try {
     upload = await sequelize.transaction(async (transaction) => {
       const created = await OriginalUpload.create(
         {
-          originalFilename: downloadedFilename,
+          // originalFilename/fileExtension/storagePath are NOT NULL with no
+          // default and aren't known until the download (below) completes —
+          // empty-string placeholders, overwritten by continueImport. Safe:
+          // serializeVideo() never reads these fields, and this row stays
+          // invisible everywhere else until VIDEO_METADATA.visibility is set
+          // by the client's immediate follow-up updateVideo call (defaults
+          // to "private").
+          originalFilename: "",
           videoId,
-          fileExtension,
-          mimeType: mimeTypeForContainer(fileExtension),
-          mediaType,
-          fileSizeBytes,
-          storagePath,
+          fileExtension: "",
+          mimeType: null,
+          fileSizeBytes: null,
+          storagePath: "",
+          status: "downloading",
           userId: req.user.id,
           thumbnailTimestampTenths: thumbnailTimestamp.tenths,
         },
@@ -705,24 +685,121 @@ async function importVideo(req, res) {
       await VideoMetadata.create(
         {
           originalUploadId: created.id,
-          title: defaultTitleFromFilename(downloadedFilename),
+          title: defaultImportTitle(url),
         },
         { transaction },
       );
       return created;
     });
   } catch (err) {
-    // Roll back the stored file so we don't leave orphaned media behind.
-    await unlink(join(originalDir, storedFilename)).catch(() => {});
     res.status(500).json({
       error: "upload_persist_failed",
-      message: "The video was downloaded but could not be recorded.",
+      message: "The import could not be started.",
     });
     return;
   }
 
-  const result = await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
-  res.status(result.status).json(result.body);
+  res.status(201).json({ ...uploadResponseBody(upload), fileVersions: [] });
+
+  // Fire-and-forget: continueImport never throws (all failures are caught
+  // internally and recorded on the row instead), matching this codebase's
+  // existing un-awaited syncVideoIndex()/syncUserIndex() convention for
+  // post-response side effects. The frontend polls
+  // GET /videos/:id/processing-status to observe how this turns out.
+  continueImport(upload, url, { skipThumbnail });
+}
+
+/**
+ * Finishes an in-progress URL import that `importVideo` started: downloads
+ * the source via the processing service, renames it into `original/` under
+ * the upload's videoId, fills in the real file metadata on the placeholder
+ * `upload` row, then delegates to `finalizeUploadTranscodes` exactly like
+ * the old synchronous import path did. Never throws — any failure marks
+ * `upload.status = "failed"` with a human-readable `statusMessage` and
+ * returns. Exported so tests can await it directly instead of racing the
+ * fire-and-forget call `importVideo` makes.
+ *
+ * @param {import('sequelize').Model} upload Placeholder ORIGINAL_UPLOADS row
+ *   (status "downloading"; originalFilename/fileExtension/storagePath "").
+ * @param {string} url Already-validated absolute http(s) URL.
+ * @param {{ skipThumbnail?: boolean }} [options] Forwarded to `finalizeUploadTranscodes`.
+ * @returns {Promise<void>} Resolves once the import either finalizes or fails.
+ */
+export async function continueImport(upload, url, { skipThumbnail = false } = {}) {
+  try {
+    const download = await requestDownload(url);
+    if (!download.ok) {
+      await upload.update({
+        status: "failed",
+        statusMessage: describeDownloadFailure(download),
+      });
+      return;
+    }
+
+    const downloadedFilename = download.body?.filename;
+    if (typeof downloadedFilename !== "string" || !downloadedFilename) {
+      await upload.update({
+        status: "failed",
+        statusMessage: "The processing service did not return a downloaded filename.",
+      });
+      return;
+    }
+
+    const fileExtension = normalizedExtension(downloadedFilename);
+    // Prefer processing's ffprobe-based signal over extension sniffing: a
+    // yt-dlp audio-only download can land in an ambiguous container (e.g.
+    // opus-in-webm), which extension alone can't distinguish from a video
+    // webm. Fall back to extension when the field is absent (defensive, in
+    // case an older processing deployment doesn't send it yet).
+    const mediaType =
+      typeof download.body?.hasVideo === "boolean"
+        ? download.body.hasVideo
+          ? "video"
+          : "audio"
+        : mediaTypeForExtension(fileExtension);
+    const storedFilename = fileExtension ? `${upload.videoId}.${fileExtension}` : upload.videoId;
+    // Relative storage path uses forward slashes for cross-platform DB consistency.
+    const storagePath = `original/${storedFilename}`;
+
+    try {
+      await rename(
+        join(originalDir, downloadedFilename),
+        join(originalDir, storedFilename),
+      );
+    } catch {
+      await upload.update({
+        status: "failed",
+        statusMessage: "The video was downloaded but could not be stored.",
+      });
+      return;
+    }
+
+    let fileSizeBytes = null;
+    try {
+      fileSizeBytes = statSync(join(originalDir, storedFilename)).size;
+    } catch {
+      // Leave fileSizeBytes null if the stat somehow fails right after rename.
+    }
+
+    await upload.update({
+      originalFilename: downloadedFilename,
+      fileExtension,
+      mimeType: mimeTypeForContainer(fileExtension),
+      mediaType,
+      fileSizeBytes,
+      storagePath,
+    });
+
+    await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
+  } catch (err) {
+    console.error("[import] continueImport failed unexpectedly:", err);
+    await upload
+      .update({
+        status: "failed",
+        statusMessage: "An unexpected error occurred while importing this video.",
+      })
+      .catch(() => {});
+  }
 }
 
 /**
@@ -828,7 +905,11 @@ export function createUploadRouter() {
   /**
    * POST /api/v1/videos/import — JSON `{ url }`.
    * Auth: required, uploader flag (or admin).
-   * Handler: {@link importVideo}.
+   * Handler: {@link importVideo}. Responds as soon as a placeholder
+   * ORIGINAL_UPLOADS/VIDEO_METADATA row exists (status "downloading") — the
+   * actual yt-dlp download and transcode-enqueue happen afterward via
+   * {@link continueImport}. Poll GET /videos/{id}/processing-status to
+   * observe progress/failure instead of relying on this response's status.
    *
    * @openapi
    * /api/v1/videos/import:
@@ -869,17 +950,15 @@ export function createUploadRouter() {
    *                   avoid the auto-generated one overwriting it.
    *     responses:
    *       201:
-   *         description: Video downloaded and recorded
+   *         description: >
+   *           Import started; the returned upload has status "downloading".
+   *           Poll GET /videos/{id}/processing-status for progress/failure.
    *       400:
    *         description: Missing or invalid url
    *       401:
    *         description: Not authenticated
    *       403:
    *         description: Uploader access required
-   *       502:
-   *         description: Processing service failed to download the URL
-   *       503:
-   *         description: Processing service unreachable
    */
   router.post("/videos/import", requireAuth, csrfProtection, requireUploader, importVideo);
 

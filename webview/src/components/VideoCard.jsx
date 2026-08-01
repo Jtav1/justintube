@@ -6,6 +6,7 @@ import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/form
 import { useAuth } from '../context/useAuth.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import apiClient from '../api/client.js'
+import ReactionScore from './ReactionScore.jsx'
 import './VideoCard.css'
 
 // Must match .video-card-title's font-size/font-weight in VideoCard.css.
@@ -20,6 +21,7 @@ function VideoCard({
   linkTo,
   active = false,
   onRemoveFromPlaylist,
+  showReactionScore = true,
 }) {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -37,6 +39,8 @@ function VideoCard({
   const [playlistsLoading, setPlaylistsLoading] = useState(false)
   const [playlistsError, setPlaylistsError] = useState(null)
   const [addStatus, setAddStatus] = useState({})
+
+  const canEdit = Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
 
   useEffect(() => {
     const el = titleRef.current
@@ -270,14 +274,14 @@ function VideoCard({
                     Remove from Playlist
                   </button>
                 )}
-                {isOwner && (
-                  <button
-                    type="button"
+                {canEdit && (
+                  <Link
+                    to={`/upload?v=${video.videoId}`}
                     className="video-card-menu-item"
-                    onClick={() => setMenuOpen(false)}
+                    onClick={closeMenu}
                   >
                     Edit
-                  </button>
+                  </Link>
                 )}
                 {isModerator && (
                   <button

@@ -2,7 +2,6 @@ import {
   ContentTag,
   OriginalUpload,
   PlaylistItem,
-  Role,
   User,
   UserPlaylist,
   VideoMetadata,
@@ -167,19 +166,20 @@ export async function loadAllEligiblePlaylistDocuments() {
 
 /**
  * Loads the searchable document for a user, or null when it isn't eligible
- * to appear in search (missing, or locked). Deliberately lean — only the
- * fields needed to *match* a query; rendering fields (bio, avatar, upload
- * count) are hydrated from the database after search, not stored in the
- * index, so they never go stale between edits and a rebuild.
+ * to appear in search (missing). Locked users are indexed like anyone else —
+ * they're filtered out of query results for non-admin callers downstream
+ * (search routes), not excluded from the index, so an admin can still find
+ * and unlock them via search. Deliberately lean — only the fields needed to
+ * *match* a query; rendering fields (bio, avatar, upload count, role) are
+ * hydrated from the database after search, not stored in the index, so they
+ * never go stale between edits and a rebuild.
  *
  * @param {number} userId USERS id.
  * @returns {Promise<object|null>} Document payload, or null when not eligible.
  */
 export async function loadEligibleUserDocument(userId) {
-  const user = await User.findByPk(userId, {
-    include: [{ model: Role, required: false }],
-  });
-  if (!user || user.Role?.name === "locked") {
+  const user = await User.findByPk(userId);
+  if (!user) {
     return null;
   }
 
@@ -191,14 +191,13 @@ export async function loadEligibleUserDocument(userId) {
 }
 
 /**
- * Bulk-loads every eligible (non-locked) user's search document. Used to
- * build a search backend's user index from scratch.
+ * Bulk-loads every user's search document. Used to build a search backend's
+ * user index from scratch.
  *
- * @returns {Promise<object[]>} Eligible documents, in `loadEligibleUserDocument` shape.
+ * @returns {Promise<object[]>} Documents, in `loadEligibleUserDocument` shape.
  */
 export async function loadAllEligibleUserDocuments() {
   const users = await User.findAll({
-    include: [{ model: Role, required: false }],
     attributes: ["id"],
   });
 

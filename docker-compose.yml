@@ -88,6 +88,7 @@ services:
       MEDIA_STORAGE_DIRECTORY: /media
       SITEDATA_STORAGE_DIRECTORY: /sitedata
       PROCESSING_API_URL: http://processing:3001
+      DOWNLOAD_REQUEST_TIMEOUT_MS: ${DOWNLOAD_REQUEST_TIMEOUT_MS:-900000}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set - see .env.example}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
@@ -121,6 +122,9 @@ services:
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
       # ENABLE_ACCOUNT_REGISTRATION: ${ENABLE_ACCOUNT_REGISTRATION:-false}
       # REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      # Emails every admin with an email address set when a user completes
+      # email verification. Also requires SMTP_HOST/MAIL_FROM_ADDRESS below.
+      ENABLE_ADMIN_NEW_USER_NOTIFICATIONS: ${ENABLE_ADMIN_NEW_USER_NOTIFICATIONS:-false}
       # Outbound email (verification links). Email is enabled only when
       # SMTP_HOST and MAIL_FROM_ADDRESS are both non-empty in root .env.
       SMTP_HOST: ${SMTP_HOST:-}

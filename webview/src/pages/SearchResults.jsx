@@ -71,7 +71,7 @@ function SearchResults() {
         )}
         <div className="search-results-grid">
           {videos.map((video) => (
-            <VideoCard key={`video-${video.id}`} video={video} />
+            <VideoCard key={`video-${video.id}`} video={video} showReactionScore={false} />
           ))}
           {playlists.map((playlist) => (
             <PlaylistCard key={`playlist-${playlist.id}`} playlist={playlist} />
