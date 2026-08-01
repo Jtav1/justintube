@@ -1,6 +1,6 @@
 # Justintube
 
-A self-hosted video platform: YouTube-like frontend, self-hosted transcoding pipeline, and shared watch sessions (CAST) (FUTURE!). Built contract-first — the API surface is specified in OpenAPI, and work tracks toward completing each documented endpoint.
+A self-hosted video platform: YouTube-like frontend, self-hosted transcoding pipeline, and shared watch sessions (CAST) (FUTURE!). Built from the bottom up because you know back end is best
 
 This software is a collaborative effort between myself (Justin) and a few friends who can choose to add themselves to this readme and other docs :)
 
