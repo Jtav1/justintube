@@ -45,6 +45,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `GET /api/v1/videos/newest` — listNewestVideos
 - [x] `POST /api/v1/videos/import` — importVideo
 - [x] `GET /api/v1/videos/:id` — getVideo
+- [x] `GET /api/v1/videos/:id/processing-status` — getVideoProcessingStatus
 - [x] `PATCH /api/v1/videos/:id` — updateVideo
 - [x] `DELETE /api/v1/videos/:id` — deleteVideo
 - [x] `GET /api/v1/videos/:id/unfurl` — getVideoUnfurl

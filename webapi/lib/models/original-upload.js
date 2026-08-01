@@ -50,6 +50,10 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       defaultValue: "uploaded",
     },
+    statusMessage: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     videoWidth: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,

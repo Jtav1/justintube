@@ -65,19 +65,21 @@ export async function getMyLikes({ page, limit } = {}) {
  * default, with a default title derived from the filename). Callers should
  * follow up with updateVideo to set the real title/description/visibility/tags.
  * @param {File} file
- * @param {{ skipThumbnail?: boolean }} [options] `skipThumbnail` skips the
- *   processing service's auto-generated thumbnail — pass this when the
- *   caller is about to upload a custom one via updateVideoThumbnail, so it
- *   can't be overwritten by a later-arriving auto-generated thumbnail.
+ * @param {{ skipThumbnail?: boolean, onUploadProgress?: (event: ProgressEvent) => void }} [options]
+ *   `skipThumbnail` skips the processing service's auto-generated thumbnail
+ *   — pass this when the caller is about to upload a custom one via
+ *   updateVideoThumbnail, so it can't be overwritten by a later-arriving
+ *   auto-generated thumbnail. `onUploadProgress` is forwarded to axios for
+ *   real byte-level upload progress (`event.loaded`/`event.total`).
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
  */
-export async function uploadVideoFile(file, { skipThumbnail = false } = {}) {
+export async function uploadVideoFile(file, { skipThumbnail = false, onUploadProgress } = {}) {
   const formData = new FormData()
   formData.append('file', file)
   if (skipThumbnail) {
     formData.append('skipThumbnail', 'true')
   }
-  const res = await apiClient.post('/api/v1/videos/upload', formData)
+  const res = await apiClient.post('/api/v1/videos/upload', formData, { onUploadProgress })
   return res.data
 }
 
@@ -147,6 +149,17 @@ export async function importVideoUrl(url, { skipThumbnail = false } = {}) {
  */
 export async function getImportStatus() {
   const res = await apiClient.get('/api/v1/videos/import/status')
+  return res.data
+}
+
+/**
+ * Polls an upload's download/transcode progress. Owner or admin only. Used
+ * by the upload page to drive its progress bar after creation.
+ * @param {number} id
+ * @returns {Promise<{status: string, statusMessage: string|null, fileVersions: Array<{id: number, resolution: string|null, status: string}>}>}
+ */
+export async function getVideoProcessingStatus(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/processing-status`)
   return res.data
 }
 

@@ -2340,6 +2340,83 @@ export function createVideosRouter() {
   });
 
   /**
+   * GET /videos/:id/processing-status — getVideoProcessingStatus
+   * Auth: required. Owner or admin. Lightweight polling endpoint the upload
+   * page uses to drive the upload/import progress bar (download phase via
+   * `status`, transcode phase via complete-vs-total `fileVersions`) without
+   * re-fetching the full video payload.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/processing-status:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Get an upload's download/transcode progress
+   *     operationId: getVideoProcessingStatus
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Upload status plus per-file-version transcode status
+   *       "403":
+   *         description: Not the owner or an admin
+   *       "404":
+   *         description: Not found
+   */
+  router.get("/videos/:id/processing-status", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const upload = await OriginalUpload.findByPk(id);
+      if (!upload) {
+        sendNotFound(res);
+        return;
+      }
+      if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the owner or an admin can view import/processing status.",
+        });
+        return;
+      }
+
+      const versions = await FileVersion.findAll({
+        where: { originalUploadId: upload.id },
+        order: [["id", "ASC"]],
+      });
+
+      res.status(200).json({
+        status: upload.status,
+        statusMessage: upload.statusMessage ?? null,
+        fileVersions: versions.map((v) => ({
+          id: v.id,
+          resolution: v.resolution,
+          status: v.status,
+        })),
+      });
+    } catch (err) {
+      console.error("getVideoProcessingStatus failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to load processing status.",
+      });
+    }
+  });
+
+  /**
    * PUT /videos/:id/access — setVideoAccess
    * Auth: required. Owner or admin. Body: `{ usernames: string[] }` replace-all.
    * Only allowed while the video is currently `private` — grants are only
