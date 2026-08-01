@@ -113,3 +113,44 @@
     cursor: default;
   }
 }
+
+@media (max-width: 640px) {
+  .user-card {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    height: auto;
+    gap: 8px 12px;
+  }
+
+  .user-card-avatar {
+    width: 56px;
+    height: 56px;
+    order: 1;
+  }
+
+  .user-card-identity {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .user-card-status-icons {
+    order: 3;
+    flex-direction: row;
+    margin-left: auto;
+  }
+
+  .user-card-bio {
+    order: 4;
+    flex: 1 1 100%;
+    -webkit-line-clamp: 3;
+  }
+
+  .user-card-role-select {
+    order: 5;
+    flex: 1 1 100%;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
