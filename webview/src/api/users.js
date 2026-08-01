@@ -109,6 +109,17 @@ export async function adminGrantUploader(userId) {
 }
 
 /**
+ * Updates an arbitrary user's role, on an admin's behalf.
+ * @param {number} userId
+ * @param {string} role One of USER_ROLES (see ../lib/roles.js).
+ * @returns {Promise<object>} The updated user record.
+ */
+export async function adminUpdateUserRole(userId, role) {
+  const res = await apiClient.patch(`/api/v1/admin/users/${userId}`, { role })
+  return res.data
+}
+
+/**
  * Searches users by username/display-name prefix (used by recipient pickers,
  * e.g. sharing a private video with specific users).
  * @param {string} query

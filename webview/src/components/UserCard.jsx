@@ -1,17 +1,38 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MailCheck, MailWarning, UserRound, Video, VideoOff } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
+import { adminUpdateUserRole } from '../api/users.js'
+import { USER_ROLES } from '../lib/roles.js'
 import './UserCard.css'
 
 function UserCard({ user }) {
   const { user: authUser } = useAuth()
   const isAdminViewer = authUser?.role === 'admin'
 
+  const [role, setRole] = useState(user.role)
+  const [updatingRole, setUpdatingRole] = useState(false)
+
   const avatarUrl = user.avatarFilename
     ? `${apiClient.defaults.baseURL}/api/v1/users/${user.username}/avatar`
     : null
   const showStatusIcons = isAdminViewer && user.emailVerified !== undefined
+  const showRoleSelect = isAdminViewer && role !== undefined
+
+  async function handleRoleChange(event) {
+    const nextRole = event.target.value
+    const previousRole = role
+    setRole(nextRole)
+    setUpdatingRole(true)
+    try {
+      await adminUpdateUserRole(user.id, nextRole)
+    } catch {
+      setRole(previousRole)
+    } finally {
+      setUpdatingRole(false)
+    }
+  }
 
   return (
     <Link to={`/users/${user.username}`} className="user-card">
@@ -49,6 +70,21 @@ function UserCard({ user }) {
             <VideoOff className="user-card-status-icon-false" size={20} aria-label="No uploader access" />
           )}
         </div>
+      )}
+      {showRoleSelect && (
+        <label
+          className="user-card-role-select"
+          onClick={(event) => event.preventDefault()}
+        >
+          Role
+          <select value={role} disabled={updatingRole} onChange={handleRoleChange}>
+            {USER_ROLES.map((roleOption) => (
+              <option key={roleOption} value={roleOption}>
+                {roleOption}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
     </Link>
   )

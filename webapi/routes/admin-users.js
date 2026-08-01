@@ -9,7 +9,7 @@ import { serializeUser } from "../lib/auth/serialize-user.js";
 import { emailEnabled, sendVerificationEmail } from "../lib/email/mailer.js";
 import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import { OriginalUpload, Role, User, UserPlaylist } from "../lib/models/index.js";
-import { removeUserDocument, syncPlaylistIndex, syncUserIndex, syncVideoIndex } from "../lib/search.js";
+import { syncPlaylistIndex, syncUserIndex, syncVideoIndex } from "../lib/search.js";
 
 /**
  * Minimum accepted password length for admin password resets.
@@ -553,13 +553,11 @@ export function createAdminUsersRouter() {
           });
         }
 
-        // Role changes (including into/out of "locked") flip search
-        // eligibility, so re-sync/remove the user document either way.
-        if (user.Role?.name === "locked") {
-          removeUserDocument(userId);
-        } else {
-          syncUserIndex(userId);
-        }
+        // Username/displayName are what the index actually stores, but a role
+        // change can flip an admin-only field the search route filters on, so
+        // re-sync unconditionally rather than trying to detect "did the
+        // rendered fields change".
+        syncUserIndex(userId);
 
         res.status(200).json(serializeAdminUser(user));
       } catch (err) {
