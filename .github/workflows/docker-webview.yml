@@ -11,7 +11,7 @@ permissions:
 
 on:
   push:
-    branches: ["master"]
+    branches: ["main"]
     paths: ["webview/**"]
     # Publish semver tags as releases.
     tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+rc[0-9]+"]
