@@ -129,6 +129,12 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_SECURE: ${SMTP_SECURE:-true}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      # Comma-separated allowed extensions per upload type.
+      FILETYPES_ALLOWED: ${FILETYPES_ALLOWED:-mp4,mkv,webm,wav,mp3,m4a,aac,flac,ogg}
+      THUMBNAIL_FILETYPES_ALLOWED: ${THUMBNAIL_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
+      AVATAR_FILETYPES_ALLOWED: ${AVATAR_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
+      BANNER_FILETYPES_ALLOWED: ${BANNER_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
+      THEME_IMAGE_FILETYPES_ALLOWED: ${THEME_IMAGE_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:${WEBVIEW_PORT:-5173}}
       # Allows the webview SPA's browser-side requests through CORS. Required
       # because the webapi image sets NODE_ENV=production, which disables
