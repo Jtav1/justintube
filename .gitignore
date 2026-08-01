@@ -10,3 +10,6 @@ docs/Planned Views.md
 .vscode/
 
 CLAUDE.md
+.env.dev
+
+.env.prod
