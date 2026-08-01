@@ -1,7 +1,11 @@
 import axios from 'axios'
 
+const apiBaseURL = window.__RUNTIME_CONFIG__?.API_BASE_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+
+console.log('[justintube] API base URL:', apiBaseURL)
+
 const apiClient = axios.create({
-  baseURL: window.__RUNTIME_CONFIG__?.API_BASE_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000',
+  baseURL: apiBaseURL,
   withCredentials: true,
 })
 
