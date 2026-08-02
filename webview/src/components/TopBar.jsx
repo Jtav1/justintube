@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import SearchAutocomplete from './SearchAutocomplete.jsx'
 import ThemeSelector from './ThemeSelector.jsx'
+import NotificationBell from './NotificationBell.jsx'
 import './TopBar.css'
 
 function TopBar({ onToggleSidebar, backgroundUrl }) {
@@ -138,6 +139,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             <span>Upload</span>
           </Link>
         )}
+        {user && <NotificationBell />}
         <div className="topbar-theme" ref={themeMenuRef}>
           <button
             type="button"

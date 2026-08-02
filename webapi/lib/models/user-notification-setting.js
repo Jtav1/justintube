@@ -5,8 +5,9 @@ import { timestampColumn } from "./attribute-helpers.js";
 /**
  * USER_NOTIFICATION_SETTINGS table model. Stores a user's per-type notification
  * preferences; `notificationTypeId` references NOTIFICATION_TYPES and is
- * nullable (no row for a type defaults to enabled, see the routes that read
- * this table).
+ * nullable (no row for a type defaults both `enabled` and `emailEnabled` to
+ * true, see the routes that read this table). `enabled` gates in-app/tray
+ * delivery; `emailEnabled` gates email delivery - the two are independent.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -27,6 +28,11 @@ export const UserNotificationSetting = sequelize.define(
       allowNull: true,
     },
     enabled: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
+    emailEnabled: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,

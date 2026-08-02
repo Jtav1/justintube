@@ -18,6 +18,7 @@ import SearchResultsPage from './pages/SearchResults.jsx'
 import AccountSettingsPage from './pages/AccountSettings.jsx'
 import SubscriptionsPage from './pages/UserSubscriptions.jsx'
 import LikedVideosPage from './pages/LikedVideos.jsx'
+import NotificationsPage from './pages/NotificationsPage.jsx'
 
 function App() {
   return (
@@ -42,6 +43,7 @@ function App() {
         <Route path="/search" element={<SearchResultsPage />} />
         <Route path="/settings" element={<AccountSettingsPage />} />
         <Route path="/subscriptions" element={<SubscriptionsPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
       </Route>
     </Routes>
   )

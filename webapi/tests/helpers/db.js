@@ -623,6 +623,7 @@ export async function seedUserNotificationSetting(userId, overrides = {}) {
     userId,
     notificationTypeId: null,
     enabled: true,
+    emailEnabled: true,
     ...overrides,
   };
 

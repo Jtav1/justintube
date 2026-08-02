@@ -6,11 +6,20 @@
   box-sizing: border-box;
 }
 
+.settings-columns {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  width: 100%;
+  max-width: 1320px;
+}
+
 .settings-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 100%;
+  flex: 1 1 640px;
+  min-width: 0;
   max-width: 640px;
   padding: 32px;
   border: 1px solid var(--border);
@@ -25,6 +34,16 @@
   h2 {
     margin: 0;
     font-size: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-columns {
+    flex-direction: column;
+  }
+
+  .settings-card {
+    max-width: none;
   }
 }
 

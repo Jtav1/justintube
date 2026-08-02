@@ -76,6 +76,7 @@ describe("me / notification-preferences routes", () => {
     expect(res.body.preferences).toHaveLength(activeTypes.length);
     for (const pref of res.body.preferences) {
       expect(pref.enabled).toBe(true);
+      expect(pref.emailEnabled).toBe(true);
     }
   });
 
@@ -110,6 +111,73 @@ describe("me / notification-preferences routes", () => {
     for (const pref of others) {
       expect(pref.enabled).toBe(true);
     }
+  });
+
+  test("PATCH toggles only emailEnabled, leaving enabled untouched", async () => {
+    const agent = createTestAgent();
+    await registerSession(agent, {
+      username: "prefs_email_toggle",
+      email: "prefs_email_toggle@example.com",
+    });
+    const csrfToken = await fetchCsrf(agent);
+
+    const patch = await agent
+      .patch("/api/v1/me/notification-preferences")
+      .set("X-CSRF-Token", csrfToken)
+      .send({ preferences: [{ notificationType: "like", emailEnabled: false }] });
+
+    expect(patch.status).toBe(200);
+    const patchedLike = patch.body.preferences.find(
+      (pref) => pref.notificationType === "like",
+    );
+    expect(patchedLike.emailEnabled).toBe(false);
+    expect(patchedLike.enabled).toBe(true);
+
+    const get = await agent.get("/api/v1/me/notification-preferences");
+    expect(get.status).toBe(200);
+    const like = get.body.preferences.find(
+      (pref) => pref.notificationType === "like",
+    );
+    expect(like.emailEnabled).toBe(false);
+    expect(like.enabled).toBe(true);
+  });
+
+  test("PATCH toggles only enabled, leaving emailEnabled untouched", async () => {
+    const agent = createTestAgent();
+    await registerSession(agent, {
+      username: "prefs_inapp_toggle",
+      email: "prefs_inapp_toggle@example.com",
+    });
+    const csrfToken = await fetchCsrf(agent);
+
+    const patch = await agent
+      .patch("/api/v1/me/notification-preferences")
+      .set("X-CSRF-Token", csrfToken)
+      .send({ preferences: [{ notificationType: "like", enabled: false }] });
+
+    expect(patch.status).toBe(200);
+    const patchedLike = patch.body.preferences.find(
+      (pref) => pref.notificationType === "like",
+    );
+    expect(patchedLike.enabled).toBe(false);
+    expect(patchedLike.emailEnabled).toBe(true);
+  });
+
+  test("PATCH with neither enabled nor emailEnabled returns 400", async () => {
+    const agent = createTestAgent();
+    await registerSession(agent, {
+      username: "prefs_neither",
+      email: "prefs_neither@example.com",
+    });
+    const csrfToken = await fetchCsrf(agent);
+
+    const res = await agent
+      .patch("/api/v1/me/notification-preferences")
+      .set("X-CSRF-Token", csrfToken)
+      .send({ preferences: [{ notificationType: "like" }] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
   });
 
   test("PATCH with an unknown notificationType returns 400", async () => {
