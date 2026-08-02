@@ -5,17 +5,6 @@ import {
 } from '../api/notifications.js'
 import './NotificationSettings.css'
 
-/**
- * Turns a snake_case notification type name into a readable label, e.g.
- * "video_comment" -> "Video comment".
- * @param {string} notificationType
- * @returns {string}
- */
-function humanizeType(notificationType) {
-  const words = notificationType.replace(/_/g, ' ')
-  return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
 function NotificationSettings() {
   const [preferences, setPreferences] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -77,9 +66,14 @@ function NotificationSettings() {
 
       {preferences && (
         <div className="notification-settings-list">
-          {preferences.map(({ notificationType, enabled, emailEnabled }) => (
+          {preferences.map(({ notificationType, description, enabled, emailEnabled }) => (
             <div className="notification-settings-row" key={notificationType}>
-              <span className="notification-settings-label">{humanizeType(notificationType)}</span>
+              <span className="notification-settings-label">
+                <span className="notification-settings-name">{notificationType}</span>
+                {description && (
+                  <span className="notification-settings-description">{description}</span>
+                )}
+              </span>
               <div className="notification-settings-switches">
                 <label className="notification-settings-switch-group">
                   <span className="notification-settings-switch-label">In-app</span>

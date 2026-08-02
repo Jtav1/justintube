@@ -36,11 +36,11 @@ const DEFAULT_ROLES = [
 const DEFAULT_NOTIFICATION_TYPES = [
   {
     name: "subscription",
-    description: "Someone you're subscribed to uploads a new video.",
+    description: "New upload from your subscriptions",
   },
-  { name: "like", description: "Someone likes your video." },
-  { name: "comment", description: "Someone comments on your video." },
-  { name: "subscriber", description: "Someone subscribes to your channel." },
+  { name: "like", description: "Video receives a like" },
+  { name: "comment", description: "Video receives new comment" },
+  { name: "subscriber", description: "Someone subscribes to you" },
 ];
 
 /**
@@ -220,7 +220,9 @@ export async function seedDemoUsers() {
   for (const { username, role } of DEFAULT_DEMO_USERS) {
     const userRole = await Role.findOne({ where: { name: role } });
     if (!userRole) {
-      console.warn(`[api]: ${role} role missing; skipping demo user "${username}" seed.`);
+      console.warn(
+        `[api]: ${role} role missing; skipping demo user "${username}" seed.`,
+      );
       continue;
     }
 

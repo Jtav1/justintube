@@ -25,7 +25,7 @@ async function loadActiveNotificationTypes() {
  * for any type the user has no explicit row for yet.
  *
  * @param {number} userId Id of the authenticated user.
- * @returns {Promise<{preferences: {notificationType: string, enabled: boolean, emailEnabled: boolean}[]}>}
+ * @returns {Promise<{preferences: {notificationType: string, description: string|null, enabled: boolean, emailEnabled: boolean}[]}>}
  *   The preferences payload.
  */
 async function buildPreferencesPayload(userId) {
@@ -41,6 +41,7 @@ async function buildPreferencesPayload(userId) {
   return {
     preferences: types.map((type) => ({
       notificationType: type.name,
+      description: type.description,
       enabled: enabledByTypeId.has(type.id)
         ? enabledByTypeId.get(type.id)
         : true,
