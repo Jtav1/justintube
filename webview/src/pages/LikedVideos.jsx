@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/useAuth.js'
 import { getMyLikes } from '../api/videos.js'
+import { getMyLikesPlaylist } from '../api/playlists.js'
 import VideoCard from '../components/VideoCard.jsx'
+import PlaylistCard from '../components/PlaylistCard.jsx'
 import './VideoListing.css'
 
 const PAGE_LIMIT = 24
@@ -14,6 +16,7 @@ function LikedVideos() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState(null)
+  const [likesPlaylist, setLikesPlaylist] = useState(null)
 
   useEffect(() => {
     if (!user) {
@@ -43,7 +46,21 @@ function LikedVideos() {
       }
     }
 
+    async function loadPlaylist() {
+      try {
+        const playlist = await getMyLikesPlaylist()
+        if (!cancelled) {
+          setLikesPlaylist(playlist)
+        }
+      } catch {
+        if (!cancelled) {
+          setLikesPlaylist(null)
+        }
+      }
+    }
+
     load()
+    loadPlaylist()
 
     return () => {
       cancelled = true
@@ -89,6 +106,7 @@ function LikedVideos() {
       <div className="video-listing-section">
         <h2 className="video-listing-section-title">Liked Videos</h2>
         <div className="video-listing-grid">
+          {likesPlaylist && <PlaylistCard key={`playlist-${likesPlaylist.id}`} playlist={likesPlaylist} />}
           {items.map((video) => (
             <VideoCard key={video.id} video={video} />
           ))}

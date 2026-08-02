@@ -32,6 +32,10 @@ import {
   isModeratorOrAdmin,
   isOwnerOrAdmin,
 } from "../lib/video-access.js";
+import {
+  addVideoToLikesPlaylist,
+  removeVideoFromLikesPlaylist,
+} from "../lib/likes-playlist.js";
 import { buildPublicLink } from "../lib/email/mailer.js";
 import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
@@ -801,7 +805,9 @@ async function loadUploadWithMetadata(id) {
 /**
  * Sets the caller's reaction (like/dislike) on a video, toggling off if the same reaction is
  * already recorded. At most one VIDEO_LIKES row exists per (userId, originalUploadId); this
- * always replaces or removes that row rather than ever storing more than one.
+ * always replaces or removes that row rather than ever storing more than one. A like additionally
+ * keeps the user's "My Likes" playlist in sync: liking adds the video, and unliking (via toggle-off
+ * or switching to a dislike) removes it (see lib/likes-playlist.js).
  *
  * @param {number} originalUploadId ORIGINAL_UPLOADS id being reacted to.
  * @param {number} userId Reacting user's id.
@@ -812,16 +818,27 @@ async function toggleVideoReaction(originalUploadId, userId, value) {
   const existing = await VideoLike.findOne({
     where: { originalUploadId, userId },
   });
-
-  if (existing && existing.likeValue === value) {
-    await existing.destroy();
-    return { liked: false, disliked: false };
-  }
+  const previousValue = existing?.likeValue ?? null;
 
   if (existing) {
     await existing.destroy();
   }
+
+  if (previousValue === value) {
+    if (previousValue === 1) {
+      await removeVideoFromLikesPlaylist(userId, originalUploadId);
+    }
+    return { liked: false, disliked: false };
+  }
+
   await VideoLike.create({ originalUploadId, userId, likeValue: value });
+
+  if (previousValue === 1) {
+    await removeVideoFromLikesPlaylist(userId, originalUploadId);
+  }
+  if (value === 1) {
+    await addVideoToLikesPlaylist(userId, originalUploadId);
+  }
 
   return { liked: value === 1, disliked: value === -1 };
 }

@@ -1330,6 +1330,71 @@ describe("Video discovery and metadata endpoints", () => {
       expect(rows).toHaveLength(0);
     });
 
+    test("liking a video creates a 'My Likes' playlist on first like, unliking removes the item, and switching to a dislike removes it too", async () => {
+      const viewer = await seedUserWithRoleAndKey("viewer", "like-playlist-key-1");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const likesPlaylistRows = () =>
+        queryRows(
+          "SELECT * FROM USER_PLAYLISTS WHERE user_id = :userId AND kind = 'likes'",
+          { userId: viewer.id },
+        );
+      const likesPlaylistItemRows = async () => {
+        const [playlist] = await likesPlaylistRows();
+        return queryRows(
+          "SELECT * FROM PLAYLIST_ITEMS WHERE playlist_id = :playlistId AND original_upload_id = :uploadId",
+          { playlistId: playlist.id, uploadId: upload.id },
+        );
+      };
+
+      expect(await likesPlaylistRows()).toHaveLength(0);
+
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-playlist-key-1");
+
+      const playlists = await likesPlaylistRows();
+      expect(playlists).toHaveLength(1);
+      expect(playlists[0].title).toBe("My Likes");
+      expect(await likesPlaylistItemRows()).toHaveLength(1);
+
+      // Unliking (toggle off) removes the video from the playlist, but the
+      // playlist itself is not deleted.
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-playlist-key-1");
+      expect(await likesPlaylistItemRows()).toHaveLength(0);
+      expect(await likesPlaylistRows()).toHaveLength(1);
+
+      // Liking again re-adds it, then disliking (switching reactions) removes it.
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-playlist-key-1");
+      expect(await likesPlaylistItemRows()).toHaveLength(1);
+
+      await client
+        .post(`/api/v1/videos/${upload.id}/dislike`)
+        .set("Authorization", "Bearer like-playlist-key-1");
+      expect(await likesPlaylistItemRows()).toHaveLength(0);
+    });
+
+    test("disliking a video that was never liked does not create a 'My Likes' playlist", async () => {
+      const viewer = await seedUserWithRoleAndKey("viewer", "like-playlist-key-2");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      await client
+        .post(`/api/v1/videos/${upload.id}/dislike`)
+        .set("Authorization", "Bearer like-playlist-key-2");
+
+      const playlists = await queryRows(
+        "SELECT * FROM USER_PLAYLISTS WHERE user_id = :userId AND kind = 'likes'",
+        { userId: viewer.id },
+      );
+      expect(playlists).toHaveLength(0);
+    });
+
     test("creates a NOTIFICATIONS row for the owner on like, but not on self-like or unlike", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "like-notify-owner-key");
       const liker = await seedUserWithRoleAndKey("viewer", "like-notify-liker-key");

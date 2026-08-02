@@ -25,6 +25,17 @@ export async function listMyPlaylists({ limit } = {}) {
 }
 
 /**
+ * Gets the current user's system-managed "My Likes" playlist. Requires
+ * authentication. Throws (404) if the user hasn't liked any videos yet — it
+ * is created lazily on first like.
+ * @returns {Promise<object>}
+ */
+export async function getMyLikesPlaylist() {
+  const res = await apiClient.get('/api/v1/me/likes-playlist')
+  return res.data
+}
+
+/**
  * Creates a new playlist owned by the current user. Requires authentication.
  * @param {{ name: string, description?: string|null, visibility?: string }} playlist
  * @returns {Promise<object>}

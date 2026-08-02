@@ -228,6 +228,57 @@ describe("me / subscriptions, subscribers, and playlists routes", () => {
     expect(res.body.items.some((item) => item.title === "Not mine")).toBe(false);
   });
 
+  test("GET /me/playlists excludes the 'My Likes' playlist (kind: likes)", async () => {
+    const agent = createTestAgent();
+    const { user } = await registerSession(agent, {
+      username: "playlists_owner_likes",
+      email: "playlists_owner_likes@example.com",
+    });
+
+    await seedPlaylist({ userId: user.id, title: "My Likes", kind: "likes" });
+    await seedPlaylist({ userId: user.id, title: "A regular playlist" });
+
+    const res = await agent.get("/api/v1/me/playlists");
+    expect(res.status).toBe(200);
+    expect(res.body.totalHits).toBe(1);
+    expect(res.body.items.map((item) => item.title)).toEqual(["A regular playlist"]);
+  });
+
+  test("unauthenticated GET /me/likes-playlist returns 401", async () => {
+    const client = createTestClient();
+    const res = await client.get("/api/v1/me/likes-playlist");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  test("GET /me/likes-playlist returns 404 before the user has ever liked a video", async () => {
+    const agent = createTestAgent();
+    await registerSession(agent, {
+      username: "likes_playlist_none",
+      email: "likes_playlist_none@example.com",
+    });
+
+    const res = await agent.get("/api/v1/me/likes-playlist");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("not_found");
+  });
+
+  test("GET /me/likes-playlist returns the playlist once it exists", async () => {
+    const agent = createTestAgent();
+    const { user } = await registerSession(agent, {
+      username: "likes_playlist_owner",
+      email: "likes_playlist_owner@example.com",
+    });
+
+    await seedPlaylist({ userId: user.id, title: "My Likes", kind: "likes" });
+
+    const res = await agent.get("/api/v1/me/likes-playlist");
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe("My Likes");
+    expect(res.body).toHaveProperty("id");
+    expect(res.body).toHaveProperty("itemCount");
+  });
+
   test("GET /me/playlists paginates with page/limit and rejects limit >= 100", async () => {
     const agent = createTestAgent();
     const { user } = await registerSession(agent, {
