@@ -216,6 +216,59 @@ export async function sendNewUserAdminNotification({ adminEmails, newUser }) {
 }
 
 /**
+ * Builds an absolute link into the frontend from a path, using
+ * `PUBLIC_APP_URL`. Shared by any email that needs to link somewhere in the
+ * app (verification, notifications, ...) so the "is PUBLIC_APP_URL
+ * configured, strip the trailing slash" logic lives in one place.
+ *
+ * @param {string} path App-relative path, including its leading slash
+ *   (e.g. `/video?v=abc123`).
+ * @returns {string|null} Absolute URL, or null when `PUBLIC_APP_URL` is unset.
+ */
+export function buildPublicLink(path) {
+  const publicUrl = String(process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
+  return publicUrl ? `${publicUrl}${path}` : null;
+}
+
+/**
+ * Sends a generic notification email - the delivery mechanism behind
+ * `lib/notifications.js`'s `createNotification`, usable for any
+ * notification type regardless of what (if anything) it links to. Callers
+ * are responsible for building `link` (e.g. via `buildPublicLink`) since
+ * the mapping from a notification's data to a URL is type-specific.
+ *
+ * @param {object} params Recipient and content details.
+ * @param {string} params.to Recipient email address.
+ * @param {string} params.title Email subject, and lead line of the body.
+ * @param {string} params.message Notification message body text.
+ * @param {string|null} [params.link] Absolute URL to include in the email, if any.
+ * @returns {Promise<void>} Resolves when the message has been accepted by SMTP.
+ * @throws {Error} When email is disabled or SMTP delivery fails.
+ */
+export async function sendNotificationEmail({ to, title, message, link = null }) {
+  if (!emailEnabled()) {
+    throw new Error("Email is not configured.");
+  }
+
+  const from = String(process.env.MAIL_FROM_ADDRESS || "").trim();
+
+  const textLines = [message, "", link ? `View it here: ${link}` : null].filter(
+    (line) => line !== null,
+  );
+  const htmlBody =
+    `<p>${escapeHtml(message)}</p>` +
+    (link ? `<p><a href="${link}">${link}</a></p>` : "");
+
+  await getTransport().sendMail({
+    from,
+    to,
+    subject: title,
+    text: textLines.join("\n"),
+    html: htmlBody,
+  });
+}
+
+/**
  * Resets the cached transport (for tests).
  *
  * @returns {void} No return value.

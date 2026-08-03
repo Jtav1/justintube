@@ -10,6 +10,7 @@ import { resetMailerForTests } from "../../lib/email/mailer.js";
 import { Role, User } from "../../lib/models/index.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
+  queryRows,
   resetTables,
   seedUser,
   seedUserApiKey,
@@ -405,6 +406,50 @@ describe("adminUpdateUser", () => {
     expect(updated.username).toBe("after_name");
     expect(updated.Role.name).toBe("moderator");
     expect(updated.passwordExpired).toBe(true);
+  });
+
+  test("notifies the user on an uploader grant and a role change, but not on idempotent re-saves", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_update_user_notify";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const target = await seedUser({ uploader: false });
+
+    const userNotifications = () =>
+      queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId ORDER BY id ASC", {
+        userId: target.id,
+      });
+
+    // Grants uploader + changes role in one request: both fire.
+    const firstRes = await client
+      .patch(`/api/v1/admin/users/${target.id}`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ uploader: true, role: "moderator" });
+    expect(firstRes.status).toBe(200);
+
+    let rows = await userNotifications();
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.title).sort()).toEqual(["Account Action", "Role Updated"]);
+    const roleRow = rows.find((row) => row.title === "Role Updated");
+    expect(roleRow.message).toBe("Your role is now: moderator");
+    expect(rows.every((row) => row.target === null)).toBe(true);
+
+    // Re-sending the same uploader:true and role:"moderator" is a no-op: no new rows.
+    const secondRes = await client
+      .patch(`/api/v1/admin/users/${target.id}`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ uploader: true, role: "moderator" });
+    expect(secondRes.status).toBe(200);
+    rows = await userNotifications();
+    expect(rows).toHaveLength(2);
+
+    // Clearing the role to null does not fire a "Role Updated" notification.
+    const clearedRes = await client
+      .patch(`/api/v1/admin/users/${target.id}`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ role: null });
+    expect(clearedRes.status).toBe(200);
+    rows = await userNotifications();
+    expect(rows).toHaveLength(2);
   });
 
   test("rejects password fields on update", async () => {

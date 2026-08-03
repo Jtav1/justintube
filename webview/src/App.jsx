@@ -18,6 +18,7 @@ import SearchResultsPage from './pages/SearchResults.jsx'
 import AccountSettingsPage from './pages/AccountSettings.jsx'
 import SubscriptionsPage from './pages/UserSubscriptions.jsx'
 import LikedVideosPage from './pages/LikedVideos.jsx'
+import NotificationsPage from './pages/NotificationsPage.jsx'
 
 function App() {
   return (
@@ -25,10 +26,10 @@ function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
-      <Route path="/control-panel" element={<ControlPanelPage />} />
       <Route path="/reports" element={<ModReportsPage />} />
       <Route element={<AppLayout />}>
         <Route path="/" element={<VideoListing />} />
+        <Route path="/control-panel" element={<ControlPanelPage />} />
         <Route path="/video" element={<VideoPage />} />
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />
@@ -42,6 +43,7 @@ function App() {
         <Route path="/search" element={<SearchResultsPage />} />
         <Route path="/settings" element={<AccountSettingsPage />} />
         <Route path="/subscriptions" element={<SubscriptionsPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
       </Route>
     </Routes>
   )

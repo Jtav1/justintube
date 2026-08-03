@@ -9,6 +9,7 @@ import { serializeUser } from "../lib/auth/serialize-user.js";
 import { emailEnabled, sendVerificationEmail } from "../lib/email/mailer.js";
 import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import { OriginalUpload, Role, User, UserPlaylist } from "../lib/models/index.js";
+import { createNotification } from "../lib/notifications.js";
 import { syncPlaylistIndex, syncUserIndex, syncVideoIndex } from "../lib/search.js";
 
 /**
@@ -419,6 +420,10 @@ export function createAdminUsersRouter() {
    * Updates a user's profile fields and/or role. Does not change passwords.
    * PATCH /api/v1/admin/users/:id
    * Auth: session cookie or Bearer API key; admin role required.
+   * Notifies the target user (type "account") on a false->true uploader grant
+   * and on a role change to a non-null role - both no-op on an idempotent
+   * re-save of the same value, and both no-op if the admin edits their own
+   * account (see `createNotification`'s self-notify guard).
    *
    * @openapi
    * /api/v1/admin/users/{id}:
@@ -528,7 +533,38 @@ export function createAdminUsersRouter() {
           }
         }
 
+        const wasUploader = user.uploader;
+        const previousRoleId = user.roleId;
+
         await user.update(parsed.patch);
+
+        if (
+          Object.prototype.hasOwnProperty.call(parsed.patch, "uploader") &&
+          parsed.patch.uploader === true &&
+          !wasUploader
+        ) {
+          await createNotification({
+            recipientUserId: user.id,
+            actorUserId: req.user.id,
+            typeName: "account",
+            title: "Account Action",
+            message: "You can now upload content!",
+          });
+        }
+
+        if (
+          Object.prototype.hasOwnProperty.call(parsed.patch, "roleId") &&
+          parsed.patch.roleId !== previousRoleId &&
+          parsed.role
+        ) {
+          await createNotification({
+            recipientUserId: user.id,
+            actorUserId: req.user.id,
+            typeName: "account",
+            title: "Role Updated",
+            message: `Your role is now: ${parsed.role.name}`,
+          });
+        }
 
         if (
           Object.prototype.hasOwnProperty.call(parsed.patch, "username") ||

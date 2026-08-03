@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Pencil, UserRound, MailCheck, MailWarning, Video, VideoOff } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
@@ -11,6 +11,7 @@ import {
   updateUserBanner,
   deleteUserBanner,
 } from '../api/users.js'
+import NotificationSettings from '../components/NotificationSettings.jsx'
 import './AccountSettings.css'
 
 const MIN_PASSWORD_LENGTH = 8
@@ -18,6 +19,7 @@ const MIN_PASSWORD_LENGTH = 8
 function AccountSettings() {
   const { user: authUser, loading: authLoading, refreshUser } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const bannerFileInputRef = useRef(null)
   const avatarFileInputRef = useRef(null)
 
@@ -84,6 +86,14 @@ function AccountSettings() {
       cancelled = true
     }
   }, [authLoading, authUser])
+
+  useEffect(() => {
+    if (loading || !location.hash) {
+      return
+    }
+    const target = document.querySelector(location.hash)
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [loading, location.hash])
 
   async function handleSaveAccount(event) {
     event.preventDefault()
@@ -278,6 +288,7 @@ function AccountSettings() {
 
   return (
     <section className="settings-page">
+      <div className="settings-columns">
       <div className="settings-card">
         <h1>Account Settings</h1>
 
@@ -489,6 +500,9 @@ function AccountSettings() {
             {changingPassword ? 'Changing...' : 'Change password'}
           </button>
         </form>
+      </div>
+
+      <NotificationSettings />
       </div>
     </section>
   )

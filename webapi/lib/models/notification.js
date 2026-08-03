@@ -33,6 +33,15 @@ export const Notification = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: false,
     },
+    /**
+     * Linkable data related to this notification, for the frontend to build
+     * a link from (e.g. a video's public `videoId` for like/comment
+     * notifications). Null when a notification has nothing to link to.
+     */
+    target: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     readAt: {
       type: DataTypes.DATE,
       allowNull: true,

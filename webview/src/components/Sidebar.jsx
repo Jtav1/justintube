@@ -46,7 +46,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
     { key: 'users', label: 'Users', icon: UsersRound, to: '/users', isActiveOverride: (isActive) => isActive && !isOwnProfilePath },
     { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: null },
     ...(user?.role === 'admin'
-      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: null }]
+      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
       : []),
     ...((user?.role === 'moderator' || user?.role === 'admin')
       ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: null }]
@@ -86,7 +86,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
       <div className="sidebar-footer">
         <hr className="sidebar-footer-divider" />
         <div className="sidebar-footer-row">
-          <span className="sidebar-footer-text">Justintube v1.0.0-alpha</span>
+          <span className="sidebar-footer-text">Justintube v1.0-alpha</span>
         </div>
         <div className="sidebar-footer-row">
           <div className="sidebar-footer-links">

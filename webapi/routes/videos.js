@@ -32,6 +32,8 @@ import {
   isModeratorOrAdmin,
   isOwnerOrAdmin,
 } from "../lib/video-access.js";
+import { buildPublicLink } from "../lib/email/mailer.js";
+import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
@@ -1993,6 +1995,8 @@ export function createVideosRouter() {
         return;
       }
 
+      const previousVisibility = metadata.visibility;
+
       await sequelize.transaction(async (transaction) => {
         if (Object.keys(parsed.patch).length > 0) {
           await metadata.update(parsed.patch, { transaction });
@@ -2026,6 +2030,25 @@ export function createVideosRouter() {
 
       await metadata.reload();
       syncVideoIndex(upload.id);
+
+      if (previousVisibility !== "public" && metadata.visibility === "public") {
+        const owner = await User.findByPk(upload.userId);
+        const ownerName = owner?.displayName || owner?.username || "Someone";
+        const subscribers = await Subscription.findAll({ where: { subscribedToId: upload.userId } });
+        await Promise.all(
+          subscribers.map((sub) =>
+            createNotification({
+              recipientUserId: sub.subscriberId,
+              actorUserId: upload.userId,
+              typeName: "subscription",
+              title: "Subscription",
+              message: `${ownerName} has posted a new video`,
+              target: upload.videoId,
+              link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+            }),
+          ),
+        );
+      }
 
       const renditions = await loadRenditions(upload);
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
@@ -2115,7 +2138,8 @@ export function createVideosRouter() {
    * POST /videos/:id/delist — delistVideo
    * Auth: required. Moderator or admin. Sets visibility to unlisted — the
    * video stays viewable by anyone with the link/id, but drops out of public
-   * browse/discovery lists (see `listPublicVideos`).
+   * browse/discovery lists (see `listPublicVideos`). Notifies the video's
+   * owner (type "moderation") with a link back to the video.
    *
    * @openapi
    * /api/v1/videos/{id}/delist:
@@ -2161,6 +2185,16 @@ export function createVideosRouter() {
         const { upload, metadata } = loaded;
         await metadata.update({ visibility: "unlisted" });
         syncVideoIndex(upload.id);
+
+        await createNotification({
+          recipientUserId: upload.userId,
+          actorUserId: req.user.id,
+          typeName: "moderation",
+          title: "Video Moderated",
+          message: `Your video "${metadata.title}" was set to unlisted by a moderator.`,
+          target: upload.videoId,
+          link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+        });
 
         const renditions = await loadRenditions(upload);
         const tagsByUploadId = await loadTagsByUploadId([upload.id]);
@@ -2675,6 +2709,18 @@ export function createVideosRouter() {
 
       const result = await toggleVideoReaction(upload.id, req.user.id, 1);
 
+      if (result.liked) {
+        await createNotification({
+          recipientUserId: upload.userId,
+          actorUserId: req.user.id,
+          typeName: "like",
+          title: "Video received a Like",
+          message: `${req.user.displayName || req.user.username} liked your video "${metadata.title}".`,
+          target: upload.videoId,
+          link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+        });
+      }
+
       res.status(200).json(result);
     } catch (err) {
       console.error("likeVideo failed:", err);
@@ -2873,6 +2919,16 @@ export function createVideosRouter() {
         distinguishedAdmin: parsed.distinguishedAdmin ?? false,
       });
       await comment.reload({ include: [{ model: User, required: false }] });
+
+      await createNotification({
+        recipientUserId: upload.userId,
+        actorUserId: req.user.id,
+        typeName: "comment",
+        title: "New comment on video",
+        message: `${req.user.displayName || req.user.username} commented on your video "${metadata.title}".`,
+        target: upload.videoId,
+        link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+      });
 
       res.status(201).json(serializeComment(comment));
     } catch (err) {

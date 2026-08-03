@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createAdminBroadcastRouter } from "./admin-broadcast.js";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
@@ -105,6 +106,7 @@ export function createApiRouter() {
   router.use(createPagesRouter());
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
+  router.use(createAdminBroadcastRouter());
   router.use(createTranscodeProfilesRouter());
   router.use(createThemesRouter());
   router.use(createVideosRouter());

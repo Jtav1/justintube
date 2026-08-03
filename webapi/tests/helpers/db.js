@@ -36,6 +36,7 @@ import {
 } from "../../lib/models/index.js";
 import { PUBLIC_THEME_OWNER } from "../../lib/models/theme.js";
 import { ensureSchema } from "../../lib/schema.js";
+import { ensureUserNotificationSettings } from "../../lib/seed.js";
 
 /**
  * Models that hold per-test data, ordered so that children are deleted before
@@ -454,6 +455,11 @@ export async function seedUser(overrides = {}) {
   }
 
   const row = await User.create(record);
+  // Mirrors registration (routes/auth.js): every user gets an explicit
+  // USER_NOTIFICATION_SETTINGS row per active type, seeded with that type's
+  // default. Requires NOTIFICATION_TYPES to already be seeded, which
+  // setupSchema()'s ensureSchema() call guarantees before any test body runs.
+  await ensureUserNotificationSettings(row.id);
   return asSeedResult(row, record);
 }
 
@@ -609,8 +615,11 @@ export async function seedNotification(userId, overrides = {}) {
 }
 
 /**
- * Inserts a USER_NOTIFICATION_SETTINGS row for a user, applying defaults for any
- * omitted field.
+ * Upserts a USER_NOTIFICATION_SETTINGS row for a user, applying defaults for
+ * any omitted field. Upserts (rather than plain `create`) because `seedUser`
+ * already auto-creates a row per active notification type - this overrides
+ * that auto-seeded row for the given `notificationTypeId` rather than
+ * violating its unique `(user_id, notification_type_id)` index.
  *
  * @param {number} userId Id of the USERS row the preference belongs to.
  * @param {object} [overrides] Partial column values to override the defaults.
@@ -623,10 +632,15 @@ export async function seedUserNotificationSetting(userId, overrides = {}) {
     userId,
     notificationTypeId: null,
     enabled: true,
+    emailEnabled: true,
     ...overrides,
   };
 
-  const row = await UserNotificationSetting.create(record);
+  const [row] = await UserNotificationSetting.findOrCreate({
+    where: { userId: record.userId, notificationTypeId: record.notificationTypeId },
+    defaults: record,
+  });
+  await row.update(record);
   return asSeedResult(row, record);
 }
 

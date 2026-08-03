@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, test } from "@jest/globals";
 import { resolveSitedataPath } from "../../lib/sitedata-meta.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
+  queryRows,
   resetTables,
   seedMetadata,
   seedPlaylist,
@@ -695,6 +696,42 @@ describe("subscribe / unsubscribe / subscription state", () => {
     const client = createTestClient();
     const res = await client.get(`/api/v1/users/${target.id}/subscription`);
     expect(res.status).toBe(401);
+  });
+
+  test("subscribing notifies the target user, but re-subscribing and unsubscribing do not", async () => {
+    const target = await seedUser({ username: "sub_target6", email: "sub_target6@example.com" });
+    const subscriber = await seedUser({ username: "sub_notifier", email: "sub_notifier@example.com" });
+    await seedUserApiKey(subscriber.id, "sub-notify-key");
+    const client = createTestClient();
+
+    const targetNotifications = () =>
+      queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", { userId: target.id });
+
+    const first = await client
+      .post(`/api/v1/users/${target.id}/subscribe`)
+      .set("Authorization", "Bearer sub-notify-key");
+    expect(first.status).toBe(200);
+
+    let rows = await targetNotifications();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("New Subscriber");
+    expect(rows[0].message).toBe("You have a new subscriber!");
+    expect(rows[0].target).toBeNull();
+
+    // Re-subscribing while already subscribed does not create a second notification.
+    const second = await client
+      .post(`/api/v1/users/${target.id}/subscribe`)
+      .set("Authorization", "Bearer sub-notify-key");
+    expect(second.status).toBe(200);
+    rows = await targetNotifications();
+    expect(rows).toHaveLength(1);
+
+    // Unsubscribing does not create a notification.
+    await client
+      .delete(`/api/v1/users/${target.id}/subscribe`)
+      .set("Authorization", "Bearer sub-notify-key");
+    rows = await targetNotifications();
+    expect(rows).toHaveLength(1);
   });
 });
 

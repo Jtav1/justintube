@@ -29,6 +29,7 @@ import {
 } from "../lib/auth/session.js";
 import { Role, User } from "../lib/models/index.js";
 import { syncUserIndex } from "../lib/search.js";
+import { ensureUserNotificationSettings } from "../lib/seed.js";
 
 /**
  * Minimum accepted password length for register/login validation.
@@ -328,6 +329,7 @@ export function createAuthRouter() {
         user.Role = role;
       }
       syncUserIndex(user.id);
+      await ensureUserNotificationSettings(user.id);
 
       if (needsVerify) {
         await sendUserVerificationEmail(user);

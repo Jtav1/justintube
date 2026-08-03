@@ -8,6 +8,7 @@ import {
   seedThemes,
   seedNotificationTypes,
   shouldSeedDemoUsers,
+  ensureUserNotificationSettings,
 } from "./seed.js";
 import { syncSessionStore } from "./auth/session.js";
 import { generateVideoId } from "./video-id.js";
@@ -254,6 +255,11 @@ async function ensureSqliteMissingColumns() {
       table: "ORIGINAL_UPLOADS",
       column: "status_message",
       ddl: "`status_message` VARCHAR(255) NULL",
+    },
+    {
+      table: "NOTIFICATIONS",
+      column: "target",
+      ddl: "`target` VARCHAR(255) NULL",
     },
   ];
 
@@ -658,5 +664,6 @@ export async function ensureSchema() {
     await seedDemoUsers();
   }
   await seedThemes();
+  await ensureUserNotificationSettings();
   await syncSessionStore();
 }

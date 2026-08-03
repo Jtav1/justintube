@@ -8,6 +8,7 @@ import {
 import { Role } from "../../lib/models/index.js";
 import { createTestClient } from "../helpers/app.js";
 import {
+  queryRows,
   resetTables,
   seedComment,
   seedMetadata,
@@ -146,6 +147,34 @@ describe("Video comments endpoints", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("invalid_body");
+    });
+
+    test("creates a NOTIFICATIONS row for the owner, but not on a self-comment", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "comment-notify-owner-key");
+      const commenter = await seedUserWithRoleAndKey("viewer", "comment-notify-commenter-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Notify Me", visibility: "public" });
+
+      const ownerNotifications = () =>
+        queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", { userId: owner.id });
+
+      // Commenting on your own video does not notify yourself.
+      await client
+        .post(`/api/v1/videos/${upload.id}/comments`)
+        .set("Authorization", "Bearer comment-notify-owner-key")
+        .send({ body: "self comment" });
+      expect(await ownerNotifications()).toHaveLength(0);
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/comments`)
+        .set("Authorization", "Bearer comment-notify-commenter-key")
+        .send({ body: "nice video" });
+      expect(res.status).toBe(201);
+
+      const rows = await ownerNotifications();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].title).toBe("New comment on video");
+      expect(rows[0].target).toBe(upload.videoId);
     });
 
     describe("commentsEnabled: false", () => {

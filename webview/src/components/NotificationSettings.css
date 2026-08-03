@@ -1,0 +1,106 @@
+.notification-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notification-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.notification-settings-row:last-child {
+  border-bottom: none;
+}
+
+.notification-settings-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-h);
+}
+
+.notification-settings-name {
+  text-transform: capitalize;
+}
+
+.notification-settings-description {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.notification-settings-switches {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.notification-settings-switch-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.notification-settings-switch-label {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.notification-settings-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.notification-settings-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.notification-settings-switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  transition: background-color 0.2s;
+}
+
+.notification-settings-switch-track::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-h);
+  transition: transform 0.2s;
+}
+
+.notification-settings-switch input:checked + .notification-settings-switch-track {
+  background: var(--accent);
+}
+
+.notification-settings-switch input:checked + .notification-settings-switch-track::before {
+  transform: translateX(18px);
+  background: var(--bg);
+}
+
+.notification-settings-switch input:focus-visible + .notification-settings-switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
