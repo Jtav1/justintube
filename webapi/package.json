@@ -1,6 +1,6 @@
 {
   "name": "justintube-api",
-  "version": "0.0.1",
+  "version": "1.0",
   "description": "Backend web API for Justintube. Nodejs/express becuase that's what I like",
   "homepage": "https://github.com/Jtav1/justintube#readme",
   "bugs": {

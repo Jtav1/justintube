@@ -1,12 +1,12 @@
 {
   "name": "justintube-processing",
-  "version": "0.0.1",
+  "version": "1.0",
   "description": "Processing container providing yt-dlp downloads and ffmpeg transcoding for Justintube",
   "license": "See LICENSE.md",
   "author": "Justin Tavares",
   "type": "module",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=20.6.0"
   },
   "main": "index.js",
   "scripts": {

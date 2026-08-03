@@ -79,6 +79,7 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `GET /api/v1/me/settings` — getMeSettings
 - [x] `GET /api/v1/me/videos` — listMyVideos
 - [x] `GET /api/v1/me/likes` — listMyLikes
+- [x] `GET /api/v1/me/likes-playlist` — getMyLikesPlaylist
 - [x] `GET /api/v1/me/subscriptions` — listMySubscriptions
 - [x] `GET /api/v1/me/subscribers` — listMySubscribers
 - [x] `GET /api/v1/me/playlists` — listMyPlaylists
@@ -89,6 +90,8 @@ Future
 
 - [ ] `GET /api/v1/me/history` — listMyHistory (Will require new history table)
 - [ ] `DELETE /api/v1/me/history` — clearMyHistory
+- [ ] `GET /api/v1/videos/:id/reaction` — getVideoReaction
+- [ ] `DELETE /api/v1/videos/:id/reaction` — clearVideoReaction
 
 ### Me / API Keys
 
