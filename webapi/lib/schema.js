@@ -257,6 +257,11 @@ async function ensureSqliteMissingColumns() {
       ddl: "`status_message` VARCHAR(255) NULL",
     },
     {
+      table: "USER_PLAYLISTS",
+      column: "kind",
+      ddl: "`kind` VARCHAR(16) NOT NULL DEFAULT 'standard'",
+    },
+    {
       table: "NOTIFICATIONS",
       column: "target",
       ddl: "`target` VARCHAR(255) NULL",

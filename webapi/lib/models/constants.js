@@ -28,6 +28,16 @@ export const VISIBILITY_VALUES = ["public", "private", "unlisted", "hidden"];
 export const LIKE_VALUES = [1, -1];
 
 /**
+ * Allowed USER_PLAYLISTS.kind values. "standard" is a normal user-created
+ * playlist; "likes" is the single per-user, system-managed "My Likes"
+ * playlist whose membership is driven entirely by video like/dislike
+ * actions (see lib/likes-playlist.js) rather than direct item mutation.
+ *
+ * @type {string[]}
+ */
+export const PLAYLIST_KIND_VALUES = ["standard", "likes"];
+
+/**
  * Allowed media-type labels for ORIGINAL_UPLOADS and TRANSCODE_PROFILES,
  * distinguishing audio-only uploads from standard video uploads.
  *

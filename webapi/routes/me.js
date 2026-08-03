@@ -22,6 +22,7 @@ import {
 import { parsePagination } from "../lib/pagination.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { canViewVideo } from "../lib/video-access.js";
+import { buildPlaylistsPage } from "./playlists.js";
 import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
@@ -629,6 +630,64 @@ export function createMeRouter() {
   });
 
   /**
+   * Returns the authenticated user's system-managed "My Likes" playlist
+   * (kind "likes"), or 404 if they haven't liked a video yet — it is created
+   * lazily on first like (see lib/likes-playlist.js).
+   * GET /api/v1/me/likes-playlist
+   * Auth: session cookie or Bearer API key (`requireAuth`).
+   *
+   * @openapi
+   * /api/v1/me/likes-playlist:
+   *   get:
+   *     tags: [Me]
+   *     summary: Get my "My Likes" playlist
+   *     operationId: getMyLikesPlaylist
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: My Likes playlist
+   *       401:
+   *         description: Not authenticated
+   *       404:
+   *         description: No My Likes playlist yet (no videos liked)
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the playlist or an error response.
+   */
+  router.get("/me/likes-playlist", requireAuth, async (req, res) => {
+    try {
+      const playlist = await UserPlaylist.findOne({
+        where: { userId: req.user.id, kind: "likes" },
+        include: [{ model: User, required: false }],
+      });
+      if (!playlist) {
+        res.status(404).json({
+          error: "not_found",
+          message: "You haven't liked any videos yet.",
+        });
+        return;
+      }
+
+      const payload = await buildPlaylistsPage([playlist], 1, {
+        page: 1,
+        limit: 1,
+        user: req.user,
+        role: req.authRole,
+      });
+      res.status(200).json(payload.items[0]);
+    } catch (err) {
+      console.error("getMyLikesPlaylist failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to load your My Likes playlist.",
+      });
+    }
+  });
+
+  /**
    * Returns the users the authenticated user is subscribed to, newest
    * subscription first, paginated.
    * GET /api/v1/me/subscriptions
@@ -800,6 +859,9 @@ export function createMeRouter() {
 
   /**
    * Returns the authenticated user's own playlists, newest first, paginated.
+   * Excludes the system-managed "My Likes" playlist (`kind: "likes"`) — this
+   * endpoint backs the manual "add video to playlist" picker, and that
+   * playlist's membership is only ever changed by liking/disliking videos.
    * GET /api/v1/me/playlists
    * Auth: session cookie or Bearer API key (`requireAuth`).
    *
@@ -850,7 +912,7 @@ export function createMeRouter() {
       const { page, limit } = pagination;
 
       const { rows, count } = await UserPlaylist.findAndCountAll({
-        where: { userId: req.user.id },
+        where: { userId: req.user.id, kind: { [Op.ne]: "likes" } },
         order: [["createdAt", "DESC"]],
         limit,
         offset: (page - 1) * limit,

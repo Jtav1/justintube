@@ -216,6 +216,15 @@ function UploadPage() {
     }
   }, [trackingId])
 
+  useEffect(() => {
+    if (!trackingId || !processingStatus) {
+      return
+    }
+    if (TERMINAL_UPLOAD_STATUSES.has(processingStatus.status) && processingStatus.status !== 'failed') {
+      navigate(`/users/${user.username}`)
+    }
+  }, [trackingId, processingStatus, navigate, user.username])
+
   const recipientSearchActive = visibility === 'private' && recipientQuery.trim().length > 0
 
   useEffect(() => {
@@ -503,8 +512,6 @@ function UploadPage() {
           (fileVersions.filter((v) => v.status === 'complete').length / fileVersions.length) * 100,
         )
       : null
-    const isTerminal = TERMINAL_UPLOAD_STATUSES.has(status)
-
     return (
       <section className="upload-page">
         <div className="upload-card">
@@ -521,16 +528,6 @@ function UploadPage() {
             <p className="upload-error">
               {processingStatus?.statusMessage || 'This import failed. Please try again.'}
             </p>
-          )}
-          {isTerminal && status !== 'failed' && <p>Your video is ready.</p>}
-          {isTerminal && (
-            <button
-              type="button"
-              className="upload-submit"
-              onClick={() => navigate(`/users/${user.username}`)}
-            >
-              Go to your channel
-            </button>
           )}
         </div>
       </section>

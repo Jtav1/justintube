@@ -7,6 +7,7 @@ import {
   seedMetadata,
   seedPlaylist,
   seedPlaylistAccess,
+  seedPlaylistItem,
   seedUpload,
   seedUser,
   seedUserApiKey,
@@ -486,6 +487,28 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
 
       expect(res.status).toBe(403);
     });
+
+    test("rejects adding an item to the owner's own 'My Likes' playlist with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "add-key-5");
+      const playlist = await seedPlaylist({
+        userId: owner.id,
+        title: "My Likes",
+        kind: "likes",
+      });
+      const upload = await seedUpload();
+
+      const res = await client
+        .post(`/api/v1/playlists/${playlist.id}/items`)
+        .set("Authorization", "Bearer add-key-5")
+        .send({ videoId: String(upload.id) });
+
+      expect(res.status).toBe(403);
+      const rows = await queryRows(
+        "SELECT * FROM PLAYLIST_ITEMS WHERE playlist_id = :playlistId",
+        { playlistId: playlist.id },
+      );
+      expect(rows).toHaveLength(0);
+    });
   });
 
   describe("DELETE /playlists/{id}/items/{videoId} (removePlaylistItem)", () => {
@@ -527,6 +550,28 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .set("Authorization", "Bearer remove-key-3");
 
       expect(res.status).toBe(403);
+    });
+
+    test("rejects removing an item from the owner's own 'My Likes' playlist with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "remove-key-4");
+      const playlist = await seedPlaylist({
+        userId: owner.id,
+        title: "My Likes",
+        kind: "likes",
+      });
+      const upload = await seedUpload();
+      await seedPlaylistItem(playlist.id, upload.id);
+
+      const res = await client
+        .delete(`/api/v1/playlists/${playlist.id}/items/${upload.id}`)
+        .set("Authorization", "Bearer remove-key-4");
+
+      expect(res.status).toBe(403);
+      const rows = await queryRows(
+        "SELECT * FROM PLAYLIST_ITEMS WHERE playlist_id = :playlistId",
+        { playlistId: playlist.id },
+      );
+      expect(rows).toHaveLength(1);
     });
   });
 

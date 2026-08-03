@@ -726,6 +726,13 @@ export function createPlaylistsRouter() {
         });
         return;
       }
+      if (playlist.kind === "likes") {
+        res.status(403).json({
+          error: "forbidden",
+          message: "The My Likes playlist is managed automatically by liking videos.",
+        });
+        return;
+      }
 
       const body = req.body && typeof req.body === "object" ? req.body : {};
       const videoId = parsePositiveInt(body.videoId);
@@ -830,6 +837,13 @@ export function createPlaylistsRouter() {
         res.status(403).json({
           error: "forbidden",
           message: "Only the playlist owner or an admin can remove items from this playlist.",
+        });
+        return;
+      }
+      if (playlist.kind === "likes") {
+        res.status(403).json({
+          error: "forbidden",
+          message: "The My Likes playlist is managed automatically by liking/disliking videos.",
         });
         return;
       }
