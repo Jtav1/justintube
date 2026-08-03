@@ -32,10 +32,11 @@ import {
   isModeratorOrAdmin,
   isOwnerOrAdmin,
 } from "../lib/video-access.js";
+import { buildPublicLink } from "../lib/email/mailer.js";
+import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
-import { notifyVideoInteraction } from "../lib/video-notifications.js";
 
 /**
  * Relative media subfolder where thumbnail images are expected to live
@@ -2677,12 +2678,15 @@ export function createVideosRouter() {
       const result = await toggleVideoReaction(upload.id, req.user.id, 1);
 
       if (result.liked) {
-        await notifyVideoInteraction({
-          upload,
+        await createNotification({
+          recipientUserId: upload.userId,
           actorUserId: req.user.id,
           typeName: "like",
           title: "Video received a Like",
           message: `${req.user.displayName || req.user.username} liked your video "${metadata.title}".`,
+          target: upload.videoId,
+          link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+          requireExplicitEmailOptIn: true,
         });
       }
 
@@ -2885,12 +2889,15 @@ export function createVideosRouter() {
       });
       await comment.reload({ include: [{ model: User, required: false }] });
 
-      await notifyVideoInteraction({
-        upload,
+      await createNotification({
+        recipientUserId: upload.userId,
         actorUserId: req.user.id,
         typeName: "comment",
         title: "New comment on video",
         message: `${req.user.displayName || req.user.username} commented on your video "${metadata.title}".`,
+        target: upload.videoId,
+        link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+        requireExplicitEmailOptIn: true,
       });
 
       res.status(201).json(serializeComment(comment));

@@ -38,11 +38,11 @@ const DEFAULT_NOTIFICATION_TYPES = [
     name: "subscription",
     description: "New video from one of your subscriptions",
   },
-  { name: "like", description: "Video receives a like" },
-  { name: "comment", description: "Video receives a comment" },
-  { name: "subscriber", description: "Someone subscribes to you" },
-  { name: "delist", description: "Moderator actions" },
-  { name: "account", description: "Account status change" },
+  { name: "like", description: "New like received" },
+  { name: "comment", description: "New comment received" },
+  { name: "subscriber", description: "New subscriber" },
+  { name: "moderation", description: "Moderator actions" },
+  { name: "account", description: "Account status changes" },
   { name: "admin", description: "Sitewide alerts & messages" },
 ];
 

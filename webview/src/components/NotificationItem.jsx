@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { formatRelativeDate } from '../lib/format.js'
+import { buildNotificationLink } from '../lib/notification-links.js'
 import './NotificationItem.css'
 
 /**
@@ -9,18 +10,18 @@ import './NotificationItem.css'
  * render their current page in full (no virtualization/infinite scroll),
  * mounting is an accurate proxy for "displayed on screen."
  *
- * When the notification has a `target`, it links to that video
- * (`/video?v=<target>`). By default the whole row is the link (tray
- * dropdown); pass `titleOnly` to link just the title instead (all
- * notifications page).
+ * When the notification's type+target resolve to a link (see
+ * `lib/notification-links.js`), it's clickable. By default the whole row is
+ * the link (tray dropdown); pass `titleOnly` to link just the title instead
+ * (all notifications page).
  *
  * @param {{ notification: object, onRead: (id: number) => void,
  *   titleOnly?: boolean, onNavigate?: () => void }} props
  */
 function NotificationItem({ notification, onRead, titleOnly = false, onNavigate }) {
-  const { id, title, message, target, readAt, createdAt } = notification
+  const { id, title, message, readAt, createdAt } = notification
   const isUnread = readAt == null
-  const href = target ? `/video?v=${encodeURIComponent(target)}` : null
+  const href = buildNotificationLink(notification)
 
   useEffect(() => {
     if (isUnread) {
