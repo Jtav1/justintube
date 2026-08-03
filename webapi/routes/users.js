@@ -8,6 +8,7 @@ import { Op, col, fn } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
+import { buildPublicLink } from "../lib/email/mailer.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
 import { createNotification } from "../lib/notifications.js";
 import {
@@ -1002,6 +1003,8 @@ export function createUsersRouter() {
           typeName: "subscriber",
           title: "New Subscriber",
           message: "You have a new subscriber!",
+          target: "subscribers",
+          link: buildPublicLink("/subscribers"),
         });
       }
 

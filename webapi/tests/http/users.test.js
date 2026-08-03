@@ -730,7 +730,7 @@ describe("subscribe / unsubscribe / subscription state", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].title).toBe("New Subscriber");
     expect(rows[0].message).toBe("You have a new subscriber!");
-    expect(rows[0].target).toBeNull();
+    expect(rows[0].target).toBe("subscribers");
 
     // Re-subscribing while already subscribed does not create a second notification.
     const second = await client
