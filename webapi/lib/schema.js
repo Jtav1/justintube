@@ -255,6 +255,11 @@ async function ensureSqliteMissingColumns() {
       column: "status_message",
       ddl: "`status_message` VARCHAR(255) NULL",
     },
+    {
+      table: "NOTIFICATIONS",
+      column: "target",
+      ddl: "`target` VARCHAR(255) NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

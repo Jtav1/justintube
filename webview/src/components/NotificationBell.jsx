@@ -100,7 +100,12 @@ function NotificationBell() {
               <p className="notification-bell-empty">No notifications</p>
             )}
             {items.map((item) => (
-              <NotificationItem key={item.id} notification={item} onRead={handleRead} />
+              <NotificationItem
+                key={item.id}
+                notification={item}
+                onRead={handleRead}
+                onNavigate={() => setOpen(false)}
+              />
             ))}
           </div>
           <div className="notification-bell-footer">

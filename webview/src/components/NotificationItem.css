@@ -10,6 +10,25 @@
   border-bottom: none;
 }
 
+a.notification-item {
+  color: inherit;
+  text-decoration: none;
+}
+
+.notification-item-clickable:hover {
+  background: var(--accent-bg);
+  cursor: pointer;
+}
+
+.notification-item-title-link {
+  display: block;
+  text-decoration: none;
+}
+
+.notification-item-title-link:hover {
+  text-decoration: underline;
+}
+
 .notification-item-unread {
   background: var(--accent-bg);
 }

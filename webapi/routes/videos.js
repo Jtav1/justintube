@@ -35,6 +35,7 @@ import {
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { notifyVideoInteraction } from "../lib/video-notifications.js";
 
 /**
  * Relative media subfolder where thumbnail images are expected to live
@@ -2675,6 +2676,16 @@ export function createVideosRouter() {
 
       const result = await toggleVideoReaction(upload.id, req.user.id, 1);
 
+      if (result.liked) {
+        await notifyVideoInteraction({
+          upload,
+          actorUserId: req.user.id,
+          typeName: "like",
+          title: "Video received a Like",
+          message: `${req.user.displayName || req.user.username} liked your video "${metadata.title}".`,
+        });
+      }
+
       res.status(200).json(result);
     } catch (err) {
       console.error("likeVideo failed:", err);
@@ -2873,6 +2884,14 @@ export function createVideosRouter() {
         distinguishedAdmin: parsed.distinguishedAdmin ?? false,
       });
       await comment.reload({ include: [{ model: User, required: false }] });
+
+      await notifyVideoInteraction({
+        upload,
+        actorUserId: req.user.id,
+        typeName: "comment",
+        title: "New comment on video",
+        message: `${req.user.displayName || req.user.username} commented on your video "${metadata.title}".`,
+      });
 
       res.status(201).json(serializeComment(comment));
     } catch (err) {

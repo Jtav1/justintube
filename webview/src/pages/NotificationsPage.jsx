@@ -79,7 +79,7 @@ function NotificationsPage() {
 
       <div className="notifications-page-list">
         {items.map((item) => (
-          <NotificationItem key={item.id} notification={item} onRead={handleRead} />
+          <NotificationItem key={item.id} notification={item} onRead={handleRead} titleOnly />
         ))}
       </div>
 

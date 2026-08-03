@@ -216,6 +216,43 @@ export async function sendNewUserAdminNotification({ adminEmails, newUser }) {
 }
 
 /**
+ * Sends a generic notification email (e.g. for a like or comment on a
+ * video), linking to the target video when `PUBLIC_APP_URL` is configured.
+ *
+ * @param {object} params Recipient and content details.
+ * @param {string} params.to Recipient email address.
+ * @param {string} params.title Email subject, and lead line of the body.
+ * @param {string} params.message Notification message body text.
+ * @param {string} params.videoId Public `videoId` the notification links to.
+ * @returns {Promise<void>} Resolves when the message has been accepted by SMTP.
+ * @throws {Error} When email is disabled or SMTP delivery fails.
+ */
+export async function sendNotificationEmail({ to, title, message, videoId }) {
+  if (!emailEnabled()) {
+    throw new Error("Email is not configured.");
+  }
+
+  const from = String(process.env.MAIL_FROM_ADDRESS || "").trim();
+  const publicUrl = String(process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
+  const link = publicUrl ? `${publicUrl}/video?v=${encodeURIComponent(videoId)}` : null;
+
+  const textLines = [message, "", link ? `View it here: ${link}` : null].filter(
+    (line) => line !== null,
+  );
+  const htmlBody =
+    `<p>${escapeHtml(message)}</p>` +
+    (link ? `<p><a href="${link}">${link}</a></p>` : "");
+
+  await getTransport().sendMail({
+    from,
+    to,
+    subject: title,
+    text: textLines.join("\n"),
+    html: htmlBody,
+  });
+}
+
+/**
  * Resets the cached transport (for tests).
  *
  * @returns {void} No return value.

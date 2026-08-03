@@ -36,11 +36,14 @@ const DEFAULT_ROLES = [
 const DEFAULT_NOTIFICATION_TYPES = [
   {
     name: "subscription",
-    description: "New upload from your subscriptions",
+    description: "New video from one of your subscriptions",
   },
   { name: "like", description: "Video receives a like" },
-  { name: "comment", description: "Video receives new comment" },
+  { name: "comment", description: "Video receives a comment" },
   { name: "subscriber", description: "Someone subscribes to you" },
+  { name: "delist", description: "Moderator actions" },
+  { name: "account", description: "Account status change" },
+  { name: "admin", description: "Sitewide alerts & messages" },
 ];
 
 /**

@@ -12,7 +12,7 @@ import { parsePagination } from "../lib/pagination.js";
  * @param {import('sequelize').Model} notification Notification row, with
  *   `NotificationType` eagerly loaded.
  * @returns {{id: number, notificationType: string, title: string, message: string,
- *   readAt: string|null, createdAt: string}} Serialized notification.
+ *   target: string|null, readAt: string|null, createdAt: string}} Serialized notification.
  */
 function serializeNotification(notification) {
   return {
@@ -20,6 +20,7 @@ function serializeNotification(notification) {
     notificationType: notification.NotificationType?.name ?? null,
     title: notification.title,
     message: notification.message,
+    target: notification.target,
     readAt: notification.readAt,
     createdAt: notification.createdAt,
   };

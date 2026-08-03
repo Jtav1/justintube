@@ -1221,6 +1221,44 @@ describe("Video discovery and metadata endpoints", () => {
       expect(rows).toHaveLength(0);
     });
 
+    test("creates a NOTIFICATIONS row for the owner on like, but not on self-like or unlike", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "like-notify-owner-key");
+      const liker = await seedUserWithRoleAndKey("viewer", "like-notify-liker-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Notify Me", visibility: "public" });
+
+      const ownerNotifications = () =>
+        queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", { userId: owner.id });
+
+      // Liking your own video does not notify yourself.
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-notify-owner-key");
+      expect(await ownerNotifications()).toHaveLength(0);
+
+      await client
+        .post(`/api/v1/videos/${upload.id}/dislike`)
+        .set("Authorization", "Bearer like-notify-owner-key");
+      expect(await ownerNotifications()).toHaveLength(0);
+
+      const likeRes = await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-notify-liker-key");
+      expect(likeRes.status).toBe(200);
+
+      let rows = await ownerNotifications();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].title).toBe("Video received a Like");
+      expect(rows[0].target).toBe(upload.videoId);
+
+      // Toggling the like off does not create a second notification.
+      await client
+        .post(`/api/v1/videos/${upload.id}/like`)
+        .set("Authorization", "Bearer like-notify-liker-key");
+      rows = await ownerNotifications();
+      expect(rows).toHaveLength(1);
+    });
+
     test("getVideo includes viewerReaction only for authenticated callers", async () => {
       await seedUserWithRoleAndKey("viewer", "like-key-2");
       const upload = await seedUpload();
