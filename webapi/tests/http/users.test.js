@@ -297,12 +297,26 @@ describe("GET /users/:username (getUserChannel)", () => {
       displayName: "Channel Owner",
       bio: "Hello world",
       avatarFilename: "owner.jpg",
+      subscriberCount: 0,
     });
     expect(res.body.videos.totalHits).toBe(2);
     expect(res.body.videos.items.map((v) => v.title)).toEqual([
       "Newer public video",
       "Older public video",
     ]);
+  });
+
+  test("includes the subscriber count on the channel profile", async () => {
+    const owner = await seedUser({ username: "subscribed_owner", email: "subscribed_owner@example.com" });
+    const subscriberOne = await seedUser({ username: "subscriber_one", email: "subscriber_one@example.com" });
+    const subscriberTwo = await seedUser({ username: "subscriber_two", email: "subscriber_two@example.com" });
+    await seedSubscription(subscriberOne.id, owner.id);
+    await seedSubscription(subscriberTwo.id, owner.id);
+
+    const client = createTestClient();
+    const res = await client.get("/api/v1/users/subscribed_owner");
+    expect(res.status).toBe(200);
+    expect(res.body.user.subscriberCount).toBe(2);
   });
 
   test("hides non-public videos from the channel page even for the owner or an admin", async () => {

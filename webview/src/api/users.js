@@ -120,6 +120,58 @@ export async function adminUpdateUserRole(userId, role) {
 }
 
 /**
+ * Fetches whether the current user is subscribed to another user.
+ * @param {number} userId
+ * @returns {Promise<{subscribed: boolean}>}
+ */
+export async function getSubscriptionState(userId) {
+  const res = await apiClient.get(`/api/v1/users/${userId}/subscription`)
+  return res.data
+}
+
+/**
+ * Subscribes the current user to another user.
+ * @param {number} userId
+ * @returns {Promise<{subscribed: boolean}>}
+ */
+export async function subscribeToUser(userId) {
+  const res = await apiClient.post(`/api/v1/users/${userId}/subscribe`)
+  return res.data
+}
+
+/**
+ * Unsubscribes the current user from another user.
+ * @param {number} userId
+ * @returns {Promise<{subscribed: boolean}>}
+ */
+export async function unsubscribeFromUser(userId) {
+  const res = await apiClient.delete(`/api/v1/users/${userId}/subscribe`)
+  return res.data
+}
+
+/**
+ * Fetches the users the current user is subscribed to, newest subscription
+ * first.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function listMySubscriptions({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/me/subscriptions', { params: { page, limit } })
+  return res.data
+}
+
+/**
+ * Fetches the users subscribed to the current user, newest subscription
+ * first.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function listMySubscribers({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/me/subscribers', { params: { page, limit } })
+  return res.data
+}
+
+/**
  * Searches users by username/display-name prefix (used by recipient pickers,
  * e.g. sharing a private video with specific users).
  * @param {string} query

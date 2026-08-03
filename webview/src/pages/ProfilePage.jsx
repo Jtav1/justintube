@@ -468,6 +468,8 @@ function ProfilePage() {
         </div>
       </div>
 
+      <p className="profile-subscriber-count">{user.subscriberCount ?? 0} Subscribers</p>
+
       <div className="profile-bio-row">
         {editingBio ? (
           <form
@@ -585,7 +587,9 @@ function ProfilePage() {
 
       <div className="profile-videos-header">
         {visiblePlaylists.length > 0 && (
-          <h2 className="profile-section-title profile-videos-title">All Videos</h2>
+          <h2 className="profile-section-title profile-videos-title">
+            All Videos ({videos.totalHits} Total)
+          </h2>
         )}
         <label className="profile-sort">
           Sort by

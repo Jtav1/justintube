@@ -40,7 +40,6 @@ export function AuthProvider({ children }) {
   async function logout() {
     await authApi.logout()
     setUser(null)
-    window.location.reload()
   }
 
   /**

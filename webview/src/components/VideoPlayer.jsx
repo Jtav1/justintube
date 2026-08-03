@@ -17,6 +17,7 @@ import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
 import { delistVideo, dislikeVideo, likeVideo, recordView } from '../api/videos.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
+import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../api/users.js'
 import { useAuth } from '../context/useAuth.js'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
@@ -63,6 +64,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const [delisted, setDelisted] = useState(false)
   const [delistPending, setDelistPending] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
+  const [subscribed, setSubscribed] = useState(null)
+  const [subscribePending, setSubscribePending] = useState(false)
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -114,9 +117,37 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     ? `${apiClient.defaults.baseURL}/api/v1/users/${video.uploader.username}/avatar`
     : null
 
+  const uploaderId = video.uploader?.userId ?? null
+  const canSubscribe = Boolean(user) && uploaderId != null && user.id !== uploaderId
+
   useEffect(() => {
     viewRecordedRef.current = false
   }, [video.id])
+
+  useEffect(() => {
+    let cancelled = false
+    setSubscribed(null)
+
+    if (!canSubscribe) {
+      return undefined
+    }
+
+    getSubscriptionState(uploaderId)
+      .then((data) => {
+        if (!cancelled) {
+          setSubscribed(data.subscribed)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSubscribed(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [canSubscribe, uploaderId])
 
   useEffect(() => {
     if (!qualityMenuOpen) {
@@ -285,6 +316,23 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     setTimeout(() => setLinkCopied(false), 1500)
   }
 
+  async function handleToggleSubscribe() {
+    if (subscribePending || subscribed === null) {
+      return
+    }
+    setSubscribePending(true)
+    try {
+      const result = subscribed
+        ? await unsubscribeFromUser(uploaderId)
+        : await subscribeToUser(uploaderId)
+      setSubscribed(result.subscribed)
+    } catch (err) {
+      console.error('Failed to update subscription:', err)
+    } finally {
+      setSubscribePending(false)
+    }
+  }
+
   return (
     <div className="video-player">
       <div className={`video-player-frame${isAudio ? ' video-player-frame-audio' : ''}`}>
@@ -378,9 +426,21 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
             >
               {video.title}
             </h1>
-            <p className="video-player-uploader">
-              <Link to={`/users/${video.uploader?.username}`}>{uploaderName}</Link>
-            </p>
+            <div className="video-player-uploader-row">
+              <p className="video-player-uploader">
+                <Link to={`/users/${video.uploader?.username}`}>{uploaderName}</Link>
+              </p>
+              {canSubscribe && (
+                <button
+                  type="button"
+                  className={`video-player-subscribe-btn${subscribed ? ' video-player-subscribe-btn-active' : ''}`}
+                  disabled={subscribed === null || subscribePending}
+                  onClick={handleToggleSubscribe}
+                >
+                  {subscribed ? 'Unsubscribe' : 'Subscribe'}
+                </button>
+              )}
+            </div>
             <p className="video-player-stats">
               {formatViewCount(video.viewCount)} &middot;{' '}
               <span className="video-player-visibility">{video.visibility}</span>

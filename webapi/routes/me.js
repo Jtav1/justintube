@@ -23,6 +23,7 @@ import { parsePagination } from "../lib/pagination.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { canViewVideo } from "../lib/video-access.js";
 import { buildPlaylistsPage } from "./playlists.js";
+import { loadUploadCountsByUserId } from "./users.js";
 import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
@@ -269,15 +270,19 @@ function parseMeUpdate(body) {
  * public-safe shape returned by `listMySubscriptions`/`listMySubscribers`.
  *
  * @param {import('sequelize').Model} user User model instance.
- * @returns {{id: number, username: string, displayName: string|null, avatarFilename: string|null}}
+ * @param {{uploadCount?: number}} [options] `uploadCount`: public upload
+ *   count, precomputed by the caller (matches `serializeUserListItem`, so
+ *   the shared UserCard component renders consistently).
+ * @returns {{id: number, username: string, displayName: string|null, avatarFilename: string|null, uploadCount: number}}
  *   Public-safe hydrated user payload.
  */
-function serializeSubscriptionUser(user) {
+function serializeSubscriptionUser(user, { uploadCount = 0 } = {}) {
   return {
     id: user.id,
     username: user.username,
     displayName: user.displayName ?? null,
     avatarFilename: user.avatarFilename ?? null,
+    uploadCount,
   };
 }
 
@@ -753,9 +758,13 @@ export function createMeRouter() {
         offset: (page - 1) * limit,
       });
 
+      const uploadCounts = await loadUploadCountsByUserId(rows.map((row) => row.SubscribedTo.id));
+
       res.status(200).json({
         items: rows.map((row) => ({
-          ...serializeSubscriptionUser(row.SubscribedTo),
+          ...serializeSubscriptionUser(row.SubscribedTo, {
+            uploadCount: uploadCounts.get(row.SubscribedTo.id) ?? 0,
+          }),
           subscribedAt: row.createdAt,
         })),
         page,
@@ -838,9 +847,13 @@ export function createMeRouter() {
         offset: (page - 1) * limit,
       });
 
+      const uploadCounts = await loadUploadCountsByUserId(rows.map((row) => row.Subscriber.id));
+
       res.status(200).json({
         items: rows.map((row) => ({
-          ...serializeSubscriptionUser(row.Subscriber),
+          ...serializeSubscriptionUser(row.Subscriber, {
+            uploadCount: uploadCounts.get(row.Subscriber.id) ?? 0,
+          }),
           subscribedAt: row.createdAt,
         })),
         page,

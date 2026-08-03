@@ -259,6 +259,12 @@
   color: var(--text-h);
 }
 
+.video-player-uploader-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .video-player-uploader {
   margin: 0;
   font-size: 14px;
@@ -272,6 +278,40 @@
 
 .video-player-uploader a:hover {
   text-decoration: underline;
+}
+
+.video-player-subscribe-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.video-player-subscribe-btn:hover:not(:disabled) {
+  background: var(--accent-border);
+  color: var(--text-h);
+}
+
+.video-player-subscribe-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.video-player-subscribe-btn-active {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.video-player-subscribe-btn-active:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .video-player-stats {
