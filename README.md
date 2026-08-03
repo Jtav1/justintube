@@ -10,6 +10,17 @@ I (Justin) have been hosting a MediaCMS instance for a long time for myself and 
 
 Quick shout out to them though, https://mediacms.io/ https://github.com/mediacms-io/mediacms if you are looking at this project you will probably be better served by MediaCMS until I remove this warning. However Justintube is not a fork and shares zero code or ideas with them - I'm not patient enough to bother doing that lol
 
+## Versioning
+
+v1.1.x - Alpha releases
+- Unstable and structural changes. Data will be deleted and manipulated
+
+v1.2.x - Beta releases
+- Longer term (X weeks) features that may or may not cause unstability
+
+v2.0.0 - Initial production release
+- All initial planned features implemented and site is ready for use. Anything additional should not break or delete any data from production instances
+
 ## What it does
 
 - **Video platform basics** — upload (including yt-dlp URL import), FFmpeg transcoding to multiple resolutions with configurable hardware acceleration (WIP/FUTURE), video tagging, search with typeahead suggestions, subscriptions, likes, playlists, watch history, and notifications.
