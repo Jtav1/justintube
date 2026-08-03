@@ -906,6 +906,43 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.error).toBe("forbidden");
     });
 
+    test("notifies the video owner, but not on an unowned video or a self-delist", async () => {
+      const mod = await seedUserWithRoleAndKey("moderator", "mod-delist-notify-key");
+      const owner = await seedUserWithRoleAndKey("viewer", "delist-owner-key");
+
+      // Unowned video: no owner to notify.
+      const unowned = await seedUpload();
+      await seedMetadata(unowned.id, { title: "Unowned", visibility: "public" });
+      await client
+        .post(`/api/v1/videos/${unowned.id}/delist`)
+        .set("Authorization", "Bearer mod-delist-notify-key");
+      expect(await queryRows("SELECT * FROM NOTIFICATIONS", {})).toHaveLength(0);
+
+      // Moderator delisting their own video: no self-notification.
+      const own = await seedUpload({ userId: mod.id });
+      await seedMetadata(own.id, { title: "Own video", visibility: "public" });
+      await client
+        .post(`/api/v1/videos/${own.id}/delist`)
+        .set("Authorization", "Bearer mod-delist-notify-key");
+      expect(
+        await queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", { userId: mod.id }),
+      ).toHaveLength(0);
+
+      // Moderator delisting someone else's video: owner is notified.
+      const owned = await seedUpload({ userId: owner.id });
+      await seedMetadata(owned.id, { title: "Someone else's video", visibility: "public" });
+      await client
+        .post(`/api/v1/videos/${owned.id}/delist`)
+        .set("Authorization", "Bearer mod-delist-notify-key");
+
+      const rows = await queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", {
+        userId: owner.id,
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].title).toBe("Video Moderated");
+      expect(rows[0].target).toBe(owned.videoId);
+    });
+
     test("response includes tags and complete renditions, same as getVideo", async () => {
       await seedUserWithRoleAndKey("moderator", "mod-delist-shape-key");
       const upload = await seedUpload();
@@ -1120,6 +1157,78 @@ describe("Video discovery and metadata endpoints", () => {
       expect(getRes.status).toBe(200);
       expect(getRes.body.items).toHaveLength(1);
       expect(getRes.body.items[0].username).toBe("friend_preserve");
+    });
+  });
+
+  describe("subscription notifications", () => {
+    test("notifies subscribers when a video transitions from private to public", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "sub-notify-owner-key", {
+        displayName: "Video Owner",
+      });
+      const subscriber = await seedUserWithRoleAndKey("viewer", "sub-notify-subscriber-key");
+      await seedSubscription(subscriber.id, owner.id);
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "New Video", visibility: "private" });
+
+      const subscriberNotifications = () =>
+        queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", {
+          userId: subscriber.id,
+        });
+
+      const patchRes = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer sub-notify-owner-key")
+        .send({ visibility: "public" });
+      expect(patchRes.status).toBe(200);
+
+      let rows = await subscriberNotifications();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].title).toBe("Subscription");
+      expect(rows[0].message).toBe("Video Owner has posted a new video");
+      expect(rows[0].target).toBe(upload.videoId);
+
+      // Re-patching an already-public video does not create a duplicate.
+      const secondPatch = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer sub-notify-owner-key")
+        .send({ title: "New Video (edited)" });
+      expect(secondPatch.status).toBe(200);
+
+      rows = await subscriberNotifications();
+      expect(rows).toHaveLength(1);
+    });
+
+    test("notifies every subscriber, and does not error when there are none", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "sub-notify-owner-multi-key");
+      const subscriberA = await seedUserWithRoleAndKey("viewer", "sub-notify-a-key");
+      const subscriberB = await seedUserWithRoleAndKey("viewer", "sub-notify-b-key");
+      await seedSubscription(subscriberA.id, owner.id);
+      await seedSubscription(subscriberB.id, owner.id);
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+
+      const patchRes = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer sub-notify-owner-multi-key")
+        .send({ visibility: "public" });
+      expect(patchRes.status).toBe(200);
+
+      const notificationsFor = (userId) =>
+        queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", { userId });
+      expect(await notificationsFor(subscriberA.id)).toHaveLength(1);
+      expect(await notificationsFor(subscriberB.id)).toHaveLength(1);
+    });
+
+    test("does not error when publishing a video with no subscribers", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "sub-notify-owner-none-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+
+      const patchRes = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer sub-notify-owner-none-key")
+        .send({ visibility: "public" });
+      expect(patchRes.status).toBe(200);
     });
   });
 

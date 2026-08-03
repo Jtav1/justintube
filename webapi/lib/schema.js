@@ -8,6 +8,7 @@ import {
   seedThemes,
   seedNotificationTypes,
   shouldSeedDemoUsers,
+  ensureUserNotificationSettings,
 } from "./seed.js";
 import { syncSessionStore } from "./auth/session.js";
 import { generateVideoId } from "./video-id.js";
@@ -663,5 +664,6 @@ export async function ensureSchema() {
     await seedDemoUsers();
   }
   await seedThemes();
+  await ensureUserNotificationSettings();
   await syncSessionStore();
 }

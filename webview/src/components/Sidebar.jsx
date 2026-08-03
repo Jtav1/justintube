@@ -46,7 +46,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
     { key: 'users', label: 'Users', icon: UsersRound, to: '/users', isActiveOverride: (isActive) => isActive && !isOwnProfilePath },
     { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: null },
     ...(user?.role === 'admin'
-      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: null }]
+      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
       : []),
     ...((user?.role === 'moderator' || user?.role === 'admin')
       ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: null }]

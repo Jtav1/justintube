@@ -26,10 +26,10 @@ function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
-      <Route path="/control-panel" element={<ControlPanelPage />} />
       <Route path="/reports" element={<ModReportsPage />} />
       <Route element={<AppLayout />}>
         <Route path="/" element={<VideoListing />} />
+        <Route path="/control-panel" element={<ControlPanelPage />} />
         <Route path="/video" element={<VideoPage />} />
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />

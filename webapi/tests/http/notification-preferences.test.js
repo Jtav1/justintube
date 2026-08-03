@@ -59,7 +59,13 @@ describe("me / notification-preferences routes", () => {
     expect(res.body.error).toBe("unauthorized");
   });
 
-  test("GET with no rows defaults every active type to enabled: true", async () => {
+  test("GET after registration reflects each type's seeded default preference", async () => {
+    // Registration seeds an explicit row per active type (see
+    // ensureUserNotificationSettings), so this asserts against the real
+    // seeded values rather than a "no row" fallback. Likes/comments are
+    // opt-in (default off); everything else is opt-out (default on).
+    const OPT_IN_TYPES = new Set(["like", "comment"]);
+
     const activeTypes = await NotificationType.findAll({
       where: { enabled: true },
     });
@@ -75,8 +81,9 @@ describe("me / notification-preferences routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.preferences).toHaveLength(activeTypes.length);
     for (const pref of res.body.preferences) {
-      expect(pref.enabled).toBe(true);
-      expect(pref.emailEnabled).toBe(true);
+      const expectedDefault = !OPT_IN_TYPES.has(pref.notificationType);
+      expect(pref.enabled).toBe(expectedDefault);
+      expect(pref.emailEnabled).toBe(expectedDefault);
     }
   });
 
@@ -105,8 +112,10 @@ describe("me / notification-preferences routes", () => {
       (pref) => pref.notificationType === "like",
     );
     expect(like.enabled).toBe(false);
+    // "like" and "comment" both default to enabled: false (opt-in); only
+    // exclude those two from the "everything else defaults true" check.
     const others = get.body.preferences.filter(
-      (pref) => pref.notificationType !== "like",
+      (pref) => pref.notificationType !== "like" && pref.notificationType !== "comment",
     );
     for (const pref of others) {
       expect(pref.enabled).toBe(true);
@@ -121,14 +130,17 @@ describe("me / notification-preferences routes", () => {
     });
     const csrfToken = await fetchCsrf(agent);
 
+    // "admin" defaults to enabled/emailEnabled: true, so the untouched field
+    // staying true after this patch demonstrates independence, not a
+    // coincidence of the type's default.
     const patch = await agent
       .patch("/api/v1/me/notification-preferences")
       .set("X-CSRF-Token", csrfToken)
-      .send({ preferences: [{ notificationType: "like", emailEnabled: false }] });
+      .send({ preferences: [{ notificationType: "admin", emailEnabled: false }] });
 
     expect(patch.status).toBe(200);
     const patchedLike = patch.body.preferences.find(
-      (pref) => pref.notificationType === "like",
+      (pref) => pref.notificationType === "admin",
     );
     expect(patchedLike.emailEnabled).toBe(false);
     expect(patchedLike.enabled).toBe(true);
@@ -136,7 +148,7 @@ describe("me / notification-preferences routes", () => {
     const get = await agent.get("/api/v1/me/notification-preferences");
     expect(get.status).toBe(200);
     const like = get.body.preferences.find(
-      (pref) => pref.notificationType === "like",
+      (pref) => pref.notificationType === "admin",
     );
     expect(like.emailEnabled).toBe(false);
     expect(like.enabled).toBe(true);
@@ -153,11 +165,11 @@ describe("me / notification-preferences routes", () => {
     const patch = await agent
       .patch("/api/v1/me/notification-preferences")
       .set("X-CSRF-Token", csrfToken)
-      .send({ preferences: [{ notificationType: "like", enabled: false }] });
+      .send({ preferences: [{ notificationType: "admin", enabled: false }] });
 
     expect(patch.status).toBe(200);
     const patchedLike = patch.body.preferences.find(
-      (pref) => pref.notificationType === "like",
+      (pref) => pref.notificationType === "admin",
     );
     expect(patchedLike.enabled).toBe(false);
     expect(patchedLike.emailEnabled).toBe(true);
@@ -238,7 +250,7 @@ describe("me / notification-preferences routes", () => {
     expect(patch.status).toBe(200);
 
     const bobSettings = await UserNotificationSetting.findAll({
-      where: { userId: bob.id },
+      where: { userId: bob.id, notificationTypeId: commentType.id },
     });
     expect(bobSettings).toHaveLength(1);
     expect(bobSettings[0].enabled).toBe(false);

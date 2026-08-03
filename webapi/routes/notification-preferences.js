@@ -6,6 +6,7 @@ import {
   UserNotificationSetting,
   sequelize,
 } from "../lib/models/index.js";
+import { getNotificationTypeDefaults } from "../lib/seed.js";
 
 /**
  * Loads all active notification types, ordered by id.
@@ -21,8 +22,12 @@ async function loadActiveNotificationTypes() {
 
 /**
  * Builds the caller's full notification preferences payload: one entry per
- * active notification type, defaulting `enabled` and `emailEnabled` to true
- * for any type the user has no explicit row for yet.
+ * active notification type. Every user is expected to have an explicit
+ * USER_NOTIFICATION_SETTINGS row for every active type (seeded at
+ * registration and reconciled on every boot by
+ * `ensureUserNotificationSettings`), so this reads those rows directly. The
+ * type's seeded default (`getNotificationTypeDefaults`) is only a fallback
+ * for a row somehow being missing, not the normal path.
  *
  * @param {number} userId Id of the authenticated user.
  * @returns {Promise<{preferences: {notificationType: string, description: string|null, enabled: boolean, emailEnabled: boolean}[]}>}
@@ -31,24 +36,19 @@ async function loadActiveNotificationTypes() {
 async function buildPreferencesPayload(userId) {
   const types = await loadActiveNotificationTypes();
   const settings = await UserNotificationSetting.findAll({ where: { userId } });
-  const enabledByTypeId = new Map(
-    settings.map((row) => [row.notificationTypeId, Boolean(row.enabled)]),
-  );
-  const emailEnabledByTypeId = new Map(
-    settings.map((row) => [row.notificationTypeId, Boolean(row.emailEnabled)]),
-  );
+  const settingByTypeId = new Map(settings.map((row) => [row.notificationTypeId, row]));
 
   return {
-    preferences: types.map((type) => ({
-      notificationType: type.name,
-      description: type.description,
-      enabled: enabledByTypeId.has(type.id)
-        ? enabledByTypeId.get(type.id)
-        : true,
-      emailEnabled: emailEnabledByTypeId.has(type.id)
-        ? emailEnabledByTypeId.get(type.id)
-        : true,
-    })),
+    preferences: types.map((type) => {
+      const setting = settingByTypeId.get(type.id);
+      const defaults = getNotificationTypeDefaults(type.name);
+      return {
+        notificationType: type.name,
+        description: type.description,
+        enabled: setting ? Boolean(setting.enabled) : defaults.enabled,
+        emailEnabled: setting ? Boolean(setting.emailEnabled) : defaults.emailEnabled,
+      };
+    }),
   };
 }
 

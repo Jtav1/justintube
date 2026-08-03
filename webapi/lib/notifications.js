@@ -1,4 +1,5 @@
 import { emailEnabled, sendNotificationEmail } from "./email/mailer.js";
+import { getNotificationTypeDefaults } from "./seed.js";
 import { Notification, NotificationType, User, UserNotificationSetting } from "./models/index.js";
 
 /**
@@ -32,12 +33,6 @@ import { Notification, NotificationType, User, UserNotificationSetting } from ".
  *   link. Independent of `target` - callers that email a link generally
  *   build it from the same data as `target`, but the mapping from "target"
  *   to "URL" is type-specific and not this function's concern.
- * @param {boolean} [params.requireExplicitEmailOptIn] When true, only email
- *   if the recipient has an explicit `UserNotificationSetting` row with
- *   `emailEnabled: true` for this type - no row, or `emailEnabled: false`,
- *   both mean "don't email". When false (default), mirrors the sitewide
- *   preferences default (no row = email enabled), matching what
- *   `buildPreferencesPayload()` shows in the settings UI.
  * @returns {Promise<void>} Resolves once delivery has been attempted.
  */
 export async function createNotification({
@@ -48,7 +43,6 @@ export async function createNotification({
   message,
   target = null,
   link = null,
-  requireExplicitEmailOptIn = false,
 }) {
   try {
     if (!recipientUserId) {
@@ -74,10 +68,10 @@ export async function createNotification({
     await maybeSendNotificationEmail({
       recipientUserId,
       notificationTypeId: type.id,
+      typeName: type.name,
       title,
       message,
       link,
-      requireExplicitEmailOptIn,
     });
   } catch (err) {
     console.error(`createNotification (${typeName}) failed:`, err);
@@ -86,26 +80,32 @@ export async function createNotification({
 
 /**
  * Emails a notification recipient, gated on the global SMTP switch and the
- * recipient's per-type email preference. See `createNotification`'s
- * `requireExplicitEmailOptIn` doc for the two gating modes.
+ * recipient's per-type email preference. Every user is expected to have an
+ * explicit USER_NOTIFICATION_SETTINGS row for every active notification type
+ * (seeded at registration and reconciled on every boot by
+ * `ensureUserNotificationSettings`), so this reads that row directly rather
+ * than guessing what an absent row should mean. The type's seeded default
+ * (`getNotificationTypeDefaults`) is only a fallback for the row somehow
+ * being missing (e.g. a race with the reconciliation job), not the normal
+ * path.
  *
  * @private
  * @param {object} params
  * @param {number} params.recipientUserId Id of the user to email.
  * @param {number} params.notificationTypeId NOTIFICATION_TYPES id for this event.
+ * @param {string} params.typeName NOTIFICATION_TYPES.name, for the missing-row fallback default.
  * @param {string} params.title Notification title (used as the email subject).
  * @param {string} params.message Notification message body.
  * @param {string|null} params.link Optional URL to include in the email body.
- * @param {boolean} params.requireExplicitEmailOptIn Gating mode, see `createNotification`.
  * @returns {Promise<void>} Resolves once email delivery has been attempted (or skipped).
  */
 async function maybeSendNotificationEmail({
   recipientUserId,
   notificationTypeId,
+  typeName,
   title,
   message,
   link,
-  requireExplicitEmailOptIn,
 }) {
   if (!emailEnabled()) {
     return;
@@ -114,9 +114,9 @@ async function maybeSendNotificationEmail({
   const setting = await UserNotificationSetting.findOne({
     where: { userId: recipientUserId, notificationTypeId },
   });
-  const wantsEmail = requireExplicitEmailOptIn
-    ? setting?.emailEnabled === true
-    : setting?.emailEnabled !== false;
+  const wantsEmail = setting
+    ? setting.emailEnabled === true
+    : getNotificationTypeDefaults(typeName).emailEnabled;
   if (!wantsEmail) {
     return;
   }

@@ -1,4 +1,4 @@
-import { NotificationType, Role, Theme, User } from "./models/index.js";
+import { NotificationType, Role, Theme, User, UserNotificationSetting } from "./models/index.js";
 import { hashPassword } from "./auth/password.js";
 import { PUBLIC_THEME_OWNER } from "./models/theme.js";
 
@@ -31,20 +31,79 @@ const DEFAULT_ROLES = [
  * a hardcoded constant) — a type can be turned off via its `enabled` column
  * without a code deploy.
  *
- * @type {Array<{name: string, description: string}>}
+ * `defaultEnabled`/`defaultEmailEnabled` are the values a fresh
+ * USER_NOTIFICATION_SETTINGS row gets for this type (see
+ * `ensureUserNotificationSettings`) — every user gets an explicit row for
+ * every active type, so these are the only place "default" preferences are
+ * decided; nothing downstream should special-case a missing row anymore.
+ * Likes/comments are opt-in (off until the user turns them on); everything
+ * else is opt-out (on until the user turns it off).
+ *
+ * @type {Array<{name: string, description: string, defaultEnabled: boolean, defaultEmailEnabled: boolean}>}
  */
 const DEFAULT_NOTIFICATION_TYPES = [
   {
     name: "subscription",
     description: "New video from one of your subscriptions",
+    defaultEnabled: true,
+    defaultEmailEnabled: true,
   },
-  { name: "like", description: "New like received" },
-  { name: "comment", description: "New comment received" },
-  { name: "subscriber", description: "New subscriber" },
-  { name: "moderation", description: "Moderator actions" },
-  { name: "account", description: "Account status changes" },
-  { name: "admin", description: "Sitewide alerts & messages" },
+  { name: "like", description: "New like received", defaultEnabled: false, defaultEmailEnabled: false },
+  {
+    name: "comment",
+    description: "New comment received",
+    defaultEnabled: false,
+    defaultEmailEnabled: false,
+  },
+  {
+    name: "subscriber",
+    description: "New subscriber",
+    defaultEnabled: true,
+    defaultEmailEnabled: true,
+  },
+  {
+    name: "moderation",
+    description: "Moderator actions",
+    defaultEnabled: true,
+    defaultEmailEnabled: true,
+  },
+  {
+    name: "account",
+    description: "Account status changes",
+    defaultEnabled: true,
+    defaultEmailEnabled: true,
+  },
+  {
+    name: "admin",
+    description: "Sitewide alerts & messages",
+    defaultEnabled: true,
+    defaultEmailEnabled: true,
+  },
 ];
+
+/**
+ * Fallback default used for a notification type name that isn't found in
+ * `DEFAULT_NOTIFICATION_TYPES` (shouldn't happen in practice - every active
+ * `NotificationType` row originates from that list).
+ *
+ * @type {{enabled: boolean, emailEnabled: boolean}}
+ */
+const FALLBACK_NOTIFICATION_DEFAULTS = { enabled: true, emailEnabled: true };
+
+/**
+ * Returns the seeded default `enabled`/`emailEnabled` values for a
+ * notification type name, per `DEFAULT_NOTIFICATION_TYPES`.
+ *
+ * @param {string} typeName NOTIFICATION_TYPES.name.
+ * @returns {{enabled: boolean, emailEnabled: boolean}} Default preference values.
+ */
+export function getNotificationTypeDefaults(typeName) {
+  const entry = DEFAULT_NOTIFICATION_TYPES.find((type) => type.name === typeName);
+  if (!entry) {
+    return FALLBACK_NOTIFICATION_DEFAULTS;
+  }
+  return { enabled: entry.defaultEnabled, emailEnabled: entry.defaultEmailEnabled };
+}
 
 /**
  * Inserts the standard authorization roles into the ROLES table if they are not
@@ -77,6 +136,58 @@ export async function seedNotificationTypes() {
       where: { name },
       defaults: { description, enabled: true },
     });
+  }
+}
+
+/**
+ * Ensures every (user, active notification type) pair has a
+ * USER_NOTIFICATION_SETTINGS row, seeded with that type's
+ * `defaultEnabled`/`defaultEmailEnabled` values. Idempotent - only inserts
+ * pairs that don't already exist.
+ *
+ * Pass `userId` to scope this to one freshly-created user (called from the
+ * registration route so a new account has its rows immediately); omit it to
+ * reconcile every user (called on every boot, covering users created before
+ * this table existed and any notification type added after they registered).
+ *
+ * @param {number} [userId] When given, only ensures rows for this user.
+ * @returns {Promise<void>} Resolves once any missing rows have been created.
+ */
+export async function ensureUserNotificationSettings(userId) {
+  const userWhere = userId != null ? { id: userId } : {};
+  const settingsWhere = userId != null ? { userId } : {};
+
+  const [users, types, existingSettings] = await Promise.all([
+    User.findAll({ where: userWhere, attributes: ["id"] }),
+    NotificationType.findAll({ where: { enabled: true } }),
+    UserNotificationSetting.findAll({
+      where: settingsWhere,
+      attributes: ["userId", "notificationTypeId"],
+    }),
+  ]);
+
+  const existingPairs = new Set(
+    existingSettings.map((row) => `${row.userId}:${row.notificationTypeId}`),
+  );
+
+  const rowsToCreate = [];
+  for (const user of users) {
+    for (const type of types) {
+      if (existingPairs.has(`${user.id}:${type.id}`)) {
+        continue;
+      }
+      const defaults = getNotificationTypeDefaults(type.name);
+      rowsToCreate.push({
+        userId: user.id,
+        notificationTypeId: type.id,
+        enabled: defaults.enabled,
+        emailEnabled: defaults.emailEnabled,
+      });
+    }
+  }
+
+  if (rowsToCreate.length > 0) {
+    await UserNotificationSetting.bulkCreate(rowsToCreate);
   }
 }
 

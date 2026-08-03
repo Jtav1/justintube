@@ -198,6 +198,7 @@ Internal (ingest server callbacks; Bearer `INTERNAL_SERVICE_TOKEN`, mirrors the 
 - [x] `GET /api/v1/admin/config/:name` — adminGetSystemConfig
 - [x] `PUT /api/v1/admin/config/:name` — adminUpsertSystemConfig
 - [x] `DELETE /api/v1/admin/config/:name` — adminDeleteSystemConfig
+- [x] `POST /api/v1/admin/notifications/broadcast` — adminBroadcastNotification
 
 ### Themes
 

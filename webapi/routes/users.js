@@ -9,6 +9,7 @@ import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
+import { createNotification } from "../lib/notifications.js";
 import {
   OriginalUpload,
   PlaylistAccess,
@@ -986,9 +987,18 @@ export function createUsersRouter() {
         return;
       }
 
-      await Subscription.findOrCreate({
+      const [, created] = await Subscription.findOrCreate({
         where: { subscriberId: req.user.id, subscribedToId: targetId },
       });
+      if (created) {
+        await createNotification({
+          recipientUserId: targetId,
+          actorUserId: req.user.id,
+          typeName: "subscriber",
+          title: "New Subscriber",
+          message: "You have a new subscriber!",
+        });
+      }
 
       res.status(200).json({ subscribed: true });
     } catch (err) {

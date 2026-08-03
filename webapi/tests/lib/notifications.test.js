@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, jest, test } from "@jest/globals";
-import { NotificationType } from "../../lib/models/index.js";
+import { NotificationType, UserNotificationSetting } from "../../lib/models/index.js";
 import {
   queryRows,
   resetTables,
@@ -24,17 +24,25 @@ jest.unstable_mockModule("../../lib/email/mailer.js", () => ({
  * notification primitive every notification-triggering event (likes,
  * comments, and future types) is meant to call. The mailer is mocked so
  * these exercise the gating logic without touching SMTP.
+ *
+ * `seedUser` (tests/helpers/db.js) auto-seeds a USER_NOTIFICATION_SETTINGS
+ * row per active type, mirroring registration - so every test here starts
+ * from real seeded defaults ("like"/"comment" opt-in, everything else
+ * opt-out) rather than an absent row.
  */
 describe("createNotification (lib/notifications.js)", () => {
   /** @type {typeof import("../../lib/notifications.js")} */
   let notifications;
   /** @type {number} */
   let likeTypeId;
+  /** @type {number} */
+  let adminTypeId;
 
   beforeAll(async () => {
     await setupSchema();
     notifications = await import("../../lib/notifications.js");
     likeTypeId = (await NotificationType.findOne({ where: { name: "like" } })).id;
+    adminTypeId = (await NotificationType.findOne({ where: { name: "admin" } })).id;
   });
 
   afterEach(async () => {
@@ -116,8 +124,8 @@ describe("createNotification (lib/notifications.js)", () => {
     expect(rows[0].target).toBe("some-username");
   });
 
-  describe("requireExplicitEmailOptIn: true", () => {
-    test("does not email with no preference row, even when SMTP is enabled", async () => {
+  describe("email gating", () => {
+    test("does not email an opt-in type (like) by default - the seeded row starts emailEnabled: false", async () => {
       mockEmailEnabled.mockReturnValue(true);
       const user = await seedUser({ email: "owner@example.com" });
 
@@ -126,32 +134,18 @@ describe("createNotification (lib/notifications.js)", () => {
         typeName: "like",
         title: "t",
         message: "m",
-        requireExplicitEmailOptIn: true,
       });
 
       expect(mockSendNotificationEmail).not.toHaveBeenCalled();
     });
 
-    test("does not email when the row has emailEnabled: false", async () => {
+    test("emails an opt-in type once the user explicitly enables it", async () => {
       mockEmailEnabled.mockReturnValue(true);
       const user = await seedUser({ email: "owner@example.com" });
-      await seedUserNotificationSetting(user.id, { notificationTypeId: likeTypeId, emailEnabled: false });
-
-      await notifications.createNotification({
-        recipientUserId: user.id,
-        typeName: "like",
-        title: "t",
-        message: "m",
-        requireExplicitEmailOptIn: true,
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: likeTypeId,
+        emailEnabled: true,
       });
-
-      expect(mockSendNotificationEmail).not.toHaveBeenCalled();
-    });
-
-    test("emails when the row has an explicit emailEnabled: true", async () => {
-      mockEmailEnabled.mockReturnValue(true);
-      const user = await seedUser({ email: "owner@example.com" });
-      await seedUserNotificationSetting(user.id, { notificationTypeId: likeTypeId, emailEnabled: true });
 
       await notifications.createNotification({
         recipientUserId: user.id,
@@ -159,7 +153,6 @@ describe("createNotification (lib/notifications.js)", () => {
         title: "Video received a Like",
         message: "m",
         link: "https://example.com/video?v=abc123",
-        requireExplicitEmailOptIn: true,
       });
 
       expect(mockSendNotificationEmail).toHaveBeenCalledWith({
@@ -169,12 +162,47 @@ describe("createNotification (lib/notifications.js)", () => {
         link: "https://example.com/video?v=abc123",
       });
     });
-  });
 
-  describe("requireExplicitEmailOptIn: false (default)", () => {
-    test("emails by default when no preference row exists, mirroring the settings UI default", async () => {
+    test("emails an opt-out type (admin) by default - the seeded row starts emailEnabled: true", async () => {
       mockEmailEnabled.mockReturnValue(true);
       const user = await seedUser({ email: "owner@example.com" });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "admin",
+        title: "t",
+        message: "m",
+      });
+
+      expect(mockSendNotificationEmail).toHaveBeenCalledTimes(1);
+    });
+
+    test("does not email an opt-out type once the user explicitly disables it", async () => {
+      mockEmailEnabled.mockReturnValue(true);
+      const user = await seedUser({ email: "owner@example.com" });
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: adminTypeId,
+        emailEnabled: false,
+      });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "admin",
+        title: "t",
+        message: "m",
+      });
+
+      expect(mockSendNotificationEmail).not.toHaveBeenCalled();
+    });
+
+    test("falls back to the type's seeded default when the settings row is unexpectedly missing", async () => {
+      mockEmailEnabled.mockReturnValue(true);
+      const user = await seedUser({ email: "owner@example.com" });
+      // Every user gets a row per active type automatically; delete it to
+      // exercise the defensive missing-row fallback path directly.
+      await UserNotificationSetting.destroy({
+        where: { userId: user.id, notificationTypeId: likeTypeId },
+      });
 
       await notifications.createNotification({
         recipientUserId: user.id,
@@ -183,13 +211,17 @@ describe("createNotification (lib/notifications.js)", () => {
         message: "m",
       });
 
-      expect(mockSendNotificationEmail).toHaveBeenCalledTimes(1);
+      // "like" defaults to emailEnabled: false, so still no email with no row.
+      expect(mockSendNotificationEmail).not.toHaveBeenCalled();
     });
 
-    test("does not email when the row has an explicit emailEnabled: false", async () => {
-      mockEmailEnabled.mockReturnValue(true);
+    test("never emails when SMTP is disabled, regardless of preferences", async () => {
+      mockEmailEnabled.mockReturnValue(false);
       const user = await seedUser({ email: "owner@example.com" });
-      await seedUserNotificationSetting(user.id, { notificationTypeId: likeTypeId, emailEnabled: false });
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: likeTypeId,
+        emailEnabled: true,
+      });
 
       await notifications.createNotification({
         recipientUserId: user.id,
@@ -200,20 +232,5 @@ describe("createNotification (lib/notifications.js)", () => {
 
       expect(mockSendNotificationEmail).not.toHaveBeenCalled();
     });
-  });
-
-  test("never emails when SMTP is disabled, regardless of preferences", async () => {
-    mockEmailEnabled.mockReturnValue(false);
-    const user = await seedUser({ email: "owner@example.com" });
-    await seedUserNotificationSetting(user.id, { notificationTypeId: likeTypeId, emailEnabled: true });
-
-    await notifications.createNotification({
-      recipientUserId: user.id,
-      typeName: "like",
-      title: "t",
-      message: "m",
-    });
-
-    expect(mockSendNotificationEmail).not.toHaveBeenCalled();
   });
 });
