@@ -74,6 +74,24 @@ a.sidebar-item:hover {
   cursor: default;
 }
 
+.sidebar-subnav {
+  list-style: none;
+  margin: 2px 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-subitem {
+  padding: 6px 12px 6px 44px;
+  font-size: 13px;
+}
+
+.sidebar-collapsed .sidebar-subnav {
+  display: none;
+}
+
 .sidebar-collapsed .sidebar-label {
   display: none;
 }

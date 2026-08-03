@@ -73,6 +73,41 @@
   overflow: hidden;
 }
 
+.user-card-subscribe-btn {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.user-card-subscribe-btn:hover:not(:disabled) {
+  background: var(--accent-border);
+  color: var(--text-h);
+}
+
+.user-card-subscribe-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.user-card-subscribe-btn-active {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.user-card-subscribe-btn-active:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
 .user-card-status-icons {
   display: flex;
   flex-direction: column;
@@ -133,6 +168,11 @@
     flex: 1 1 auto;
     min-width: 0;
     max-width: none;
+  }
+
+  .user-card-subscribe-btn {
+    order: 3;
+    margin-left: auto;
   }
 
   .user-card-status-icons {

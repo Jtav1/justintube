@@ -390,11 +390,12 @@ async function findVisibleUserByUsername(username) {
  * public info.
  *
  * @param {import('sequelize').Model} user User model instance.
- * @param {{isPrivileged?: boolean}} [options] `isPrivileged`: owner-or-admin viewer.
- * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, bannerFilename: string|null, role: string|null, emailVerified?: boolean, uploader?: boolean}}
+ * @param {{isPrivileged?: boolean, subscriberCount?: number}} [options] `isPrivileged`: owner-or-admin
+ *   viewer. `subscriberCount`: total number of subscribers, precomputed by the caller.
+ * @returns {{id: number, username: string, displayName: string|null, bio: string|null, avatarFilename: string|null, bannerFilename: string|null, role: string|null, subscriberCount: number, emailVerified?: boolean, uploader?: boolean}}
  *   Public-safe channel profile payload.
  */
-function serializeChannelUser(user, { isPrivileged = false } = {}) {
+function serializeChannelUser(user, { isPrivileged = false, subscriberCount = 0 } = {}) {
   return {
     id: user.id,
     username: user.username,
@@ -403,6 +404,7 @@ function serializeChannelUser(user, { isPrivileged = false } = {}) {
     avatarFilename: user.avatarFilename ?? null,
     bannerFilename: user.bannerFilename ?? null,
     role: user.Role?.name ?? null,
+    subscriberCount,
     ...(isPrivileged
       ? { emailVerified: Boolean(user.emailVerified), uploader: Boolean(user.uploader) }
       : {}),
@@ -718,12 +720,15 @@ export function createUsersRouter() {
 
       const isSelf = req.user?.id != null && Number(req.user.id) === Number(user.id);
       const isPrivileged = isSelf || isAdmin(req.authRole);
-      const videos = await loadUserPublicVideosPage(user.id, pagination, {
-        isPrivileged,
-        viewerUserId: req.user?.id ?? null,
-        sort: sortResult.sort,
-      });
-      res.status(200).json({ user: serializeChannelUser(user, { isPrivileged }), videos });
+      const [videos, subscriberCount] = await Promise.all([
+        loadUserPublicVideosPage(user.id, pagination, {
+          isPrivileged,
+          viewerUserId: req.user?.id ?? null,
+          sort: sortResult.sort,
+        }),
+        Subscription.count({ where: { subscribedToId: user.id } }),
+      ]);
+      res.status(200).json({ user: serializeChannelUser(user, { isPrivileged, subscriberCount }), videos });
     } catch (err) {
       console.error("getUserChannel failed:", err);
       res.status(500).json({

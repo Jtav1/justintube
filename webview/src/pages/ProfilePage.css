@@ -222,6 +222,19 @@
   display: none;
 }
 
+.profile-subscriber-count {
+  margin: 0;
+  padding-left: 340px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .profile-subscriber-count {
+    padding-left: 0;
+  }
+}
+
 .profile-bio-row {
   display: flex;
   align-items: flex-start;

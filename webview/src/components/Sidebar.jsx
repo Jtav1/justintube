@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, User, ListVideo, ThumbsUp, Star, Users, UsersRound, ShieldCheck, MessageSquareWarning, Braces } from 'lucide-react'
+import { Home, User, ListVideo, ThumbsUp, Star, Users, UsersRound, UserCheck, ShieldCheck, MessageSquareWarning, Braces } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import packageJson from '../../package.json'
@@ -36,6 +36,8 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
     ownProfilePath
     && (location.pathname === ownProfilePath || location.pathname.startsWith(`${ownProfilePath}/`)),
   )
+  const isOnSubscriptionsPath =
+    location.pathname === '/subscriptions' || location.pathname.startsWith('/subscriptions/')
 
   const navItems = [
     { key: 'home', label: 'Home', icon: Home, to: '/', end: true },
@@ -44,7 +46,19 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
     { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : null },
     { key: 'featured', label: 'Featured', icon: Star, to: '/featured' },
     { key: 'users', label: 'Users', icon: UsersRound, to: '/users', isActiveOverride: (isActive) => isActive && !isOwnProfilePath },
-    { key: 'subscriptions', label: 'Subscriptions', icon: Users, to: null },
+    {
+      key: 'subscriptions',
+      label: 'Subscriptions',
+      icon: Users,
+      to: user ? '/subscriptions' : null,
+      children: isOnSubscriptionsPath
+        ? [
+            { key: 'subscriptions-new', label: 'New Content', to: user ? '/subscriptions' : null, end: true },
+            { key: 'subscriptions-mine', label: 'My Subscriptions', to: user ? '/subscriptions/mine' : null },
+          ]
+        : null,
+    },
+    { key: 'subscribers', label: 'Subscribers', icon: UserCheck, to: user ? '/subscribers' : null },
     ...(user?.role === 'admin'
       ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
       : []),
@@ -59,7 +73,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
       style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}
     >
       <ul className="sidebar-nav">
-        {navItems.map(({ key, label, icon: Icon, to, end, isActiveOverride }) => (
+        {navItems.map(({ key, label, icon: Icon, to, end, isActiveOverride, children }) => (
           <li key={key}>
             {to ? (
               <NavLink
@@ -79,6 +93,30 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
                 <Icon size={20} />
                 <span className="sidebar-label">{label}</span>
               </span>
+            )}
+            {children && (
+              <ul className="sidebar-subnav">
+                {children.map((child) => (
+                  <li key={child.key}>
+                    {child.to ? (
+                      <NavLink
+                        to={child.to}
+                        end={Boolean(child.end)}
+                        className={({ isActive }) =>
+                          `sidebar-item sidebar-subitem${isActive ? ' sidebar-item-active' : ''}`
+                        }
+                        onClick={onNavigate}
+                      >
+                        <span className="sidebar-label">{child.label}</span>
+                      </NavLink>
+                    ) : (
+                      <span className="sidebar-item sidebar-subitem sidebar-item-placeholder">
+                        <span className="sidebar-label">{child.label}</span>
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </li>
         ))}

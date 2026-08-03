@@ -211,6 +211,16 @@ export async function recordView(id) {
 }
 
 /**
+ * Lists public videos from channels the current user is subscribed to,
+ * newest first. Requires authentication.
+ * @returns {Promise<{items: object[]}>}
+ */
+export async function getSubscriptionFeed() {
+  const res = await apiClient.get('/api/v1/feed/subscriptions')
+  return res.data
+}
+
+/**
  * Lists every comment (and reply) on a video, oldest first. Note: unlike
  * `getVideo`, this keys on the video's numeric id, not its public `videoId`.
  * @param {number} id Numeric video id.
