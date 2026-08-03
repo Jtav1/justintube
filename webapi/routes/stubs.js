@@ -62,8 +62,6 @@ export function registerStubRoutes(router) {
   // Me / library / settings
   r("get", "/me/history", "listMyHistory");
   r("delete", "/me/history", "clearMyHistory");
-  r("get", "/me/like-history", "listMyLikeHistory");
-  r("get", "/me/videos/likes-received", "listLikesReceived");
 
   // Me / stream key (OBS / RTMP ingest credential)
   r("get", "/me/stream-key", "getMyStreamKey");

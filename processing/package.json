@@ -6,7 +6,7 @@
   "author": "Justin Tavares",
   "type": "module",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=20.6.0"
   },
   "main": "index.js",
   "scripts": {

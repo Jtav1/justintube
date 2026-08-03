@@ -17,14 +17,18 @@ Shared media layout (same volume as the Web API in compose):
 
 Default listen port: `PORT` (3001).
 
+## Requirements
+
+- Node.js **≥ 24** (see `package.json` `engines` — stricter than `webapi/`'s ≥20.6)
+- Docker for `dev` / `start`
+- A reachable Redis for transcode routes
+
 ## Setup
 
 ```bash
 cp .env.example .env
 npm install
 ```
-
-Requires Docker for `dev` / `start`, and a reachable Redis for transcode routes.
 
 Callbacks to the Web API require:
 
@@ -53,9 +57,15 @@ Compose services: `redis` + `processing` (shared `media-data` volume at `/media`
 
 ## API
 
+Every route below `/health` requires `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
+(see `lib/require-internal-token.js`) — this service is meant to be reached only
+by `webapi` over the private Docker network; the token is defense-in-depth for
+the case where that boundary doesn't hold.
+
 ### `GET /health`
 
-Liveness probe. Includes whether a Redis-backed queue is configured.
+Liveness probe. Includes whether a Redis-backed queue is configured. Not
+gated by the internal token.
 
 ### `POST /download`
 
@@ -63,6 +73,7 @@ JSON body `{ "url": "https://..." }`
 
 ```bash
 curl -X POST http://localhost:3001/download \
+  -H "Authorization: Bearer $INTERNAL_SERVICE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://www.youtube.com/watch?v=…"}'
 ```
@@ -120,6 +131,7 @@ Batch body (preferred; used by the Web API after upload):
 
 ```bash
 curl -X POST http://localhost:3001/transcode \
+  -H "Authorization: Bearer $INTERNAL_SERVICE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"filename":"…mp4","jobs":[…]}'
 ```

@@ -2,7 +2,7 @@
 
 Express 5 application API for Justintube. Serves `/api/v1` (browser + API-key clients), `/internal` (processing callbacks), OpenAPI docs, and health checks.
 
-Conventions: [docs/code-standards.md](../docs/code-standards.md). Progress: [docs/API_Checklist.md](../docs/API_Checklist.md).
+Conventions: [docs/code-standards.md](../docs/code-standards.md). Progress: [docs/api-checklist.md](../docs/api-checklist.md).
 
 ## Requirements
 
