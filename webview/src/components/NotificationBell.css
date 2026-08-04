@@ -17,7 +17,8 @@
   cursor: pointer;
 }
 
-.notification-bell-toggle:hover {
+.notification-bell-toggle:hover,
+.notification-bell-toggle[aria-expanded='true'] {
   background: var(--accent-bg);
 }
 
@@ -33,13 +34,14 @@
 }
 
 .notification-bell-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  /* position: fixed + top/right/width are set inline in NotificationBell.jsx,
+     computed and clamped from the toggle button's screen position - this
+     dropdown is portaled to <body> so it stays fully within the viewport
+     instead of overflowing off-screen when the toggle isn't flush with the
+     viewport's right edge (e.g. mobile layouts, where other topbar icons
+     sit to its right) or when the viewport is resized while it's open. */
   display: flex;
   flex-direction: column;
-  width: 340px;
-  max-width: calc(100vw - 24px);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
