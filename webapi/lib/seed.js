@@ -39,7 +39,15 @@ const DEFAULT_ROLES = [
  * Likes/comments are opt-in (off until the user turns them on); everything
  * else is opt-out (on until the user turns it off).
  *
- * @type {Array<{name: string, description: string, defaultEnabled: boolean, defaultEmailEnabled: boolean}>}
+ * `inAppLocked: true` marks a type whose in-app delivery can't be turned off
+ * by the user - moderation actions, account status changes, and sitewide
+ * admin broadcasts are important enough that they must always reach the
+ * in-app notification list, even though the user can still opt out of the
+ * email copy. `createNotification` (lib/notifications.js) and the
+ * notification-preferences routes both read this flag rather than
+ * hardcoding the type list twice.
+ *
+ * @type {Array<{name: string, description: string, defaultEnabled: boolean, defaultEmailEnabled: boolean, inAppLocked?: boolean}>}
  */
 const DEFAULT_NOTIFICATION_TYPES = [
   {
@@ -66,18 +74,21 @@ const DEFAULT_NOTIFICATION_TYPES = [
     description: "Moderator actions",
     defaultEnabled: true,
     defaultEmailEnabled: true,
+    inAppLocked: true,
   },
   {
     name: "account",
     description: "Account status changes",
     defaultEnabled: true,
     defaultEmailEnabled: true,
+    inAppLocked: true,
   },
   {
     name: "admin",
     description: "Sitewide alerts & messages",
     defaultEnabled: true,
     defaultEmailEnabled: true,
+    inAppLocked: true,
   },
 ];
 
@@ -103,6 +114,18 @@ export function getNotificationTypeDefaults(typeName) {
     return FALLBACK_NOTIFICATION_DEFAULTS;
   }
   return { enabled: entry.defaultEnabled, emailEnabled: entry.defaultEmailEnabled };
+}
+
+/**
+ * Returns whether a notification type's in-app delivery is locked "on" -
+ * users can still opt out of its email copy, but the in-app notification
+ * always gets created regardless of their stored `enabled` preference.
+ *
+ * @param {string} typeName NOTIFICATION_TYPES.name.
+ * @returns {boolean} True when in-app delivery for this type can't be disabled.
+ */
+export function isNotificationTypeInAppLocked(typeName) {
+  return DEFAULT_NOTIFICATION_TYPES.some((type) => type.name === typeName && type.inAppLocked === true);
 }
 
 /**

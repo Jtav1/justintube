@@ -5,7 +5,7 @@ import {
   expect,
   test,
 } from "@jest/globals";
-import { Role } from "../../lib/models/index.js";
+import { NotificationType, Role } from "../../lib/models/index.js";
 import { createTestClient } from "../helpers/app.js";
 import {
   queryRows,
@@ -15,6 +15,7 @@ import {
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedUserNotificationSetting,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -154,6 +155,11 @@ describe("Video comments endpoints", () => {
       const commenter = await seedUserWithRoleAndKey("viewer", "comment-notify-commenter-key");
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id, { title: "Notify Me", visibility: "public" });
+
+      // "comment" is opt-in (off by default) - explicitly enable in-app
+      // delivery for the owner so this test exercises the "opted in" path.
+      const commentTypeId = (await NotificationType.findOne({ where: { name: "comment" } })).id;
+      await seedUserNotificationSetting(owner.id, { notificationTypeId: commentTypeId, enabled: true });
 
       const ownerNotifications = () =>
         queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", { userId: owner.id });

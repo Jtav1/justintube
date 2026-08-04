@@ -104,3 +104,15 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+.notification-settings-switch input:disabled + .notification-settings-switch-track {
+  opacity: 0.5;
+}
+
+.notification-settings-switch:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.notification-settings-switch-group:has(input:disabled) {
+  cursor: not-allowed;
+}

@@ -6,7 +6,7 @@ import {
   UserNotificationSetting,
   sequelize,
 } from "../lib/models/index.js";
-import { getNotificationTypeDefaults } from "../lib/seed.js";
+import { getNotificationTypeDefaults, isNotificationTypeInAppLocked } from "../lib/seed.js";
 
 /**
  * Loads all active notification types, ordered by id.
@@ -30,7 +30,7 @@ async function loadActiveNotificationTypes() {
  * for a row somehow being missing, not the normal path.
  *
  * @param {number} userId Id of the authenticated user.
- * @returns {Promise<{preferences: {notificationType: string, description: string|null, enabled: boolean, emailEnabled: boolean}[]}>}
+ * @returns {Promise<{preferences: {notificationType: string, description: string|null, enabled: boolean, emailEnabled: boolean, enabledLocked: boolean}[]}>}
  *   The preferences payload.
  */
 async function buildPreferencesPayload(userId) {
@@ -42,11 +42,13 @@ async function buildPreferencesPayload(userId) {
     preferences: types.map((type) => {
       const setting = settingByTypeId.get(type.id);
       const defaults = getNotificationTypeDefaults(type.name);
+      const enabledLocked = isNotificationTypeInAppLocked(type.name);
       return {
         notificationType: type.name,
         description: type.description,
-        enabled: setting ? Boolean(setting.enabled) : defaults.enabled,
+        enabled: enabledLocked ? true : setting ? Boolean(setting.enabled) : defaults.enabled,
         emailEnabled: setting ? Boolean(setting.emailEnabled) : defaults.emailEnabled,
+        enabledLocked,
       };
     }),
   };
@@ -91,6 +93,12 @@ function parsePreferencesUpdate(body, typeIdByName) {
       return {
         ok: false,
         message: `enabled must be a boolean for notificationType "${notificationType}".`,
+      };
+    }
+    if (hasEnabled && item.enabled === false && isNotificationTypeInAppLocked(notificationType)) {
+      return {
+        ok: false,
+        message: `In-app notifications for "${notificationType}" cannot be disabled.`,
       };
     }
     if (hasEmailEnabled && typeof item.emailEnabled !== "boolean") {
@@ -153,7 +161,10 @@ export function createNotificationPreferencesRouter() {
    *       - bearerApiKey: []
    *     responses:
    *       200:
-   *         description: Per-type enabled/emailEnabled flags (default to true for types with no explicit row)
+   *         description: >
+   *           Per-type enabled/emailEnabled flags (default to true for types with no explicit row).
+   *           `enabledLocked: true` marks types whose in-app delivery can't be disabled (moderation,
+   *           account, admin) - `enabled` always reads true for those regardless of any stored setting.
    *       401:
    *         description: Not authenticated
    *
@@ -207,7 +218,7 @@ export function createNotificationPreferencesRouter() {
    *                   description: At least one of enabled/emailEnabled must be present.
    *                   properties:
    *                     notificationType: { type: string }
-   *                     enabled: { type: boolean, description: "In-app/tray delivery" }
+   *                     enabled: { type: boolean, description: "In-app/tray delivery. Cannot be set to false for enabledLocked types (moderation, account, admin)." }
    *                     emailEnabled: { type: boolean, description: "Email delivery" }
    *     responses:
    *       200:
