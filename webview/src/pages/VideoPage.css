@@ -12,6 +12,29 @@
   color: var(--text);
 }
 
+.video-page-hidden-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px;
+  color: var(--text);
+}
+
+.video-page-hidden-notice button {
+  font: inherit;
+  padding: 8px 16px;
+  border: 1px solid var(--accent-border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.video-page-hidden-notice button:hover {
+  background: var(--accent-bg);
+}
+
 .video-page-layout {
   display: flex;
   align-items: stretch;
