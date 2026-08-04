@@ -344,11 +344,11 @@ export async function seedVideoLike(originalUploadId, overrides = {}) {
 }
 
 /**
- * Inserts a USER_VIEW_HISTORY row (a single watch event) for an existing
- * upload, applying defaults for any omitted field. No unique constraint on
- * this table - callers can seed multiple rows for the same
- * originalUploadId/userId pair to simulate repeat views (pass distinct
- * `createdAt` overrides to control ordering).
+ * Inserts (or, on a repeat originalUploadId/userId pair, updates) a
+ * USER_VIEW_HISTORY row for an existing upload, applying defaults for any
+ * omitted field. There is a unique constraint on (userId, originalUploadId) -
+ * pass distinct `updatedAt` overrides to control ordering across rows instead
+ * of seeding the same pair twice.
  *
  * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
  * @param {object} [overrides] Partial column values to override the defaults.
@@ -362,7 +362,12 @@ export async function seedUserViewHistory(originalUploadId, overrides = {}) {
     ...overrides,
   };
 
-  const row = await UserViewHistory.create(record);
+  const existing = await UserViewHistory.findOne({
+    where: { originalUploadId: record.originalUploadId, userId: record.userId },
+  });
+  const row = existing
+    ? await existing.update(record)
+    : await UserViewHistory.create(record);
   return asSeedResult(row, record);
 }
 

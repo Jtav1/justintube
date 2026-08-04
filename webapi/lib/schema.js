@@ -620,6 +620,76 @@ async function migrateOriginalUploadVideoId() {
 }
 
 /**
+ * Migrates `USER_VIEW_HISTORY` from "one row per view" to "one row per
+ * (user, upload)": adds the new `updated_at` column (backfilled from
+ * `created_at`), collapses any pre-existing repeat-view rows down to the
+ * most recent row per (user_id, original_upload_id) pair, drops the old
+ * non-unique `idx_user_view_history_user_created` index if present, and adds
+ * the `uq_user_view_history_user_upload` unique index the model now expects.
+ * Guarded/idempotent like the other `migrate*` helpers — safe to run on every
+ * boot regardless of migration state.
+ *
+ * @returns {Promise<void>} Resolves once the table matches the current model.
+ */
+async function migrateUserViewHistoryDedup() {
+  const TABLE = "USER_VIEW_HISTORY";
+  if (!(await tableExists(TABLE))) {
+    return;
+  }
+
+  if (!(await columnExists(TABLE, "updated_at"))) {
+    const ddl = DB_CLIENT === "sqlite" ? "`updated_at` DATETIME" : "`updated_at` DATETIME NULL";
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
+    await sequelize.query(
+      `UPDATE \`${TABLE}\` SET \`updated_at\` = \`created_at\` WHERE \`updated_at\` IS NULL`,
+    );
+    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.updated_at`);
+  }
+
+  if (!(await indexExists(TABLE, "uq_user_view_history_user_upload"))) {
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query(`
+        DELETE FROM \`${TABLE}\`
+         WHERE \`id\` NOT IN (
+           SELECT MAX(\`id\`) FROM \`${TABLE}\` GROUP BY \`user_id\`, \`original_upload_id\`
+         )
+      `);
+    } else {
+      await sequelize.query(`
+        DELETE t1 FROM \`${TABLE}\` t1
+        INNER JOIN \`${TABLE}\` t2
+                ON t1.\`user_id\` = t2.\`user_id\`
+               AND t1.\`original_upload_id\` = t2.\`original_upload_id\`
+               AND t1.\`id\` < t2.\`id\`
+      `);
+    }
+    console.log(`[api]: deduplicated ${TABLE} rows ahead of unique index creation`);
+
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query(
+        `CREATE UNIQUE INDEX \`uq_user_view_history_user_upload\` ON \`${TABLE}\` (\`user_id\`, \`original_upload_id\`)`,
+      );
+    } else {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` ADD UNIQUE INDEX \`uq_user_view_history_user_upload\` (\`user_id\`, \`original_upload_id\`)`,
+      );
+    }
+    console.log(`[api]: created index uq_user_view_history_user_upload on ${TABLE}`);
+  }
+
+  if (await indexExists(TABLE, "idx_user_view_history_user_created")) {
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query("DROP INDEX `idx_user_view_history_user_created`");
+    } else {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` DROP INDEX \`idx_user_view_history_user_created\``,
+      );
+    }
+    console.log(`[api]: dropped index idx_user_view_history_user_created on ${TABLE}`);
+  }
+}
+
+/**
  * Migrates both `USER_NOTIFICATION_SETTINGS` and `NOTIFICATIONS` off their
  * legacy free-form/constrained `notification_type` string columns onto a real
  * `notification_type_id` foreign key referencing NOTIFICATION_TYPES. Runs
@@ -654,6 +724,7 @@ export async function ensureSchema() {
   console.log(`[api]: initializing ${DB_CLIENT} database`);
 
   await migrateOriginalUploadVideoId();
+  await migrateUserViewHistoryDedup();
   await migrateNotificationTypeForeignKeys();
 
   if (DB_CLIENT === "sqlite") {

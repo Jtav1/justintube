@@ -567,7 +567,7 @@ describe("me / history routes", () => {
     await seedMetadata(older.id, { title: "Watched older", visibility: "public" });
     await seedUserViewHistory(older.id, {
       userId: user.id,
-      createdAt: new Date(Date.now() - 60_000),
+      updatedAt: new Date(Date.now() - 60_000),
     });
 
     const newer = await seedUpload({ userId: user.id });
@@ -606,23 +606,24 @@ describe("me / history routes", () => {
     expect(invalid.body.error).toBe("invalid_query");
   });
 
-  test("a repeat-viewed video produces two separate history items with distinct historyIds", async () => {
+  test("a repeat-viewed video upserts a single history row with a stable historyId", async () => {
     const { user, get } = await seedAuthedClient("repeat");
 
     const upload = await seedUpload({ userId: user.id });
     await seedMetadata(upload.id, { title: "Rewatched video", visibility: "public" });
-    await seedUserViewHistory(upload.id, {
+    const firstView = await seedUserViewHistory(upload.id, {
       userId: user.id,
-      createdAt: new Date(Date.now() - 60_000),
+      updatedAt: new Date(Date.now() - 60_000),
     });
-    await seedUserViewHistory(upload.id, { userId: user.id });
+    const secondView = await seedUserViewHistory(upload.id, { userId: user.id });
+
+    expect(secondView.id).toBe(firstView.id);
 
     const res = await get("/api/v1/me/history");
     expect(res.status).toBe(200);
-    expect(res.body.totalHits).toBe(2);
-    expect(res.body.items).toHaveLength(2);
-    expect(res.body.items[0].id).toBe(res.body.items[1].id);
-    expect(res.body.items[0].historyId).not.toBe(res.body.items[1].historyId);
+    expect(res.body.totalHits).toBe(1);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].historyId).toBe(firstView.id);
   });
 
   test("GET /me/history excludes a video the owner later made private", async () => {

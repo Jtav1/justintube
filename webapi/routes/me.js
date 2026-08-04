@@ -642,10 +642,10 @@ export function createMeRouter() {
 
   /**
    * Returns videos the authenticated user has viewed (USER_VIEW_HISTORY
-   * rows), most-recently-viewed first, paginated. Repeat views of the same
-   * video each produce their own row/item (no dedup), each with a distinct
-   * `historyId` - the same video can legitimately appear more than once.
-   * Only includes videos the user can currently see, per {@link canViewVideo}
+   * rows), most-recently-viewed first, paginated. There is at most one row
+   * per (user, video) pair - repeat views upsert the existing row's
+   * `updatedAt` rather than adding another item, so `historyId` stays stable
+   * across rewatches. Only includes videos the user can currently see, per {@link canViewVideo}
    * (same visibility rules as listMyLikes). Deleted videos never appear -
    * their history rows are removed automatically via ON DELETE CASCADE.
    * GET /api/v1/me/history
@@ -730,7 +730,7 @@ export function createMeRouter() {
             ],
           },
         ],
-        order: [["createdAt", "DESC"]],
+        order: [["updatedAt", "DESC"]],
       });
 
       const visibleHistory = history.filter((row) => {
@@ -758,7 +758,7 @@ export function createMeRouter() {
             ...reactionCountsByUploadId.get(row.OriginalUpload.id),
           }),
           historyId: row.id,
-          viewedAt: row.createdAt,
+          viewedAt: row.updatedAt,
         })),
         page,
         limit,
@@ -798,8 +798,9 @@ export function createMeRouter() {
 
   /**
    * Removes a single entry from the authenticated user's watch history, by
-   * the history entry's own id (not the video's id - the same video can have
-   * multiple history entries from repeat views).
+   * the history entry's own id (not the video's id). Since there is at most
+   * one history row per (user, video) pair, this removes that video from the
+   * user's history entirely - a later rewatch inserts a fresh row/historyId.
    * DELETE /api/v1/me/history/:id
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *

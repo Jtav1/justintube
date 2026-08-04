@@ -2602,7 +2602,8 @@ export function createVideosRouter() {
   /**
    * POST /videos/:id/view — recordVideoView
    * Auth: optional. Requires canView. Increments viewCount for every viewer; when
-   * authenticated, also inserts a USER_VIEW_HISTORY row for the caller.
+   * authenticated, also upserts the caller's USER_VIEW_HISTORY row for this video
+   * (one row per user/video pair - repeat views just bump `updatedAt`).
    *
    * @openapi
    * /api/v1/videos/{id}/view:
@@ -2649,9 +2650,10 @@ export function createVideosRouter() {
       await metadata.reload();
 
       if (req.user) {
-        await UserViewHistory.create({
+        await UserViewHistory.upsert({
           originalUploadId: upload.id,
           userId: req.user.id,
+          updatedAt: sequelize.literal("CURRENT_TIMESTAMP"),
         });
       }
 
