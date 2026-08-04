@@ -21,6 +21,7 @@ import {
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedUserViewHistory,
   seedVideoAccess,
   seedVideoThumbnail,
   setupSchema,
@@ -1567,6 +1568,28 @@ describe("Video discovery and metadata endpoints", () => {
       const titles = res.body.items.map((item) => item.title);
       expect(titles).toContain("From channel");
       expect(titles).not.toContain("Private channel clip");
+    });
+
+    test("excludes videos already in the caller's watch history", async () => {
+      const viewer = await seedUserWithRoleAndKey("viewer", "feed-key-watched");
+      const channel = await seedUser({ username: "channel_watched" });
+      await seedSubscription(viewer.id, channel.id);
+
+      const watched = await seedUpload({ userId: channel.id });
+      await seedMetadata(watched.id, { title: "Already watched", visibility: "public" });
+      await seedUserViewHistory(watched.id, { userId: viewer.id });
+
+      const unwatched = await seedUpload({ userId: channel.id });
+      await seedMetadata(unwatched.id, { title: "Not watched yet", visibility: "public" });
+
+      const res = await client
+        .get("/api/v1/feed/subscriptions")
+        .set("Authorization", "Bearer feed-key-watched");
+
+      expect(res.status).toBe(200);
+      const titles = res.body.items.map((item) => item.title);
+      expect(titles).toContain("Not watched yet");
+      expect(titles).not.toContain("Already watched");
     });
   });
 });

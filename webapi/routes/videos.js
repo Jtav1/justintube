@@ -203,7 +203,7 @@ const MAX_COMMENT_LENGTH = 2000;
  * @param {unknown} raw Route parameter value.
  * @returns {number|null} Parsed id, or null when invalid.
  */
-function parsePositiveInt(raw) {
+export function parsePositiveInt(raw) {
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) {
     return null;
@@ -3351,20 +3351,21 @@ export function createVideosRouter() {
 
   /**
    * GET /feed/subscriptions — feedSubscriptions
-   * Auth: required. Public videos from subscribed channels, newest first.
+   * Auth: required. Public videos from subscribed channels that the caller
+   * hasn't already watched (per USER_VIEW_HISTORY), newest first.
    *
    * @openapi
    * /api/v1/feed/subscriptions:
    *   get:
    *     tags: [Videos]
-   *     summary: Subscription feed of public videos
+   *     summary: Subscription feed of new (unwatched) public videos
    *     operationId: feedSubscriptions
    *     security:
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     responses:
    *       "200":
-   *         description: Subscription feed
+   *         description: Subscription feed, excluding videos already in the caller's watch history
    *       "401":
    *         description: Unauthorized
    */
@@ -3387,7 +3388,17 @@ export function createVideosRouter() {
         ],
         viewerUserId: req.user.id,
       });
-      res.status(200).json({ items });
+
+      const uploadIds = items.map((item) => item.id);
+      const watchedRows = uploadIds.length
+        ? await UserViewHistory.findAll({
+            where: { userId: req.user.id, originalUploadId: { [Op.in]: uploadIds } },
+            attributes: ["originalUploadId"],
+          })
+        : [];
+      const watchedIds = new Set(watchedRows.map((row) => row.originalUploadId));
+
+      res.status(200).json({ items: items.filter((item) => !watchedIds.has(item.id)) });
     } catch (err) {
       console.error("feedSubscriptions failed:", err);
       res.status(500).json({

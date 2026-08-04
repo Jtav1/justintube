@@ -2,11 +2,13 @@ import { afterEach, beforeAll, describe, expect, test } from "@jest/globals";
 import { User } from "../../lib/models/index.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
+  queryRows,
   resetTables,
   seedMetadata,
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedUserViewHistory,
   seedVideoAccess,
   seedVideoLike,
   seedVideoThumbnail,
@@ -495,5 +497,235 @@ describe("me / videos and likes routes", () => {
     const invalid = await agent.get("/api/v1/me/likes").query({ limit: 999 });
     expect(invalid.status).toBe(400);
     expect(invalid.body.error).toBe("invalid_query");
+  });
+});
+
+describe("me / history routes", () => {
+  // Uses seedUser + seedUserApiKey + Bearer auth throughout (rather than
+  // real POST /auth/register calls like the describe blocks above) - this
+  // block registers/deletes enough times that going through the real,
+  // rate-limited registration endpoint would trip authCredentialLimiter
+  // (routes/auth.js, max 20/min, a module-level singleton shared across every
+  // createApp() in this test file). Bearer auth also skips CSRF entirely, so
+  // no fetchCsrf/X-CSRF-Token dance is needed for the DELETE requests here.
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  /**
+   * Seeds a user with an API key and returns a supertest client pre-set with
+   * the Bearer Authorization header, so callers can chain `.get(...)` etc.
+   * directly without repeating the header on every request.
+   *
+   * @param {string} suffix Unique-ish suffix for the username/email/key.
+   * @returns {Promise<{user: object, client: import('supertest').SuperTest}>}
+   */
+  async function seedAuthedClient(suffix) {
+    const user = await seedUser({ username: `history_${suffix}`, email: `history_${suffix}@example.com` });
+    const rawKey = `history-test-key-${suffix}`;
+    await seedUserApiKey(user.id, rawKey);
+    const client = createTestClient();
+    return {
+      user,
+      get: (url) => client.get(url).set("Authorization", `Bearer ${rawKey}`),
+      delete: (url) => client.delete(url).set("Authorization", `Bearer ${rawKey}`),
+    };
+  }
+
+  test("unauthenticated GET /me/history returns 401", async () => {
+    const client = createTestClient();
+    const res = await client.get("/api/v1/me/history");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("unauthorized");
+  });
+
+  test("unauthenticated DELETE /me/history returns 403 (CSRF check runs before auth for cookie-less requests)", async () => {
+    const client = createTestClient();
+    const res = await client.delete("/api/v1/me/history");
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("csrf_invalid");
+  });
+
+  test("GET /me/history returns an empty list when the user has no history", async () => {
+    const { get } = await seedAuthedClient("empty");
+
+    const res = await get("/api/v1/me/history");
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(res.body.totalHits).toBe(0);
+    expect(res.body.totalPages).toBe(0);
+  });
+
+  test("GET /me/history returns viewed videos newest-viewed first", async () => {
+    const { user, get } = await seedAuthedClient("order");
+
+    const older = await seedUpload({ userId: user.id });
+    await seedMetadata(older.id, { title: "Watched older", visibility: "public" });
+    await seedUserViewHistory(older.id, {
+      userId: user.id,
+      createdAt: new Date(Date.now() - 60_000),
+    });
+
+    const newer = await seedUpload({ userId: user.id });
+    await seedMetadata(newer.id, { title: "Watched newer", visibility: "public" });
+    await seedUserViewHistory(newer.id, { userId: user.id });
+
+    const res = await get("/api/v1/me/history");
+    expect(res.status).toBe(200);
+    expect(res.body.totalHits).toBe(2);
+    expect(res.body.items.map((item) => item.title)).toEqual(["Watched newer", "Watched older"]);
+    expect(typeof res.body.items[0].historyId).toBe("number");
+    expect(res.body.items[0].viewedAt).toBeTruthy();
+  });
+
+  test("GET /me/history paginates with page/limit and rejects limit >= 100", async () => {
+    const { user, get } = await seedAuthedClient("paginate");
+
+    for (let i = 0; i < 3; i += 1) {
+      const upload = await seedUpload({ userId: user.id });
+      await seedMetadata(upload.id, { title: `Watched ${i}`, visibility: "public" });
+      await seedUserViewHistory(upload.id, { userId: user.id });
+    }
+
+    const page1 = await get("/api/v1/me/history").query({ page: 1, limit: 2 });
+    expect(page1.status).toBe(200);
+    expect(page1.body.items).toHaveLength(2);
+    expect(page1.body.totalHits).toBe(3);
+    expect(page1.body.totalPages).toBe(2);
+
+    const page2 = await get("/api/v1/me/history").query({ page: 2, limit: 2 });
+    expect(page2.status).toBe(200);
+    expect(page2.body.items).toHaveLength(1);
+
+    const invalid = await get("/api/v1/me/history").query({ limit: 100 });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toBe("invalid_query");
+  });
+
+  test("a repeat-viewed video produces two separate history items with distinct historyIds", async () => {
+    const { user, get } = await seedAuthedClient("repeat");
+
+    const upload = await seedUpload({ userId: user.id });
+    await seedMetadata(upload.id, { title: "Rewatched video", visibility: "public" });
+    await seedUserViewHistory(upload.id, {
+      userId: user.id,
+      createdAt: new Date(Date.now() - 60_000),
+    });
+    await seedUserViewHistory(upload.id, { userId: user.id });
+
+    const res = await get("/api/v1/me/history");
+    expect(res.status).toBe(200);
+    expect(res.body.totalHits).toBe(2);
+    expect(res.body.items).toHaveLength(2);
+    expect(res.body.items[0].id).toBe(res.body.items[1].id);
+    expect(res.body.items[0].historyId).not.toBe(res.body.items[1].historyId);
+  });
+
+  test("GET /me/history excludes a video the owner later made private", async () => {
+    const { user, get } = await seedAuthedClient("visibility");
+    const other = await seedUser({
+      username: "history_visibility_other",
+      email: "history_visibility_other@example.com",
+    });
+
+    const madePrivate = await seedUpload({ userId: other.id });
+    await seedMetadata(madePrivate.id, { title: "Now private", visibility: "private" });
+    await seedUserViewHistory(madePrivate.id, { userId: user.id });
+
+    const stillPublic = await seedUpload({ userId: other.id });
+    await seedMetadata(stillPublic.id, { title: "Still public", visibility: "public" });
+    await seedUserViewHistory(stillPublic.id, { userId: user.id });
+
+    const res = await get("/api/v1/me/history");
+    expect(res.status).toBe(200);
+    expect(res.body.totalHits).toBe(1);
+    expect(res.body.items.map((item) => item.title)).toEqual(["Still public"]);
+  });
+
+  test("DELETE /me/history/:id removes the row and it no longer appears in the list", async () => {
+    const { user, get, delete: del } = await seedAuthedClient("delete_one");
+
+    const upload = await seedUpload({ userId: user.id });
+    await seedMetadata(upload.id, { title: "To remove", visibility: "public" });
+    const entry = await seedUserViewHistory(upload.id, { userId: user.id });
+
+    const deleteRes = await del(`/api/v1/me/history/${entry.id}`);
+    expect(deleteRes.status).toBe(204);
+    expect(deleteRes.body).toEqual({});
+
+    const res = await get("/api/v1/me/history");
+    expect(res.body.items).toEqual([]);
+  });
+
+  test("DELETE /me/history/:id owned by another user returns 404 and leaves the row intact", async () => {
+    const owner = await seedUser({
+      username: "history_delete_owner",
+      email: "history_delete_owner@example.com",
+    });
+    const upload = await seedUpload({ userId: owner.id });
+    await seedMetadata(upload.id, { title: "Owned by someone else", visibility: "public" });
+    const entry = await seedUserViewHistory(upload.id, { userId: owner.id });
+
+    const { delete: del } = await seedAuthedClient("delete_attacker");
+
+    const res = await del(`/api/v1/me/history/${entry.id}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("not_found");
+
+    const rows = await queryRows("SELECT * FROM USER_VIEW_HISTORY WHERE id = :id", {
+      id: entry.id,
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  test("DELETE /me/history/:id with a non-numeric id returns 400", async () => {
+    const { delete: del } = await seedAuthedClient("delete_badid");
+
+    const res = await del("/api/v1/me/history/abc");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_id");
+  });
+
+  test("DELETE /me/history/:id for a nonexistent id returns 404", async () => {
+    const { delete: del } = await seedAuthedClient("delete_missing");
+
+    const res = await del("/api/v1/me/history/999999");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("not_found");
+  });
+
+  test("DELETE /me/history clears every row for the caller only", async () => {
+    const bob = await seedUser({
+      username: "history_clear_bob",
+      email: "history_clear_bob@example.com",
+    });
+    const bobUpload = await seedUpload({ userId: bob.id });
+    await seedMetadata(bobUpload.id, { title: "Bob watched", visibility: "public" });
+    await seedUserViewHistory(bobUpload.id, { userId: bob.id });
+
+    const { user, get, delete: del } = await seedAuthedClient("clear_alice");
+
+    const aliceUpload1 = await seedUpload({ userId: user.id });
+    await seedMetadata(aliceUpload1.id, { title: "Alice watched 1", visibility: "public" });
+    await seedUserViewHistory(aliceUpload1.id, { userId: user.id });
+
+    const aliceUpload2 = await seedUpload({ userId: user.id });
+    await seedMetadata(aliceUpload2.id, { title: "Alice watched 2", visibility: "public" });
+    await seedUserViewHistory(aliceUpload2.id, { userId: user.id });
+
+    const clear = await del("/api/v1/me/history");
+    expect(clear.status).toBe(204);
+
+    const aliceHistory = await get("/api/v1/me/history");
+    expect(aliceHistory.body.items).toEqual([]);
+
+    const bobRows = await queryRows("SELECT * FROM USER_VIEW_HISTORY WHERE user_id = :userId", {
+      userId: bob.id,
+    });
+    expect(bobRows).toHaveLength(1);
   });
 });

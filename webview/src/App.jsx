@@ -20,6 +20,7 @@ import SubscriptionsPage from './pages/UserSubscriptions.jsx'
 import MySubscriptionsPage from './pages/MySubscriptions.jsx'
 import SubscribersPage from './pages/Subscribers.jsx'
 import LikedVideosPage from './pages/LikedVideos.jsx'
+import HistoryPage from './pages/History.jsx'
 import NotificationsPage from './pages/NotificationsPage.jsx'
 
 function App() {
@@ -40,6 +41,7 @@ function App() {
         <Route path="/users/:username/playlists" element={<UserPlaylistsPage />} />
         <Route path="/playlists" element={<PlaylistsPage />} />
         <Route path="/liked/:username" element={<LikedVideosPage />} />
+        <Route path="/history" element={<HistoryPage />} />
         <Route path="/featured" element={<FeaturedVideosPage />} />
         <Route path="/users" element={<UsersListPage />} />
         <Route path="/search" element={<SearchResultsPage />} />

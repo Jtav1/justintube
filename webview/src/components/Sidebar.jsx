@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, User, ListVideo, ThumbsUp, Star, Users, UsersRound, UserCheck, ShieldCheck, MessageSquareWarning, Braces } from 'lucide-react'
+import { Home, User, ListVideo, ThumbsUp, History, Star, Users, UsersRound, UserCheck, ShieldCheck, MessageSquareWarning, Braces } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import packageJson from '../../package.json'
@@ -44,6 +44,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
     { key: 'profile', label: 'My Profile', icon: User, to: ownProfilePath },
     { key: 'playlists', label: 'Playlists', icon: ListVideo, to: '/playlists' },
     { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : null },
+    { key: 'history', label: 'History', icon: History, to: user ? '/history' : null },
     { key: 'featured', label: 'Featured', icon: Star, to: '/featured' },
     { key: 'users', label: 'Users', icon: UsersRound, to: '/users', isActiveOverride: (isActive) => isActive && !isOwnProfilePath },
     {
