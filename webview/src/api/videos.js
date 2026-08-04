@@ -61,6 +61,37 @@ export async function getMyLikes({ page, limit } = {}) {
 }
 
 /**
+ * Lists videos the current user has watched, most-recently-viewed first.
+ * Repeat views of the same video appear as separate entries (distinct
+ * `historyId`s). Requires authentication.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function getMyHistory({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/me/history', { params: { page, limit } })
+  return res.data
+}
+
+/**
+ * Removes a single entry from the current user's watch history, by the
+ * history entry's own id (not the video's id - the same video can have
+ * multiple history entries from repeat views).
+ * @param {number} historyId
+ * @returns {Promise<void>}
+ */
+export async function removeHistoryEntry(historyId) {
+  await apiClient.delete(`/api/v1/me/history/${historyId}`)
+}
+
+/**
+ * Clears the current user's entire watch history.
+ * @returns {Promise<void>}
+ */
+export async function clearMyHistory() {
+  await apiClient.delete('/api/v1/me/history')
+}
+
+/**
  * Uploads a video file, creating an ORIGINAL_UPLOADS row (private by
  * default, with a default title derived from the filename). Callers should
  * follow up with updateVideo to set the real title/description/visibility/tags.

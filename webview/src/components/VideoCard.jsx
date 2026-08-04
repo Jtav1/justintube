@@ -21,6 +21,7 @@ function VideoCard({
   linkTo,
   active = false,
   onRemoveFromPlaylist,
+  onRemoveFromHistory,
   showReactionScore = true,
 }) {
   const { user } = useAuth()
@@ -195,7 +196,11 @@ function VideoCard({
             <Link to={`/users/${video.uploader?.username}`}>{uploaderName}</Link>
           </p>
           <p className="video-card-meta">
-            {formatViewCount(video.viewCount)} &middot; {formatRelativeDate(video.createdAt)}
+            {video.viewedAt ? (
+              `Watched ${formatRelativeDate(video.viewedAt)}`
+            ) : (
+              <>{formatViewCount(video.viewCount)} &middot; {formatRelativeDate(video.createdAt)}</>
+            )}
           </p>
         </div>
         {!hideMenu && (
@@ -272,6 +277,18 @@ function VideoCard({
                     }}
                   >
                     Remove from Playlist
+                  </button>
+                )}
+                {onRemoveFromHistory && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={() => {
+                      closeMenu()
+                      onRemoveFromHistory()
+                    }}
+                  >
+                    Remove
                   </button>
                 )}
                 {canEdit && (

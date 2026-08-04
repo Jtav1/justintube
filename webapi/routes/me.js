@@ -14,6 +14,7 @@ import {
   Subscription,
   User,
   UserPlaylist,
+  UserViewHistory,
   VideoAccess,
   VideoLike,
   VideoMetadata,
@@ -24,7 +25,12 @@ import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { canViewVideo } from "../lib/video-access.js";
 import { buildPlaylistsPage } from "./playlists.js";
 import { loadUploadCountsByUserId } from "./users.js";
-import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
+import {
+  loadReactionCountsByUploadId,
+  loadTagsByUploadId,
+  parsePositiveInt,
+  serializeVideo,
+} from "./videos.js";
 
 /**
  * Absolute path to the directory where avatar images are stored
@@ -630,6 +636,224 @@ export function createMeRouter() {
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your liked videos.",
+      });
+    }
+  });
+
+  /**
+   * Returns videos the authenticated user has viewed (USER_VIEW_HISTORY
+   * rows), most-recently-viewed first, paginated. Repeat views of the same
+   * video each produce their own row/item (no dedup), each with a distinct
+   * `historyId` - the same video can legitimately appear more than once.
+   * Only includes videos the user can currently see, per {@link canViewVideo}
+   * (same visibility rules as listMyLikes). Deleted videos never appear -
+   * their history rows are removed automatically via ON DELETE CASCADE.
+   * GET /api/v1/me/history
+   * Auth: session cookie or Bearer API key (`requireAuth`).
+   *
+   * @openapi
+   * /api/v1/me/history:
+   *   get:
+   *     tags: [Me]
+   *     summary: List my video watch history
+   *     operationId: listMyHistory
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
+   *     responses:
+   *       200:
+   *         description: Paginated list of videos I've watched, newest-viewed first
+   *       400:
+   *         description: Invalid page/limit
+   *       401:
+   *         description: Not authenticated
+   *   delete:
+   *     tags: [Me]
+   *     summary: Clear my entire video watch history
+   *     operationId: clearMyHistory
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       204:
+   *         description: Watch history cleared
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the paginated watch-history list or an error response.
+   */
+  router.get("/me/history", requireAuth, async (req, res) => {
+    try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const grants = await VideoAccess.findAll({
+        where: { userId: req.user.id },
+        attributes: ["originalUploadId"],
+      });
+      const grantedUploadIds = new Set(grants.map((grant) => grant.originalUploadId));
+
+      const history = await UserViewHistory.findAll({
+        where: { userId: req.user.id },
+        include: [
+          {
+            model: OriginalUpload,
+            required: true,
+            include: [
+              { model: VideoMetadata, as: "VideoMetadata", required: true },
+              { model: VideoThumbnail, required: false },
+              { model: User, required: false },
+            ],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
+      });
+
+      const visibleHistory = history.filter((row) => {
+        const upload = row.OriginalUpload;
+        return canViewVideo(
+          req.user,
+          req.authRole,
+          upload,
+          upload.VideoMetadata,
+          grantedUploadIds.has(upload.id),
+        );
+      });
+
+      const totalHits = visibleHistory.length;
+      const offset = (page - 1) * limit;
+      const pageHistory = visibleHistory.slice(offset, offset + limit);
+      const historyUploadIds = pageHistory.map((row) => row.OriginalUpload.id);
+      const tagsByUploadId = await loadTagsByUploadId(historyUploadIds);
+      const reactionCountsByUploadId = await loadReactionCountsByUploadId(historyUploadIds);
+
+      res.status(200).json({
+        items: pageHistory.map((row) => ({
+          ...serializeVideo(row.OriginalUpload, row.OriginalUpload.VideoMetadata, {
+            tags: tagsByUploadId.get(row.OriginalUpload.id) || [],
+            ...reactionCountsByUploadId.get(row.OriginalUpload.id),
+          }),
+          historyId: row.id,
+          viewedAt: row.createdAt,
+        })),
+        page,
+        limit,
+        totalHits,
+        totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
+      });
+    } catch (err) {
+      console.error("listMyHistory failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list your watch history.",
+      });
+    }
+  });
+
+  /**
+   * Clears the authenticated user's entire video watch history.
+   * DELETE /api/v1/me/history
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 empty or an error response.
+   */
+  router.delete("/me/history", requireAuth, async (req, res) => {
+    try {
+      await UserViewHistory.destroy({ where: { userId: req.user.id } });
+      res.status(204).send();
+    } catch (err) {
+      console.error("clearMyHistory failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to clear your watch history.",
+      });
+    }
+  });
+
+  /**
+   * Removes a single entry from the authenticated user's watch history, by
+   * the history entry's own id (not the video's id - the same video can have
+   * multiple history entries from repeat views).
+   * DELETE /api/v1/me/history/:id
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/me/history/{id}:
+   *   delete:
+   *     tags: [Me]
+   *     summary: Remove one entry from my watch history
+   *     operationId: deleteHistoryEntry
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *       - name: id
+   *         in: path
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       204:
+   *         description: History entry removed
+   *       400:
+   *         description: Invalid id
+   *       401:
+   *         description: Not authenticated
+   *       404:
+   *         description: History entry not found
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 empty or an error response.
+   */
+  router.delete("/me/history/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({ error: "invalid_id", message: "id must be a positive integer." });
+        return;
+      }
+
+      const row = await UserViewHistory.findOne({ where: { id, userId: req.user.id } });
+      if (!row) {
+        res.status(404).json({ error: "not_found", message: "History entry not found." });
+        return;
+      }
+
+      await row.destroy();
+      res.status(204).send();
+    } catch (err) {
+      console.error("deleteHistoryEntry failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to remove history entry.",
       });
     }
   });

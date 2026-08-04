@@ -59,10 +59,6 @@ export function registerStubRoutes(router) {
   r("get", "/videos/:id/reaction", "getVideoReaction");
   r("delete", "/videos/:id/reaction", "clearVideoReaction");
 
-  // Me / library / settings
-  r("get", "/me/history", "listMyHistory");
-  r("delete", "/me/history", "clearMyHistory");
-
   // Me / stream key (OBS / RTMP ingest credential)
   r("get", "/me/stream-key", "getMyStreamKey");
   r("post", "/me/stream-key/rotate", "rotateMyStreamKey");

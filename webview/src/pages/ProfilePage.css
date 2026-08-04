@@ -222,15 +222,55 @@
   display: none;
 }
 
+.profile-subscriber-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 340px;
+}
+
 .profile-subscriber-count {
   margin: 0;
-  padding-left: 340px;
   font-size: 14px;
   color: var(--text);
 }
 
+.profile-subscribe-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.profile-subscribe-btn:hover:not(:disabled) {
+  background: var(--accent-border);
+  color: var(--text-h);
+}
+
+.profile-subscribe-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.profile-subscribe-btn-active {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.profile-subscribe-btn-active:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
 @media (max-width: 640px) {
-  .profile-subscriber-count {
+  .profile-subscriber-row {
     padding-left: 0;
   }
 }

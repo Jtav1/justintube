@@ -13,6 +13,9 @@ import {
   adminResendUserVerification,
   adminGrantUploader,
   adminUpdateUserRole,
+  getSubscriptionState,
+  subscribeToUser,
+  unsubscribeFromUser,
 } from '../api/users.js'
 import { listUserPlaylists } from '../api/playlists.js'
 import { USER_ROLES } from '../lib/roles.js'
@@ -56,6 +59,8 @@ function ProfilePage() {
   const playlistsGridRef = useRef(null)
   const [bannerUploading, setBannerUploading] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
+  const [subscribed, setSubscribed] = useState(null)
+  const [subscribePending, setSubscribePending] = useState(false)
 
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
@@ -168,6 +173,32 @@ function ProfilePage() {
     return () => observer.disconnect()
   }, [playlists])
 
+  useEffect(() => {
+    let cancelled = false
+    setSubscribed(null)
+
+    const targetId = profile?.user?.id
+    if (!authUser || targetId == null || authUser.username === username) {
+      return undefined
+    }
+
+    getSubscriptionState(targetId)
+      .then((data) => {
+        if (!cancelled) {
+          setSubscribed(data.subscribed)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSubscribed(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authUser, profile?.user?.id, username])
+
   const isOwnProfile = Boolean(authUser && authUser.username === username)
   const isAdminViewer = Boolean(authUser && authUser.role === 'admin')
   const canManageProfile = Boolean(
@@ -177,6 +208,7 @@ function ProfilePage() {
     (isOwnProfile || isAdminViewer) && profile?.user?.emailVerified === false,
   )
   const canGrantUploader = Boolean(isAdminViewer && profile?.user?.uploader === false)
+  const canSubscribe = Boolean(authUser) && !isOwnProfile && profile?.user?.id != null
 
   async function handleResendVerification() {
     setResendingVerification(true)
@@ -213,6 +245,23 @@ function ProfilePage() {
       setGrantUploaderStatus({ type: 'error', message: 'Failed to grant uploader access.' })
     } finally {
       setGrantingUploader(false)
+    }
+  }
+
+  async function handleToggleSubscribe() {
+    if (subscribePending || subscribed === null) {
+      return
+    }
+    setSubscribePending(true)
+    try {
+      const result = subscribed
+        ? await unsubscribeFromUser(profile.user.id)
+        : await subscribeToUser(profile.user.id)
+      setSubscribed(result.subscribed)
+    } catch (err) {
+      console.error('Failed to update subscription:', err)
+    } finally {
+      setSubscribePending(false)
     }
   }
 
@@ -468,7 +517,19 @@ function ProfilePage() {
         </div>
       </div>
 
-      <p className="profile-subscriber-count">{user.subscriberCount ?? 0} Subscribers</p>
+      <div className="profile-subscriber-row">
+        <p className="profile-subscriber-count">{user.subscriberCount ?? 0} Subscribers</p>
+        {canSubscribe && (
+          <button
+            type="button"
+            className={`profile-subscribe-btn${subscribed ? ' profile-subscribe-btn-active' : ''}`}
+            disabled={subscribed === null || subscribePending}
+            onClick={handleToggleSubscribe}
+          >
+            {subscribed ? 'Unsubscribe' : 'Subscribe'}
+          </button>
+        )}
+      </div>
 
       <div className="profile-bio-row">
         {editingBio ? (

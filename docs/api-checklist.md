@@ -85,11 +85,12 @@ Bearer `INTERNAL_SERVICE_TOKEN` required.
 - [x] `GET /api/v1/me/playlists` — listMyPlaylists
 - [x] `GET /api/v1/me/notification-preferences` — getNotificationPreferences
 - [x] `PATCH /api/v1/me/notification-preferences` — updateNotificationPreferences
+- [x] `GET /api/v1/me/history` — listMyHistory
+- [x] `DELETE /api/v1/me/history` — clearMyHistory
+- [x] `DELETE /api/v1/me/history/:id` — deleteHistoryEntry
 
 Future
 
-- [ ] `GET /api/v1/me/history` — listMyHistory (Will require new history table)
-- [ ] `DELETE /api/v1/me/history` — clearMyHistory
 - [ ] `GET /api/v1/videos/:id/reaction` — getVideoReaction
 - [ ] `DELETE /api/v1/videos/:id/reaction` — clearVideoReaction
 

@@ -13,6 +13,35 @@
   color: var(--text-h);
 }
 
+.video-listing-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.video-listing-section-header .video-listing-section-title {
+  margin: 0;
+}
+
+.video-listing-clear-all {
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  color: #d33;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.3s, background 0.3s;
+}
+
+.video-listing-clear-all:hover {
+  background: rgba(221, 51, 51, 0.1);
+  border-color: #d33;
+}
+
 .video-listing-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
