@@ -83,6 +83,9 @@ function VideoCard({
   }
 
   async function handleHide() {
+    if (!window.confirm('Hide this video forever? You won\'t see it recommended again.')) {
+      return
+    }
     setHideError(false)
     try {
       await hideVideo(video.id)
