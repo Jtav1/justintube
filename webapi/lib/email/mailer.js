@@ -251,19 +251,23 @@ export async function sendNotificationEmail({ to, title, message, link = null })
   }
 
   const from = String(process.env.MAIL_FROM_ADDRESS || "").trim();
+  const publicUrl = String(process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
+  const signature = `- justintube (<${publicUrl}>)`;
 
   const textLines = [message, "", link ? `View it here: ${link}` : null].filter(
     (line) => line !== null,
   );
+  const text = `${textLines.join("\n")}\n${signature}`;
   const htmlBody =
     `<p>${escapeHtml(message)}</p>` +
-    (link ? `<p><a href="${link}">${link}</a></p>` : "");
+    (link ? `<p><a href="${link}">${link}</a></p>` : "") +
+    `<p>${escapeHtml(signature)}</p>`;
 
   await getTransport().sendMail({
     from,
     to,
     subject: title,
-    text: textLines.join("\n"),
+    text,
     html: htmlBody,
   });
 }

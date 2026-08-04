@@ -10,6 +10,7 @@ const TARGET_LINK_BUILDERS = {
   comment: (target) => `/video?v=${encodeURIComponent(target)}`,
   moderation: (target) => `/video?v=${encodeURIComponent(target)}`,
   subscription: (target) => `/video?v=${encodeURIComponent(target)}`,
+  subscriber: () => `/subscribers`,
 }
 
 /**
