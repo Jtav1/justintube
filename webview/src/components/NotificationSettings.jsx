@@ -66,7 +66,7 @@ function NotificationSettings() {
 
       {preferences && (
         <div className="notification-settings-list">
-          {preferences.map(({ notificationType, description, enabled, emailEnabled }) => (
+          {preferences.map(({ notificationType, description, enabled, emailEnabled, enabledLocked }) => (
             <div className="notification-settings-row" key={notificationType}>
               <span className="notification-settings-label">
                 <span className="notification-settings-name">{notificationType}</span>
@@ -75,12 +75,16 @@ function NotificationSettings() {
                 )}
               </span>
               <div className="notification-settings-switches">
-                <label className="notification-settings-switch-group">
+                <label
+                  className="notification-settings-switch-group"
+                  title={enabledLocked ? 'This notification type cannot be disabled in-app.' : undefined}
+                >
                   <span className="notification-settings-switch-label">In-app</span>
                   <span className="notification-settings-switch">
                     <input
                       type="checkbox"
                       checked={enabled}
+                      disabled={enabledLocked}
                       onChange={(event) =>
                         handleToggle(notificationType, 'enabled', event.target.checked)
                       }

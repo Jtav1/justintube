@@ -23,8 +23,10 @@ export async function markNotificationsRead(notificationIds) {
 /**
  * Fetches the current session's notification preferences: one entry per
  * active notification type, defaulting to `enabled: true` when the user has
- * no explicit setting for that type.
- * @returns {Promise<{preferences: {notificationType: string, description: string|null, enabled: boolean}[]}>}
+ * no explicit setting for that type. `enabledLocked: true` marks types whose
+ * in-app delivery can't be disabled (moderation, account, admin) - `enabled`
+ * always reads true for those.
+ * @returns {Promise<{preferences: {notificationType: string, description: string|null, enabled: boolean, emailEnabled: boolean, enabledLocked: boolean}[]}>}
  */
 export async function getNotificationPreferences() {
   const res = await apiClient.get('/api/v1/me/notification-preferences')
