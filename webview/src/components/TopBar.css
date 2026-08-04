@@ -139,7 +139,8 @@
   cursor: pointer;
 }
 
-.topbar-theme-toggle:hover {
+.topbar-theme-toggle:hover,
+.topbar-theme-toggle[aria-expanded='true'] {
   background: var(--accent-bg);
 }
 

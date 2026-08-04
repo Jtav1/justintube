@@ -162,17 +162,81 @@ describe("me / notification-preferences routes", () => {
     });
     const csrfToken = await fetchCsrf(agent);
 
+    // "subscriber" is not an enabledLocked type, so its in-app delivery can
+    // be toggled off independently of email - unlike admin/moderation/account.
     const patch = await agent
       .patch("/api/v1/me/notification-preferences")
       .set("X-CSRF-Token", csrfToken)
-      .send({ preferences: [{ notificationType: "admin", enabled: false }] });
+      .send({ preferences: [{ notificationType: "subscriber", enabled: false }] });
 
     expect(patch.status).toBe(200);
     const patchedLike = patch.body.preferences.find(
-      (pref) => pref.notificationType === "admin",
+      (pref) => pref.notificationType === "subscriber",
     );
     expect(patchedLike.enabled).toBe(false);
     expect(patchedLike.emailEnabled).toBe(true);
+  });
+
+  test.each(["admin", "moderation", "account"])(
+    "PATCH rejects disabling in-app delivery for the enabledLocked type %s",
+    async (notificationType) => {
+      const agent = createTestAgent();
+      await registerSession(agent, {
+        username: `prefs_locked_${notificationType}`,
+        email: `prefs_locked_${notificationType}@example.com`,
+      });
+      const csrfToken = await fetchCsrf(agent);
+
+      const res = await agent
+        .patch("/api/v1/me/notification-preferences")
+        .set("X-CSRF-Token", csrfToken)
+        .send({ preferences: [{ notificationType, enabled: false }] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+
+      const get = await agent.get("/api/v1/me/notification-preferences");
+      const pref = get.body.preferences.find((p) => p.notificationType === notificationType);
+      expect(pref.enabled).toBe(true);
+      expect(pref.enabledLocked).toBe(true);
+    },
+  );
+
+  test("PATCH still allows disabling email for an enabledLocked type", async () => {
+    const agent = createTestAgent();
+    await registerSession(agent, {
+      username: "prefs_locked_email_toggle",
+      email: "prefs_locked_email_toggle@example.com",
+    });
+    const csrfToken = await fetchCsrf(agent);
+
+    const patch = await agent
+      .patch("/api/v1/me/notification-preferences")
+      .set("X-CSRF-Token", csrfToken)
+      .send({ preferences: [{ notificationType: "admin", emailEnabled: false }] });
+
+    expect(patch.status).toBe(200);
+    const pref = patch.body.preferences.find((p) => p.notificationType === "admin");
+    expect(pref.emailEnabled).toBe(false);
+    expect(pref.enabled).toBe(true);
+    expect(pref.enabledLocked).toBe(true);
+  });
+
+  test("GET marks moderation/account/admin as enabledLocked, other types as not locked", async () => {
+    const agent = createTestAgent();
+    await registerSession(agent, {
+      username: "prefs_locked_flags",
+      email: "prefs_locked_flags@example.com",
+    });
+
+    const res = await agent.get("/api/v1/me/notification-preferences");
+    expect(res.status).toBe(200);
+    const byType = new Map(res.body.preferences.map((p) => [p.notificationType, p]));
+    expect(byType.get("admin").enabledLocked).toBe(true);
+    expect(byType.get("moderation").enabledLocked).toBe(true);
+    expect(byType.get("account").enabledLocked).toBe(true);
+    expect(byType.get("subscriber").enabledLocked).toBe(false);
+    expect(byType.get("like").enabledLocked).toBe(false);
   });
 
   test("PATCH with neither enabled nor emailEnabled returns 400", async () => {

@@ -1,5 +1,5 @@
 import { emailEnabled, sendNotificationEmail } from "./email/mailer.js";
-import { getNotificationTypeDefaults } from "./seed.js";
+import { getNotificationTypeDefaults, isNotificationTypeInAppLocked } from "./seed.js";
 import { Notification, NotificationType, User, UserNotificationSetting } from "./models/index.js";
 
 /**
@@ -11,7 +11,11 @@ import { Notification, NotificationType, User, UserNotificationSetting } from ".
  *
  * A no-op when `recipientUserId` is falsy, `actorUserId` is given and
  * equals `recipientUserId` (no self-notifications), or the notification
- * type is missing/disabled. Never throws - failures are logged and
+ * type is missing/disabled. The in-app row itself is further gated on the
+ * recipient's per-type `enabled` preference, except for types marked
+ * `inAppLocked` in `DEFAULT_NOTIFICATION_TYPES` (moderation/account/admin),
+ * which always get an in-app row regardless of that preference - only their
+ * email copy can be opted out of. Never throws - failures are logged and
  * swallowed so the triggering request never fails because of notification
  * delivery.
  *
@@ -57,17 +61,23 @@ export async function createNotification({
       return;
     }
 
-    await Notification.create({
-      userId: recipientUserId,
-      notificationTypeId: type.id,
-      title,
-      message,
-      target,
+    const setting = await UserNotificationSetting.findOne({
+      where: { userId: recipientUserId, notificationTypeId: type.id },
     });
+
+    if (wantsInAppNotification(type.name, setting)) {
+      await Notification.create({
+        userId: recipientUserId,
+        notificationTypeId: type.id,
+        title,
+        message,
+        target,
+      });
+    }
 
     await maybeSendNotificationEmail({
       recipientUserId,
-      notificationTypeId: type.id,
+      setting,
       typeName: type.name,
       title,
       message,
@@ -79,20 +89,41 @@ export async function createNotification({
 }
 
 /**
- * Emails a notification recipient, gated on the global SMTP switch and the
- * recipient's per-type email preference. Every user is expected to have an
- * explicit USER_NOTIFICATION_SETTINGS row for every active notification type
+ * Returns whether an in-app Notification row should be created for this
+ * recipient/type. Locked types (`inAppLocked` in `DEFAULT_NOTIFICATION_TYPES`
+ * - moderation/account/admin) always return true, since their in-app
+ * delivery isn't something the user can turn off. Every user is expected to
+ * have an explicit USER_NOTIFICATION_SETTINGS row for every active type
  * (seeded at registration and reconciled on every boot by
- * `ensureUserNotificationSettings`), so this reads that row directly rather
- * than guessing what an absent row should mean. The type's seeded default
- * (`getNotificationTypeDefaults`) is only a fallback for the row somehow
- * being missing (e.g. a race with the reconciliation job), not the normal
- * path.
+ * `ensureUserNotificationSettings`), so a present row's `enabled` is read
+ * directly; the type's seeded default (`getNotificationTypeDefaults`) is
+ * only a fallback for the row somehow being missing.
+ *
+ * @private
+ * @param {string} typeName NOTIFICATION_TYPES.name.
+ * @param {import('sequelize').Model|null} setting The recipient's
+ *   USER_NOTIFICATION_SETTINGS row for this type, if any.
+ * @returns {boolean} True when the in-app notification should be created.
+ */
+function wantsInAppNotification(typeName, setting) {
+  if (isNotificationTypeInAppLocked(typeName)) {
+    return true;
+  }
+  return setting ? setting.enabled === true : getNotificationTypeDefaults(typeName).enabled;
+}
+
+/**
+ * Emails a notification recipient, gated on the global SMTP switch and the
+ * recipient's per-type email preference. Unlike in-app delivery, email is
+ * never locked "on" - every type, including moderation/account/admin, can
+ * still have its email copy opted out of independently.
  *
  * @private
  * @param {object} params
  * @param {number} params.recipientUserId Id of the user to email.
- * @param {number} params.notificationTypeId NOTIFICATION_TYPES id for this event.
+ * @param {import('sequelize').Model|null} params.setting The recipient's
+ *   USER_NOTIFICATION_SETTINGS row for this type, if any (already fetched by
+ *   `createNotification`, so this avoids a second query for the same row).
  * @param {string} params.typeName NOTIFICATION_TYPES.name, for the missing-row fallback default.
  * @param {string} params.title Notification title (used as the email subject).
  * @param {string} params.message Notification message body.
@@ -101,7 +132,7 @@ export async function createNotification({
  */
 async function maybeSendNotificationEmail({
   recipientUserId,
-  notificationTypeId,
+  setting,
   typeName,
   title,
   message,
@@ -111,9 +142,6 @@ async function maybeSendNotificationEmail({
     return;
   }
 
-  const setting = await UserNotificationSetting.findOne({
-    where: { userId: recipientUserId, notificationTypeId },
-  });
   const wantsEmail = setting
     ? setting.emailEnabled === true
     : getNotificationTypeDefaults(typeName).emailEnabled;

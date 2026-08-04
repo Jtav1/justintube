@@ -8,7 +8,7 @@ import {
   test,
 } from "@jest/globals";
 import { mediaDir } from "../../lib/media-meta.js";
-import { Role } from "../../lib/models/index.js";
+import { NotificationType, Role } from "../../lib/models/index.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
   queryRows,
@@ -21,6 +21,7 @@ import {
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedUserNotificationSetting,
   seedUserViewHistory,
   seedVideoAccess,
   seedVideoThumbnail,
@@ -1401,6 +1402,11 @@ describe("Video discovery and metadata endpoints", () => {
       const liker = await seedUserWithRoleAndKey("viewer", "like-notify-liker-key");
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id, { title: "Notify Me", visibility: "public" });
+
+      // "like" is opt-in (off by default) - explicitly enable in-app delivery
+      // for the owner so this test exercises the "opted in" path.
+      const likeTypeId = (await NotificationType.findOne({ where: { name: "like" } })).id;
+      await seedUserNotificationSetting(owner.id, { notificationTypeId: likeTypeId, enabled: true });
 
       const ownerNotifications = () =>
         queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", { userId: owner.id });

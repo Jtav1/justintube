@@ -96,9 +96,12 @@ describe("createNotification (lib/notifications.js)", () => {
   test("creates a notification with a null target when none is given", async () => {
     const user = await seedUser();
 
+    // "admin" is opt-out (in-app on by default), unlike "like" which is
+    // opt-in - using it here keeps this test about target handling, not
+    // in-app opt-in/opt-out gating (covered separately below).
     await notifications.createNotification({
       recipientUserId: user.id,
-      typeName: "like",
+      typeName: "admin",
       title: "Sitewide alert",
       message: "no target here",
     });
@@ -122,6 +125,80 @@ describe("createNotification (lib/notifications.js)", () => {
     const rows = await notificationsFor(user.id);
     expect(rows).toHaveLength(1);
     expect(rows[0].target).toBe("some-username");
+  });
+
+  describe("in-app gating", () => {
+    test("does not create an in-app notification once a non-locked type is explicitly disabled", async () => {
+      const user = await seedUser();
+      const subscriptionTypeId = (await NotificationType.findOne({ where: { name: "subscription" } })).id;
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: subscriptionTypeId,
+        enabled: false,
+      });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "subscription",
+        title: "t",
+        message: "m",
+      });
+
+      expect(await notificationsFor(user.id)).toHaveLength(0);
+    });
+
+    test("creates an in-app notification for an opt-in type once the user enables it", async () => {
+      const user = await seedUser();
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: likeTypeId,
+        enabled: true,
+      });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "like",
+        title: "t",
+        message: "m",
+      });
+
+      expect(await notificationsFor(user.id)).toHaveLength(1);
+    });
+
+    test("does not create an in-app notification for an opt-in type by default", async () => {
+      const user = await seedUser();
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "like",
+        title: "t",
+        message: "m",
+      });
+
+      expect(await notificationsFor(user.id)).toHaveLength(0);
+    });
+
+    test.each(["admin", "moderation", "account"])(
+      "always creates an in-app notification for the locked type %s, even if disabled in the stored setting",
+      async (typeName) => {
+        const user = await seedUser();
+        const typeId = (await NotificationType.findOne({ where: { name: typeName } })).id;
+        // The preferences API rejects setting enabled: false for locked types,
+        // but seed a disabled row directly here to prove createNotification
+        // itself enforces the lock rather than relying solely on API validation.
+        await seedUserNotificationSetting(user.id, {
+          notificationTypeId: typeId,
+          enabled: false,
+        });
+
+        await notifications.createNotification({
+          recipientUserId: user.id,
+          typeName,
+          title: "t",
+          message: "m",
+        });
+
+        expect(await notificationsFor(user.id)).toHaveLength(1);
+      },
+    );
   });
 
   describe("email gating", () => {

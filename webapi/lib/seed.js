@@ -39,7 +39,15 @@ const DEFAULT_ROLES = [
  * Likes/comments are opt-in (off until the user turns them on); everything
  * else is opt-out (on until the user turns it off).
  *
- * @type {Array<{name: string, description: string, defaultEnabled: boolean, defaultEmailEnabled: boolean}>}
+ * `inAppLocked: true` marks a type whose in-app delivery can't be turned off
+ * by the user - moderation actions, account status changes, and sitewide
+ * admin broadcasts are important enough that they must always reach the
+ * in-app notification list, even though the user can still opt out of the
+ * email copy. `createNotification` (lib/notifications.js) and the
+ * notification-preferences routes both read this flag rather than
+ * hardcoding the type list twice.
+ *
+ * @type {Array<{name: string, description: string, defaultEnabled: boolean, defaultEmailEnabled: boolean, inAppLocked?: boolean}>}
  */
 const DEFAULT_NOTIFICATION_TYPES = [
   {
@@ -66,18 +74,21 @@ const DEFAULT_NOTIFICATION_TYPES = [
     description: "Moderator actions",
     defaultEnabled: true,
     defaultEmailEnabled: true,
+    inAppLocked: true,
   },
   {
     name: "account",
     description: "Account status changes",
     defaultEnabled: true,
     defaultEmailEnabled: true,
+    inAppLocked: true,
   },
   {
     name: "admin",
     description: "Sitewide alerts & messages",
     defaultEnabled: true,
     defaultEmailEnabled: true,
+    inAppLocked: true,
   },
 ];
 
@@ -89,6 +100,24 @@ const DEFAULT_NOTIFICATION_TYPES = [
  * @type {{enabled: boolean, emailEnabled: boolean}}
  */
 const FALLBACK_NOTIFICATION_DEFAULTS = { enabled: true, emailEnabled: true };
+
+/**
+ * Notification type names that used to be seeded but have since been
+ * superseded and removed from `DEFAULT_NOTIFICATION_TYPES`. There is no
+ * migration runner (see CLAUDE.md), so an old row for one of these names can
+ * still be sitting in NOTIFICATION_TYPES as `enabled: true` from a boot
+ * before the rename/removal - left alone, it would keep showing up in every
+ * user's notification preferences and keep getting a fresh
+ * USER_NOTIFICATION_SETTINGS row for anyone who registers.
+ * `disableDeprecatedNotificationTypes` (called on every boot) turns these
+ * off rather than deleting the rows, so historical NOTIFICATIONS entries
+ * that reference them remain intact and viewable.
+ *
+ * @type {Record<string, string>} Deprecated type name -> replacement type name.
+ */
+const DEPRECATED_NOTIFICATION_TYPES = {
+  delist: "moderation",
+};
 
 /**
  * Returns the seeded default `enabled`/`emailEnabled` values for a
@@ -106,6 +135,18 @@ export function getNotificationTypeDefaults(typeName) {
 }
 
 /**
+ * Returns whether a notification type's in-app delivery is locked "on" -
+ * users can still opt out of its email copy, but the in-app notification
+ * always gets created regardless of their stored `enabled` preference.
+ *
+ * @param {string} typeName NOTIFICATION_TYPES.name.
+ * @returns {boolean} True when in-app delivery for this type can't be disabled.
+ */
+export function isNotificationTypeInAppLocked(typeName) {
+  return DEFAULT_NOTIFICATION_TYPES.some((type) => type.name === typeName && type.inAppLocked === true);
+}
+
+/**
  * Inserts the standard authorization roles into the ROLES table if they are not
  * already present. Uses findOrCreate so it is idempotent and safe to run on
  * every startup.
@@ -120,6 +161,7 @@ export async function seedReferenceData() {
     });
   }
   await seedNotificationTypes();
+  await disableDeprecatedNotificationTypes();
 }
 
 /**
@@ -136,6 +178,26 @@ export async function seedNotificationTypes() {
       where: { name },
       defaults: { description, enabled: true },
     });
+  }
+}
+
+/**
+ * Disables any NOTIFICATION_TYPES row still `enabled: true` under a name
+ * listed in `DEPRECATED_NOTIFICATION_TYPES`, e.g. a leftover "delist" row
+ * from before it was superseded by "moderation". Idempotent and safe to run
+ * on every boot - once a row is disabled this is a no-op for it.
+ *
+ * @returns {Promise<void>} Resolves once any deprecated types have been disabled.
+ */
+export async function disableDeprecatedNotificationTypes() {
+  for (const [name, supersededBy] of Object.entries(DEPRECATED_NOTIFICATION_TYPES)) {
+    const [count] = await NotificationType.update(
+      { enabled: false },
+      { where: { name, enabled: true } },
+    );
+    if (count > 0) {
+      console.log(`[api]: disabled deprecated notification type "${name}" (superseded by "${supersededBy}")`);
+    }
   }
 }
 
