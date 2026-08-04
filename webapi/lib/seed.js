@@ -102,6 +102,24 @@ const DEFAULT_NOTIFICATION_TYPES = [
 const FALLBACK_NOTIFICATION_DEFAULTS = { enabled: true, emailEnabled: true };
 
 /**
+ * Notification type names that used to be seeded but have since been
+ * superseded and removed from `DEFAULT_NOTIFICATION_TYPES`. There is no
+ * migration runner (see CLAUDE.md), so an old row for one of these names can
+ * still be sitting in NOTIFICATION_TYPES as `enabled: true` from a boot
+ * before the rename/removal - left alone, it would keep showing up in every
+ * user's notification preferences and keep getting a fresh
+ * USER_NOTIFICATION_SETTINGS row for anyone who registers.
+ * `disableDeprecatedNotificationTypes` (called on every boot) turns these
+ * off rather than deleting the rows, so historical NOTIFICATIONS entries
+ * that reference them remain intact and viewable.
+ *
+ * @type {Record<string, string>} Deprecated type name -> replacement type name.
+ */
+const DEPRECATED_NOTIFICATION_TYPES = {
+  delist: "moderation",
+};
+
+/**
  * Returns the seeded default `enabled`/`emailEnabled` values for a
  * notification type name, per `DEFAULT_NOTIFICATION_TYPES`.
  *
@@ -143,6 +161,7 @@ export async function seedReferenceData() {
     });
   }
   await seedNotificationTypes();
+  await disableDeprecatedNotificationTypes();
 }
 
 /**
@@ -159,6 +178,26 @@ export async function seedNotificationTypes() {
       where: { name },
       defaults: { description, enabled: true },
     });
+  }
+}
+
+/**
+ * Disables any NOTIFICATION_TYPES row still `enabled: true` under a name
+ * listed in `DEPRECATED_NOTIFICATION_TYPES`, e.g. a leftover "delist" row
+ * from before it was superseded by "moderation". Idempotent and safe to run
+ * on every boot - once a row is disabled this is a no-op for it.
+ *
+ * @returns {Promise<void>} Resolves once any deprecated types have been disabled.
+ */
+export async function disableDeprecatedNotificationTypes() {
+  for (const [name, supersededBy] of Object.entries(DEPRECATED_NOTIFICATION_TYPES)) {
+    const [count] = await NotificationType.update(
+      { enabled: false },
+      { where: { name, enabled: true } },
+    );
+    if (count > 0) {
+      console.log(`[api]: disabled deprecated notification type "${name}" (superseded by "${supersededBy}")`);
+    }
   }
 }
 
