@@ -21,11 +21,8 @@ import {
   seedUpload,
   seedUser,
   seedUserApiKey,
-<<<<<<< HEAD
-  seedUserViewHistory,
-=======
   seedUserNotificationSetting,
->>>>>>> 484c500 (dont let users turn off certain notifs)
+  seedUserViewHistory,
   seedVideoAccess,
   seedVideoThumbnail,
   setupSchema,
