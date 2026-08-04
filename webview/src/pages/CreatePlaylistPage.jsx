@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import { getVideo } from '../api/videos.js'
 import {
   addVideoToPlaylist,
@@ -30,6 +31,7 @@ const MAX_DESCRIPTION_LENGTH = 65535
 
 function CreatePlaylistPage() {
   const { user, loading: authLoading } = useAuth()
+  const { success, error: toastError } = useToast()
   const navigate = useNavigate()
   const { id: playlistId } = useParams()
   const isEditMode = Boolean(playlistId)
@@ -49,7 +51,6 @@ function CreatePlaylistPage() {
   const [visibility, setVisibility] = useState('public')
 
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
@@ -79,7 +80,8 @@ function CreatePlaylistPage() {
         }
       } catch {
         if (!cancelled) {
-          setVideoError('Failed to load this video.')
+          setVideoError('This video is unavailable right now.')
+          toastError('Failed to load this video.')
         }
       } finally {
         if (!cancelled) {
@@ -93,7 +95,7 @@ function CreatePlaylistPage() {
     return () => {
       cancelled = true
     }
-  }, [authLoading, user, videoId, isEditMode])
+  }, [authLoading, user, videoId, isEditMode, toastError])
 
   useEffect(() => {
     if (authLoading || !user || !isEditMode) {
@@ -113,6 +115,7 @@ function CreatePlaylistPage() {
         const canEdit = String(user.id) === String(data.owner?.id) || user.role === 'admin'
         if (!canEdit) {
           setPlaylistError('You don\'t have permission to edit this playlist.')
+          toastError('You don\'t have permission to edit this playlist.')
           return
         }
         setPlaylist(data)
@@ -121,7 +124,8 @@ function CreatePlaylistPage() {
         setVisibility(data.visibility)
       } catch {
         if (!cancelled) {
-          setPlaylistError('Playlist not found.')
+          setPlaylistError('This playlist is unavailable right now.')
+          toastError('Failed to load this playlist.')
         }
       } finally {
         if (!cancelled) {
@@ -135,7 +139,7 @@ function CreatePlaylistPage() {
     return () => {
       cancelled = true
     }
-  }, [authLoading, user, isEditMode, playlistId])
+  }, [authLoading, user, isEditMode, playlistId, toastError])
 
   if (authLoading || !user) {
     return null
@@ -151,7 +155,7 @@ function CreatePlaylistPage() {
         <section className="create-playlist-page">
           <div className="create-playlist-card">
             <h1>Edit Playlist</h1>
-            <p className="create-playlist-error">{playlistError ?? 'Playlist not found.'}</p>
+            <p className="create-playlist-hint">{playlistError ?? 'This playlist is unavailable right now.'}</p>
           </div>
         </section>
       )
@@ -166,7 +170,7 @@ function CreatePlaylistPage() {
         <section className="create-playlist-page">
           <div className="create-playlist-card">
             <h1>New Playlist</h1>
-            <p className="create-playlist-error">{videoError ?? 'Video not found.'}</p>
+            <p className="create-playlist-hint">{videoError ?? 'This video is unavailable right now.'}</p>
           </div>
         </section>
       )
@@ -179,7 +183,7 @@ function CreatePlaylistPage() {
     try {
       await removePlaylistItem(playlistId, uploadId)
     } catch {
-      setSubmitError('Failed to remove that video. Please try again.')
+      toastError('Failed to remove that video. Please try again.')
       return
     }
     setPlaylist((prev) => ({
@@ -198,15 +202,15 @@ function CreatePlaylistPage() {
     }
 
     setDeleting(true)
-    setSubmitError(null)
     try {
       await deletePlaylist(playlistId)
     } catch {
-      setSubmitError('Failed to delete the playlist. Please try again.')
+      toastError('Failed to delete the playlist. Please try again.')
       setDeleting(false)
       return
     }
 
+    success('Playlist deleted.')
     navigate('/playlists')
   }
 
@@ -217,7 +221,6 @@ function CreatePlaylistPage() {
     }
 
     setSubmitting(true)
-    setSubmitError(null)
 
     if (isEditMode) {
       try {
@@ -227,12 +230,13 @@ function CreatePlaylistPage() {
           visibility,
         })
       } catch {
-        setSubmitError('Failed to save changes. Please try again.')
+        toastError('Failed to save changes. Please try again.')
         setSubmitting(false)
         return
       }
 
       setSubmitting(false)
+      success('Playlist updated.')
       navigate(-1)
       return
     }
@@ -245,7 +249,7 @@ function CreatePlaylistPage() {
         visibility,
       })
     } catch {
-      setSubmitError('Failed to create the playlist. Please try again.')
+      toastError('Failed to create the playlist. Please try again.')
       setSubmitting(false)
       return
     }
@@ -253,7 +257,7 @@ function CreatePlaylistPage() {
     try {
       await addVideoToPlaylist(created.id, video.id)
     } catch {
-      setSubmitError(
+      toastError(
         'The playlist was created, but this video could not be added to it. ' +
           'You can add it from the video\'s menu instead.',
       )
@@ -262,6 +266,7 @@ function CreatePlaylistPage() {
     }
 
     setSubmitting(false)
+    success('Playlist created.')
     navigate(-1)
   }
 
@@ -312,8 +317,6 @@ function CreatePlaylistPage() {
           </option>
         ))}
       </select>
-
-      {submitError && <p className="create-playlist-error">{submitError}</p>}
 
       <button type="submit" className="create-playlist-submit" disabled={submitDisabled}>
         {submitting ? 'Saving...' : isEditMode ? 'Save Changes' : 'Create Playlist'}

@@ -32,8 +32,7 @@
   gap: 10px;
 }
 
-.search-results-empty,
-.search-results-error {
+.search-results-empty {
   text-align: center;
   color: var(--text);
 }

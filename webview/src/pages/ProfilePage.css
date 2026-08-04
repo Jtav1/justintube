@@ -353,10 +353,6 @@
   color: var(--text);
 }
 
-.profile-status-error {
-  color: #d33;
-}
-
 .profile-verification-row {
   display: flex;
   align-items: center;

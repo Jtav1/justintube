@@ -48,8 +48,7 @@
   gap: 10px;
 }
 
-.video-listing-empty,
-.video-listing-error {
+.video-listing-empty {
   text-align: center;
   color: var(--text);
 }

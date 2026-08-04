@@ -4,6 +4,7 @@ import { UserRound } from 'lucide-react'
 import { createComment, listComments } from '../api/videos.js'
 import { formatRelativeDate } from '../lib/format.js'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import apiClient from '../api/client.js'
 import './VideoComments.css'
 
@@ -90,11 +91,11 @@ function CommentAvatar({ username }) {
  * }} props
  */
 function CommentComposer({ isModerator, isAdmin, commentsEnabled, submitLabel, onSubmit, onCancel, autoFocus }) {
+  const { error: toastError } = useToast()
   const [body, setBody] = useState('')
   const [modChecked, setModChecked] = useState(false)
   const [adminChecked, setAdminChecked] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState(null)
 
   const canShowModCheckbox = isModerator || isAdmin
   const canShowAdminCheckbox = isAdmin
@@ -107,7 +108,6 @@ function CommentComposer({ isModerator, isAdmin, commentsEnabled, submitLabel, o
       return
     }
     setSubmitting(true)
-    setError(null)
     try {
       await onSubmit({
         body: body.trim(),
@@ -118,7 +118,7 @@ function CommentComposer({ isModerator, isAdmin, commentsEnabled, submitLabel, o
       setModChecked(false)
       setAdminChecked(false)
     } catch {
-      setError('Failed to post comment.')
+      toastError('Failed to post comment.')
     } finally {
       setSubmitting(false)
     }
@@ -172,7 +172,6 @@ function CommentComposer({ isModerator, isAdmin, commentsEnabled, submitLabel, o
           Comments are disabled on this video{canShowModCheckbox ? ' — check a box above to post anyway.' : '.'}
         </p>
       )}
-      {error && <p className="video-comments-error">{error}</p>}
     </form>
   )
 }
@@ -186,6 +185,7 @@ function CommentComposer({ isModerator, isAdmin, commentsEnabled, submitLabel, o
  */
 function VideoComments({ video }) {
   const { user } = useAuth()
+  const { error: toastError } = useToast()
   const [comments, setComments] = useState([])
   const [loading, setLoading] = useState(true)
   const [replyingToId, setReplyingToId] = useState(null)
@@ -203,6 +203,10 @@ function VideoComments({ video }) {
         if (!cancelled) {
           setComments(data.items ?? [])
         }
+      } catch {
+        if (!cancelled) {
+          toastError('Failed to load comments.')
+        }
       } finally {
         if (!cancelled) {
           setLoading(false)
@@ -215,7 +219,7 @@ function VideoComments({ video }) {
     return () => {
       cancelled = true
     }
-  }, [video.id])
+  }, [video.id, toastError])
 
   const displayOrder = useMemo(() => buildDisplayOrder(comments), [comments])
   const canPostWhileDisabled = isModerator || isAdmin

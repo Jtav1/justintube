@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
@@ -11,6 +12,7 @@ import './VideoPage.css'
 
 function VideoPage() {
   const { user } = useAuth()
+  const { error: toastError } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
@@ -39,7 +41,8 @@ function VideoPage() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load video. Does this video exist?.')
+          setError('This video is unavailable right now.')
+          toastError('Failed to load video. Does this video exist?')
         }
       } finally {
         if (!cancelled) {
@@ -53,7 +56,7 @@ function VideoPage() {
     return () => {
       cancelled = true
     }
-  }, [videoId])
+  }, [videoId, toastError])
 
   useEffect(() => {
     let cancelled = false
@@ -89,6 +92,7 @@ function VideoPage() {
     try {
       await removePlaylistItem(playlist.id, video.id)
     } catch {
+      toastError('Failed to remove from playlist.')
       return
     }
     const currentIndex = playlist.items.findIndex((item) => item.videoId === videoId)

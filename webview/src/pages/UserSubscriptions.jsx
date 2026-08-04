@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import { getSubscriptionFeed } from '../api/videos.js'
 import VideoCard from '../components/VideoCard.jsx'
 import './VideoListing.css'
 
 function UserSubscriptions() {
   const { user, loading: authLoading } = useAuth()
+  const { error: toastError } = useToast()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     if (!user) {
@@ -19,7 +20,6 @@ function UserSubscriptions() {
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await getSubscriptionFeed()
         if (!cancelled) {
@@ -27,7 +27,7 @@ function UserSubscriptions() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load your subscription feed.')
+          toastError('Failed to load your subscription feed.')
         }
       } finally {
         if (!cancelled) {
@@ -41,7 +41,7 @@ function UserSubscriptions() {
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user, toastError])
 
   if (authLoading) {
     return null
@@ -57,8 +57,7 @@ function UserSubscriptions() {
 
   return (
     <section className="video-listing">
-      {error && <p className="video-listing-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && items.length === 0 && (
         <p className="video-listing-empty">
           No new videos yet. Subscribe to some channels to see their uploads here.
         </p>

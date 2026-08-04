@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { UploadCloud } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import {
   uploadVideoFile,
   importVideoUrl,
@@ -60,6 +61,7 @@ function isAudioFile(file) {
 
 function UploadPage() {
   const { user, loading: authLoading } = useAuth()
+  const { success, error: toastError } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const fileInputRef = useRef(null)
@@ -90,7 +92,6 @@ function UploadPage() {
   const [recipients, setRecipients] = useState([])
 
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState(null)
 
   const [importAvailable, setImportAvailable] = useState(true)
 
@@ -137,7 +138,8 @@ function UploadPage() {
         setFeatured(Boolean(video.featured))
       } catch {
         if (!cancelled) {
-          setEditError('Failed to load this video.')
+          setEditError('This video is unavailable right now.')
+          toastError('Failed to load this video.')
         }
       } finally {
         if (!cancelled) {
@@ -151,7 +153,7 @@ function UploadPage() {
     return () => {
       cancelled = true
     }
-  }, [isEditMode, editVideoId, authLoading, user])
+  }, [isEditMode, editVideoId, authLoading, user, toastError])
 
   useEffect(() => {
     if (isEditMode) {
@@ -221,9 +223,10 @@ function UploadPage() {
       return
     }
     if (TERMINAL_UPLOAD_STATUSES.has(processingStatus.status) && processingStatus.status !== 'failed') {
+      success('Video is ready!')
       navigate(`/users/${user.username}`)
     }
-  }, [trackingId, processingStatus, navigate, user.username])
+  }, [trackingId, processingStatus, navigate, user.username, success])
 
   const recipientSearchActive = visibility === 'private' && recipientQuery.trim().length > 0
 
@@ -272,7 +275,7 @@ function UploadPage() {
       <section className="upload-page">
         <div className="upload-card">
           <h1>Edit Video</h1>
-          <p className="upload-error">{editError}</p>
+          <p className="upload-hint">{editError}</p>
         </div>
       </section>
     )
@@ -401,7 +404,6 @@ function UploadPage() {
     }
 
     setSubmitting(true)
-    setSubmitError(null)
 
     let createdId
     if (isEditMode) {
@@ -420,7 +422,7 @@ function UploadPage() {
           : await importVideoUrl(url.trim(), { skipThumbnail: Boolean(thumbnailFile) })
         createdId = uploaded.id
       } catch {
-        setSubmitError(
+        toastError(
           file
             ? 'Failed to upload the file. Please try again.'
             : 'Failed to import the video from that URL. Please try again.',
@@ -439,7 +441,7 @@ function UploadPage() {
         tags,
       })
     } catch {
-      setSubmitError(
+      toastError(
         isEditMode
           ? 'Failed to save your changes. Please try again.'
           : `Your video was uploaded but its details could not be saved. ` +
@@ -453,7 +455,7 @@ function UploadPage() {
       try {
         await updateVideoThumbnail(createdId, thumbnailFile)
       } catch {
-        setSubmitError(
+        toastError(
           'Your video was uploaded and configured, but the custom thumbnail could not be saved. ' +
             'You can try uploading it again from your profile.',
         )
@@ -469,7 +471,7 @@ function UploadPage() {
           recipients.map((r) => r.username),
         )
       } catch {
-        setSubmitError(
+        toastError(
           'Your video was uploaded and configured, but sharing with specific users failed. ' +
             'You can manage access from your profile.',
         )
@@ -482,9 +484,7 @@ function UploadPage() {
       try {
         await setVideoFeatured(createdId, featured)
       } catch {
-        setSubmitError(
-          'Your video was saved, but its featured status could not be updated.',
-        )
+        toastError('Your video was saved, but its featured status could not be updated.')
         setSubmitting(false)
         return
       }
@@ -493,6 +493,7 @@ function UploadPage() {
     setSubmitting(false)
 
     if (isEditMode) {
+      success('Changes saved.')
       navigate(`/video?v=${editVideoId}`)
       return
     }
@@ -718,8 +719,6 @@ function UploadPage() {
         {uploadPercent != null && (
           <ProgressBar value={uploadPercent} label={`Uploading (${uploadPercent}%)...`} />
         )}
-
-        {submitError && <p className="upload-error">{submitError}</p>}
 
         <button type="submit" className="upload-submit" disabled={submitDisabled}>
           {isEditMode
