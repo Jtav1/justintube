@@ -362,7 +362,7 @@
 
 .video-player-reactions {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   flex-shrink: 0;
 }

@@ -231,6 +231,27 @@ export async function dislikeVideo(id) {
 }
 
 /**
+ * Hides a video from the caller's own listings/feeds going forward.
+ * Idempotent. Cannot be used on the caller's own uploaded video.
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{hidden: boolean}>}
+ */
+export async function hideVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/hide`)
+  return res.data
+}
+
+/**
+ * Unhides a previously-hidden video. Idempotent.
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{hidden: boolean}>}
+ */
+export async function unhideVideo(id) {
+  const res = await apiClient.delete(`/api/v1/videos/${id}/hide`)
+  return res.data
+}
+
+/**
  * Records a view: increments the video's view count (all viewers), and, when
  * the caller is authenticated, adds a row to their watch history.
  * @param {number} id Numeric video id.

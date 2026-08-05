@@ -19,6 +19,7 @@ import { Theme } from "./theme.js";
 import { TranscodeProfile } from "./transcode-profile.js";
 import { User } from "./user.js";
 import { UserApiKey } from "./user-api-key.js";
+import { UserHiddenVideo } from "./user-hidden-video.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
@@ -256,6 +257,24 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
+  User.hasMany(UserHiddenVideo, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  UserHiddenVideo.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasMany(UserHiddenVideo, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  UserHiddenVideo.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
   OriginalUpload.hasMany(ContentTag, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -429,6 +448,7 @@ export const models = {
   VideoTransferMapping,
   VideoTransferHistory,
   UserViewHistory,
+  UserHiddenVideo,
 };
 
 export {
@@ -452,6 +472,7 @@ export {
   TranscodeProfile,
   User,
   UserApiKey,
+  UserHiddenVideo,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
