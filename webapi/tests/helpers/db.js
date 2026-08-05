@@ -23,6 +23,7 @@ import {
   TranscodeProfile,
   User,
   UserApiKey,
+  UserHiddenVideo,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
@@ -56,6 +57,7 @@ const RESET_MODELS = [
   VideoLike,
   UserViewHistory,
   VideoAccess,
+  UserHiddenVideo,
   ContentTag,
   Comment,
   FeaturedVideo,
@@ -440,6 +442,20 @@ export async function seedFeaturedVideo(originalUploadId) {
  */
 export async function seedVideoAccess(originalUploadId, userId) {
   const row = await VideoAccess.create({ originalUploadId, userId });
+  return { id: row.id, originalUploadId, userId };
+}
+
+/**
+ * Inserts a USER_HIDDEN_VIDEOS row recording that a user has hidden an
+ * upload from their own listings.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {number} userId Id of the USERS row hiding the video.
+ * @returns {Promise<{id: number, originalUploadId: number, userId: number}>}
+ *   The seeded row's id and foreign keys.
+ */
+export async function seedUserHiddenVideo(originalUploadId, userId) {
+  const row = await UserHiddenVideo.create({ originalUploadId, userId });
   return { id: row.id, originalUploadId, userId };
 }
 
