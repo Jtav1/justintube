@@ -3,9 +3,11 @@ import { sequelize } from "../db.js";
 import { timestampColumn } from "./attribute-helpers.js";
 
 /**
- * USER_VIEW_HISTORY table model. Records one row per video view by an authenticated user
- * (anonymous views only increment VIDEO_METADATA.view_count and are never recorded here). Unlike
- * VIDEO_LIKES there is no unique constraint — repeat views each get their own row.
+ * USER_VIEW_HISTORY table model. Records one row per (user, video) pair for an authenticated
+ * user (anonymous views only increment VIDEO_METADATA.view_count and are never recorded here).
+ * Like VIDEO_LIKES, at most one row per (user, upload): repeat views upsert the existing row
+ * rather than inserting a new one — `createdAt` stays the first-view time, `updatedAt` moves to
+ * the most recent view.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -26,14 +28,20 @@ export const UserViewHistory = sequelize.define(
       allowNull: false,
     },
     createdAt: timestampColumn("created_at"),
+    updatedAt: timestampColumn("updated_at"),
   },
   {
     tableName: "USER_VIEW_HISTORY",
     timestamps: false,
     indexes: [
       {
-        fields: ["user_id", "created_at"],
-        name: "idx_user_view_history_user_created",
+        unique: true,
+        fields: ["user_id", "original_upload_id"],
+        name: "uq_user_view_history_user_upload",
+      },
+      {
+        fields: ["user_id", "updated_at"],
+        name: "idx_user_view_history_user_updated",
       },
     ],
   },

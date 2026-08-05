@@ -5,6 +5,7 @@ import { ImageOff, MoreVertical, VideoOff } from 'lucide-react'
 import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/format.js'
 import { useAuth } from '../context/useAuth.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
+import { hideVideo } from '../api/videos.js'
 import apiClient from '../api/client.js'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoCard.css'
@@ -40,6 +41,8 @@ function VideoCard({
   const [playlistsLoading, setPlaylistsLoading] = useState(false)
   const [playlistsError, setPlaylistsError] = useState(null)
   const [addStatus, setAddStatus] = useState({})
+  const [hidden, setHidden] = useState(false)
+  const [hideError, setHideError] = useState(false)
 
   // List-fetched videos don't carry viewerPermission (see webapi's
   // scope note on list endpoints), so fall back to the client-side
@@ -83,6 +86,20 @@ function VideoCard({
   async function handleCopyLink() {
     setMenuOpen(false)
     await navigator.clipboard.writeText(`${window.location.origin}${videoPath}`)
+  }
+
+  async function handleHide() {
+    if (!window.confirm('Hide this video forever? You won\'t see it recommended again.')) {
+      return
+    }
+    setHideError(false)
+    try {
+      await hideVideo(video.id)
+      setMenuOpen(false)
+      setHidden(true)
+    } catch {
+      setHideError(true)
+    }
   }
 
   function closeMenu() {
@@ -172,6 +189,10 @@ function VideoCard({
     window.addEventListener('scroll', handleScroll, true)
     return () => window.removeEventListener('scroll', handleScroll, true)
   }, [menuOpen])
+
+  if (hidden) {
+    return null
+  }
 
   return (
     <article
@@ -272,6 +293,16 @@ function VideoCard({
                       )
                     })}
                   </div>
+                )}
+                {Boolean(user) && !isOwner && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={handleHide}
+                  >
+                    Hide Forever
+                    {hideError && ' — Failed, try again'}
+                  </button>
                 )}
                 {onRemoveFromPlaylist && (
                   <button

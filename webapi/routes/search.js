@@ -12,6 +12,7 @@ import {
   suggestVideos,
 } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { loadHiddenUploadIds } from "../lib/video-hidden.js";
 import { buildPlaylistsPage } from "./playlists.js";
 import { loadUploadCountsByUserId, serializeUserListItem } from "./users.js";
 import { loadViewerPermissionsByUploadId } from "./videos.js";
@@ -470,7 +471,8 @@ export function createSearchRouter() {
 
     try {
       const result = await searchVideos(parsed);
-      const hits = result.hits || [];
+      const hiddenUploadIds = await loadHiddenUploadIds(req.user?.id);
+      const hits = (result.hits || []).filter((hit) => !hiddenUploadIds.has(hit.id));
       const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
         hits.map((hit) => ({ id: hit.id, userId: hit.userId })),
         req.user,
@@ -532,8 +534,10 @@ export function createSearchRouter() {
 
     try {
       const result = await suggestVideos(parsed.q, parsed.limit);
+      const hiddenUploadIds = await loadHiddenUploadIds(req.user?.id);
+      const hits = (result.hits || []).filter((hit) => !hiddenUploadIds.has(hit.id));
       res.status(200).json({
-        items: (result.hits || []).map((hit) => ({
+        items: hits.map((hit) => ({
           id: hit.id,
           videoId: hit.videoId,
           title: hit.title,
@@ -620,13 +624,16 @@ export function createSearchRouter() {
         ? parsed.userLimit
         : Math.max(parsed.userLimit * 4, 40);
 
-      const [videoResult, playlistResult, userResult] = await Promise.all([
+      const [videoResult, playlistResult, userResult, hiddenUploadIds] = await Promise.all([
         searchVideosAdvanced({ q: parsed.q, limit: parsed.videoLimit }),
         searchPlaylistsAdvanced({ q: parsed.q, limit: parsed.playlistLimit }),
         searchUsersAdvanced({ q: parsed.q, limit: userSearchLimit }),
+        loadHiddenUploadIds(req.user?.id),
       ]);
 
-      const videoHits = videoResult.hits || [];
+      const videos = (videoResult.hits || [])
+        .filter((hit) => !hiddenUploadIds.has(hit.id))
+        .map(serializeHit);
       const videoViewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
         videoHits.map((hit) => ({ id: hit.id, userId: hit.userId })),
         req.user,
@@ -634,7 +641,7 @@ export function createSearchRouter() {
       );
       const videos = videoHits.map((hit) =>
         serializeHit(hit, videoViewerPermissionByUploadId.get(hit.id)),
-      );
+      );   
 
       const playlistHits = playlistResult.hits || [];
       const playlistIds = playlistHits.map((hit) => hit.id);

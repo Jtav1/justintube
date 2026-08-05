@@ -1465,8 +1465,9 @@ describe("Video discovery and metadata endpoints", () => {
         { id: upload.id, userId: viewer.id },
       );
       expect(history).toHaveLength(1);
+      const firstUpdatedAt = history[0].updated_at;
 
-      // A second view from the same user records a second row (no dedup).
+      // A second view from the same user upserts the existing row (unique per user/video).
       await client
         .post(`/api/v1/videos/${upload.id}/view`)
         .set("Authorization", "Bearer view-key-1");
@@ -1475,7 +1476,12 @@ describe("Video discovery and metadata endpoints", () => {
         "SELECT * FROM USER_VIEW_HISTORY WHERE original_upload_id = :id AND user_id = :userId",
         { id: upload.id, userId: viewer.id },
       );
-      expect(historyAfter).toHaveLength(2);
+      expect(historyAfter).toHaveLength(1);
+      expect(historyAfter[0].id).toBe(history[0].id);
+      expect(historyAfter[0].created_at).toBe(history[0].created_at);
+      expect(new Date(historyAfter[0].updated_at).getTime()).toBeGreaterThanOrEqual(
+        new Date(firstUpdatedAt).getTime(),
+      );
     });
 
     test("likes and dislikes require auth, persist VIDEO_LIKES, and toggle off on repeat", async () => {

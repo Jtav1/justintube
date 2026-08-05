@@ -25,6 +25,7 @@ import {
   loadViewerPermissionsByUploadId,
   serializeVideo,
 } from "./videos.js";
+import { loadHiddenUploadIds } from "../lib/video-hidden.js";
 
 /**
  * Parses a route param as a positive integer.
@@ -189,6 +190,10 @@ async function loadViewerPermissionsByPlaylistId(playlists, user, role) {
  * videos are kept only for their owner, an admin, or someone holding a
  * VIDEO_ACCESS grant on that specific video.
  *
+ * Also drops any video the caller has personally hidden (USER_HIDDEN_VIDEOS,
+ * see `lib/video-hidden.js`) — a per-viewer preference distinct from
+ * VIDEO_METADATA.visibility.
+ *
  * @param {import('sequelize').Model[]} items PLAYLIST_ITEMS rows to filter.
  * @param {import('sequelize').Model|null|undefined} user Authenticated user (optional).
  * @param {import('sequelize').Model|null|undefined} role Authenticated role (optional).
@@ -211,8 +216,13 @@ async function filterViewablePlaylistItems(items, user, role) {
     grantedUploadIds = new Set(grants.map((grant) => grant.originalUploadId));
   }
 
+  const hiddenUploadIds = await loadHiddenUploadIds(user?.id);
+
   return items.filter((item) => {
     const upload = item.OriginalUpload;
+    if (hiddenUploadIds.has(upload.id)) {
+      return false;
+    }
     const visibility = upload.VideoMetadata.visibility;
     if (visibility === "hidden") {
       return false;
@@ -501,10 +511,10 @@ export function createPlaylistsRouter() {
    * GET /playlists/:id — getPlaylist
    * Auth: optional. Returns the playlist and its items when viewable. Items
    * are additionally filtered per-video: `hidden` videos are never returned,
-   * and `private` videos are only returned to their owner, an admin, or a
-   * caller holding a VIDEO_ACCESS grant on that video (see
-   * {@link filterViewablePlaylistItems}) — independent of whether the
-   * playlist itself is public.
+   * `private` videos are only returned to their owner, an admin, or a
+   * caller holding a VIDEO_ACCESS grant on that video, and videos the caller
+   * has personally hidden are dropped (see {@link filterViewablePlaylistItems})
+   * — independent of whether the playlist itself is public.
    *
    * @openapi
    * /api/v1/playlists/{id}:

@@ -20,6 +20,7 @@ import {
   OriginalUpload,
   Subscription,
   User,
+  UserHiddenVideo,
   UserViewHistory,
   VideoAccess,
   VideoLike,
@@ -34,6 +35,7 @@ import {
   isOwnerOrAdmin,
   resolveViewerPermission,
 } from "../lib/video-access.js";
+import { isVideoHidden, loadHiddenUploadIds } from "../lib/video-hidden.js";
 import {
   addVideoToLikesPlaylist,
   removeVideoFromLikesPlaylist,
@@ -1005,7 +1007,9 @@ function sendNotFound(res) {
  * videos are included for their owner (`options.viewerUserId`); `private`
  * and `hidden` videos are additionally included for any viewer holding a
  * matching VIDEO_ACCESS grant. Everyone else never sees delisted, hidden, or
- * private content in these bulk lists.
+ * private content in these bulk lists. When `options.viewerUserId` is set,
+ * videos that viewer has personally hidden (USER_HIDDEN_VIDEOS, see
+ * lib/video-hidden.js — unrelated to VIDEO_METADATA.visibility) are excluded.
  *
  * @param {object} [options] Query options.
  * @param {import('sequelize').WhereOptions} [options.uploadWhere] Extra ORIGINAL_UPLOADS where.
@@ -1040,9 +1044,17 @@ async function listPublicVideos(options = {}) {
     }
   }
 
+  const uploadWhere = { ...(options.uploadWhere || {}) };
+  if (options.viewerUserId) {
+    const hiddenUploadIds = await loadHiddenUploadIds(options.viewerUserId);
+    if (hiddenUploadIds.size > 0) {
+      uploadWhere.id = { [Op.notIn]: [...hiddenUploadIds] };
+    }
+  }
+
   const rows = await OriginalUpload.findAll({
     where: {
-      ...(options.uploadWhere || {}),
+      ...uploadWhere,
       [Op.or]: visibilityOr,
     },
     include: [
@@ -1529,7 +1541,11 @@ export function createVideosRouter() {
    * response payload) — the video page link uses the videoId. When the
    * caller is authenticated, the payload includes `viewerReaction`
    * ("like"/"dislike"/null) reflecting their current vote. When the caller is
-   * an admin, the payload also includes `featured` (boolean).
+   * an admin, the payload also includes `featured` (boolean). When the caller
+   * has personally hidden this video (see lib/video-hidden.js), responds 404
+   * with `error: "hidden_by_viewer"` — distinct from the generic masked
+   * `not_found` used for missing/unauthorized videos — so the frontend can
+   * show a "you hid this video" notice instead of a plain not-found message.
    *
    * @openapi
    * /api/v1/videos/{id}:
@@ -1548,7 +1564,10 @@ export function createVideosRouter() {
    *       "200":
    *         description: Video metadata
    *       "404":
-   *         description: Not found or inaccessible
+   *         description: >
+   *           Not found or inaccessible. When the caller has personally hidden
+   *           this video (see POST /videos/{id}/hide), the body's `error` is
+   *           `hidden_by_viewer` instead of `not_found`.
    */
   router.get("/videos/:id", optionalAuth, async (req, res) => {
     try {
@@ -1562,6 +1581,14 @@ export function createVideosRouter() {
       const grant = await loadAccessGrant(upload.id, req.user?.id);
       if (!canViewVideo(req.user, req.authRole, upload, metadata, Boolean(grant))) {
         sendNotFound(res);
+        return;
+      }
+
+      if (req.user && (await isVideoHidden(req.user.id, upload.id))) {
+        res.status(404).json({
+          error: "hidden_by_viewer",
+          message: "You've hidden this video.",
+        });
         return;
       }
 
@@ -2780,7 +2807,8 @@ export function createVideosRouter() {
   /**
    * POST /videos/:id/view — recordVideoView
    * Auth: optional. Requires canView. Increments viewCount for every viewer; when
-   * authenticated, also inserts a USER_VIEW_HISTORY row for the caller.
+   * authenticated, also upserts the caller's USER_VIEW_HISTORY row for this video
+   * (one row per user/video pair - repeat views just bump `updatedAt`).
    *
    * @openapi
    * /api/v1/videos/{id}/view:
@@ -2827,9 +2855,10 @@ export function createVideosRouter() {
       await metadata.reload();
 
       if (req.user) {
-        await UserViewHistory.create({
+        await UserViewHistory.upsert({
           originalUploadId: upload.id,
           userId: req.user.id,
+          updatedAt: sequelize.literal("CURRENT_TIMESTAMP"),
         });
       }
 
@@ -2993,6 +3022,143 @@ export function createVideosRouter() {
       res.status(500).json({
         error: "internal_error",
         message: "Failed to dislike video.",
+      });
+    }
+  });
+
+  /**
+   * POST /videos/:id/hide — hideVideo
+   * Auth: required. Requires canView. Hides the video from the caller's own
+   * listings/feeds (a per-viewer preference — see lib/video-hidden.js) going
+   * forward. Idempotent. A caller cannot hide their own uploaded video.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/hide:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Hide a video from the caller's own listings (idempotent)
+   *     operationId: hideVideo
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Numeric video id or its public videoId.
+   *     responses:
+   *       "200":
+   *         description: Resulting hidden state
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 hidden:
+   *                   type: boolean
+   *       "400":
+   *         description: Cannot hide your own video
+   *       "404":
+   *         description: Video not found or inaccessible
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the resulting hidden state or an error response.
+   */
+  router.post("/videos/:id/hide", requireAuth, async (req, res) => {
+    try {
+      const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (upload.userId != null && Number(upload.userId) === Number(req.user.id)) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "You cannot hide your own video.",
+        });
+        return;
+      }
+
+      await UserHiddenVideo.findOrCreate({
+        where: { userId: req.user.id, originalUploadId: upload.id },
+      });
+
+      res.status(200).json({ hidden: true });
+    } catch (err) {
+      console.error("hideVideo failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to hide video.",
+      });
+    }
+  });
+
+  /**
+   * DELETE /videos/:id/hide — unhideVideo
+   * Auth: required. Deliberately does not require canView — a caller must be
+   * able to unhide a video precisely in the case where they otherwise
+   * couldn't see it. Accepts either the numeric id or the public videoId
+   * (like getVideo) since the caller may only know the videoId from the URL
+   * when the video is currently masked as hidden. Idempotent, including when
+   * the identifier doesn't resolve to any video.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/hide:
+   *   delete:
+   *     tags: [Videos]
+   *     summary: Unhide a previously-hidden video (idempotent)
+   *     operationId: unhideVideo
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Numeric video id or its public videoId.
+   *     responses:
+   *       "200":
+   *         description: Resulting hidden state (or was already not hidden)
+   *       "401":
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the resulting hidden state or an error response.
+   */
+  router.delete("/videos/:id/hide", requireAuth, async (req, res) => {
+    try {
+      const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
+      if (!loaded) {
+        res.status(200).json({ hidden: false });
+        return;
+      }
+
+      await UserHiddenVideo.destroy({
+        where: { userId: req.user.id, originalUploadId: loaded.upload.id },
+      });
+
+      res.status(200).json({ hidden: false });
+    } catch (err) {
+      console.error("unhideVideo failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to unhide video.",
       });
     }
   });

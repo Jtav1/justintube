@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { getVideo } from '../api/videos.js'
+import { getVideo, unhideVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { useToast } from '../context/useToast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
@@ -19,7 +19,9 @@ function VideoPage() {
   const [video, setVideo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [hiddenByViewer, setHiddenByViewer] = useState(false)
   const [playlist, setPlaylist] = useState(null)
+  const [reloadCount, setReloadCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -32,15 +34,20 @@ function VideoPage() {
       }
       setLoading(true)
       setError(null)
+      setHiddenByViewer(false)
       try {
         const data = await getVideo(videoId)
         if (!cancelled) {
           setVideo(data)
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          setError('This video is unavailable right now.')
-          toastError('Failed to load video. Does this video exist?')
+          if (err?.response?.data?.error === 'hidden_by_viewer') {
+            setHiddenByViewer(true)
+          } else {
+            setError('Failed to load video. Does this video exist?.')
+            toastError('Failed to load video. Does this video exist?')
+          }
         }
       } finally {
         if (!cancelled) {
@@ -54,7 +61,16 @@ function VideoPage() {
     return () => {
       cancelled = true
     }
-  }, [videoId, toastError])
+  }, [videoId, reloadCount])
+
+  async function handleUnhide() {
+    try {
+      await unhideVideo(videoId)
+      setReloadCount((count) => count + 1)
+    } catch {
+      // Leave the hidden notice in place; the user can retry.
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -106,7 +122,13 @@ function VideoPage() {
   return (
     <section className="video-page">
       {error && <p className="video-page-error">{error}</p>}
-      {!loading && !error && video && (
+      {hiddenByViewer && (
+        <div className="video-page-hidden-notice">
+          <p>You&apos;ve hidden this video.</p>
+          <button type="button" onClick={handleUnhide}>Unhide</button>
+        </div>
+      )}
+      {!loading && !error && !hiddenByViewer && video && (
         <div className="video-page-layout">
           <div className="video-page-main">
             <VideoPlayer

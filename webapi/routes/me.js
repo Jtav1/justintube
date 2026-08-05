@@ -25,6 +25,7 @@ import {
 import { parsePagination } from "../lib/pagination.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { canViewVideo } from "../lib/video-access.js";
+import { loadHiddenUploadIds } from "../lib/video-hidden.js";
 import { buildPlaylistsPage } from "./playlists.js";
 import { loadUploadCountsByUserId } from "./users.js";
 import {
@@ -533,7 +534,8 @@ export function createMeRouter() {
    * Returns videos the authenticated user has liked (positive VIDEO_LIKES
    * rows), newest like first, paginated. Only includes videos the user can
    * currently see, per {@link canViewVideo}: owner/admin always; public and
-   * unlisted always; private and hidden only with a VIDEO_ACCESS grant.
+   * unlisted always; private and hidden only with a VIDEO_ACCESS grant. Videos
+   * the caller has personally hidden (USER_HIDDEN_VIDEOS) are excluded.
    * GET /api/v1/me/likes
    * Auth: session cookie or Bearer API key (`requireAuth`).
    *
@@ -588,6 +590,7 @@ export function createMeRouter() {
         attributes: ["originalUploadId"],
       });
       const grantedUploadIds = new Set(grants.map((grant) => grant.originalUploadId));
+      const hiddenUploadIds = await loadHiddenUploadIds(req.user.id);
 
       const likes = await VideoLike.findAll({
         where: { userId: req.user.id, likeValue: { [Op.gt]: 0 } },
@@ -607,12 +610,15 @@ export function createMeRouter() {
 
       const visibleLikes = likes.filter((like) => {
         const upload = like.OriginalUpload;
-        return canViewVideo(
-          req.user,
-          req.authRole,
-          upload,
-          upload.VideoMetadata,
-          grantedUploadIds.has(upload.id),
+        return (
+          !hiddenUploadIds.has(upload.id) &&
+          canViewVideo(
+            req.user,
+            req.authRole,
+            upload,
+            upload.VideoMetadata,
+            grantedUploadIds.has(upload.id),
+          )
         );
       });
 
@@ -656,7 +662,8 @@ export function createMeRouter() {
    * video each produce their own row/item (no dedup), each with a distinct
    * `historyId` - the same video can legitimately appear more than once.
    * Only includes videos the user can currently see, per {@link canViewVideo}
-   * (same visibility rules as listMyLikes). Deleted videos never appear -
+   * (same visibility rules as listMyLikes), and excludes videos the caller
+   * has personally hidden (USER_HIDDEN_VIDEOS). Deleted videos never appear -
    * their history rows are removed automatically via ON DELETE CASCADE.
    * GET /api/v1/me/history
    * Auth: session cookie or Bearer API key (`requireAuth`).
@@ -726,6 +733,7 @@ export function createMeRouter() {
         attributes: ["originalUploadId"],
       });
       const grantedUploadIds = new Set(grants.map((grant) => grant.originalUploadId));
+      const hiddenUploadIds = await loadHiddenUploadIds(req.user.id);
 
       const history = await UserViewHistory.findAll({
         where: { userId: req.user.id },
@@ -740,17 +748,20 @@ export function createMeRouter() {
             ],
           },
         ],
-        order: [["createdAt", "DESC"]],
+        order: [["updatedAt", "DESC"]],
       });
 
       const visibleHistory = history.filter((row) => {
         const upload = row.OriginalUpload;
-        return canViewVideo(
-          req.user,
-          req.authRole,
-          upload,
-          upload.VideoMetadata,
-          grantedUploadIds.has(upload.id),
+        return (
+          !hiddenUploadIds.has(upload.id) &&
+          canViewVideo(
+            req.user,
+            req.authRole,
+            upload,
+            upload.VideoMetadata,
+            grantedUploadIds.has(upload.id),
+          )
         );
       });
 
@@ -774,7 +785,7 @@ export function createMeRouter() {
             ...reactionCountsByUploadId.get(row.OriginalUpload.id),
           }),
           historyId: row.id,
-          viewedAt: row.createdAt,
+          viewedAt: row.updatedAt,
         })),
         page,
         limit,
@@ -814,8 +825,9 @@ export function createMeRouter() {
 
   /**
    * Removes a single entry from the authenticated user's watch history, by
-   * the history entry's own id (not the video's id - the same video can have
-   * multiple history entries from repeat views).
+   * the history entry's own id (not the video's id). Since there is at most
+   * one history row per (user, video) pair, this removes that video from the
+   * user's history entirely - a later rewatch inserts a fresh row/historyId.
    * DELETE /api/v1/me/history/:id
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *

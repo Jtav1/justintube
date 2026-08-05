@@ -27,6 +27,7 @@ import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { syncPlaylistIndex, syncUserIndex } from "../lib/search.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { isAdmin, isModeratorOrAdmin } from "../lib/video-access.js";
+import { loadHiddenUploadIds } from "../lib/video-hidden.js";
 import { buildPlaylistsPage } from "./playlists.js";
 import {
   loadReactionCountsByUploadId,
@@ -426,7 +427,8 @@ function serializeChannelUser(user, { isPrivileged = false, subscriberCount = 0 
  * this listing for non-privileged viewers — `unlisted` is watchable via a
  * direct link (see `canViewVideo` in `lib/video-access.js`) but deliberately
  * excluded from channel listings, which is a distinct concern from watch
- * access.
+ * access. Independent of `isPrivileged`, videos `viewerUserId` has personally
+ * hidden (USER_HIDDEN_VIDEOS, see `lib/video-hidden.js`) are always excluded.
  *
  * @param {number} userId Target user's id.
  * @param {{page: number, limit: number}} pagination Parsed pagination.
@@ -468,8 +470,16 @@ async function loadUserPublicVideosPage(
 
   const [sortColumn, sortDirection] = USER_VIDEOS_SORT_OPTIONS[sort];
 
+  const where = { userId, [Op.or]: visibilityOr };
+  if (viewerUserId != null) {
+    const hiddenUploadIds = await loadHiddenUploadIds(viewerUserId);
+    if (hiddenUploadIds.size > 0) {
+      where.id = { [Op.notIn]: [...hiddenUploadIds] };
+    }
+  }
+
   const { rows, count } = await OriginalUpload.findAndCountAll({
-    where: { userId, [Op.or]: visibilityOr },
+    where,
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },

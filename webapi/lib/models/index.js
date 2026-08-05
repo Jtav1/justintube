@@ -20,6 +20,7 @@ import { Theme } from "./theme.js";
 import { TranscodeProfile } from "./transcode-profile.js";
 import { User } from "./user.js";
 import { UserApiKey } from "./user-api-key.js";
+import { UserHiddenVideo } from "./user-hidden-video.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
@@ -260,6 +261,7 @@ function registerAssociations() {
   AccessPermission.hasMany(VideoAccess, {
     foreignKey: "permissionId",
   });
+  
   VideoAccess.belongsTo(AccessPermission, {
     foreignKey: "permissionId",
   });
@@ -267,14 +269,36 @@ function registerAssociations() {
   AccessPermission.hasMany(PlaylistAccess, {
     foreignKey: "permissionId",
   });
+  
   PlaylistAccess.belongsTo(AccessPermission, {
     foreignKey: "permissionId",
+  });
+  
+  User.hasMany(UserHiddenVideo, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  
+  UserHiddenVideo.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasMany(UserHiddenVideo, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  
+  UserHiddenVideo.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
   });
 
   OriginalUpload.hasMany(ContentTag, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
+  
   ContentTag.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -284,6 +308,7 @@ function registerAssociations() {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
+  
   Comment.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -293,6 +318,7 @@ function registerAssociations() {
     foreignKey: "userId",
     onDelete: "SET NULL",
   });
+  
   Comment.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "SET NULL",
@@ -445,6 +471,7 @@ export const models = {
   VideoTransferMapping,
   VideoTransferHistory,
   UserViewHistory,
+  UserHiddenVideo,
 };
 
 export {
@@ -469,6 +496,7 @@ export {
   TranscodeProfile,
   User,
   UserApiKey,
+  UserHiddenVideo,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,

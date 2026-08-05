@@ -24,6 +24,7 @@ import {
   TranscodeProfile,
   User,
   UserApiKey,
+  UserHiddenVideo,
   UserIdentity,
   UserNotificationSetting,
   UserPlaylist,
@@ -57,6 +58,7 @@ const RESET_MODELS = [
   VideoLike,
   UserViewHistory,
   VideoAccess,
+  UserHiddenVideo,
   ContentTag,
   Comment,
   FeaturedVideo,
@@ -349,11 +351,11 @@ export async function seedVideoLike(originalUploadId, overrides = {}) {
 }
 
 /**
- * Inserts a USER_VIEW_HISTORY row (a single watch event) for an existing
- * upload, applying defaults for any omitted field. No unique constraint on
- * this table - callers can seed multiple rows for the same
- * originalUploadId/userId pair to simulate repeat views (pass distinct
- * `createdAt` overrides to control ordering).
+ * Inserts (or, on a repeat originalUploadId/userId pair, updates) a
+ * USER_VIEW_HISTORY row for an existing upload, applying defaults for any
+ * omitted field. There is a unique constraint on (userId, originalUploadId) -
+ * pass distinct `updatedAt` overrides to control ordering across rows instead
+ * of seeding the same pair twice.
  *
  * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
  * @param {object} [overrides] Partial column values to override the defaults.
@@ -367,7 +369,12 @@ export async function seedUserViewHistory(originalUploadId, overrides = {}) {
     ...overrides,
   };
 
-  const row = await UserViewHistory.create(record);
+  const existing = await UserViewHistory.findOne({
+    where: { originalUploadId: record.originalUploadId, userId: record.userId },
+  });
+  const row = existing
+    ? await existing.update(record)
+    : await UserViewHistory.create(record);
   return asSeedResult(row, record);
 }
 
@@ -450,6 +457,20 @@ export async function seedVideoAccess(originalUploadId, userId, overrides = {}) 
     permissionId: permissionRow.id,
   });
   return { id: row.id, originalUploadId, userId, permission };
+}
+
+/**
+ * Inserts a USER_HIDDEN_VIDEOS row recording that a user has hidden an
+ * upload from their own listings.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {number} userId Id of the USERS row hiding the video.
+ * @returns {Promise<{id: number, originalUploadId: number, userId: number}>}
+ *   The seeded row's id and foreign keys.
+ */
+export async function seedUserHiddenVideo(originalUploadId, userId) {
+  const row = await UserHiddenVideo.create({ originalUploadId, userId });
+  return { id: row.id, originalUploadId, userId };
 }
 
 /**
