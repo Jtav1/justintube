@@ -1,5 +1,7 @@
 import { Check } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { useTheme } from '../context/useTheme.js'
+import { useAuth } from '../context/useAuth.js'
 import './ThemeSelector.css'
 
 function ThemeSwatches({ colors }) {
@@ -27,6 +29,7 @@ function ThemeSwatches({ colors }) {
 
 function ThemeSelector() {
   const { theme, themes, selectTheme } = useTheme()
+  const { user } = useAuth()
   const scrollable = themes.length > 2
 
   return (
@@ -47,9 +50,11 @@ function ThemeSelector() {
           </button>
         ))}
       </div>
-      <button type="button" className="theme-selector-edit-link" disabled>
-        Edit Themes (Coming soon)
-      </button>
+      {user?.role === 'admin' && (
+        <Link to="/control-panel/themes/new" className="theme-selector-edit-link">
+          Manage Themes
+        </Link>
+      )}
     </div>
   )
 }

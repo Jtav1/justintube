@@ -10,7 +10,7 @@
 }
 
 .theme-selector-scrollable {
-  max-height: 88px;
+  max-height: 190px;
   overflow-y: auto;
 }
 
@@ -82,6 +82,10 @@
   text-align: center;
   color: var(--text);
   text-decoration: none;
-  cursor: not-allowed;
-  opacity: 0.6;
+  cursor: pointer;
+}
+
+.theme-selector-edit-link:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
 }
