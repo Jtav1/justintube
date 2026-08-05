@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { Menu, Palette, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import SearchAutocomplete from './SearchAutocomplete.jsx'
 import ThemeSelector from './ThemeSelector.jsx'
 import NotificationBell from './NotificationBell.jsx'
@@ -16,8 +17,10 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
   const [query, setQuery] = useState('')
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const themeMenuRef = useRef(null)
+  const themeToggleRef = useRef(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef(null)
+  const userToggleRef = useRef(null)
 
   // Keeps the search box in sync with the URL only on the results page -
   // elsewhere it's free local state that starts empty on navigation. Adjusted
@@ -53,6 +56,8 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [themeMenuOpen])
 
+  useDismissablePopover(themeMenuOpen, () => setThemeMenuOpen(false), themeToggleRef)
+
   useEffect(() => {
     if (!userMenuOpen) {
       return undefined
@@ -67,6 +72,8 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [userMenuOpen])
+
+  useDismissablePopover(userMenuOpen, () => setUserMenuOpen(false), userToggleRef)
 
   const avatarUrl = user
     ? `${apiClient.defaults.baseURL}/api/v1/users/${user.username}/avatar`
@@ -150,6 +157,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             title="Select theme"
             aria-haspopup="true"
             aria-expanded={themeMenuOpen}
+            ref={themeToggleRef}
           >
             <Palette size={20} />
           </button>
@@ -168,6 +176,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
                 onClick={() => setUserMenuOpen((open) => !open)}
                 aria-haspopup="true"
                 aria-expanded={userMenuOpen}
+                ref={userToggleRef}
               >
                 {user.avatarFilename ? (
                   <img className="topbar-avatar" src={avatarUrl} alt="" />

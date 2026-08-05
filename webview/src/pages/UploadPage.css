@@ -59,6 +59,10 @@
   }
 }
 
+.upload-card .required-mark {
+  color: var(--error, #d33);
+}
+
 @media (max-width: 640px) {
   .upload-card {
     padding: 16px;

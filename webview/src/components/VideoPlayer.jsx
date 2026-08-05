@@ -21,6 +21,7 @@ import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../api/users.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
 
@@ -79,7 +80,9 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
 
   const videoRef = useRef(null)
   const qualityMenuRef = useRef(null)
+  const qualityToggleRef = useRef(null)
   const playlistMenuRef = useRef(null)
+  const playlistToggleRef = useRef(null)
   const playlistDropdownRef = useRef(null)
   const resumeStateRef = useRef(null)
   const viewRecordedRef = useRef(false)
@@ -169,6 +172,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [qualityMenuOpen])
 
+  useDismissablePopover(qualityMenuOpen, () => setQualityMenuOpen(false), qualityToggleRef)
+
   useEffect(() => {
     if (!playlistMenuOpen) {
       return undefined
@@ -183,6 +188,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [playlistMenuOpen])
+
+  useDismissablePopover(playlistMenuOpen, () => setPlaylistMenuOpen(false), playlistToggleRef)
 
   useEffect(() => {
     if (playlistMenuOpen) {
@@ -398,6 +405,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
                 aria-label="Select video quality"
                 title="Select video quality"
                 onClick={() => setQualityMenuOpen((prev) => !prev)}
+                ref={qualityToggleRef}
               >
                 <Settings2 size={18} />
               </button>
@@ -546,6 +554,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               title="Add to playlist"
               disabled={!user}
               onClick={handleTogglePlaylistMenu}
+              ref={playlistToggleRef}
             >
               <ListPlus size={18} />
             </button>

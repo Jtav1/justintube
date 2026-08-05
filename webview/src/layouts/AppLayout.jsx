@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { useTheme } from '../context/useTheme.js'
 import apiClient from '../api/client.js'
 import { useIsMobile } from '../lib/viewport.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import { useRouteAnnouncer } from '../hooks/useRouteAnnouncer.js'
 import TopBar from '../components/TopBar.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import './AppLayout.css'
@@ -32,6 +34,8 @@ function AppLayout() {
   const { theme } = useTheme()
   const location = useLocation()
   const isMobile = useIsMobile()
+  const mainRef = useRef(null)
+  useRouteAnnouncer(mainRef)
   const collapsedByDefault = COLLAPSED_BY_DEFAULT_ROUTES.includes(location.pathname) || isMobile
   const [collapsed, setCollapsed] = useState(() => collapsedByDefault || readStoredCollapsed())
 
@@ -56,10 +60,16 @@ function AppLayout() {
     setCollapsed(true)
   }
 
+  const mobileSidebarOpen = isMobile && !collapsed
+  useDismissablePopover(mobileSidebarOpen, closeSidebar, null)
+
   const viewBackgroundUrl = resolveThemeImageUrl(theme?.images?.viewBackgroundUrl)
 
   return (
     <div className="app-layout">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <TopBar
         onToggleSidebar={toggleSidebar}
         backgroundUrl={resolveThemeImageUrl(theme?.images?.headerBackgroundUrl)}
@@ -70,10 +80,19 @@ function AppLayout() {
           backgroundUrl={resolveThemeImageUrl(theme?.images?.sidebarBackgroundUrl)}
           onNavigate={isMobile ? closeSidebar : undefined}
         />
-        {isMobile && !collapsed && (
-          <div className="app-layout-backdrop" onClick={closeSidebar} />
+        {mobileSidebarOpen && (
+          <div
+            className="app-layout-backdrop"
+            role="button"
+            tabIndex={-1}
+            aria-label="Close sidebar"
+            onClick={closeSidebar}
+          />
         )}
         <main
+          id="main-content"
+          ref={mainRef}
+          tabIndex={-1}
           className="app-layout-content"
           style={viewBackgroundUrl ? { backgroundImage: `url(${viewBackgroundUrl})` } : undefined}
         >

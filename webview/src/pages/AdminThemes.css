@@ -1,3 +1,7 @@
+.required-mark {
+  color: var(--error, #d33);
+}
+
 .admin-themes-list {
   display: flex;
   flex-direction: column;

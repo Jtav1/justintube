@@ -35,6 +35,10 @@ function VerifyEmailPage() {
   const startedRef = useRef(false)
 
   useEffect(() => {
+    document.title = 'Verify email - Justintube'
+  }, [])
+
+  useEffect(() => {
     if (startedRef.current) {
       return
     }

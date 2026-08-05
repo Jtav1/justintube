@@ -7,6 +7,7 @@ import { useAuth } from '../context/useAuth.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { hideVideo } from '../api/videos.js'
 import apiClient from '../api/client.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoCard.css'
 
@@ -189,6 +190,8 @@ function VideoCard({
     window.addEventListener('scroll', handleScroll, true)
     return () => window.removeEventListener('scroll', handleScroll, true)
   }, [menuOpen])
+
+  useDismissablePopover(menuOpen, closeMenu, toggleRef)
 
   if (hidden) {
     return null

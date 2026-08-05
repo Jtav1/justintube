@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
 import './AuthForm.css'
@@ -27,6 +27,10 @@ function RegisterPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
+  useEffect(() => {
+    document.title = 'Register - Justintube'
+  }, [])
+
   async function handleSubmit(event) {
     event.preventDefault()
     if (submitting) {
@@ -49,7 +53,9 @@ function RegisterPage() {
     <section id="auth-center">
       <form className="auth-card" onSubmit={handleSubmit}>
         <h1>Register</h1>
-        <label htmlFor="username">Username</label>
+        <label htmlFor="username">
+          Username <span className="required-mark" aria-hidden="true">*</span>
+        </label>
         <input
           id="username"
           name="username"
@@ -57,9 +63,13 @@ function RegisterPage() {
           autoComplete="username"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
+          aria-describedby={error ? 'register-error' : undefined}
+          aria-invalid={error ? 'true' : undefined}
           required
         />
-        <label htmlFor="email">Email</label>
+        <label htmlFor="email">
+          Email <span className="required-mark" aria-hidden="true">*</span>
+        </label>
         <input
           id="email"
           name="email"
@@ -67,9 +77,13 @@ function RegisterPage() {
           autoComplete="email"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
+          aria-describedby={error ? 'register-error' : undefined}
+          aria-invalid={error ? 'true' : undefined}
           required
         />
-        <label htmlFor="password">Password</label>
+        <label htmlFor="password">
+          Password <span className="required-mark" aria-hidden="true">*</span>
+        </label>
         <input
           id="password"
           name="password"
@@ -78,9 +92,15 @@ function RegisterPage() {
           minLength={8}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
+          aria-describedby={error ? 'register-error' : undefined}
+          aria-invalid={error ? 'true' : undefined}
           required
         />
-        {error && <p className="auth-error">{error}</p>}
+        {error && (
+          <p id="register-error" className="auth-error" role="alert">
+            {error}
+          </p>
+        )}
         <button type="submit" className="auth-submit" disabled={submitting}>
           Register
         </button>

@@ -45,7 +45,7 @@ function ColorField({ label, value, onChange }) {
   )
 }
 
-function ImageField({ label, currentUrl, file, removed, onFileChange, onToggleRemove }) {
+function ImageField({ label, currentUrl, file, removed, onFileChange, onToggleRemove, previewAlt }) {
   const inputRef = useRef(null)
 
   const objectUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
@@ -63,7 +63,7 @@ function ImageField({ label, currentUrl, file, removed, onFileChange, onToggleRe
   return (
     <div className="admin-themes-image-field">
       <label>{label}</label>
-      {previewUrl && <img src={previewUrl} alt="" className="admin-themes-image-preview" />}
+      {previewUrl && <img src={previewUrl} alt={previewAlt} className="admin-themes-image-preview" />}
       {!previewUrl && removed && (
         <p className="admin-themes-image-removed-note">Will be removed on save.</p>
       )}
@@ -247,7 +247,9 @@ function AdminThemes() {
         <h1>{isEditMode ? 'Edit Theme' : 'Create Theme'}</h1>
 
         <form className="settings-form" onSubmit={handleSubmit}>
-          <label htmlFor="admin-theme-name">Name</label>
+          <label htmlFor="admin-theme-name">
+            Name <span className="required-mark" aria-hidden="true">*</span>
+          </label>
           <input
             id="admin-theme-name"
             type="text"
@@ -296,6 +298,7 @@ function AdminThemes() {
                 removed={removals[key]}
                 onFileChange={(file) => setFile(key, file)}
                 onToggleRemove={(value) => setRemoved(key, value)}
+                previewAlt={`${label} background preview`}
               />
             ))}
           </div>

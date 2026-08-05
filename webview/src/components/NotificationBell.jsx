@@ -8,6 +8,7 @@ import {
   getNotificationPreferences,
 } from '../api/notifications.js'
 import { useToast } from '../context/useToast.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import NotificationItem from './NotificationItem.jsx'
 import './NotificationBell.css'
 
@@ -92,6 +93,8 @@ function NotificationBell() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
+
+  useDismissablePopover(open, () => setOpen(false), toggleRef)
 
   useEffect(() => {
     if (!open) {

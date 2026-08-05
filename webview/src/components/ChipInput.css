@@ -99,7 +99,8 @@
   cursor: pointer;
 }
 
-.chip-input-suggestion:hover {
+.chip-input-suggestion:hover,
+.chip-input-suggestion-active {
   background: var(--accent-bg);
 }
 

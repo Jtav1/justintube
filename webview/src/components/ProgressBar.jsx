@@ -9,7 +9,7 @@ import './ProgressBar.css'
 function ProgressBar({ value = 0, indeterminate = false, label }) {
   const clamped = Math.max(0, Math.min(100, value))
   return (
-    <div className="progress-bar-wrap">
+    <div className="progress-bar-wrap" role="status" aria-live="polite" aria-atomic="true">
       <p className="progress-bar-label">{label}</p>
       <div
         className={`progress-bar-track${indeterminate ? ' progress-bar-indeterminate' : ''}`}

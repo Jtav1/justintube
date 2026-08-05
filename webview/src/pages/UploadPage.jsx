@@ -628,16 +628,17 @@ function UploadPage() {
         {!isEditMode && (
           <>
             <div className="upload-source-row">
-              <div
+              <label
+                htmlFor="upload-dropzone-input"
                 className={`upload-dropzone${fileLocked ? ' upload-dropzone-disabled' : ''}${dragActive ? ' upload-dropzone-active' : ''}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => !fileLocked && fileInputRef.current?.click()}
               >
                 <UploadCloud size={28} />
                 <p>{file ? file.name : 'Drag & drop a video or audio file, or click to choose a file'}</p>
                 <input
+                  id="upload-dropzone-input"
                   ref={fileInputRef}
                   type="file"
                   accept="video/*,audio/*"
@@ -657,7 +658,7 @@ function UploadPage() {
                     Clear
                   </button>
                 )}
-              </div>
+              </label>
 
               {importAvailable && (
                 <>
@@ -687,20 +688,18 @@ function UploadPage() {
         )}
 
         <div className="upload-field-group">
-          <label>Thumbnail</label>
+          <label htmlFor="upload-thumbnail-input">Thumbnail</label>
           {!isEditMode && !importAvailable && (
             <p className="upload-hint">
               Automatic thumbnail generation is unavailable right now — you can upload one
               manually instead.
             </p>
           )}
-          <div
-            className="upload-thumbnail-picker"
-            onClick={() => thumbnailInputRef.current?.click()}
-          >
+          <label htmlFor="upload-thumbnail-input" className="upload-thumbnail-picker">
             <UploadCloud size={20} />
             <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
             <input
+              id="upload-thumbnail-input"
               ref={thumbnailInputRef}
               type="file"
               accept="image/*"
@@ -719,10 +718,12 @@ function UploadPage() {
                 Clear
               </button>
             )}
-          </div>
+          </label>
         </div>
 
-        <label htmlFor="upload-title">Title</label>
+        <label htmlFor="upload-title">
+          Title <span className="required-mark" aria-hidden="true">*</span>
+        </label>
         <input
           id="upload-title"
           type="text"
