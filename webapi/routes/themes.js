@@ -414,18 +414,27 @@ function parseThemeBody(body, options) {
 }
 
 /**
- * Applies any uploaded background image files from `req.files` onto a
- * patch object, keyed by THEMES column name.
+ * Applies any uploaded background image files from `req.files` onto a patch
+ * object, keyed by THEMES column name. For a slot with no uploaded file, a
+ * truthy `remove<Field>` body field (e.g. `removeHeaderBackground`) clears
+ * the slot instead, letting an admin remove a previously-saved image without
+ * replacing it.
  *
  * @param {import('express').Request} req Incoming request (`req.files` set by multer.fields).
  * @param {Record<string, unknown>} patch Patch object to mutate in place.
  * @returns {void}
  */
 function applyUploadedImages(req, patch) {
+  const body = req.body || {};
   for (const { field, column } of Object.values(IMAGE_SLOTS)) {
     const file = req.files?.[field]?.[0];
     if (file) {
       patch[column] = file.filename;
+      continue;
+    }
+    const removeField = `remove${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+    if (parseBooleanish(body[removeField])) {
+      patch[column] = null;
     }
   }
 }
@@ -609,7 +618,10 @@ export function createThemesRouter() {
    * by an admin. `system: true` (admin-only) converts the theme to
    * `"public"`; there is no reverse conversion. `isDefault: true`
    * (admin-only) requires the theme to be (or become, via `system`)
-   * `"public"`, and clears any prior default.
+   * `"public"`, and clears any prior default. For each image slot, a truthy
+   * `remove<Field>` (e.g. `removeHeaderBackground`) clears a previously-saved
+   * image when no replacement file is uploaded for that slot in the same
+   * request; an uploaded file for a slot takes precedence over its remove flag.
    *
    * @openapi
    * /api/v1/themes/{id}:
@@ -647,6 +659,10 @@ export function createThemesRouter() {
    *               sidebarBackground: { type: string, format: binary }
    *               viewBackground: { type: string, format: binary }
    *               footerBackground: { type: string, format: binary }
+   *               removeHeaderBackground: { type: string }
+   *               removeSidebarBackground: { type: string }
+   *               removeViewBackground: { type: string }
+   *               removeFooterBackground: { type: string }
    *     responses:
    *       "200":
    *         description: Updated theme

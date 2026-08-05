@@ -9,6 +9,7 @@ import UploadPage from './pages/UploadPage.jsx'
 import CreatePlaylistPage from './pages/CreatePlaylistPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
 import ControlPanelPage from './pages/AdminPanel.jsx'
+import AdminThemesPage from './pages/AdminThemes.jsx'
 import ModReportsPage from './pages/ModReports.jsx'
 import UserPlaylistsPage from './pages/UserPlaylists.jsx'
 import PlaylistsPage from './pages/Playlists.jsx'
@@ -33,6 +34,8 @@ function App() {
       <Route element={<AppLayout />}>
         <Route path="/" element={<VideoListing />} />
         <Route path="/control-panel" element={<ControlPanelPage />} />
+        <Route path="/control-panel/themes/new" element={<AdminThemesPage />} />
+        <Route path="/control-panel/themes/:id/edit" element={<AdminThemesPage />} />
         <Route path="/video" element={<VideoPage />} />
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />
