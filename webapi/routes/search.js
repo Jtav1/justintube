@@ -163,7 +163,8 @@ function parseSearchQuery(query) {
       ? query.username.trim()
       : undefined;
 
-  const sortKey = typeof query.sort === "string" ? query.sort.trim() : "relevance";
+  const sortKey =
+    typeof query.sort === "string" ? query.sort.trim() : "relevance";
   if (!Object.prototype.hasOwnProperty.call(SORT_OPTIONS, sortKey)) {
     return {
       ok: false,
@@ -176,7 +177,8 @@ function parseSearchQuery(query) {
     return { ok: false, message: "page must be a positive integer." };
   }
 
-  const limitRaw = query.limit === undefined ? DEFAULT_LIMIT : Number(query.limit);
+  const limitRaw =
+    query.limit === undefined ? DEFAULT_LIMIT : Number(query.limit);
   if (!Number.isInteger(limitRaw) || limitRaw < 1) {
     return { ok: false, message: "limit must be a positive integer." };
   }
@@ -205,12 +207,16 @@ function parseSearchQuery(query) {
 function parseUserSearchQuery(query) {
   const q = typeof query.q === "string" ? query.q.trim() : "";
 
-  const limitRaw = query.limit === undefined ? USER_SEARCH_DEFAULT_LIMIT : Number(query.limit);
+  const limitRaw =
+    query.limit === undefined ? USER_SEARCH_DEFAULT_LIMIT : Number(query.limit);
   if (!Number.isInteger(limitRaw) || limitRaw < 1) {
     return { ok: false, message: "limit must be a positive integer." };
   }
   if (limitRaw > USER_SEARCH_MAX_LIMIT) {
-    return { ok: false, message: `limit must be at most ${USER_SEARCH_MAX_LIMIT}.` };
+    return {
+      ok: false,
+      message: `limit must be at most ${USER_SEARCH_MAX_LIMIT}.`,
+    };
   }
 
   return { ok: true, q, limit: limitRaw };
@@ -226,12 +232,16 @@ function parseUserSearchQuery(query) {
 function parseSuggestQuery(query) {
   const q = typeof query.q === "string" ? query.q.trim() : "";
 
-  const limitRaw = query.limit === undefined ? SUGGEST_LIMIT : Number(query.limit);
+  const limitRaw =
+    query.limit === undefined ? SUGGEST_LIMIT : Number(query.limit);
   if (!Number.isInteger(limitRaw) || limitRaw < 1) {
     return { ok: false, message: "limit must be a positive integer." };
   }
   if (limitRaw > SUGGEST_MAX_LIMIT) {
-    return { ok: false, message: `limit must be at most ${SUGGEST_MAX_LIMIT}.` };
+    return {
+      ok: false,
+      message: `limit must be at most ${SUGGEST_MAX_LIMIT}.`,
+    };
   }
 
   return { ok: true, q, limit: limitRaw };
@@ -264,15 +274,27 @@ function parseAdvancedSearchQuery(query) {
     return { ok: true, value };
   }
 
-  const videoLimit = parseLimit(query.videoLimit, ADVANCED_LIMITS.video, "videoLimit");
+  const videoLimit = parseLimit(
+    query.videoLimit,
+    ADVANCED_LIMITS.video,
+    "videoLimit",
+  );
   if (!videoLimit.ok) {
     return videoLimit;
   }
-  const playlistLimit = parseLimit(query.playlistLimit, ADVANCED_LIMITS.playlist, "playlistLimit");
+  const playlistLimit = parseLimit(
+    query.playlistLimit,
+    ADVANCED_LIMITS.playlist,
+    "playlistLimit",
+  );
   if (!playlistLimit.ok) {
     return playlistLimit;
   }
-  const userLimit = parseLimit(query.userLimit, ADVANCED_LIMITS.user, "userLimit");
+  const userLimit = parseLimit(
+    query.userLimit,
+    ADVANCED_LIMITS.user,
+    "userLimit",
+  );
   if (!userLimit.ok) {
     return userLimit;
   }
@@ -472,14 +494,18 @@ export function createSearchRouter() {
     try {
       const result = await searchVideos(parsed);
       const hiddenUploadIds = await loadHiddenUploadIds(req.user?.id);
-      const hits = (result.hits || []).filter((hit) => !hiddenUploadIds.has(hit.id));
+      const hits = (result.hits || []).filter(
+        (hit) => !hiddenUploadIds.has(hit.id),
+      );
       const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
         hits.map((hit) => ({ id: hit.id, userId: hit.userId })),
         req.user,
         req.authRole,
       );
       res.status(200).json({
-        items: hits.map((hit) => serializeHit(hit, viewerPermissionByUploadId.get(hit.id))),
+        items: hits.map((hit) =>
+          serializeHit(hit, viewerPermissionByUploadId.get(hit.id)),
+        ),
         page: result.page ?? parsed.page,
         limit: result.hitsPerPage ?? parsed.limit,
         totalHits: result.totalHits ?? 0,
@@ -535,7 +561,9 @@ export function createSearchRouter() {
     try {
       const result = await suggestVideos(parsed.q, parsed.limit);
       const hiddenUploadIds = await loadHiddenUploadIds(req.user?.id);
-      const hits = (result.hits || []).filter((hit) => !hiddenUploadIds.has(hit.id));
+      const hits = (result.hits || []).filter(
+        (hit) => !hiddenUploadIds.has(hit.id),
+      );
       res.status(200).json({
         items: hits.map((hit) => ({
           id: hit.id,
@@ -624,58 +652,73 @@ export function createSearchRouter() {
         ? parsed.userLimit
         : Math.max(parsed.userLimit * 4, 40);
 
-      const [videoResult, playlistResult, userResult, hiddenUploadIds] = await Promise.all([
-        searchVideosAdvanced({ q: parsed.q, limit: parsed.videoLimit }),
-        searchPlaylistsAdvanced({ q: parsed.q, limit: parsed.playlistLimit }),
-        searchUsersAdvanced({ q: parsed.q, limit: userSearchLimit }),
-        loadHiddenUploadIds(req.user?.id),
-      ]);
+      const [videoResult, playlistResult, userResult, hiddenUploadIds] =
+        await Promise.all([
+          searchVideosAdvanced({ q: parsed.q, limit: parsed.videoLimit }),
+          searchPlaylistsAdvanced({ q: parsed.q, limit: parsed.playlistLimit }),
+          searchUsersAdvanced({ q: parsed.q, limit: userSearchLimit }),
+          loadHiddenUploadIds(req.user?.id),
+        ]);
 
       const videos = (videoResult.hits || [])
         .filter((hit) => !hiddenUploadIds.has(hit.id))
-        .map(serializeHit);
-      const videoViewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
-        videoHits.map((hit) => ({ id: hit.id, userId: hit.userId })),
-        req.user,
-        req.authRole,
-      );
-      const videos = videoHits.map((hit) =>
-        serializeHit(hit, videoViewerPermissionByUploadId.get(hit.id)),
-      );   
+        .map((hit) =>
+          serializeHit(hit, videoViewerPermissionByUploadId.get(hit.id)),
+        );
+      const videoViewerPermissionByUploadId =
+        await loadViewerPermissionsByUploadId(
+          videoHits.map((hit) => ({ id: hit.id, userId: hit.userId })),
+          req.user,
+          req.authRole,
+        );
 
       const playlistHits = playlistResult.hits || [];
       const playlistIds = playlistHits.map((hit) => hit.id);
-      const playlistRows = playlistIds.length > 0
-        ? await UserPlaylist.findAll({
-          where: { id: playlistIds },
-          include: [{ model: User, required: false }],
-        })
-        : [];
+      const playlistRows =
+        playlistIds.length > 0
+          ? await UserPlaylist.findAll({
+              where: { id: playlistIds },
+              include: [{ model: User, required: false }],
+            })
+          : [];
       const playlistRowById = new Map(playlistRows.map((row) => [row.id, row]));
       const orderedPlaylistRows = playlistIds
         .map((id) => playlistRowById.get(id))
         .filter(Boolean);
-      const playlistsPage = await buildPlaylistsPage(orderedPlaylistRows, orderedPlaylistRows.length, {
-        page: 1,
-        limit: Math.max(orderedPlaylistRows.length, 1),
-        user: req.user,
-        role: req.authRole,
-      });
+      const playlistsPage = await buildPlaylistsPage(
+        orderedPlaylistRows,
+        orderedPlaylistRows.length,
+        {
+          page: 1,
+          limit: Math.max(orderedPlaylistRows.length, 1),
+          user: req.user,
+          role: req.authRole,
+        },
+      );
 
       const userHits = userResult.hits || [];
       const userIds = userHits.map((hit) => hit.id);
-      const userRows = userIds.length > 0
-        ? await User.findAll({ where: { id: userIds }, include: [{ model: Role, required: false }] })
-        : [];
+      const userRows =
+        userIds.length > 0
+          ? await User.findAll({
+              where: { id: userIds },
+              include: [{ model: Role, required: false }],
+            })
+          : [];
       const userRowById = new Map(userRows.map((row) => [row.id, row]));
       const visibleUserRows = userIds
         .map((id) => userRowById.get(id))
         .filter(Boolean)
         .filter((user) => isAdminCaller || user.Role?.name !== "locked")
         .slice(0, parsed.userLimit);
-      const uploadCounts = await loadUploadCountsByUserId(visibleUserRows.map((user) => user.id));
+      const uploadCounts = await loadUploadCountsByUserId(
+        visibleUserRows.map((user) => user.id),
+      );
       const users = visibleUserRows.map((user) =>
-        serializeUserListItem(user, { isAdminCaller, uploadCount: uploadCounts.get(user.id) ?? 0 }),
+        serializeUserListItem(user, {
+          isAdminCaller,
+          uploadCount: uploadCounts.get(user.id) ?? 0,
+        }),
       );
 
       res.status(200).json({
