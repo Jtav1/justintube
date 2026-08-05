@@ -45,9 +45,10 @@ function VideoPage() {
           if (err?.response?.data?.error === 'hidden_by_viewer') {
             setHiddenByViewer(true)
           } else {
-            setError('This video is unavailable right now.')
             toastError('Failed to load video. Does this video exist?')
+            setError('This video is unavailable right now.')
           }
+          toastError('This video is unavailable right now.')
         }
       } finally {
         if (!cancelled) {
@@ -70,7 +71,7 @@ function VideoPage() {
     } catch {
       // Leave the hidden notice in place; the user can retry.
     }
-  }
+  }, [videoId, toastError]
 
   useEffect(() => {
     let cancelled = false
