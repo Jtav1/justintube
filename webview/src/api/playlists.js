@@ -101,6 +101,41 @@ export async function addVideoToPlaylist(playlistId, videoId) {
 }
 
 /**
+ * Lists the private-access grants for a playlist. Owner or admin only.
+ * @param {number|string} id
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null, permission: string}>}>}
+ */
+export async function getPlaylistAccess(id) {
+  const res = await apiClient.get(`/api/v1/playlists/${id}/access`)
+  return res.data
+}
+
+/**
+ * Grants (or updates the permission level of) a user's access to a private
+ * playlist. Owner or admin only. Calling this again for a user who already
+ * has a grant updates their permission level rather than erroring.
+ * @param {number|string} id
+ * @param {string} username
+ * @param {'view'|'edit'} [permission] Defaults to "view" server-side.
+ * @returns {Promise<{userId: number, username: string, displayName: string|null, granted: boolean, permission: string}>}
+ */
+export async function addPlaylistAccess(id, username, permission) {
+  const res = await apiClient.post(`/api/v1/playlists/${id}/access`, { username, permission })
+  return res.data
+}
+
+/**
+ * Revokes a user's access to a private playlist. Owner or admin only. Idempotent.
+ * @param {number|string} id
+ * @param {number} userId
+ * @returns {Promise<{userId: number, username: string|null, displayName: string|null, granted: boolean}>}
+ */
+export async function removePlaylistAccess(id, userId) {
+  const res = await apiClient.delete(`/api/v1/playlists/${id}/access/${userId}`)
+  return res.data
+}
+
+/**
  * Lists a user's playlists visible to the current viewer: their public
  * playlists always, plus (when authenticated) private playlists the viewer
  * holds a PLAYLIST_ACCESS grant on, plus every visibility when viewing your

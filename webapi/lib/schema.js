@@ -1,8 +1,9 @@
 import { QueryTypes } from "sequelize";
 import { DB_CLIENT, sequelize } from "./db.js";
-import { models, NotificationType } from "./models/index.js";
+import { AccessPermission, models, NotificationType } from "./models/index.js";
 import {
   seedReferenceData,
+  seedAccessPermissions,
   seedAdminUser,
   seedDemoUsers,
   seedThemes,
@@ -533,6 +534,63 @@ async function migrateNotificationsFk() {
 }
 
 /**
+ * Ensures `VIDEO_ACCESS` and `PLAYLIST_ACCESS` have a `permission_id` foreign
+ * key referencing `ACCESS_PERMISSIONS`, backfilling any existing grant row
+ * (from before "view"/"edit" permission levels existed) to the seeded "view"
+ * permission. Runs before the general sync path (see `ensureSchema`) for the
+ * same reason as `migrateNotificationsFk`: that path enforces the model's
+ * `allowNull: false` on this column, which would fail on MySQL if any row
+ * still had a NULL value when it ran.
+ *
+ * @returns {Promise<void>} Resolves once both tables have a populated permission_id.
+ */
+async function migrateAccessPermissionForeignKeys() {
+  await AccessPermission.sync();
+  await seedAccessPermissions();
+
+  const [viewPermission] = await sequelize.query(
+    "SELECT `id` FROM `ACCESS_PERMISSIONS` WHERE `name` = 'view'",
+    { type: QueryTypes.SELECT },
+  );
+  if (!viewPermission) {
+    return;
+  }
+
+  for (const table of ["VIDEO_ACCESS", "PLAYLIST_ACCESS"]) {
+    if (!(await tableExists(table))) {
+      continue;
+    }
+
+    if (!(await columnExists(table, "permission_id"))) {
+      const ddl =
+        DB_CLIENT === "sqlite"
+          ? "`permission_id` INTEGER"
+          : "`permission_id` INT UNSIGNED NULL";
+      await sequelize.query(`ALTER TABLE \`${table}\` ADD COLUMN ${ddl}`);
+      console.log(`[api]: added ${DB_CLIENT} column ${table}.permission_id`);
+    }
+
+    const [{ count }] = await sequelize.query(
+      `SELECT COUNT(*) AS count FROM \`${table}\` WHERE \`permission_id\` IS NULL`,
+      { type: QueryTypes.SELECT },
+    );
+    if (Number(count) > 0) {
+      await sequelize.query(
+        `UPDATE \`${table}\` SET \`permission_id\` = :viewId WHERE \`permission_id\` IS NULL`,
+        { replacements: { viewId: viewPermission.id } },
+      );
+      console.log(`[api]: backfilled ${count} ${table}.permission_id value(s) to "view"`);
+    }
+
+    if (DB_CLIENT === "mysql") {
+      await sequelize.query(
+        `ALTER TABLE \`${table}\` MODIFY COLUMN \`permission_id\` INT UNSIGNED NOT NULL`,
+      );
+    }
+  }
+}
+
+/**
  * Migrates `ORIGINAL_UPLOADS.uuid_name` (a 36-char UUID) into `video_id` (a
  * 6-character case-sensitive alphanumeric public id): adds the new column,
  * backfills it with freshly generated unique codes, swaps the unique index
@@ -655,6 +713,7 @@ export async function ensureSchema() {
 
   await migrateOriginalUploadVideoId();
   await migrateNotificationTypeForeignKeys();
+  await migrateAccessPermissionForeignKeys();
 
   if (DB_CLIENT === "sqlite") {
     await ensureSqliteSchema();

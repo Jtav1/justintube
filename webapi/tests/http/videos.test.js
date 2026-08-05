@@ -1069,11 +1069,11 @@ describe("Video discovery and metadata endpoints", () => {
       const putRes = await client
         .put(`/api/v1/videos/${upload.id}/access`)
         .set("Authorization", "Bearer owner-access-key")
-        .send({ usernames: ["friend_user"] });
+        .send({ grants: [{ username: "friend_user" }] });
 
       expect(putRes.status).toBe(200);
       expect(putRes.body.items).toEqual([
-        { userId: friend.id, username: "friend_user", displayName: null },
+        { userId: friend.id, username: "friend_user", displayName: null, permission: "view" },
       ]);
 
       const getRes = await client
@@ -1083,6 +1083,31 @@ describe("Video discovery and metadata endpoints", () => {
       expect(getRes.status).toBe(200);
       expect(getRes.body.items).toHaveLength(1);
       expect(getRes.body.items[0].username).toBe("friend_user");
+      expect(getRes.body.items[0].permission).toBe("view");
+    });
+
+    test("owner can grant edit permission and it round-trips", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-edit-grant-key");
+      const friend = await seedUser({ username: "friend_edit_grant" });
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+
+      const putRes = await client
+        .put(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer owner-edit-grant-key")
+        .send({ grants: [{ username: "friend_edit_grant", permission: "edit" }] });
+
+      expect(putRes.status).toBe(200);
+      expect(putRes.body.items).toEqual([
+        { userId: friend.id, username: "friend_edit_grant", displayName: null, permission: "edit" },
+      ]);
+
+      const getRes = await client
+        .get(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer owner-edit-grant-key");
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.items[0].permission).toBe("edit");
     });
 
     test("rejects unknown usernames", async () => {
@@ -1093,7 +1118,22 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client
         .put(`/api/v1/videos/${upload.id}/access`)
         .set("Authorization", "Bearer owner-bad-access")
-        .send({ usernames: ["no_such_user"] });
+        .send({ grants: [{ username: "no_such_user" }] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+
+    test("rejects an invalid permission value", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-bad-permission");
+      const friend = await seedUser({ username: "friend_bad_permission" });
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+
+      const res = await client
+        .put(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer owner-bad-permission")
+        .send({ grants: [{ username: friend.username, permission: "owner" }] });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("invalid_body");
@@ -1108,7 +1148,7 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client
         .put(`/api/v1/videos/${upload.id}/access`)
         .set("Authorization", "Bearer owner-nonprivate-access")
-        .send({ usernames: [friend.username] });
+        .send({ grants: [{ username: friend.username }] });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("invalid_state");
@@ -1159,6 +1199,121 @@ describe("Video discovery and metadata endpoints", () => {
       expect(getRes.status).toBe(200);
       expect(getRes.body.items).toHaveLength(1);
       expect(getRes.body.items[0].username).toBe("friend_preserve");
+    });
+
+    test("an edit-grantee can update title/description/tags via PATCH", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-editgrantee-patch");
+      const editor = await seedUserWithRoleAndKey("viewer", "editor-editgrantee-patch");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private", title: "Original title" });
+      await seedVideoAccess(upload.id, editor.id, { permission: "edit" });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer editor-editgrantee-patch")
+        .send({ title: "Edited by grantee", description: "New description", tags: ["a", "b"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.title).toBe("Edited by grantee");
+      expect(res.body.description).toBe("New description");
+      expect(res.body.tags.sort()).toEqual(["a", "b"]);
+      expect(res.body.viewerPermission).toBe("edit");
+    });
+
+    test("an edit-grantee's PATCH including visibility is rejected, whole request unchanged", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-editgrantee-visibility");
+      const editor = await seedUserWithRoleAndKey("viewer", "editor-editgrantee-visibility");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private", title: "Untouched title" });
+      await seedVideoAccess(upload.id, editor.id, { permission: "edit" });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer editor-editgrantee-visibility")
+        .send({ title: "Should not apply", visibility: "public" });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+
+      const getRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer editor-editgrantee-visibility");
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.title).toBe("Untouched title");
+      expect(getRes.body.visibility).toBe("private");
+    });
+
+    test("an edit-grantee cannot delete the video", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-editgrantee-delete");
+      const editor = await seedUserWithRoleAndKey("viewer", "editor-editgrantee-delete");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedVideoAccess(upload.id, editor.id, { permission: "edit" });
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer editor-editgrantee-delete");
+
+      expect(res.status).toBe(403);
+    });
+
+    test("an edit-grantee cannot list or set the video's access grants", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-editgrantee-access");
+      const editor = await seedUserWithRoleAndKey("viewer", "editor-editgrantee-access");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedVideoAccess(upload.id, editor.id, { permission: "edit" });
+
+      const listRes = await client
+        .get(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer editor-editgrantee-access");
+      expect(listRes.status).toBe(403);
+
+      const setRes = await client
+        .put(`/api/v1/videos/${upload.id}/access`)
+        .set("Authorization", "Bearer editor-editgrantee-access")
+        .send({ grants: [] });
+      expect(setRes.status).toBe(403);
+    });
+
+    test("a view-grantee is rejected on PATCH", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-viewgrantee-patch");
+      const viewer = await seedUserWithRoleAndKey("viewer", "viewer-viewgrantee-patch");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedVideoAccess(upload.id, viewer.id, { permission: "view" });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer viewer-viewgrantee-patch")
+        .send({ title: "Should not be allowed" });
+
+      expect(res.status).toBe(403);
+    });
+
+    test("GET /videos/:id reports the caller's viewerPermission", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-viewerpermission");
+      const editor = await seedUserWithRoleAndKey("viewer", "editor-viewerpermission");
+      const viewer = await seedUserWithRoleAndKey("viewer", "viewer-viewerpermission");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedVideoAccess(upload.id, editor.id, { permission: "edit" });
+      await seedVideoAccess(upload.id, viewer.id, { permission: "view" });
+
+      const ownerRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-viewerpermission");
+      expect(ownerRes.body.viewerPermission).toBe("owner");
+
+      const editorRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer editor-viewerpermission");
+      expect(editorRes.body.viewerPermission).toBe("edit");
+
+      const viewerRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer viewer-viewerpermission");
+      expect(viewerRes.body.viewerPermission).toBe("view");
     });
   });
 

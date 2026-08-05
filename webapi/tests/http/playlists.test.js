@@ -341,6 +341,30 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         ["Private, granted", "Public video", "Unlisted video"].sort(),
       );
     });
+
+    test("reports the caller's viewerPermission", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "get-viewerpermission-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "get-viewerpermission-key-2");
+      const viewer = await seedUserWithRoleAndKey("viewer", "get-viewerpermission-key-3");
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: viewer.id, permission: "view" });
+
+      const ownerRes = await client
+        .get(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer get-viewerpermission-key-1");
+      expect(ownerRes.body.viewerPermission).toBe("owner");
+
+      const editorRes = await client
+        .get(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer get-viewerpermission-key-2");
+      expect(editorRes.body.viewerPermission).toBe("edit");
+
+      const viewerRes = await client
+        .get(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer get-viewerpermission-key-3");
+      expect(viewerRes.body.viewerPermission).toBe("view");
+    });
   });
 
   describe("PATCH /playlists/{id} (updatePlaylist)", () => {
@@ -372,6 +396,61 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         .patch(`/api/v1/playlists/${playlist.id}`)
         .set("Authorization", "Bearer patch-key-3")
         .send({ name: "Hijacked" });
+
+      expect(res.status).toBe(403);
+    });
+
+    test("an edit-grantee can update name/description", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "patch-editgrantee-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "patch-editgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id, title: "Old name" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+
+      const res = await client
+        .patch(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer patch-editgrantee-key-2")
+        .send({ name: "Edited by grantee", description: "New description" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.name).toBe("Edited by grantee");
+      expect(res.body.description).toBe("New description");
+      expect(res.body.viewerPermission).toBe("edit");
+    });
+
+    test("an edit-grantee's PATCH including visibility is rejected, whole request unchanged", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "patch-editgrantee-vis-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "patch-editgrantee-vis-key-2");
+      const playlist = await seedPlaylist({
+        userId: owner.id,
+        title: "Untouched name",
+        visibility: "private",
+      });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+
+      const res = await client
+        .patch(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer patch-editgrantee-vis-key-2")
+        .send({ name: "Should not apply", visibility: "public" });
+
+      expect(res.status).toBe(403);
+
+      const rows = await queryRows("SELECT * FROM USER_PLAYLISTS WHERE id = :id", {
+        id: playlist.id,
+      });
+      expect(rows[0].title).toBe("Untouched name");
+      expect(rows[0].visibility).toBe("private");
+    });
+
+    test("a view-grantee is rejected", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "patch-viewgrantee-key-1");
+      const viewer = await seedUserWithRoleAndKey("viewer", "patch-viewgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id, title: "Old name" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: viewer.id, permission: "view" });
+
+      const res = await client
+        .patch(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer patch-viewgrantee-key-2")
+        .send({ name: "Should not be allowed" });
 
       expect(res.status).toBe(403);
     });
@@ -423,6 +502,19 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       const res = await client
         .delete(`/api/v1/playlists/${playlist.id}`)
         .set("Authorization", "Bearer delete-key-3");
+
+      expect(res.status).toBe(403);
+    });
+
+    test("an edit-grantee cannot delete the playlist", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "delete-editgrantee-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "delete-editgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+
+      const res = await client
+        .delete(`/api/v1/playlists/${playlist.id}`)
+        .set("Authorization", "Bearer delete-editgrantee-key-2");
 
       expect(res.status).toBe(403);
     });
@@ -509,6 +601,37 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       );
       expect(rows).toHaveLength(0);
     });
+
+    test("an edit-grantee can add an item", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "add-editgrantee-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "add-editgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+      const upload = await seedUpload();
+
+      const res = await client
+        .post(`/api/v1/playlists/${playlist.id}/items`)
+        .set("Authorization", "Bearer add-editgrantee-key-2")
+        .send({ videoId: String(upload.id) });
+
+      expect(res.status).toBe(200);
+      expect(res.body.itemCount).toBe(1);
+    });
+
+    test("a view-grantee is rejected with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "add-viewgrantee-key-1");
+      const viewer = await seedUserWithRoleAndKey("viewer", "add-viewgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: viewer.id, permission: "view" });
+      const upload = await seedUpload();
+
+      const res = await client
+        .post(`/api/v1/playlists/${playlist.id}/items`)
+        .set("Authorization", "Bearer add-viewgrantee-key-2")
+        .send({ videoId: String(upload.id) });
+
+      expect(res.status).toBe(403);
+    });
   });
 
   describe("DELETE /playlists/{id}/items/{videoId} (removePlaylistItem)", () => {
@@ -573,6 +696,37 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       );
       expect(rows).toHaveLength(1);
     });
+
+    test("an edit-grantee can remove an item", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "remove-editgrantee-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "remove-editgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+      const upload = await seedUpload();
+      await seedPlaylistItem(playlist.id, upload.id);
+
+      const res = await client
+        .delete(`/api/v1/playlists/${playlist.id}/items/${upload.id}`)
+        .set("Authorization", "Bearer remove-editgrantee-key-2");
+
+      expect(res.status).toBe(200);
+      expect(res.body.itemCount).toBe(0);
+    });
+
+    test("a view-grantee is rejected with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "remove-viewgrantee-key-1");
+      const viewer = await seedUserWithRoleAndKey("viewer", "remove-viewgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: viewer.id, permission: "view" });
+      const upload = await seedUpload();
+      await seedPlaylistItem(playlist.id, upload.id);
+
+      const res = await client
+        .delete(`/api/v1/playlists/${playlist.id}/items/${upload.id}`)
+        .set("Authorization", "Bearer remove-viewgrantee-key-2");
+
+      expect(res.status).toBe(403);
+    });
   });
 
   describe("GET /playlists/{id}/access (listPlaylistAccess)", () => {
@@ -590,7 +744,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.items).toEqual([
-        { userId: grantee.id, username: "grantee_list", displayName: null },
+        { userId: grantee.id, username: "grantee_list", displayName: null, permission: "view" },
       ]);
     });
 
@@ -602,6 +756,19 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       const res = await client
         .get(`/api/v1/playlists/${playlist.id}/access`)
         .set("Authorization", "Bearer list-access-key-4");
+
+      expect(res.status).toBe(403);
+    });
+
+    test("rejects an edit-grantee with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-access-editgrantee-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "list-access-editgrantee-key-2");
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+
+      const res = await client
+        .get(`/api/v1/playlists/${playlist.id}/access`)
+        .set("Authorization", "Bearer list-access-editgrantee-key-2");
 
       expect(res.status).toBe(403);
     });
@@ -626,6 +793,7 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         username: "grantee_add",
         displayName: null,
         granted: true,
+        permission: "view",
       });
 
       const rows = await queryRows(
@@ -633,6 +801,50 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
         { playlistId: playlist.id },
       );
       expect(rows).toHaveLength(1);
+    });
+
+    test("grants edit permission and upserts the permission on a repeat call", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "add-access-edit-key-1");
+      const grantee = await seedUserWithRoleAndKey("viewer", "add-access-edit-key-2", {
+        username: "grantee_edit_upsert",
+      });
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+
+      const firstRes = await client
+        .post(`/api/v1/playlists/${playlist.id}/access`)
+        .set("Authorization", "Bearer add-access-edit-key-1")
+        .send({ username: "grantee_edit_upsert", permission: "edit" });
+      expect(firstRes.status).toBe(200);
+      expect(firstRes.body.permission).toBe("edit");
+
+      const secondRes = await client
+        .post(`/api/v1/playlists/${playlist.id}/access`)
+        .set("Authorization", "Bearer add-access-edit-key-1")
+        .send({ username: "grantee_edit_upsert", permission: "view" });
+      expect(secondRes.status).toBe(200);
+      expect(secondRes.body.permission).toBe("view");
+
+      const listRes = await client
+        .get(`/api/v1/playlists/${playlist.id}/access`)
+        .set("Authorization", "Bearer add-access-edit-key-1");
+      expect(listRes.body.items).toHaveLength(1);
+      expect(listRes.body.items[0].permission).toBe("view");
+    });
+
+    test("rejects an invalid permission value", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "add-access-badperm-key-1");
+      await seedUserWithRoleAndKey("viewer", "add-access-badperm-key-2", {
+        username: "grantee_badperm",
+      });
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+
+      const res = await client
+        .post(`/api/v1/playlists/${playlist.id}/access`)
+        .set("Authorization", "Bearer add-access-badperm-key-1")
+        .send({ username: "grantee_badperm", permission: "owner" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
     });
 
     test("is idempotent when the grant already exists", async () => {
@@ -698,6 +910,23 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
 
       expect(res.status).toBe(403);
     });
+
+    test("rejects an edit-grantee with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "add-access-editgrantee-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "add-access-editgrantee-key-2");
+      await seedUserWithRoleAndKey("viewer", "add-access-editgrantee-key-3", {
+        username: "grantee_editgrantee_forbidden",
+      });
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+
+      const res = await client
+        .post(`/api/v1/playlists/${playlist.id}/access`)
+        .set("Authorization", "Bearer add-access-editgrantee-key-2")
+        .send({ username: "grantee_editgrantee_forbidden" });
+
+      expect(res.status).toBe(403);
+    });
   });
 
   describe("DELETE /playlists/{id}/access/{userId} (removePlaylistAccess)", () => {
@@ -754,6 +983,21 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       const res = await client
         .delete(`/api/v1/playlists/${playlist.id}/access/${grantee.id}`)
         .set("Authorization", "Bearer remove-access-key-7");
+
+      expect(res.status).toBe(403);
+    });
+
+    test("rejects an edit-grantee with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "remove-access-editgrantee-key-1");
+      const editor = await seedUserWithRoleAndKey("viewer", "remove-access-editgrantee-key-2");
+      const grantee = await seedUserWithRoleAndKey("viewer", "remove-access-editgrantee-key-3");
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: editor.id, permission: "edit" });
+      await seedPlaylistAccess({ playlistId: playlist.id, userId: grantee.id });
+
+      const res = await client
+        .delete(`/api/v1/playlists/${playlist.id}/access/${grantee.id}`)
+        .set("Authorization", "Bearer remove-access-editgrantee-key-2");
 
       expect(res.status).toBe(403);
     });

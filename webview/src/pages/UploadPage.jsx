@@ -8,6 +8,7 @@ import {
   importVideoUrl,
   updateVideo,
   setVideoAccess,
+  getVideoAccess,
   setVideoFeatured,
   getImportStatus,
   updateVideoThumbnail,
@@ -73,6 +74,8 @@ function UploadPage() {
   const [editLoading, setEditLoading] = useState(isEditMode)
   const [editError, setEditError] = useState(null)
   const [editForbidden, setEditForbidden] = useState(false)
+  // A fresh upload's creator is always its owner; only edit mode can set this false.
+  const [viewerIsOwnerOrAdmin, setViewerIsOwnerOrAdmin] = useState(true)
 
   const [file, setFile] = useState(null)
   const [dragActive, setDragActive] = useState(false)
@@ -125,17 +128,33 @@ function UploadPage() {
         if (cancelled) {
           return
         }
-        const canEdit = user.role === 'admin' || video.uploader?.userId === user.id
-        if (!canEdit) {
+        const canEditMetadata = video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
+        if (!canEditMetadata) {
           setEditForbidden(true)
           return
         }
+        const isOwnerAdmin = video.viewerPermission === 'owner'
+        setViewerIsOwnerOrAdmin(isOwnerAdmin)
         setEditUpload(video)
         setTitle(video.title ?? '')
         setDescription(video.description ?? '')
         setVisibility(video.visibility ?? 'public')
         setTags(video.tags ?? [])
         setFeatured(Boolean(video.featured))
+
+        if (isOwnerAdmin && video.visibility === 'private') {
+          const { items } = await getVideoAccess(video.id)
+          if (!cancelled) {
+            setRecipients(
+              items.map((item) => ({
+                userId: item.userId,
+                username: item.username,
+                displayName: item.displayName,
+                permission: item.permission,
+              })),
+            )
+          }
+        }
       } catch {
         if (!cancelled) {
           setEditError('This video is unavailable right now.')
@@ -368,13 +387,19 @@ function UploadPage() {
     if (!match) {
       return
     }
-    setRecipients((prev) => [...prev, match])
+    setRecipients((prev) => [...prev, { ...match, permission: 'view' }])
     setRecipientQuery('')
     setRecipientSuggestions([])
   }
 
   function removeRecipient(userId) {
     setRecipients((prev) => prev.filter((r) => r.userId !== Number(userId)))
+  }
+
+  function updateRecipientPermission(userId, permission) {
+    setRecipients((prev) =>
+      prev.map((r) => (r.userId === Number(userId) ? { ...r, permission } : r)),
+    )
   }
 
   const submitDisabled = isEditMode
@@ -434,12 +459,15 @@ function UploadPage() {
     }
 
     try {
-      await updateVideo(createdId, {
+      const updatePayload = {
         title: title.trim(),
         description: description.trim() || null,
-        visibility,
         tags,
-      })
+      }
+      if (viewerIsOwnerOrAdmin) {
+        updatePayload.visibility = visibility
+      }
+      await updateVideo(createdId, updatePayload)
     } catch {
       toastError(
         isEditMode
@@ -464,11 +492,11 @@ function UploadPage() {
       }
     }
 
-    if (visibility === 'private' && recipients.length > 0) {
+    if (viewerIsOwnerOrAdmin && visibility === 'private') {
       try {
         await setVideoAccess(
           createdId,
-          recipients.map((r) => r.username),
+          recipients.map((r) => ({ username: r.username, permission: r.permission })),
         )
       } catch {
         toastError(
@@ -661,6 +689,7 @@ function UploadPage() {
           id="upload-visibility"
           value={visibility}
           onChange={(event) => setVisibility(event.target.value)}
+          disabled={isEditMode && !viewerIsOwnerOrAdmin}
         >
           {VISIBILITY_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
@@ -668,6 +697,9 @@ function UploadPage() {
             </option>
           ))}
         </select>
+        {isEditMode && !viewerIsOwnerOrAdmin && (
+          <p className="upload-hint">Only the owner or an admin can change visibility.</p>
+        )}
 
         {isAdmin && (
           <label className="upload-checkbox">
@@ -680,7 +712,7 @@ function UploadPage() {
           </label>
         )}
 
-        {visibility === 'private' && (
+        {viewerIsOwnerOrAdmin && visibility === 'private' && (
           <div className="upload-field-group">
             <label>Share with</label>
             <ChipInput
@@ -699,6 +731,16 @@ function UploadPage() {
               onSelectSuggestion={addRecipient}
               suggestionsLoading={recipientSearchLoading}
               placeholder="Search by username or display name..."
+              renderChipExtra={(chip) => (
+                <select
+                  className="chip-input-permission"
+                  value={recipients.find((r) => String(r.userId) === chip.key)?.permission ?? 'view'}
+                  onChange={(event) => updateRecipientPermission(chip.key, event.target.value)}
+                >
+                  <option value="view">View</option>
+                  <option value="edit">Edit</option>
+                </select>
+              )}
             />
           </div>
         )}

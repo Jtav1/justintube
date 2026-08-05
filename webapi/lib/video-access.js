@@ -73,3 +73,52 @@ export function canViewVideo(user, role, upload, metadata, hasAccessGrant = fals
   }
   return false;
 }
+
+/**
+ * Returns true when the caller may edit a video's metadata/content (title,
+ * description, tags): the owner, an admin, or a user holding an "edit"
+ * VIDEO_ACCESS grant. Distinct from `isOwnerOrAdmin`, which gates the
+ * strictly owner/admin-only actions (delete, visibility, access management)
+ * that edit-grantees may never perform.
+ *
+ * @param {import('sequelize').Model|null|undefined} user Authenticated user.
+ * @param {import('sequelize').Model|null|undefined} role Authenticated role.
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS row.
+ * @param {boolean} [hasEditGrant=false] Whether the caller holds an "edit" VIDEO_ACCESS grant.
+ * @returns {boolean} Whether the caller may edit the video's metadata/content.
+ */
+export function canEditVideo(user, role, upload, hasEditGrant = false) {
+  if (isOwnerOrAdmin(user, role, upload)) {
+    return true;
+  }
+  return Boolean(hasEditGrant);
+}
+
+/**
+ * Resolves the caller's effective permission level for a video/playlist they
+ * can already view: "owner" for the owner or an admin, "edit" for a user
+ * holding an edit-level access grant, "view" otherwise (anonymous viewers,
+ * public/unlisted viewers, and plain view-grantees all collapse to "view").
+ * Generic over both VIDEO_ACCESS and PLAYLIST_ACCESS - callers pass whichever
+ * resource's owning userId. Intended for embedding in GET/PATCH response
+ * payloads so a non-owner client can learn its own edit rights without
+ * needing the owner-only list-access endpoint.
+ *
+ * @param {import('sequelize').Model|null|undefined} user Authenticated user.
+ * @param {import('sequelize').Model|null|undefined} role Authenticated role.
+ * @param {number|null|undefined} ownerId Owning user id (upload.userId / playlist.userId).
+ * @param {boolean} [hasEditGrant=false] Whether the caller holds an "edit" access grant.
+ * @returns {"owner"|"edit"|"view"} The caller's effective permission level.
+ */
+export function resolveViewerPermission(user, role, ownerId, hasEditGrant = false) {
+  if (isAdmin(role)) {
+    return "owner";
+  }
+  if (user && ownerId != null && Number(user.id) === Number(ownerId)) {
+    return "owner";
+  }
+  if (hasEditGrant) {
+    return "edit";
+  }
+  return "view";
+}

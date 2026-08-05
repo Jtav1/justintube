@@ -1,4 +1,5 @@
 import { sequelize } from "../db.js";
+import { AccessPermission } from "./access-permission.js";
 import { Comment } from "./comment.js";
 import { ContentTag } from "./content-tag.js";
 import { EmailVerificationToken } from "./email-verification-token.js";
@@ -256,6 +257,20 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
+  AccessPermission.hasMany(VideoAccess, {
+    foreignKey: "permissionId",
+  });
+  VideoAccess.belongsTo(AccessPermission, {
+    foreignKey: "permissionId",
+  });
+
+  AccessPermission.hasMany(PlaylistAccess, {
+    foreignKey: "permissionId",
+  });
+  PlaylistAccess.belongsTo(AccessPermission, {
+    foreignKey: "permissionId",
+  });
+
   OriginalUpload.hasMany(ContentTag, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -399,6 +414,7 @@ registerAssociations();
  * @type {object}
  */
 export const models = {
+  AccessPermission,
   Role,
   User,
   EmailVerificationToken,
@@ -432,6 +448,7 @@ export const models = {
 };
 
 export {
+  AccessPermission,
   Comment,
   ContentTag,
   EmailVerificationToken,
