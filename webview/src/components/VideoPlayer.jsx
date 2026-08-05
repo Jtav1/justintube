@@ -521,7 +521,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               aria-label={hideError ? 'Hiding video failed, try again' : 'Hide Forever'}
               onClick={handleHide}
             >
-              <EyeOff size={18} />
+              <EyeClosed size={18} />
             </button>
           )}
           <button
