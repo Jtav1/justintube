@@ -14,8 +14,10 @@ export async function listPlaylists({ page, limit } = {}) {
 }
 
 /**
- * Lists playlists owned by the current user, newest first. Requires
- * authentication. Note the API-facing field is `title`, not `name`.
+ * Lists playlists the current user can add videos to: their own playlists,
+ * plus any other user's playlist they hold an "edit" access grant on, newest
+ * first. Requires authentication. Note the API-facing field is `title`, not
+ * `name`.
  * @param {{ limit?: number }} [params]
  * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
  */

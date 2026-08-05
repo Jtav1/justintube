@@ -822,6 +822,40 @@ describe("Video discovery and metadata endpoints", () => {
       expect(strangerTitles).not.toContain("My private");
       expect(strangerTitles).not.toContain("Shared with grantee");
     });
+
+    test("includes each item's viewerPermission for owner, edit-grantee, view-grantee, and anonymous viewers", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-permission-owner-key");
+      const editor = await seedUserWithRoleAndKey("viewer", "list-permission-editor-key");
+      const viewer = await seedUserWithRoleAndKey("viewer", "list-permission-viewer-key");
+
+      const publicUpload = await seedUpload({ userId: owner.id, originalFilename: "public-perm.mp4" });
+      await seedMetadata(publicUpload.id, { title: "Public perm video", visibility: "public" });
+
+      const privateUpload = await seedUpload({ userId: owner.id, originalFilename: "private-perm.mp4" });
+      await seedMetadata(privateUpload.id, { title: "Private perm video", visibility: "private" });
+      await seedVideoAccess(privateUpload.id, editor.id, { permission: "edit" });
+      await seedVideoAccess(privateUpload.id, viewer.id, { permission: "view" });
+
+      const ownerRes = await client
+        .get("/api/v1/videos")
+        .set("Authorization", "Bearer list-permission-owner-key");
+      const findByTitle = (res, title) => res.body.items.find((item) => item.title === title);
+      expect(findByTitle(ownerRes, "Private perm video").viewerPermission).toBe("owner");
+      expect(findByTitle(ownerRes, "Public perm video").viewerPermission).toBe("owner");
+
+      const editorRes = await client
+        .get("/api/v1/videos")
+        .set("Authorization", "Bearer list-permission-editor-key");
+      expect(findByTitle(editorRes, "Private perm video").viewerPermission).toBe("edit");
+
+      const viewerRes = await client
+        .get("/api/v1/videos")
+        .set("Authorization", "Bearer list-permission-viewer-key");
+      expect(findByTitle(viewerRes, "Private perm video").viewerPermission).toBe("view");
+
+      const anonRes = await client.get("/api/v1/videos");
+      expect(findByTitle(anonRes, "Public perm video").viewerPermission).toBe("view");
+    });
   });
 
   describe("GET /videos/featured and /videos/newest", () => {

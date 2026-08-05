@@ -189,6 +189,46 @@ describe("Playlist endpoints (USER_PLAYLISTS + PLAYLIST_ITEMS)", () => {
       expect(item.thumbnails).toEqual([]);
     });
 
+    test("includes each item's viewerPermission for owner, edit-grantee, view-grantee, and anonymous viewers", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "list-permission-owner-key");
+      const editor = await seedUserWithRoleAndKey("viewer", "list-permission-editor-key");
+      const viewer = await seedUserWithRoleAndKey("viewer", "list-permission-viewer-key");
+
+      const publicPlaylist = await seedPlaylist({
+        userId: owner.id,
+        title: "Public perm playlist",
+        visibility: "public",
+      });
+      const privatePlaylist = await seedPlaylist({
+        userId: owner.id,
+        title: "Private perm playlist",
+        visibility: "private",
+      });
+      await seedPlaylistAccess({ playlistId: privatePlaylist.id, userId: editor.id, permission: "edit" });
+      await seedPlaylistAccess({ playlistId: privatePlaylist.id, userId: viewer.id, permission: "view" });
+
+      const findByName = (res, name) => res.body.items.find((item) => item.name === name);
+
+      const ownerRes = await client
+        .get("/api/v1/playlists")
+        .set("Authorization", "Bearer list-permission-owner-key");
+      expect(findByName(ownerRes, "Private perm playlist").viewerPermission).toBe("owner");
+      expect(findByName(ownerRes, "Public perm playlist").viewerPermission).toBe("owner");
+
+      const editorRes = await client
+        .get("/api/v1/playlists")
+        .set("Authorization", "Bearer list-permission-editor-key");
+      expect(findByName(editorRes, "Private perm playlist").viewerPermission).toBe("edit");
+
+      const viewerRes = await client
+        .get("/api/v1/playlists")
+        .set("Authorization", "Bearer list-permission-viewer-key");
+      expect(findByName(viewerRes, "Private perm playlist").viewerPermission).toBe("view");
+
+      const anonRes = await client.get("/api/v1/playlists");
+      expect(findByName(anonRes, "Public perm playlist").viewerPermission).toBe("view");
+    });
+
     test("supports pagination via page/limit", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "list-key-8");
       for (let i = 0; i < 3; i += 1) {

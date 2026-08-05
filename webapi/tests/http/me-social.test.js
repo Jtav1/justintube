@@ -3,6 +3,7 @@ import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
   resetTables,
   seedPlaylist,
+  seedPlaylistAccess,
   seedSubscription,
   seedUser,
   setupSchema,
@@ -226,6 +227,40 @@ describe("me / subscriptions, subscribers, and playlists routes", () => {
     expect(res.body.items[0]).toHaveProperty("createdAt");
     expect(new Date(res.body.items[0].lastAddedAt).getTime()).toBe(lastAddedAt.getTime());
     expect(res.body.items.some((item) => item.title === "Not mine")).toBe(false);
+  });
+
+  test("GET /me/playlists includes another user's playlist I hold an edit grant on, but not a view-only grant", async () => {
+    const agent = createTestAgent();
+    const { user } = await registerSession(agent, {
+      username: "playlists_grantee",
+      email: "playlists_grantee@example.com",
+    });
+
+    const owner = await seedUser({
+      username: "playlists_grant_owner",
+      email: "playlists_grant_owner@example.com",
+    });
+    const editShared = await seedPlaylist({
+      userId: owner.id,
+      title: "Shared for editing",
+      visibility: "private",
+    });
+    const viewShared = await seedPlaylist({
+      userId: owner.id,
+      title: "Shared for viewing only",
+      visibility: "private",
+    });
+    await seedPlaylistAccess({ playlistId: editShared.id, userId: user.id, permission: "edit" });
+    await seedPlaylistAccess({ playlistId: viewShared.id, userId: user.id, permission: "view" });
+
+    const res = await agent.get("/api/v1/me/playlists");
+    expect(res.status).toBe(200);
+    const titles = res.body.items.map((item) => item.title);
+    expect(titles).toContain("Shared for editing");
+    expect(titles).not.toContain("Shared for viewing only");
+
+    const editItem = res.body.items.find((item) => item.title === "Shared for editing");
+    expect(editItem.viewerPermission).toBe("edit");
   });
 
   test("GET /me/playlists excludes the 'My Likes' playlist (kind: likes)", async () => {

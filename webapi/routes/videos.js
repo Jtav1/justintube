@@ -939,6 +939,54 @@ async function userHasEditGrant(originalUploadId, userId) {
 }
 
 /**
+ * Batch-resolves the caller's effective permission level ("owner"/"edit"/"view")
+ * for a set of videos, using a single VideoAccess+AccessPermission query
+ * (scoped to the non-owned ids) rather than one grant lookup per row. Used by
+ * list/search endpoints so every video card can show an accurate Edit
+ * affordance without an N+1 query per item.
+ *
+ * @param {Array<{id: number, userId: number|null}>} items Videos to resolve, by id and owning userId.
+ * @param {import('sequelize').Model|null|undefined} user Authenticated user.
+ * @param {import('sequelize').Model|null|undefined} role Authenticated role.
+ * @returns {Promise<Map<number, "owner"|"edit"|"view">>} Map of video id to permission level.
+ */
+export async function loadViewerPermissionsByUploadId(items, user, role) {
+  const result = new Map();
+  if (!user) {
+    for (const item of items) {
+      result.set(item.id, "view");
+    }
+    return result;
+  }
+
+  let editGrantedIds = new Set();
+  if (!isAdmin(role)) {
+    const nonOwnedIds = items
+      .filter((item) => Number(item.userId) !== Number(user.id))
+      .map((item) => item.id);
+    if (nonOwnedIds.length > 0) {
+      const grants = await VideoAccess.findAll({
+        where: { userId: user.id, originalUploadId: { [Op.in]: nonOwnedIds } },
+        include: [{ model: AccessPermission, required: true }],
+      });
+      editGrantedIds = new Set(
+        grants
+          .filter((grant) => grant.AccessPermission.name === "edit")
+          .map((grant) => grant.originalUploadId),
+      );
+    }
+  }
+
+  for (const item of items) {
+    result.set(
+      item.id,
+      resolveViewerPermission(user, role, item.userId, editGrantedIds.has(item.id)),
+    );
+  }
+  return result;
+}
+
+/**
  * Sends 404 when the caller cannot view a private video (or when missing).
  *
  * @param {import('express').Response} res Express response.
@@ -964,6 +1012,9 @@ function sendNotFound(res) {
  * @param {import('sequelize').Includeable[]} [options.includes] Extra includes.
  * @param {import('sequelize').Order} [options.order] Order clause.
  * @param {number|null} [options.viewerUserId] Authenticated caller's id, if any.
+ * @param {import('sequelize').Model|null} [options.viewerUser] Authenticated caller, used to
+ *   attach each item's `viewerPermission` (see {@link loadViewerPermissionsByUploadId}).
+ * @param {import('sequelize').Model|null} [options.viewerRole] Authenticated caller's role.
  * @returns {Promise<object[]>} Serialized video items.
  */
 async function listPublicVideos(options = {}) {
@@ -1006,9 +1057,15 @@ async function listPublicVideos(options = {}) {
   const uploadIds = rows.map((upload) => upload.id);
   const tagsByUploadId = await loadTagsByUploadId(uploadIds);
   const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
+  const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+    rows,
+    options.viewerUser,
+    options.viewerRole,
+  );
   return rows.map((upload) =>
     serializeVideo(upload, upload.VideoMetadata, {
       tags: tagsByUploadId.get(upload.id) || [],
+      viewerPermission: viewerPermissionByUploadId.get(upload.id),
       ...reactionCountsByUploadId.get(upload.id),
     }),
   );
@@ -1385,6 +1442,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -1416,6 +1475,8 @@ export function createVideosRouter() {
         includes: [{ model: FeaturedVideo, required: true }],
         order: [[FeaturedVideo, "createdAt", "DESC"]],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -1448,6 +1509,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -3453,6 +3516,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -3502,6 +3567,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user.id,
+        viewerUser: req.user,
+        viewerRole: req.authRole,
       });
 
       const uploadIds = items.map((item) => item.id);

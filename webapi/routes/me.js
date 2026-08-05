@@ -10,7 +10,9 @@ import { requireAuth } from "../lib/auth/require-auth.js";
 import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
 import {
+  AccessPermission,
   OriginalUpload,
+  PlaylistAccess,
   Subscription,
   User,
   UserPlaylist,
@@ -28,6 +30,7 @@ import { loadUploadCountsByUserId } from "./users.js";
 import {
   loadReactionCountsByUploadId,
   loadTagsByUploadId,
+  loadViewerPermissionsByUploadId,
   parsePositiveInt,
   serializeVideo,
 } from "./videos.js";
@@ -508,6 +511,7 @@ export function createMeRouter() {
         items: rows.map((upload) =>
           serializeVideo(upload, upload.VideoMetadata, {
             tags: tagsByUploadId.get(upload.id) || [],
+            viewerPermission: "owner",
             ...reactionCountsByUploadId.get(upload.id),
           }),
         ),
@@ -618,11 +622,17 @@ export function createMeRouter() {
       const likedUploadIds = pageLikes.map((like) => like.OriginalUpload.id);
       const tagsByUploadId = await loadTagsByUploadId(likedUploadIds);
       const reactionCountsByUploadId = await loadReactionCountsByUploadId(likedUploadIds);
+      const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+        pageLikes.map((like) => like.OriginalUpload),
+        req.user,
+        req.authRole,
+      );
 
       res.status(200).json({
         items: pageLikes.map((like) =>
           serializeVideo(like.OriginalUpload, like.OriginalUpload.VideoMetadata, {
             tags: tagsByUploadId.get(like.OriginalUpload.id) || [],
+            viewerPermission: viewerPermissionByUploadId.get(like.OriginalUpload.id),
             ...reactionCountsByUploadId.get(like.OriginalUpload.id),
           }),
         ),
@@ -750,11 +760,17 @@ export function createMeRouter() {
       const historyUploadIds = pageHistory.map((row) => row.OriginalUpload.id);
       const tagsByUploadId = await loadTagsByUploadId(historyUploadIds);
       const reactionCountsByUploadId = await loadReactionCountsByUploadId(historyUploadIds);
+      const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+        pageHistory.map((row) => row.OriginalUpload),
+        req.user,
+        req.authRole,
+      );
 
       res.status(200).json({
         items: pageHistory.map((row) => ({
           ...serializeVideo(row.OriginalUpload, row.OriginalUpload.VideoMetadata, {
             tags: tagsByUploadId.get(row.OriginalUpload.id) || [],
+            viewerPermission: viewerPermissionByUploadId.get(row.OriginalUpload.id),
             ...reactionCountsByUploadId.get(row.OriginalUpload.id),
           }),
           historyId: row.id,
@@ -1095,10 +1111,14 @@ export function createMeRouter() {
   });
 
   /**
-   * Returns the authenticated user's own playlists, newest first, paginated.
-   * Excludes the system-managed "My Likes" playlist (`kind: "likes"`) — this
-   * endpoint backs the manual "add video to playlist" picker, and that
-   * playlist's membership is only ever changed by liking/disliking videos.
+   * Returns the authenticated user's own playlists plus any other user's
+   * playlist they hold an "edit" PLAYLIST_ACCESS grant on, newest first,
+   * paginated. Excludes the system-managed "My Likes" playlist
+   * (`kind: "likes"`) — this endpoint backs the manual "add video to
+   * playlist" picker, and that playlist's membership is only ever changed by
+   * liking/disliking videos. Edit-grantees need to see (and add to) the
+   * playlist here the same as its owner; plain view-grantees are not
+   * included, since they cannot add items.
    * GET /api/v1/me/playlists
    * Auth: session cookie or Bearer API key (`requireAuth`).
    *
@@ -1148,8 +1168,21 @@ export function createMeRouter() {
       }
       const { page, limit } = pagination;
 
+      const grants = await PlaylistAccess.findAll({
+        where: { userId: req.user.id },
+        include: [{ model: AccessPermission, required: true }],
+      });
+      const editGrantedPlaylistIds = grants
+        .filter((grant) => grant.AccessPermission.name === "edit")
+        .map((grant) => grant.playlistId);
+
+      const orConditions = [{ userId: req.user.id }];
+      if (editGrantedPlaylistIds.length > 0) {
+        orConditions.push({ id: { [Op.in]: editGrantedPlaylistIds } });
+      }
+
       const { rows, count } = await UserPlaylist.findAndCountAll({
-        where: { userId: req.user.id, kind: { [Op.ne]: "likes" } },
+        where: { [Op.or]: orConditions, kind: { [Op.ne]: "likes" } },
         order: [["createdAt", "DESC"]],
         limit,
         offset: (page - 1) * limit,
@@ -1163,6 +1196,7 @@ export function createMeRouter() {
           visibility: playlist.visibility,
           lastAddedAt: playlist.lastAddedAt ?? null,
           createdAt: playlist.createdAt,
+          viewerPermission: Number(playlist.userId) === Number(req.user.id) ? "owner" : "edit",
         })),
         page,
         limit,

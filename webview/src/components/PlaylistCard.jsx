@@ -21,8 +21,13 @@ function PlaylistCard({ playlist }) {
   const ThumbTag = hasLink ? Link : 'div'
   const TitleTag = hasLink ? Link : 'span'
 
-  const canEdit = Boolean(user)
-    && (String(user.id) === String(playlist.owner?.id) || user.role === 'admin')
+  // List-fetched playlists don't carry viewerPermission (see webapi's
+  // scope note on list endpoints), so fall back to the client-side
+  // owner/admin check there; singular-fetch contexts get the accurate
+  // owner-or-edit-grantee answer for free.
+  const canEdit = playlist.viewerPermission
+    ? playlist.viewerPermission === 'owner' || playlist.viewerPermission === 'edit'
+    : Boolean(user) && (String(user.id) === String(playlist.owner?.id) || user.role === 'admin')
 
   function closeMenu() {
     setMenuOpen(false)

@@ -111,7 +111,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     ? `${apiClient.defaults.baseURL}${selectedRendition.streamUrl}`
     : null
 
-  const canEdit = Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
+  const canEdit =
+    video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
   const isModerator = Boolean(user) && (user.role === 'moderator' || user.role === 'admin')
 
   const uploaderName = video.uploader?.displayName || video.uploader?.username

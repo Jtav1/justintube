@@ -19,7 +19,12 @@ import { canEditPlaylist, canViewPlaylist } from "../lib/playlist-access.js";
 import { removePlaylistDocument, syncPlaylistIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { isAdmin, isOwnerOrAdmin, resolveViewerPermission } from "../lib/video-access.js";
-import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
+import {
+  loadReactionCountsByUploadId,
+  loadTagsByUploadId,
+  loadViewerPermissionsByUploadId,
+  serializeVideo,
+} from "./videos.js";
 
 /**
  * Parses a route param as a positive integer.
@@ -126,6 +131,53 @@ async function userHasAccessGrant(playlistId, userId) {
 async function userHasEditGrant(playlistId, userId) {
   const grant = await loadAccessGrant(playlistId, userId);
   return grant?.AccessPermission?.name === "edit";
+}
+
+/**
+ * Batch-resolves the caller's effective permission level ("owner"/"edit"/"view")
+ * for a set of playlists, using a single PLAYLIST_ACCESS+AccessPermission
+ * query (scoped to the non-owned ids) rather than one grant lookup per row.
+ * Mirrors `loadViewerPermissionsByUploadId` (see webapi/routes/videos.js).
+ *
+ * @param {import('sequelize').Model[]} playlists USER_PLAYLISTS rows.
+ * @param {import('sequelize').Model|null|undefined} user Authenticated user.
+ * @param {import('sequelize').Model|null|undefined} role Authenticated role.
+ * @returns {Promise<Map<number, "owner"|"edit"|"view">>} Map of playlist id to permission level.
+ */
+async function loadViewerPermissionsByPlaylistId(playlists, user, role) {
+  const result = new Map();
+  if (!user) {
+    for (const playlist of playlists) {
+      result.set(playlist.id, "view");
+    }
+    return result;
+  }
+
+  let editGrantedIds = new Set();
+  if (!isAdmin(role)) {
+    const nonOwnedIds = playlists
+      .filter((playlist) => Number(playlist.userId) !== Number(user.id))
+      .map((playlist) => playlist.id);
+    if (nonOwnedIds.length > 0) {
+      const grants = await PlaylistAccess.findAll({
+        where: { userId: user.id, playlistId: { [Op.in]: nonOwnedIds } },
+        include: [{ model: AccessPermission, required: true }],
+      });
+      editGrantedIds = new Set(
+        grants
+          .filter((grant) => grant.AccessPermission.name === "edit")
+          .map((grant) => grant.playlistId),
+      );
+    }
+  }
+
+  for (const playlist of playlists) {
+    result.set(
+      playlist.id,
+      resolveViewerPermission(user, role, playlist.userId, editGrantedIds.has(playlist.id)),
+    );
+  }
+  return result;
 }
 
 /**
@@ -241,6 +293,7 @@ export async function buildPlaylistsPage(rows, count, { page, limit, user, role 
     }),
   );
   const thumbnailsByPlaylistId = new Map(thumbnailEntries);
+  const viewerPermissionByPlaylistId = await loadViewerPermissionsByPlaylistId(rows, user, role);
 
   return {
     items: rows.map((playlist) => ({
@@ -261,6 +314,7 @@ export async function buildPlaylistsPage(rows, count, { page, limit, user, role 
       latestVideoId: thumbnailsByPlaylistId.get(playlist.id)?.latestVideoId ?? null,
       lastAddedAt: playlist.lastAddedAt ?? null,
       createdAt: playlist.createdAt,
+      viewerPermission: viewerPermissionByPlaylistId.get(playlist.id),
     })),
     page,
     limit,
@@ -527,11 +581,17 @@ export function createPlaylistsRouter() {
       const viewableUploadIds = viewableItems.map((item) => item.OriginalUpload.id);
       const tagsByUploadId = await loadTagsByUploadId(viewableUploadIds);
       const reactionCountsByUploadId = await loadReactionCountsByUploadId(viewableUploadIds);
+      const itemViewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+        viewableItems.map((item) => item.OriginalUpload),
+        req.user,
+        req.authRole,
+      );
 
       const payload = serializePlaylist(playlist, viewableItems.length, { viewerPermission });
       payload.items = viewableItems.map((item) =>
         serializeVideo(item.OriginalUpload, item.OriginalUpload.VideoMetadata, {
           tags: tagsByUploadId.get(item.OriginalUpload.id) || [],
+          viewerPermission: itemViewerPermissionByUploadId.get(item.OriginalUpload.id),
           ...reactionCountsByUploadId.get(item.OriginalUpload.id),
         }),
       );
