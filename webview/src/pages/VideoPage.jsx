@@ -45,7 +45,7 @@ function VideoPage() {
           if (err?.response?.data?.error === 'hidden_by_viewer') {
             setHiddenByViewer(true)
           } else {
-            setError('Failed to load video. Does this video exist?.')
+            setError('This video is unavailable right now.')
             toastError('Failed to load video. Does this video exist?')
           }
         }
@@ -61,7 +61,7 @@ function VideoPage() {
     return () => {
       cancelled = true
     }
-  }, [videoId, reloadCount])
+  }, [videoId, reloadCount, toastError])
 
   async function handleUnhide() {
     try {
