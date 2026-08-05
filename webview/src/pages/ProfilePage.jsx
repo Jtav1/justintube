@@ -400,6 +400,7 @@ function ProfilePage() {
               onClick={() => fileInputRef.current?.click()}
               disabled={bannerUploading}
               aria-label="Change banner image"
+              title="Change banner image"
             >
               <Pencil size={16} />
             </button>
@@ -439,6 +440,7 @@ function ProfilePage() {
                 onClick={() => avatarFileInputRef.current?.click()}
                 disabled={avatarUploading}
                 aria-label="Change avatar image"
+                title="Change avatar image"
               >
                 <Pencil size={14} />
               </button>
@@ -508,6 +510,7 @@ function ProfilePage() {
                   className="profile-edit-icon"
                   onClick={startEditName}
                   aria-label="Edit name"
+                  title="Edit name"
                 >
                   <Pencil size={18} />
                 </button>
@@ -566,6 +569,7 @@ function ProfilePage() {
                 className="profile-edit-icon"
                 onClick={startEditBio}
                 aria-label="Edit bio"
+                title="Edit bio"
               >
                 <Pencil size={18} />
               </button>

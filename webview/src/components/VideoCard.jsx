@@ -237,6 +237,7 @@ function VideoCard({
               type="button"
               className="video-card-menu-toggle"
               aria-label="Video options"
+              title="Video options"
               onClick={handleToggleMenu}
             >
               <MoreVertical size={18} />

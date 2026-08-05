@@ -48,6 +48,7 @@ function ToastItem({ toast, onDismiss }) {
         type="button"
         className="toast-close"
         aria-label="Dismiss notification"
+        title="Dismiss notification"
         onClick={() => onDismiss(toast.id)}
       >
         <X size={16} />

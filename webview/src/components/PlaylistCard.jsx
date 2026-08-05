@@ -95,6 +95,7 @@ function PlaylistCard({ playlist }) {
               type="button"
               className="playlist-card-menu-toggle"
               aria-label="Playlist options"
+              title="Playlist options"
               onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
             >
               <MoreVertical size={18} />

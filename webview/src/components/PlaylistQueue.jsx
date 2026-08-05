@@ -43,6 +43,7 @@ function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveIte
               to={`/playlists/${playlist.id}/edit`}
               className="playlist-queue-edit"
               aria-label="Edit playlist"
+              title="Edit playlist"
             >
               <Pencil size={16} />
             </Link>
@@ -64,6 +65,7 @@ function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveIte
           disabled={!canSkipBack}
           onClick={() => goToIndex(currentIndex - 1)}
           aria-label="Previous video in playlist"
+          title="Previous video in playlist"
         >
           <SkipBack size={18} />
         </button>
@@ -73,6 +75,7 @@ function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveIte
           disabled={!canSkipForward}
           onClick={() => goToIndex(currentIndex + 1)}
           aria-label="Next video in playlist"
+          title="Next video in playlist"
         >
           <SkipForward size={18} />
         </button>

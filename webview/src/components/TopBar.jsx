@@ -86,6 +86,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
           className="topbar-toggle"
           onClick={onToggleSidebar}
           aria-label="Toggle sidebar"
+          title="Toggle sidebar"
         >
           <Menu size={20} />
         </button>
@@ -127,7 +128,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
       <div className="topbar-center">
         <form className="topbar-search" onSubmit={handleSearchSubmit}>
           <SearchAutocomplete value={query} onChange={setQuery} />
-          <button type="submit" className="topbar-search-button" aria-label="Search">
+          <button type="submit" className="topbar-search-button" aria-label="Search" title="Search">
             <Search size={18} />
           </button>
         </form>
@@ -146,6 +147,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             className="topbar-theme-toggle"
             onClick={() => setThemeMenuOpen((open) => !open)}
             aria-label="Select theme"
+            title="Select theme"
             aria-haspopup="true"
             aria-expanded={themeMenuOpen}
           >

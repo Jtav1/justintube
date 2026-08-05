@@ -140,6 +140,7 @@ function NotificationBell() {
         className="notification-bell-toggle"
         onClick={handleToggle}
         aria-label="Notifications"
+        title="Notifications"
         aria-haspopup="true"
         aria-expanded={open}
         ref={toggleRef}
@@ -180,6 +181,7 @@ function NotificationBell() {
               to="/settings#notification-settings"
               className="notification-bell-settings"
               aria-label="Notification settings"
+              title="Notification settings"
               onClick={() => setOpen(false)}
             >
               <Settings size={16} />

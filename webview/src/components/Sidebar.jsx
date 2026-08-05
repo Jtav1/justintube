@@ -135,6 +135,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
               rel="noopener noreferrer"
               className="sidebar-footer-link"
               aria-label="Code Repository"
+              title="Code Repository"
             >
               <GithubIcon size={18} title="Code Repository" />
             </a>
@@ -144,6 +145,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
               rel="noopener noreferrer"
               className="sidebar-footer-link"
               aria-label="API Docs"
+              title="API Docs"
             >
               <Braces size={18} aria-label="API Docs" />
             </a>

@@ -396,6 +396,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
                 type="button"
                 className={`video-player-icon-btn${qualityMenuOpen ? ' video-player-icon-btn-active' : ''}`}
                 aria-label="Select video quality"
+                title="Select video quality"
                 onClick={() => setQualityMenuOpen((prev) => !prev)}
               >
                 <Settings2 size={18} />
@@ -422,6 +423,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
             type="button"
             className={`video-player-icon-btn${loop ? ' video-player-icon-btn-active' : ''}`}
             aria-label={loop ? 'Disable loop' : 'Enable loop'}
+            title={loop ? 'Disable loop' : 'Enable loop'}
             aria-pressed={loop}
             onClick={() => setLoop((prev) => !prev)}
           >
@@ -499,6 +501,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               to={`/upload?v=${video.videoId}`}
               className="video-player-icon-btn"
               aria-label="Edit video"
+              title="Edit video"
             >
               <Pencil size={18} />
             </Link>
@@ -508,6 +511,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               type="button"
               className="video-player-icon-btn"
               aria-label={delisted ? 'Video delisted' : 'Delist video'}
+              title={delisted ? 'Video delisted' : 'Delist video'}
               disabled={delistPending || delisted}
               onClick={handleDelist}
             >
@@ -519,6 +523,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               type="button"
               className="video-player-icon-btn"
               aria-label={hideError ? 'Hiding video failed, try again' : 'Hide Forever'}
+              title={hideError ? 'Hiding video failed, try again' : 'Hide Forever'}
               onClick={handleHide}
             >
               <EyeClosed size={18} />
@@ -528,6 +533,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
             type="button"
             className="video-player-icon-btn"
             aria-label={linkCopied ? 'Link copied' : 'Copy video link'}
+            title={linkCopied ? 'Link copied' : 'Copy video link'}
             onClick={handleCopyLink}
           >
             <LinkIcon size={18} />
@@ -537,6 +543,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               type="button"
               className={`video-player-icon-btn${playlistMenuOpen ? ' video-player-icon-btn-active' : ''}`}
               aria-label="Add to playlist"
+              title="Add to playlist"
               disabled={!user}
               onClick={handleTogglePlaylistMenu}
             >
@@ -589,6 +596,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               type="button"
               className="video-player-icon-btn"
               aria-label="Remove from playlist"
+              title="Remove from playlist"
               onClick={onRemoveFromPlaylist}
             >
               <ListMinus size={18} />
@@ -600,6 +608,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
                 type="button"
                 className={`video-player-icon-btn${reaction === 'like' ? ' video-player-icon-btn-like-active' : ''}`}
                 aria-label="Like"
+                title="Like"
                 aria-pressed={reaction === 'like'}
                 disabled={!user || reactionPending}
                 onClick={handleLike}
@@ -610,6 +619,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
                 type="button"
                 className={`video-player-icon-btn${reaction === 'dislike' ? ' video-player-icon-btn-dislike-active' : ''}`}
                 aria-label="Dislike"
+                title="Dislike"
                 aria-pressed={reaction === 'dislike'}
                 disabled={!user || reactionPending}
                 onClick={handleDislike}

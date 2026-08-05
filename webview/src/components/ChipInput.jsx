@@ -83,6 +83,7 @@ function ChipInput({
               className="chip-input-remove"
               onClick={() => onRemove(chip.key)}
               aria-label={`Remove ${chip.label}`}
+              title={`Remove ${chip.label}`}
             >
               <X size={12} />
             </button>
