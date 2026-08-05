@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react'
 import { listPlaylists } from '../api/playlists.js'
+import { useToast } from '../context/useToast.js'
 import PlaylistCard from '../components/PlaylistCard.jsx'
 import './Playlists.css'
 
 const PAGE_LIMIT = 24
 
 function Playlists() {
+  const { error: toastError } = useToast()
   const [items, setItems] = useState([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await listPlaylists({ page, limit: PAGE_LIMIT })
         if (!cancelled) {
@@ -26,7 +26,7 @@ function Playlists() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load playlists.')
+          toastError('Failed to load playlists.')
         }
       } finally {
         if (!cancelled) {
@@ -40,12 +40,11 @@ function Playlists() {
     return () => {
       cancelled = true
     }
-  }, [page])
+  }, [page, toastError])
 
   return (
     <section className="playlists-listing">
-      {error && <p className="playlists-listing-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && items.length === 0 && (
         <p className="playlists-listing-empty">No playlists yet.</p>
       )}
       <div className="playlists-listing-grid">

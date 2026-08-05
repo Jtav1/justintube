@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { searchAdvanced } from '../api/search.js'
+import { useToast } from '../context/useToast.js'
 import VideoCard from '../components/VideoCard.jsx'
 import PlaylistCard from '../components/PlaylistCard.jsx'
 import UserCard from '../components/UserCard.jsx'
 import './SearchResults.css'
 
 function SearchResults() {
+  const { error: toastError } = useToast()
   const [searchParams] = useSearchParams()
   const q = searchParams.get('q') ?? ''
 
@@ -14,7 +16,6 @@ function SearchResults() {
   const [playlists, setPlaylists] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     if (!q.trim()) {
@@ -25,7 +26,6 @@ function SearchResults() {
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await searchAdvanced(q)
         if (!cancelled) {
@@ -35,7 +35,7 @@ function SearchResults() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load search results.')
+          toastError('Failed to load search results.')
         }
       } finally {
         if (!cancelled) {
@@ -49,7 +49,7 @@ function SearchResults() {
     return () => {
       cancelled = true
     }
-  }, [q])
+  }, [q, toastError])
 
   if (!q.trim()) {
     return (
@@ -63,10 +63,8 @@ function SearchResults() {
     <section className="search-results">
       <h1 className="search-results-title">Search results for &quot;{q}&quot;</h1>
 
-      {error && <p className="search-results-error">{error}</p>}
-
       <div className="search-results-section">
-        {!loading && videos.length === 0 && playlists.length === 0 && !error && (
+        {!loading && videos.length === 0 && playlists.length === 0 && (
           <p className="search-results-empty">No videos or playlists found.</p>
         )}
         <div className="search-results-grid">
@@ -81,7 +79,7 @@ function SearchResults() {
 
       <div className="search-results-section">
         <h2 className="search-results-section-title">Users</h2>
-        {!loading && users.length === 0 && !error && (
+        {!loading && users.length === 0 && (
           <p className="search-results-empty">No matching users.</p>
         )}
         <div className="search-results-users-list">

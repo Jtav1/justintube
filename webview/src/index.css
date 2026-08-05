@@ -11,6 +11,16 @@
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 
+  --success: #2e7d32;
+  --success-bg: rgba(46, 125, 50, 0.1);
+  --success-border: rgba(46, 125, 50, 0.5);
+  --error: #d32f2f;
+  --error-bg: rgba(211, 47, 47, 0.1);
+  --error-border: rgba(211, 47, 47, 0.5);
+  --info: #1565c0;
+  --info-bg: rgba(21, 101, 192, 0.1);
+  --info-border: rgba(21, 101, 192, 0.5);
+
   --sans: system-ui, Seravek, 'Gill Sans Nova', Ubuntu, Calibri, 'DejaVu Sans', source-sans-pro, sans-serif;
   --heading: system-ui, Seravek, 'Gill Sans Nova', Ubuntu, Calibri, 'DejaVu Sans', source-sans-pro, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
@@ -44,6 +54,16 @@
     --social-bg: rgba(47, 48, 58, 0.5);
     --shadow:
       rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+
+    --success: #4caf50;
+    --success-bg: rgba(76, 175, 80, 0.15);
+    --success-border: rgba(76, 175, 80, 0.5);
+    --error: #ef5350;
+    --error-bg: rgba(239, 83, 80, 0.15);
+    --error-border: rgba(239, 83, 80, 0.5);
+    --info: #42a5f5;
+    --info-bg: rgba(66, 165, 245, 0.15);
+    --info-border: rgba(66, 165, 245, 0.5);
   }
 
   #social .button-icon {

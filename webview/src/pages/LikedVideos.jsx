@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import { getMyLikes } from '../api/videos.js'
 import { getMyLikesPlaylist } from '../api/playlists.js'
 import VideoCard from '../components/VideoCard.jsx'
@@ -10,12 +11,12 @@ const PAGE_LIMIT = 24
 
 function LikedVideos() {
   const { user, loading: authLoading } = useAuth()
+  const { error: toastError } = useToast()
   const [items, setItems] = useState([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState(null)
   const [likesPlaylist, setLikesPlaylist] = useState(null)
 
   useEffect(() => {
@@ -27,7 +28,6 @@ function LikedVideos() {
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await getMyLikes({ page: 1, limit: PAGE_LIMIT })
         if (!cancelled) {
@@ -37,7 +37,7 @@ function LikedVideos() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load your liked videos.')
+          toastError('Failed to load your liked videos.')
         }
       } finally {
         if (!cancelled) {
@@ -65,7 +65,7 @@ function LikedVideos() {
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user, toastError])
 
   async function handleLoadMore() {
     if (loadingMore) {
@@ -78,7 +78,7 @@ function LikedVideos() {
       setPage(data.page)
       setTotalPages(data.totalPages)
     } catch {
-      setError('Failed to load more videos.')
+      toastError('Failed to load more videos.')
     } finally {
       setLoadingMore(false)
     }
@@ -98,8 +98,7 @@ function LikedVideos() {
 
   return (
     <section className="video-listing">
-      {error && <p className="video-listing-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && items.length === 0 && (
         <p className="video-listing-empty">You haven't liked any videos yet.</p>
       )}
 

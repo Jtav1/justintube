@@ -6,24 +6,24 @@ import {
   markNotificationsRead,
   getNotificationPreferences,
 } from '../api/notifications.js'
+import { useToast } from '../context/useToast.js'
 import NotificationItem from '../components/NotificationItem.jsx'
 import './NotificationsPage.css'
 
 const PAGE_LIMIT = 20
 
 function NotificationsPage() {
+  const { error: toastError } = useToast()
   const [items, setItems] = useState([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const [prefs, data] = await Promise.all([
           getNotificationPreferences(),
@@ -39,7 +39,7 @@ function NotificationsPage() {
         setTotalPages(data.totalPages)
       } catch {
         if (!cancelled) {
-          setError('Failed to load notifications.')
+          toastError('Failed to load notifications.')
         }
       } finally {
         if (!cancelled) {
@@ -53,13 +53,13 @@ function NotificationsPage() {
     return () => {
       cancelled = true
     }
-  }, [page])
+  }, [page, toastError])
 
   function handleRead(id) {
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, readAt: new Date().toISOString() } : item)),
     )
-    markNotificationsRead([id]).catch(() => {})
+    markNotificationsRead([id]).catch(() => toastError('Failed to mark notification as read.'))
   }
 
   return (
@@ -72,8 +72,7 @@ function NotificationsPage() {
         </Link>
       </div>
 
-      {error && <p className="notifications-page-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && items.length === 0 && (
         <p className="notifications-page-empty">No notifications yet.</p>
       )}
 

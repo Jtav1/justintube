@@ -95,12 +95,6 @@
   color: var(--text);
 }
 
-.video-comments-error {
-  margin: 0;
-  font-size: 13px;
-  color: #d33;
-}
-
 .video-comments-empty {
   margin: 0;
   font-size: 13px;

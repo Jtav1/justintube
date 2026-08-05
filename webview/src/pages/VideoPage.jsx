@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getVideo, unhideVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
@@ -11,6 +12,7 @@ import './VideoPage.css'
 
 function VideoPage() {
   const { user } = useAuth()
+  const { error: toastError } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
@@ -45,8 +47,9 @@ function VideoPage() {
           if (err?.response?.data?.error === 'hidden_by_viewer') {
             setHiddenByViewer(true)
           } else {
-            setError('Failed to load video. Does this video exist?.')
+            toastError('Failed to load video. Does this video exist?')
           }
+          toastError('This video is unavailable right now.')
         }
       } finally {
         if (!cancelled) {
@@ -69,7 +72,7 @@ function VideoPage() {
     } catch {
       // Leave the hidden notice in place; the user can retry.
     }
-  }
+  }, [videoId, toastError])
 
   useEffect(() => {
     let cancelled = false
@@ -105,6 +108,7 @@ function VideoPage() {
     try {
       await removePlaylistItem(playlist.id, video.id)
     } catch {
+      toastError('Failed to remove from playlist.')
       return
     }
     const currentIndex = playlist.items.findIndex((item) => item.videoId === videoId)

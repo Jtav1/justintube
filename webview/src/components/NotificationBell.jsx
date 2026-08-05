@@ -7,6 +7,7 @@ import {
   markNotificationsRead,
   getNotificationPreferences,
 } from '../api/notifications.js'
+import { useToast } from '../context/useToast.js'
 import NotificationItem from './NotificationItem.jsx'
 import './NotificationBell.css'
 
@@ -42,6 +43,7 @@ function computeDropdownPosition(rect) {
  * notifications page and notification settings.
  */
 function NotificationBell() {
+  const { error: toastError } = useToast()
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
@@ -126,7 +128,7 @@ function NotificationBell() {
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, readAt: new Date().toISOString() } : item)),
     )
-    markNotificationsRead([id]).catch(() => {})
+    markNotificationsRead([id]).catch(() => toastError('Failed to mark notification as read.'))
   }
 
   const hasUnread = items.some((item) => item.readAt == null)

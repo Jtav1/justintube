@@ -19,6 +19,7 @@ import { delistVideo, dislikeVideo, likeVideo, recordView } from '../api/videos.
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../api/users.js'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
 
@@ -46,6 +47,7 @@ function pickDefaultRendition(renditions) {
 
 function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const { user } = useAuth()
+  const { error: toastError } = useToast()
   const navigate = useNavigate()
   const renditions = video.renditions ?? []
   const isAudio = video.mediaType === 'audio'
@@ -273,6 +275,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
       setReaction(nextReaction)
     } catch (err) {
       console.error('Failed to like video:', err)
+      toastError('Failed to like video.')
     } finally {
       setReactionPending(false)
     }
@@ -290,6 +293,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
       setReaction(nextReaction)
     } catch (err) {
       console.error('Failed to dislike video:', err)
+      toastError('Failed to dislike video.')
     } finally {
       setReactionPending(false)
     }
@@ -305,15 +309,21 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
       setDelisted(true)
     } catch (err) {
       console.error('Failed to delist video:', err)
+      toastError('Failed to delist video.')
     } finally {
       setDelistPending(false)
     }
   }
 
   async function handleCopyLink() {
-    await navigator.clipboard.writeText(`${window.location.origin}/video?v=${video.videoId}`)
-    setLinkCopied(true)
-    setTimeout(() => setLinkCopied(false), 1500)
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/video?v=${video.videoId}`)
+      setLinkCopied(true)
+      setTimeout(() => setLinkCopied(false), 1500)
+    } catch (err) {
+      console.error('Failed to copy link:', err)
+      toastError('Failed to copy link.')
+    }
   }
 
   async function handleToggleSubscribe() {
@@ -328,6 +338,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
       setSubscribed(result.subscribed)
     } catch (err) {
       console.error('Failed to update subscription:', err)
+      toastError('Failed to update subscription.')
     } finally {
       setSubscribePending(false)
     }
