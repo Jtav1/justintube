@@ -7,7 +7,8 @@ import {
   uploadVideoFile,
   importVideoUrl,
   updateVideo,
-  setVideoAccess,
+  setVideoEditors,
+  setVideoViewers,
   getVideoAccess,
   setVideoFeatured,
   getImportStatus,
@@ -89,10 +90,16 @@ function UploadPage() {
   const [tagInput, setTagInput] = useState('')
   const [tags, setTags] = useState([])
 
-  const [recipientQuery, setRecipientQuery] = useState('')
-  const [recipientSuggestions, setRecipientSuggestions] = useState([])
-  const [recipientSearchLoading, setRecipientSearchLoading] = useState(false)
-  const [recipients, setRecipients] = useState([])
+  const [viewerQuery, setViewerQuery] = useState('')
+  const [viewerSuggestions, setViewerSuggestions] = useState([])
+  const [viewerSearchLoading, setViewerSearchLoading] = useState(false)
+  const [viewers, setViewers] = useState([])
+
+  const [editorsExpanded, setEditorsExpanded] = useState(false)
+  const [editorQuery, setEditorQuery] = useState('')
+  const [editorSuggestions, setEditorSuggestions] = useState([])
+  const [editorSearchLoading, setEditorSearchLoading] = useState(false)
+  const [editors, setEditors] = useState([])
 
   const [submitting, setSubmitting] = useState(false)
 
@@ -142,17 +149,20 @@ function UploadPage() {
         setTags(video.tags ?? [])
         setFeatured(Boolean(video.featured))
 
-        if (isOwnerAdmin && video.visibility === 'private') {
+        if (isOwnerAdmin) {
           const { items } = await getVideoAccess(video.id)
           if (!cancelled) {
-            setRecipients(
-              items.map((item) => ({
-                userId: item.userId,
-                username: item.username,
-                displayName: item.displayName,
-                permission: item.permission,
-              })),
-            )
+            const toRef = (item) => ({
+              userId: item.userId,
+              username: item.username,
+              displayName: item.displayName,
+            })
+            const editorItems = items.filter((item) => item.permission === 'edit').map(toRef)
+            setEditors(editorItems)
+            setEditorsExpanded(editorItems.length > 0)
+            if (video.visibility === 'private') {
+              setViewers(items.filter((item) => item.permission === 'view').map(toRef))
+            }
           }
         }
       } catch {
@@ -247,28 +257,51 @@ function UploadPage() {
     }
   }, [trackingId, processingStatus, navigate, user.username, success])
 
-  const recipientSearchActive = visibility === 'private' && recipientQuery.trim().length > 0
+  const viewerSearchActive = visibility === 'private' && viewerQuery.trim().length > 0
 
   useEffect(() => {
-    if (!recipientSearchActive) {
+    if (!viewerSearchActive) {
       return undefined
     }
 
     const timer = setTimeout(async () => {
-      setRecipientSearchLoading(true)
+      setViewerSearchLoading(true)
       try {
-        const { items } = await searchUsers(recipientQuery.trim(), { limit: 8 })
-        const alreadyAdded = new Set(recipients.map((r) => r.userId))
-        setRecipientSuggestions(items.filter((item) => !alreadyAdded.has(item.userId)))
+        const { items } = await searchUsers(viewerQuery.trim(), { limit: 8 })
+        const alreadyAdded = new Set(viewers.map((r) => r.userId))
+        setViewerSuggestions(items.filter((item) => !alreadyAdded.has(item.userId)))
       } catch {
-        setRecipientSuggestions([])
+        setViewerSuggestions([])
       } finally {
-        setRecipientSearchLoading(false)
+        setViewerSearchLoading(false)
       }
     }, RECIPIENT_SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [recipientSearchActive, recipientQuery, recipients])
+  }, [viewerSearchActive, viewerQuery, viewers])
+
+  const editorSearchActive = editorsExpanded && editorQuery.trim().length > 0
+
+  useEffect(() => {
+    if (!editorSearchActive) {
+      return undefined
+    }
+
+    const timer = setTimeout(async () => {
+      setEditorSearchLoading(true)
+      try {
+        const { items } = await searchUsers(editorQuery.trim(), { limit: 8 })
+        const alreadyAdded = new Set(editors.map((r) => r.userId))
+        setEditorSuggestions(items.filter((item) => !alreadyAdded.has(item.userId)))
+      } catch {
+        setEditorSuggestions([])
+      } finally {
+        setEditorSearchLoading(false)
+      }
+    }, RECIPIENT_SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  }, [editorSearchActive, editorQuery, editors])
 
   if (authLoading || !user) {
     return null
@@ -382,24 +415,32 @@ function UploadPage() {
     setTags((prev) => prev.filter((t) => t !== tag))
   }
 
-  function addRecipient(userId) {
-    const match = recipientSuggestions.find((s) => s.userId === Number(userId))
+  function addViewer(userId) {
+    const match = viewerSuggestions.find((s) => s.userId === Number(userId))
     if (!match) {
       return
     }
-    setRecipients((prev) => [...prev, { ...match, permission: 'view' }])
-    setRecipientQuery('')
-    setRecipientSuggestions([])
+    setViewers((prev) => [...prev, match])
+    setViewerQuery('')
+    setViewerSuggestions([])
   }
 
-  function removeRecipient(userId) {
-    setRecipients((prev) => prev.filter((r) => r.userId !== Number(userId)))
+  function removeViewer(userId) {
+    setViewers((prev) => prev.filter((r) => r.userId !== Number(userId)))
   }
 
-  function updateRecipientPermission(userId, permission) {
-    setRecipients((prev) =>
-      prev.map((r) => (r.userId === Number(userId) ? { ...r, permission } : r)),
-    )
+  function addEditor(userId) {
+    const match = editorSuggestions.find((s) => s.userId === Number(userId))
+    if (!match) {
+      return
+    }
+    setEditors((prev) => [...prev, match])
+    setEditorQuery('')
+    setEditorSuggestions([])
+  }
+
+  function removeEditor(userId) {
+    setEditors((prev) => prev.filter((r) => r.userId !== Number(userId)))
   }
 
   const submitDisabled = isEditMode
@@ -492,11 +533,27 @@ function UploadPage() {
       }
     }
 
+    if (viewerIsOwnerOrAdmin) {
+      try {
+        await setVideoEditors(
+          createdId,
+          editors.map((r) => r.username),
+        )
+      } catch {
+        toastError(
+          'Your video was uploaded and configured, but setting editors failed. ' +
+            'You can manage editors from your profile.',
+        )
+        setSubmitting(false)
+        return
+      }
+    }
+
     if (viewerIsOwnerOrAdmin && visibility === 'private') {
       try {
-        await setVideoAccess(
+        await setVideoViewers(
           createdId,
-          recipients.map((r) => ({ username: r.username, permission: r.permission })),
+          viewers.map((r) => r.username),
         )
       } catch {
         toastError(
@@ -716,31 +773,54 @@ function UploadPage() {
           <div className="upload-field-group">
             <label>Share with</label>
             <ChipInput
-              chips={recipients.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
-              onRemove={removeRecipient}
-              inputValue={recipientQuery}
-              onInputChange={setRecipientQuery}
+              chips={viewers.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
+              onRemove={removeViewer}
+              inputValue={viewerQuery}
+              onInputChange={setViewerQuery}
               suggestions={
-                recipientSearchActive
-                  ? recipientSuggestions.map((s) => ({
+                viewerSearchActive
+                  ? viewerSuggestions.map((s) => ({
                       key: String(s.userId),
                       label: recipientLabel(s),
                     }))
                   : []
               }
-              onSelectSuggestion={addRecipient}
-              suggestionsLoading={recipientSearchLoading}
+              onSelectSuggestion={addViewer}
+              suggestionsLoading={viewerSearchLoading}
               placeholder="Search by username or display name..."
-              renderChipExtra={(chip) => (
-                <select
-                  className="chip-input-permission"
-                  value={recipients.find((r) => String(r.userId) === chip.key)?.permission ?? 'view'}
-                  onChange={(event) => updateRecipientPermission(chip.key, event.target.value)}
-                >
-                  <option value="view">View</option>
-                  <option value="edit">Edit</option>
-                </select>
-              )}
+            />
+          </div>
+        )}
+
+        {viewerIsOwnerOrAdmin && !editorsExpanded && (
+          <button
+            type="button"
+            className="upload-link-button"
+            onClick={() => setEditorsExpanded(true)}
+          >
+            + Add Editors
+          </button>
+        )}
+
+        {viewerIsOwnerOrAdmin && editorsExpanded && (
+          <div className="upload-field-group">
+            <label>Editors</label>
+            <ChipInput
+              chips={editors.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
+              onRemove={removeEditor}
+              inputValue={editorQuery}
+              onInputChange={setEditorQuery}
+              suggestions={
+                editorSearchActive
+                  ? editorSuggestions.map((s) => ({
+                      key: String(s.userId),
+                      label: recipientLabel(s),
+                    }))
+                  : []
+              }
+              onSelectSuggestion={addEditor}
+              suggestionsLoading={editorSearchLoading}
+              placeholder="Search by username or display name..."
             />
           </div>
         )}
