@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   EyeOff,
+  EyeClosed,
   Link as LinkIcon,
   ListMinus,
   ListPlus,
@@ -15,7 +16,7 @@ import {
 } from 'lucide-react'
 import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
-import { delistVideo, dislikeVideo, likeVideo, recordView } from '../api/videos.js'
+import { delistVideo, dislikeVideo, likeVideo, recordView, hideVideo } from '../api/videos.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../api/users.js'
 import { useAuth } from '../context/useAuth.js'
@@ -68,6 +69,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const [linkCopied, setLinkCopied] = useState(false)
   const [subscribed, setSubscribed] = useState(null)
   const [subscribePending, setSubscribePending] = useState(false)
+  const [hideError, setHideError] = useState(false)
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -208,6 +210,20 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   function handleCreateNewPlaylist() {
     setPlaylistMenuOpen(false)
     navigate(`/playlists/new?videoId=${video.id}`)
+  }
+
+  async function handleHide() {
+    if (!window.confirm('Hide this video forever? You won\'t see it recommended again.')) {
+      return
+    }
+    setHideError(false)
+    try {
+      await hideVideo(video.id)
+      window.location.reload()
+    } catch {
+      setHideError(true)
+      toastError('Hiding video failed.')
+    }
   }
 
   async function handleAddToExistingPlaylist(playlistId) {
@@ -494,6 +510,16 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               aria-label={delisted ? 'Video delisted' : 'Delist video'}
               disabled={delistPending || delisted}
               onClick={handleDelist}
+            >
+              <EyeOff size={18} />
+            </button>
+          )}
+          {Boolean(user) && user.id !== uploaderId && (
+            <button
+              type="button"
+              className="video-player-icon-btn"
+              aria-label={hideError ? 'Hiding video failed, try again' : 'Hide Forever'}
+              onClick={handleHide}
             >
               <EyeOff size={18} />
             </button>

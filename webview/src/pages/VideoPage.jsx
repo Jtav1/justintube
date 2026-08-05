@@ -71,7 +71,8 @@ function VideoPage() {
     } catch {
       // Leave the hidden notice in place; the user can retry.
     }
-  }, [videoId, toastError]
+  }
+
 
   useEffect(() => {
     let cancelled = false
