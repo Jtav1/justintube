@@ -12,6 +12,7 @@ import { requireModerator } from "../lib/auth/require-moderator.js";
 import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
+  AccessPermission,
   Comment,
   ContentTag,
   FeaturedVideo,
@@ -32,6 +33,7 @@ import {
   isAdmin,
   isModeratorOrAdmin,
   isOwnerOrAdmin,
+  resolveViewerPermission,
 } from "../lib/video-access.js";
 import { isVideoHidden, loadHiddenUploadIds } from "../lib/video-hidden.js";
 import {
@@ -246,6 +248,9 @@ export function parsePositiveInt(raw) {
  *   when not passed — callers should batch-load via {@link loadReactionCountsByUploadId}.
  * @param {number} [options.dislikeCount] Total VIDEO_LIKES rows with likeValue -1. Defaults to
  *   0 when not passed — callers should batch-load via {@link loadReactionCountsByUploadId}.
+ * @param {"owner"|"edit"|"view"} [options.viewerPermission] The requesting user's effective
+ *   permission level, when known (see {@link resolveViewerPermission}). Only attached when
+ *   explicitly passed — omitted from the payload entirely otherwise.
  * @returns {{
  *   id: number,
  *   videoId: string,
@@ -298,6 +303,9 @@ export function serializeVideo(upload, metadata, options = {}) {
   }
   if (options.featured !== undefined) {
     payload.featured = options.featured;
+  }
+  if (options.viewerPermission !== undefined) {
+    payload.viewerPermission = options.viewerPermission;
   }
   return payload;
 }
@@ -890,20 +898,94 @@ async function loadUploadWithMetadataByIdentifier(raw) {
 }
 
 /**
- * Returns whether the given user has a VIDEO_ACCESS grant on the upload.
+ * Loads the caller's VIDEO_ACCESS grant row for an upload, if any, including
+ * its AccessPermission so callers can inspect the grant's permission level.
+ *
+ * @param {number} originalUploadId Upload id.
+ * @param {number|null|undefined} userId Authenticated user id.
+ * @returns {Promise<import('sequelize').Model|null>} The grant row, or null.
+ */
+async function loadAccessGrant(originalUploadId, userId) {
+  if (!userId) {
+    return null;
+  }
+  return VideoAccess.findOne({
+    where: { originalUploadId, userId },
+    include: [{ model: AccessPermission }],
+  });
+}
+
+/**
+ * Returns whether the given user has a VIDEO_ACCESS grant on the upload (view
+ * or edit level - either is sufficient to view a private/hidden video).
  *
  * @param {number} originalUploadId Upload id.
  * @param {number|null|undefined} userId Authenticated user id.
  * @returns {Promise<boolean>} True when a grant row exists.
  */
 async function userHasAccessGrant(originalUploadId, userId) {
-  if (!userId) {
-    return false;
+  return Boolean(await loadAccessGrant(originalUploadId, userId));
+}
+
+/**
+ * Returns whether the given user's VIDEO_ACCESS grant is specifically
+ * "edit"-level (sufficient to update metadata/content, see canEditVideo).
+ *
+ * @param {number} originalUploadId Upload id.
+ * @param {number|null|undefined} userId Authenticated user id.
+ * @returns {Promise<boolean>} True when an "edit" grant row exists.
+ */
+async function userHasEditGrant(originalUploadId, userId) {
+  const grant = await loadAccessGrant(originalUploadId, userId);
+  return grant?.AccessPermission?.name === "edit";
+}
+
+/**
+ * Batch-resolves the caller's effective permission level ("owner"/"edit"/"view")
+ * for a set of videos, using a single VideoAccess+AccessPermission query
+ * (scoped to the non-owned ids) rather than one grant lookup per row. Used by
+ * list/search endpoints so every video card can show an accurate Edit
+ * affordance without an N+1 query per item.
+ *
+ * @param {Array<{id: number, userId: number|null}>} items Videos to resolve, by id and owning userId.
+ * @param {import('sequelize').Model|null|undefined} user Authenticated user.
+ * @param {import('sequelize').Model|null|undefined} role Authenticated role.
+ * @returns {Promise<Map<number, "owner"|"edit"|"view">>} Map of video id to permission level.
+ */
+export async function loadViewerPermissionsByUploadId(items, user, role) {
+  const result = new Map();
+  if (!user) {
+    for (const item of items) {
+      result.set(item.id, "view");
+    }
+    return result;
   }
-  const grant = await VideoAccess.findOne({
-    where: { originalUploadId, userId },
-  });
-  return Boolean(grant);
+
+  let editGrantedIds = new Set();
+  if (!isAdmin(role)) {
+    const nonOwnedIds = items
+      .filter((item) => Number(item.userId) !== Number(user.id))
+      .map((item) => item.id);
+    if (nonOwnedIds.length > 0) {
+      const grants = await VideoAccess.findAll({
+        where: { userId: user.id, originalUploadId: { [Op.in]: nonOwnedIds } },
+        include: [{ model: AccessPermission, required: true }],
+      });
+      editGrantedIds = new Set(
+        grants
+          .filter((grant) => grant.AccessPermission.name === "edit")
+          .map((grant) => grant.originalUploadId),
+      );
+    }
+  }
+
+  for (const item of items) {
+    result.set(
+      item.id,
+      resolveViewerPermission(user, role, item.userId, editGrantedIds.has(item.id)),
+    );
+  }
+  return result;
 }
 
 /**
@@ -934,6 +1016,9 @@ function sendNotFound(res) {
  * @param {import('sequelize').Includeable[]} [options.includes] Extra includes.
  * @param {import('sequelize').Order} [options.order] Order clause.
  * @param {number|null} [options.viewerUserId] Authenticated caller's id, if any.
+ * @param {import('sequelize').Model|null} [options.viewerUser] Authenticated caller, used to
+ *   attach each item's `viewerPermission` (see {@link loadViewerPermissionsByUploadId}).
+ * @param {import('sequelize').Model|null} [options.viewerRole] Authenticated caller's role.
  * @returns {Promise<object[]>} Serialized video items.
  */
 async function listPublicVideos(options = {}) {
@@ -984,9 +1069,15 @@ async function listPublicVideos(options = {}) {
   const uploadIds = rows.map((upload) => upload.id);
   const tagsByUploadId = await loadTagsByUploadId(uploadIds);
   const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
+  const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+    rows,
+    options.viewerUser,
+    options.viewerRole,
+  );
   return rows.map((upload) =>
     serializeVideo(upload, upload.VideoMetadata, {
       tags: tagsByUploadId.get(upload.id) || [],
+      viewerPermission: viewerPermissionByUploadId.get(upload.id),
       ...reactionCountsByUploadId.get(upload.id),
     }),
   );
@@ -1176,17 +1267,22 @@ function parseUpdateVideoBody(body) {
 }
 
 /**
- * Parses setVideoAccess body `{ usernames: string[] }`.
+ * Parses a setVideoEditors/setVideoViewers body `{ usernames: [string, ...] }`.
+ * Duplicate usernames (case-insensitive) within one request: first
+ * occurrence wins.
  *
  * @param {unknown} body Request body.
  * @returns {{ok: true, usernames: string[]}|{ok: false, message: string}} Parsed or error.
  */
-function parseAccessBody(body) {
+function parseUsernamesBody(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, message: "JSON body is required." };
   }
   if (!Array.isArray(body.usernames)) {
-    return { ok: false, message: "usernames must be an array of strings." };
+    return {
+      ok: false,
+      message: "usernames must be an array of strings.",
+    };
   }
   const usernames = [];
   const seen = new Set();
@@ -1206,6 +1302,71 @@ function parseAccessBody(body) {
     usernames.push(username);
   }
   return { ok: true, usernames };
+}
+
+/**
+ * Resolves a list of usernames to User rows, erroring on unknown usernames.
+ *
+ * @param {string[]} usernames Usernames to resolve.
+ * @returns {Promise<{ok: true, users: import('sequelize').Model[]}|{ok: false, message: string}>} Resolved users or error.
+ */
+async function resolveUsersByUsername(usernames) {
+  if (usernames.length === 0) {
+    return { ok: true, users: [] };
+  }
+  const users = await User.findAll({
+    where: { username: { [Op.in]: usernames } },
+  });
+  const found = new Set(users.map((u) => u.username.toLowerCase()));
+  const missing = usernames.filter((name) => !found.has(name.toLowerCase()));
+  if (missing.length > 0) {
+    return { ok: false, message: `Unknown username(s): ${missing.join(", ")}.` };
+  }
+  return { ok: true, users };
+}
+
+/**
+ * Replaces all VIDEO_ACCESS rows for `originalUploadId` at a given
+ * permission level with grants for exactly `users`, leaving rows at other
+ * permission levels untouched. Returns the full (all-permission) grant list
+ * for the video afterward, serialized for API responses.
+ *
+ * @param {number} originalUploadId Video's OriginalUpload id.
+ * @param {number} permissionId ACCESS_PERMISSIONS id to replace grants for.
+ * @param {import('sequelize').Model[]} users Users to grant at this permission level.
+ * @returns {Promise<object[]>} Serialized `{ userId, username, displayName, permission }` items.
+ */
+async function replaceVideoAccessForPermission(originalUploadId, permissionId, users) {
+  await sequelize.transaction(async (transaction) => {
+    await VideoAccess.destroy({
+      where: { originalUploadId, permissionId },
+      transaction,
+    });
+    if (users.length > 0) {
+      await VideoAccess.bulkCreate(
+        users.map((user) => ({
+          originalUploadId,
+          userId: user.id,
+          permissionId,
+        })),
+        { transaction },
+      );
+    }
+  });
+
+  const grants = await VideoAccess.findAll({
+    where: { originalUploadId },
+    include: [
+      { model: User, required: true },
+      { model: AccessPermission, required: true },
+    ],
+    order: [["id", "ASC"]],
+  });
+
+  return grants.map((grant) => ({
+    ...serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+    permission: grant.AccessPermission.name,
+  }));
 }
 
 /**
@@ -1352,6 +1513,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -1383,6 +1546,8 @@ export function createVideosRouter() {
         includes: [{ model: FeaturedVideo, required: true }],
         order: [[FeaturedVideo, "createdAt", "DESC"]],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -1415,6 +1580,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -1470,8 +1637,8 @@ export function createVideosRouter() {
       }
 
       const { upload, metadata } = loaded;
-      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
-      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+      const grant = await loadAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, Boolean(grant))) {
         sendNotFound(res);
         return;
       }
@@ -1488,9 +1655,13 @@ export function createVideosRouter() {
       const tagsByUploadId = await loadTagsByUploadId([upload.id]);
       const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
 
+      const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, upload);
+      const hasEditGrant = !isOwnerAdmin && grant?.AccessPermission?.name === "edit";
+
       const serializeOptions = {
         tags: tagsByUploadId.get(upload.id) || [],
         renditions,
+        viewerPermission: resolveViewerPermission(req.user, req.authRole, upload.userId, hasEditGrant),
         ...reactionCountsByUploadId.get(upload.id),
       };
       if (req.user) {
@@ -1977,8 +2148,11 @@ export function createVideosRouter() {
 
   /**
    * PATCH /videos/:id — updateVideo
-   * Auth: required. Owner or admin. Body: title, description, visibility,
-   * commentsEnabled, tags.
+   * Auth: required. Owner, admin, or a user with an "edit" VIDEO_ACCESS grant.
+   * Body: title, description, visibility, commentsEnabled, tags. A caller who
+   * is not the owner/admin (i.e. an edit-grantee) may update any field except
+   * `visibility` — including `visibility` in the body at all is rejected
+   * outright (the whole request, not just that field).
    *
    * @openapi
    * /api/v1/videos/{id}:
@@ -2002,7 +2176,7 @@ export function createVideosRouter() {
    *       "401":
    *         description: Unauthorized
    *       "403":
-   *         description: Forbidden
+   *         description: Not the owner/admin/edit-grantee, or an edit-grantee attempted to change visibility
    */
   router.patch("/videos/:id", requireAuth, async (req, res) => {
     try {
@@ -2031,10 +2205,21 @@ export function createVideosRouter() {
       }
 
       const { upload, metadata } = loaded;
-      if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+      const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, upload);
+      const hasEditGrant = isOwnerAdmin ? false : await userHasEditGrant(upload.id, req.user.id);
+
+      if (!isOwnerAdmin && !hasEditGrant) {
         res.status(403).json({
           error: "forbidden",
-          message: "Only the owner or an admin can update this video.",
+          message: "Only the owner, an admin, or a user with edit access can update this video.",
+        });
+        return;
+      }
+
+      if (!isOwnerAdmin && parsed.patch.visibility !== undefined) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the owner or an admin can change this video's visibility.",
         });
         return;
       }
@@ -2045,12 +2230,17 @@ export function createVideosRouter() {
         if (Object.keys(parsed.patch).length > 0) {
           await metadata.update(parsed.patch, { transaction });
           if (parsed.patch.visibility === "hidden") {
-            // Grants are only meaningful for private videos; wipe them on
-            // entry to hidden rather than leaving stale access behind. Any
-            // other visibility change (including back to private) preserves
-            // existing grants.
+            // Viewer grants are only meaningful for private videos, so wipe
+            // them on entry to hidden rather than leaving stale access
+            // behind. Editor grants are meaningful at any visibility and
+            // are preserved. Any other visibility change (including back to
+            // private) preserves all existing grants.
+            const viewPermission = await AccessPermission.findOne({
+              where: { name: "view" },
+              transaction,
+            });
             await VideoAccess.destroy({
-              where: { originalUploadId: upload.id },
+              where: { originalUploadId: upload.id, permissionId: viewPermission.id },
               transaction,
             });
           }
@@ -2102,6 +2292,7 @@ export function createVideosRouter() {
         serializeVideo(upload, metadata, {
           tags: tagsByUploadId.get(upload.id) || [],
           renditions,
+          viewerPermission: isOwnerAdmin ? "owner" : "edit",
           ...reactionCountsByUploadId.get(upload.id),
         }),
       );
@@ -2367,7 +2558,7 @@ export function createVideosRouter() {
    *           type: integer
    *     responses:
    *       "200":
-   *         description: Access grant list
+   *         description: Access grant list, each item including its "view"/"edit" permission
    */
   router.get("/videos/:id/access", requireAuth, async (req, res) => {
     try {
@@ -2395,18 +2586,22 @@ export function createVideosRouter() {
 
       const grants = await VideoAccess.findAll({
         where: { originalUploadId: upload.id },
-        include: [{ model: User, required: true }],
+        include: [
+          { model: User, required: true },
+          { model: AccessPermission, required: true },
+        ],
         order: [["id", "ASC"]],
       });
 
       res.status(200).json({
-        items: grants.map((grant) =>
-          serializeUserRef(
+        items: grants.map((grant) => ({
+          ...serializeUserRef(
             grant.userId,
             grant.User.username,
             grant.User.displayName,
           ),
-        ),
+          permission: grant.AccessPermission.name,
+        })),
       });
     } catch (err) {
       console.error("listVideoAccess failed:", err);
@@ -2495,18 +2690,20 @@ export function createVideosRouter() {
   });
 
   /**
-   * PUT /videos/:id/access — setVideoAccess
-   * Auth: required. Owner or admin. Body: `{ usernames: string[] }` replace-all.
-   * Only allowed while the video is currently `private` — grants are only
-   * meaningful for private videos, and are wiped automatically if the video
-   * is ever set to `hidden` (see `updateVideo`).
+   * PUT /videos/:id/editors — setVideoEditors
+   * Auth: required. Owner or admin (edit-grantees cannot manage the access
+   * list themselves). Body: `{ usernames: [string, ...] }` replace-all for
+   * the video's `"edit"`-level grants only — `"view"` grants are untouched.
+   * Unlike viewer grants, editor grants are meaningful (and settable) for a
+   * video at any visibility, including `hidden`, so there is no visibility
+   * restriction here.
    *
    * @openapi
-   * /api/v1/videos/{id}/access:
+   * /api/v1/videos/{id}/editors:
    *   put:
    *     tags: [Videos]
-   *     summary: Replace private-access grants for a video
-   *     operationId: setVideoAccess
+   *     summary: Replace editor grants for a video
+   *     operationId: setVideoEditors
    *     security:
    *       - cookieAuth: []
    *       - bearerApiKey: []
@@ -2517,13 +2714,25 @@ export function createVideosRouter() {
    *         required: true
    *         schema:
    *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [usernames]
+   *             properties:
+   *               usernames:
+   *                 type: array
+   *                 items:
+   *                   type: string
    *     responses:
    *       "200":
-   *         description: Updated access grant list
+   *         description: Updated access grant list (all permission levels)
    *       "400":
-   *         description: Invalid body, or the video is not currently private
+   *         description: Invalid body or unknown username
    */
-  router.put("/videos/:id/access", requireAuth, async (req, res) => {
+  router.put("/videos/:id/editors", requireAuth, async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -2534,7 +2743,108 @@ export function createVideosRouter() {
         return;
       }
 
-      const parsed = parseAccessBody(req.body);
+      const parsed = parseUsernamesBody(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: parsed.message,
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+      const { upload } = loaded;
+      if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the owner or an admin can set video editors.",
+        });
+        return;
+      }
+
+      const resolved = await resolveUsersByUsername(parsed.usernames);
+      if (!resolved.ok) {
+        res.status(400).json({ error: "invalid_body", message: resolved.message });
+        return;
+      }
+
+      const editPermission = await AccessPermission.findOne({ where: { name: "edit" } });
+      const items = await replaceVideoAccessForPermission(
+        upload.id,
+        editPermission.id,
+        resolved.users,
+      );
+
+      res.status(200).json({ items });
+    } catch (err) {
+      console.error("setVideoEditors failed:", err);
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to set video editors.",
+      });
+    }
+  });
+
+  /**
+   * PUT /videos/:id/viewers — setVideoViewers
+   * Auth: required. Owner or admin. Body: `{ usernames: [string, ...] }`
+   * replace-all for the video's `"view"`-level grants only — `"edit"`
+   * grants are untouched. Only allowed while the video is currently
+   * `private`, since viewer grants are only meaningful there (`public`/
+   * `unlisted` are already visible to anyone, `hidden` to no one but the
+   * owner/admin); viewer grants are wiped automatically if the video is
+   * ever set to `hidden` (see `updateVideo`).
+   *
+   * @openapi
+   * /api/v1/videos/{id}/viewers:
+   *   put:
+   *     tags: [Videos]
+   *     summary: Replace viewer grants for a video
+   *     operationId: setVideoViewers
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [usernames]
+   *             properties:
+   *               usernames:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       "200":
+   *         description: Updated access grant list (all permission levels)
+   *       "400":
+   *         description: Invalid body, unknown username, or the video is not currently private
+   */
+  router.put("/videos/:id/viewers", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const parsed = parseUsernamesBody(req.body);
       if (!parsed.ok) {
         res.status(400).json({
           error: "invalid_body",
@@ -2552,76 +2862,37 @@ export function createVideosRouter() {
       if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
         res.status(403).json({
           error: "forbidden",
-          message: "Only the owner or an admin can set video access.",
+          message: "Only the owner or an admin can set video viewers.",
         });
         return;
       }
       if (metadata.visibility !== "private") {
         res.status(400).json({
           error: "invalid_state",
-          message:
-            "Video access can only be managed while the video is private.",
+          message: "Video viewers can only be managed while the video is private.",
         });
         return;
       }
 
-      /** @type {import('sequelize').Model[]} */
-      let users = [];
-      if (parsed.usernames.length > 0) {
-        users = await User.findAll({
-          where: {
-            username: { [Op.in]: parsed.usernames },
-          },
-        });
-        const found = new Set(users.map((u) => u.username.toLowerCase()));
-        const missing = parsed.usernames.filter(
-          (name) => !found.has(name.toLowerCase()),
-        );
-        if (missing.length > 0) {
-          res.status(400).json({
-            error: "invalid_body",
-            message: `Unknown username(s): ${missing.join(", ")}.`,
-          });
-          return;
-        }
+      const resolved = await resolveUsersByUsername(parsed.usernames);
+      if (!resolved.ok) {
+        res.status(400).json({ error: "invalid_body", message: resolved.message });
+        return;
       }
 
-      await sequelize.transaction(async (transaction) => {
-        await VideoAccess.destroy({
-          where: { originalUploadId: upload.id },
-          transaction,
-        });
-        if (users.length > 0) {
-          await VideoAccess.bulkCreate(
-            users.map((user) => ({
-              originalUploadId: upload.id,
-              userId: user.id,
-            })),
-            { transaction },
-          );
-        }
-      });
+      const viewPermission = await AccessPermission.findOne({ where: { name: "view" } });
+      const items = await replaceVideoAccessForPermission(
+        upload.id,
+        viewPermission.id,
+        resolved.users,
+      );
 
-      const grants = await VideoAccess.findAll({
-        where: { originalUploadId: upload.id },
-        include: [{ model: User, required: true }],
-        order: [["id", "ASC"]],
-      });
-
-      res.status(200).json({
-        items: grants.map((grant) =>
-          serializeUserRef(
-            grant.userId,
-            grant.User.username,
-            grant.User.displayName,
-          ),
-        ),
-      });
+      res.status(200).json({ items });
     } catch (err) {
-      console.error("setVideoAccess failed:", err);
+      console.error("setVideoViewers failed:", err);
       res.status(500).json({
         error: "internal_error",
-        message: "Failed to set video access.",
+        message: "Failed to set video viewers.",
       });
     }
   });
@@ -2629,7 +2900,8 @@ export function createVideosRouter() {
   /**
    * POST /videos/:id/view — recordVideoView
    * Auth: optional. Requires canView. Increments viewCount for every viewer; when
-   * authenticated, also inserts a USER_VIEW_HISTORY row for the caller.
+   * authenticated, also upserts the caller's USER_VIEW_HISTORY row for this video
+   * (one row per user/video pair - repeat views just bump `updatedAt`).
    *
    * @openapi
    * /api/v1/videos/{id}/view:
@@ -2676,9 +2948,10 @@ export function createVideosRouter() {
       await metadata.reload();
 
       if (req.user) {
-        await UserViewHistory.create({
+        await UserViewHistory.upsert({
           originalUploadId: upload.id,
           userId: req.user.id,
+          updatedAt: sequelize.literal("CURRENT_TIMESTAMP"),
         });
       }
 
@@ -3502,6 +3775,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
       });
       res.status(200).json({ items });
     } catch (err) {
@@ -3551,6 +3826,8 @@ export function createVideosRouter() {
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user.id,
+        viewerUser: req.user,
+        viewerRole: req.authRole,
       });
 
       const uploadIds = items.map((item) => item.id);

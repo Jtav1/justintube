@@ -299,6 +299,7 @@ function AccountSettings() {
               onClick={() => bannerFileInputRef.current?.click()}
               disabled={bannerUploading}
               aria-label="Change banner image"
+              title="Change banner image"
             >
               <Pencil size={14} />
             </button>
@@ -335,6 +336,7 @@ function AccountSettings() {
               onClick={() => avatarFileInputRef.current?.click()}
               disabled={avatarUploading}
               aria-label="Change avatar image"
+              title="Change avatar image"
             >
               <Pencil size={12} />
             </button>

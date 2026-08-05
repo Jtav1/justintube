@@ -7,6 +7,7 @@ import { useAuth } from '../context/useAuth.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { hideVideo } from '../api/videos.js'
 import apiClient from '../api/client.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoCard.css'
 
@@ -44,7 +45,13 @@ function VideoCard({
   const [hidden, setHidden] = useState(false)
   const [hideError, setHideError] = useState(false)
 
-  const canEdit = Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
+  // List-fetched videos don't carry viewerPermission (see webapi's
+  // scope note on list endpoints), so fall back to the client-side
+  // owner/admin check there; singular-fetch contexts get the accurate
+  // owner-or-edit-grantee answer for free.
+  const canEdit = video.viewerPermission
+    ? video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
+    : Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
 
   useEffect(() => {
     const el = titleRef.current
@@ -184,6 +191,8 @@ function VideoCard({
     return () => window.removeEventListener('scroll', handleScroll, true)
   }, [menuOpen])
 
+  useDismissablePopover(menuOpen, closeMenu, toggleRef)
+
   if (hidden) {
     return null
   }
@@ -231,6 +240,7 @@ function VideoCard({
               type="button"
               className="video-card-menu-toggle"
               aria-label="Video options"
+              title="Video options"
               onClick={handleToggleMenu}
             >
               <MoreVertical size={18} />

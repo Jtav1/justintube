@@ -1,4 +1,11 @@
-import { NotificationType, Role, Theme, User, UserNotificationSetting } from "./models/index.js";
+import {
+  AccessPermission,
+  NotificationType,
+  Role,
+  Theme,
+  User,
+  UserNotificationSetting,
+} from "./models/index.js";
 import { hashPassword } from "./auth/password.js";
 import { PUBLIC_THEME_OWNER } from "./models/theme.js";
 
@@ -22,6 +29,24 @@ const DEFAULT_ROLES = [
   {
     name: "locked",
     description: "Account restricted from most actions.",
+  },
+];
+
+/**
+ * The standard access-grant permission levels seeded into the
+ * ACCESS_PERMISSIONS table. Referenced by VIDEO_ACCESS.permissionId and
+ * PLAYLIST_ACCESS.permissionId, mirroring how DEFAULT_ROLES backs
+ * USERS.roleId.
+ *
+ * @type {Array<{name: string, description: string}>}
+ */
+const DEFAULT_ACCESS_PERMISSIONS = [
+  { name: "view", description: "Can view the private video/playlist." },
+  {
+    name: "edit",
+    description:
+      "Can view and update metadata/content (and, for playlists, add/remove items), " +
+      "but cannot delete, change visibility, or manage sharing.",
   },
 ];
 
@@ -160,8 +185,28 @@ export async function seedReferenceData() {
       defaults: { description, enabled: true },
     });
   }
+  await seedAccessPermissions();
   await seedNotificationTypes();
   await disableDeprecatedNotificationTypes();
+}
+
+/**
+ * Inserts the standard access-grant permission levels ("view", "edit") into
+ * the ACCESS_PERMISSIONS table if they are not already present. Uses
+ * findOrCreate so it is idempotent and safe to run on every startup. Also
+ * called directly (before this function, i.e. before general schema sync) by
+ * `migrateAccessPermissionForeignKeys` in schema.js, since VIDEO_ACCESS/
+ * PLAYLIST_ACCESS rows need a valid permission id to backfill onto.
+ *
+ * @returns {Promise<void>} Resolves once the default access permissions have been seeded.
+ */
+export async function seedAccessPermissions() {
+  for (const { name, description } of DEFAULT_ACCESS_PERMISSIONS) {
+    await AccessPermission.findOrCreate({
+      where: { name },
+      defaults: { description },
+    });
+  }
 }
 
 /**

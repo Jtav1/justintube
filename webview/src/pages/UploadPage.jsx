@@ -7,7 +7,9 @@ import {
   uploadVideoFile,
   importVideoUrl,
   updateVideo,
-  setVideoAccess,
+  setVideoEditors,
+  setVideoViewers,
+  getVideoAccess,
   setVideoFeatured,
   getImportStatus,
   updateVideoThumbnail,
@@ -73,6 +75,8 @@ function UploadPage() {
   const [editLoading, setEditLoading] = useState(isEditMode)
   const [editError, setEditError] = useState(null)
   const [editForbidden, setEditForbidden] = useState(false)
+  // A fresh upload's creator is always its owner; only edit mode can set this false.
+  const [viewerIsOwnerOrAdmin, setViewerIsOwnerOrAdmin] = useState(true)
 
   const [file, setFile] = useState(null)
   const [dragActive, setDragActive] = useState(false)
@@ -86,10 +90,16 @@ function UploadPage() {
   const [tagInput, setTagInput] = useState('')
   const [tags, setTags] = useState([])
 
-  const [recipientQuery, setRecipientQuery] = useState('')
-  const [recipientSuggestions, setRecipientSuggestions] = useState([])
-  const [recipientSearchLoading, setRecipientSearchLoading] = useState(false)
-  const [recipients, setRecipients] = useState([])
+  const [viewerQuery, setViewerQuery] = useState('')
+  const [viewerSuggestions, setViewerSuggestions] = useState([])
+  const [viewerSearchLoading, setViewerSearchLoading] = useState(false)
+  const [viewers, setViewers] = useState([])
+
+  const [editorsExpanded, setEditorsExpanded] = useState(false)
+  const [editorQuery, setEditorQuery] = useState('')
+  const [editorSuggestions, setEditorSuggestions] = useState([])
+  const [editorSearchLoading, setEditorSearchLoading] = useState(false)
+  const [editors, setEditors] = useState([])
 
   const [submitting, setSubmitting] = useState(false)
 
@@ -125,17 +135,36 @@ function UploadPage() {
         if (cancelled) {
           return
         }
-        const canEdit = user.role === 'admin' || video.uploader?.userId === user.id
-        if (!canEdit) {
+        const canEditMetadata = video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
+        if (!canEditMetadata) {
           setEditForbidden(true)
           return
         }
+        const isOwnerAdmin = video.viewerPermission === 'owner'
+        setViewerIsOwnerOrAdmin(isOwnerAdmin)
         setEditUpload(video)
         setTitle(video.title ?? '')
         setDescription(video.description ?? '')
         setVisibility(video.visibility ?? 'public')
         setTags(video.tags ?? [])
         setFeatured(Boolean(video.featured))
+
+        if (isOwnerAdmin) {
+          const { items } = await getVideoAccess(video.id)
+          if (!cancelled) {
+            const toRef = (item) => ({
+              userId: item.userId,
+              username: item.username,
+              displayName: item.displayName,
+            })
+            const editorItems = items.filter((item) => item.permission === 'edit').map(toRef)
+            setEditors(editorItems)
+            setEditorsExpanded(editorItems.length > 0)
+            if (video.visibility === 'private') {
+              setViewers(items.filter((item) => item.permission === 'view').map(toRef))
+            }
+          }
+        }
       } catch {
         if (!cancelled) {
           setEditError('This video is unavailable right now.')
@@ -228,28 +257,51 @@ function UploadPage() {
     }
   }, [trackingId, processingStatus, navigate, user.username, success])
 
-  const recipientSearchActive = visibility === 'private' && recipientQuery.trim().length > 0
+  const viewerSearchActive = visibility === 'private' && viewerQuery.trim().length > 0
 
   useEffect(() => {
-    if (!recipientSearchActive) {
+    if (!viewerSearchActive) {
       return undefined
     }
 
     const timer = setTimeout(async () => {
-      setRecipientSearchLoading(true)
+      setViewerSearchLoading(true)
       try {
-        const { items } = await searchUsers(recipientQuery.trim(), { limit: 8 })
-        const alreadyAdded = new Set(recipients.map((r) => r.userId))
-        setRecipientSuggestions(items.filter((item) => !alreadyAdded.has(item.userId)))
+        const { items } = await searchUsers(viewerQuery.trim(), { limit: 8 })
+        const alreadyAdded = new Set(viewers.map((r) => r.userId))
+        setViewerSuggestions(items.filter((item) => !alreadyAdded.has(item.userId)))
       } catch {
-        setRecipientSuggestions([])
+        setViewerSuggestions([])
       } finally {
-        setRecipientSearchLoading(false)
+        setViewerSearchLoading(false)
       }
     }, RECIPIENT_SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [recipientSearchActive, recipientQuery, recipients])
+  }, [viewerSearchActive, viewerQuery, viewers])
+
+  const editorSearchActive = editorsExpanded && editorQuery.trim().length > 0
+
+  useEffect(() => {
+    if (!editorSearchActive) {
+      return undefined
+    }
+
+    const timer = setTimeout(async () => {
+      setEditorSearchLoading(true)
+      try {
+        const { items } = await searchUsers(editorQuery.trim(), { limit: 8 })
+        const alreadyAdded = new Set(editors.map((r) => r.userId))
+        setEditorSuggestions(items.filter((item) => !alreadyAdded.has(item.userId)))
+      } catch {
+        setEditorSuggestions([])
+      } finally {
+        setEditorSearchLoading(false)
+      }
+    }, RECIPIENT_SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  }, [editorSearchActive, editorQuery, editors])
 
   if (authLoading || !user) {
     return null
@@ -363,18 +415,32 @@ function UploadPage() {
     setTags((prev) => prev.filter((t) => t !== tag))
   }
 
-  function addRecipient(userId) {
-    const match = recipientSuggestions.find((s) => s.userId === Number(userId))
+  function addViewer(userId) {
+    const match = viewerSuggestions.find((s) => s.userId === Number(userId))
     if (!match) {
       return
     }
-    setRecipients((prev) => [...prev, match])
-    setRecipientQuery('')
-    setRecipientSuggestions([])
+    setViewers((prev) => [...prev, match])
+    setViewerQuery('')
+    setViewerSuggestions([])
   }
 
-  function removeRecipient(userId) {
-    setRecipients((prev) => prev.filter((r) => r.userId !== Number(userId)))
+  function removeViewer(userId) {
+    setViewers((prev) => prev.filter((r) => r.userId !== Number(userId)))
+  }
+
+  function addEditor(userId) {
+    const match = editorSuggestions.find((s) => s.userId === Number(userId))
+    if (!match) {
+      return
+    }
+    setEditors((prev) => [...prev, match])
+    setEditorQuery('')
+    setEditorSuggestions([])
+  }
+
+  function removeEditor(userId) {
+    setEditors((prev) => prev.filter((r) => r.userId !== Number(userId)))
   }
 
   const submitDisabled = isEditMode
@@ -434,12 +500,15 @@ function UploadPage() {
     }
 
     try {
-      await updateVideo(createdId, {
+      const updatePayload = {
         title: title.trim(),
         description: description.trim() || null,
-        visibility,
         tags,
-      })
+      }
+      if (viewerIsOwnerOrAdmin) {
+        updatePayload.visibility = visibility
+      }
+      await updateVideo(createdId, updatePayload)
     } catch {
       toastError(
         isEditMode
@@ -464,11 +533,27 @@ function UploadPage() {
       }
     }
 
-    if (visibility === 'private' && recipients.length > 0) {
+    if (viewerIsOwnerOrAdmin) {
       try {
-        await setVideoAccess(
+        await setVideoEditors(
           createdId,
-          recipients.map((r) => r.username),
+          editors.map((r) => r.username),
+        )
+      } catch {
+        toastError(
+          'Your video was uploaded and configured, but setting editors failed. ' +
+            'You can manage editors from your profile.',
+        )
+        setSubmitting(false)
+        return
+      }
+    }
+
+    if (viewerIsOwnerOrAdmin && visibility === 'private') {
+      try {
+        await setVideoViewers(
+          createdId,
+          viewers.map((r) => r.username),
         )
       } catch {
         toastError(
@@ -543,16 +628,17 @@ function UploadPage() {
         {!isEditMode && (
           <>
             <div className="upload-source-row">
-              <div
+              <label
+                htmlFor="upload-dropzone-input"
                 className={`upload-dropzone${fileLocked ? ' upload-dropzone-disabled' : ''}${dragActive ? ' upload-dropzone-active' : ''}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => !fileLocked && fileInputRef.current?.click()}
               >
                 <UploadCloud size={28} />
                 <p>{file ? file.name : 'Drag & drop a video or audio file, or click to choose a file'}</p>
                 <input
+                  id="upload-dropzone-input"
                   ref={fileInputRef}
                   type="file"
                   accept="video/*,audio/*"
@@ -572,7 +658,7 @@ function UploadPage() {
                     Clear
                   </button>
                 )}
-              </div>
+              </label>
 
               {importAvailable && (
                 <>
@@ -602,20 +688,18 @@ function UploadPage() {
         )}
 
         <div className="upload-field-group">
-          <label>Thumbnail</label>
+          <label htmlFor="upload-thumbnail-input">Thumbnail</label>
           {!isEditMode && !importAvailable && (
             <p className="upload-hint">
               Automatic thumbnail generation is unavailable right now — you can upload one
               manually instead.
             </p>
           )}
-          <div
-            className="upload-thumbnail-picker"
-            onClick={() => thumbnailInputRef.current?.click()}
-          >
+          <label htmlFor="upload-thumbnail-input" className="upload-thumbnail-picker">
             <UploadCloud size={20} />
             <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
             <input
+              id="upload-thumbnail-input"
               ref={thumbnailInputRef}
               type="file"
               accept="image/*"
@@ -634,10 +718,12 @@ function UploadPage() {
                 Clear
               </button>
             )}
-          </div>
+          </label>
         </div>
 
-        <label htmlFor="upload-title">Title</label>
+        <label htmlFor="upload-title">
+          Title <span className="required-mark" aria-hidden="true">*</span>
+        </label>
         <input
           id="upload-title"
           type="text"
@@ -661,6 +747,7 @@ function UploadPage() {
           id="upload-visibility"
           value={visibility}
           onChange={(event) => setVisibility(event.target.value)}
+          disabled={isEditMode && !viewerIsOwnerOrAdmin}
         >
           {VISIBILITY_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
@@ -668,6 +755,9 @@ function UploadPage() {
             </option>
           ))}
         </select>
+        {isEditMode && !viewerIsOwnerOrAdmin && (
+          <p className="upload-hint">Only the owner or an admin can change visibility.</p>
+        )}
 
         {isAdmin && (
           <label className="upload-checkbox">
@@ -680,24 +770,57 @@ function UploadPage() {
           </label>
         )}
 
-        {visibility === 'private' && (
+        {viewerIsOwnerOrAdmin && visibility === 'private' && (
           <div className="upload-field-group">
             <label>Share with</label>
             <ChipInput
-              chips={recipients.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
-              onRemove={removeRecipient}
-              inputValue={recipientQuery}
-              onInputChange={setRecipientQuery}
+              chips={viewers.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
+              onRemove={removeViewer}
+              inputValue={viewerQuery}
+              onInputChange={setViewerQuery}
               suggestions={
-                recipientSearchActive
-                  ? recipientSuggestions.map((s) => ({
+                viewerSearchActive
+                  ? viewerSuggestions.map((s) => ({
                       key: String(s.userId),
                       label: recipientLabel(s),
                     }))
                   : []
               }
-              onSelectSuggestion={addRecipient}
-              suggestionsLoading={recipientSearchLoading}
+              onSelectSuggestion={addViewer}
+              suggestionsLoading={viewerSearchLoading}
+              placeholder="Search by username or display name..."
+            />
+          </div>
+        )}
+
+        {viewerIsOwnerOrAdmin && !editorsExpanded && (
+          <button
+            type="button"
+            className="upload-link-button"
+            onClick={() => setEditorsExpanded(true)}
+          >
+            + Add Editors
+          </button>
+        )}
+
+        {viewerIsOwnerOrAdmin && editorsExpanded && (
+          <div className="upload-field-group">
+            <label>Editors</label>
+            <ChipInput
+              chips={editors.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
+              onRemove={removeEditor}
+              inputValue={editorQuery}
+              onInputChange={setEditorQuery}
+              suggestions={
+                editorSearchActive
+                  ? editorSuggestions.map((s) => ({
+                      key: String(s.userId),
+                      label: recipientLabel(s),
+                    }))
+                  : []
+              }
+              onSelectSuggestion={addEditor}
+              suggestionsLoading={editorSearchLoading}
               placeholder="Search by username or display name..."
             />
           </div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   EyeOff,
+  EyeClosed,
   Link as LinkIcon,
   ListMinus,
   ListPlus,
@@ -15,11 +16,12 @@ import {
 } from 'lucide-react'
 import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
-import { delistVideo, dislikeVideo, likeVideo, recordView } from '../api/videos.js'
+import { delistVideo, dislikeVideo, likeVideo, recordView, hideVideo } from '../api/videos.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../api/users.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
 
@@ -68,6 +70,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   const [linkCopied, setLinkCopied] = useState(false)
   const [subscribed, setSubscribed] = useState(null)
   const [subscribePending, setSubscribePending] = useState(false)
+  const [hideError, setHideError] = useState(false)
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -77,7 +80,9 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
 
   const videoRef = useRef(null)
   const qualityMenuRef = useRef(null)
+  const qualityToggleRef = useRef(null)
   const playlistMenuRef = useRef(null)
+  const playlistToggleRef = useRef(null)
   const playlistDropdownRef = useRef(null)
   const resumeStateRef = useRef(null)
   const viewRecordedRef = useRef(false)
@@ -111,7 +116,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     ? `${apiClient.defaults.baseURL}${selectedRendition.streamUrl}`
     : null
 
-  const canEdit = Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
+  const canEdit =
+    video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
   const isModerator = Boolean(user) && (user.role === 'moderator' || user.role === 'admin')
 
   const uploaderName = video.uploader?.displayName || video.uploader?.username
@@ -166,6 +172,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [qualityMenuOpen])
 
+  useDismissablePopover(qualityMenuOpen, () => setQualityMenuOpen(false), qualityToggleRef)
+
   useEffect(() => {
     if (!playlistMenuOpen) {
       return undefined
@@ -180,6 +188,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [playlistMenuOpen])
+
+  useDismissablePopover(playlistMenuOpen, () => setPlaylistMenuOpen(false), playlistToggleRef)
 
   useEffect(() => {
     if (playlistMenuOpen) {
@@ -207,6 +217,20 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
   function handleCreateNewPlaylist() {
     setPlaylistMenuOpen(false)
     navigate(`/playlists/new?videoId=${video.id}`)
+  }
+
+  async function handleHide() {
+    if (!window.confirm('Hide this video forever? You won\'t see it recommended again.')) {
+      return
+    }
+    setHideError(false)
+    try {
+      await hideVideo(video.id)
+      window.location.reload()
+    } catch {
+      setHideError(true)
+      toastError('Hiding video failed.')
+    }
   }
 
   async function handleAddToExistingPlaylist(playlistId) {
@@ -379,7 +403,9 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
                 type="button"
                 className={`video-player-icon-btn${qualityMenuOpen ? ' video-player-icon-btn-active' : ''}`}
                 aria-label="Select video quality"
+                title="Select video quality"
                 onClick={() => setQualityMenuOpen((prev) => !prev)}
+                ref={qualityToggleRef}
               >
                 <Settings2 size={18} />
               </button>
@@ -405,6 +431,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
             type="button"
             className={`video-player-icon-btn${loop ? ' video-player-icon-btn-active' : ''}`}
             aria-label={loop ? 'Disable loop' : 'Enable loop'}
+            title={loop ? 'Disable loop' : 'Enable loop'}
             aria-pressed={loop}
             onClick={() => setLoop((prev) => !prev)}
           >
@@ -482,6 +509,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               to={`/upload?v=${video.videoId}`}
               className="video-player-icon-btn"
               aria-label="Edit video"
+              title="Edit video"
             >
               <Pencil size={18} />
             </Link>
@@ -491,16 +519,29 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               type="button"
               className="video-player-icon-btn"
               aria-label={delisted ? 'Video delisted' : 'Delist video'}
+              title={delisted ? 'Video delisted' : 'Delist video'}
               disabled={delistPending || delisted}
               onClick={handleDelist}
             >
               <EyeOff size={18} />
             </button>
           )}
+          {Boolean(user) && user.id !== uploaderId && (
+            <button
+              type="button"
+              className="video-player-icon-btn"
+              aria-label={hideError ? 'Hiding video failed, try again' : 'Hide Forever'}
+              title={hideError ? 'Hiding video failed, try again' : 'Hide Forever'}
+              onClick={handleHide}
+            >
+              <EyeClosed size={18} />
+            </button>
+          )}
           <button
             type="button"
             className="video-player-icon-btn"
             aria-label={linkCopied ? 'Link copied' : 'Copy video link'}
+            title={linkCopied ? 'Link copied' : 'Copy video link'}
             onClick={handleCopyLink}
           >
             <LinkIcon size={18} />
@@ -510,8 +551,10 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               type="button"
               className={`video-player-icon-btn${playlistMenuOpen ? ' video-player-icon-btn-active' : ''}`}
               aria-label="Add to playlist"
+              title="Add to playlist"
               disabled={!user}
               onClick={handleTogglePlaylistMenu}
+              ref={playlistToggleRef}
             >
               <ListPlus size={18} />
             </button>
@@ -562,6 +605,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               type="button"
               className="video-player-icon-btn"
               aria-label="Remove from playlist"
+              title="Remove from playlist"
               onClick={onRemoveFromPlaylist}
             >
               <ListMinus size={18} />
@@ -573,6 +617,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
                 type="button"
                 className={`video-player-icon-btn${reaction === 'like' ? ' video-player-icon-btn-like-active' : ''}`}
                 aria-label="Like"
+                title="Like"
                 aria-pressed={reaction === 'like'}
                 disabled={!user || reactionPending}
                 onClick={handleLike}
@@ -583,6 +628,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
                 type="button"
                 className={`video-player-icon-btn${reaction === 'dislike' ? ' video-player-icon-btn-dislike-active' : ''}`}
                 aria-label="Dislike"
+                title="Dislike"
                 aria-pressed={reaction === 'dislike'}
                 disabled={!user || reactionPending}
                 onClick={handleDislike}

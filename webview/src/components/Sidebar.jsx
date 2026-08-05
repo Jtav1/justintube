@@ -69,10 +69,11 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
   ]
 
   return (
-    <nav
+    <div
       className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}
       style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}
     >
+      <nav className="sidebar-nav-wrap">
       <ul className="sidebar-nav">
         {navItems.map(({ key, label, icon: Icon, to, end, isActiveOverride, children }) => (
           <li key={key}>
@@ -90,7 +91,11 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
                 <span className="sidebar-label">{label}</span>
               </NavLink>
             ) : (
-              <span className="sidebar-item sidebar-item-placeholder">
+              <span
+                className="sidebar-item sidebar-item-placeholder"
+                aria-disabled="true"
+                tabIndex={-1}
+              >
                 <Icon size={20} />
                 <span className="sidebar-label">{label}</span>
               </span>
@@ -111,7 +116,11 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
                         <span className="sidebar-label">{child.label}</span>
                       </NavLink>
                     ) : (
-                      <span className="sidebar-item sidebar-subitem sidebar-item-placeholder">
+                      <span
+                        className="sidebar-item sidebar-subitem sidebar-item-placeholder"
+                        aria-disabled="true"
+                        tabIndex={-1}
+                      >
                         <span className="sidebar-label">{child.label}</span>
                       </span>
                     )}
@@ -122,7 +131,8 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
           </li>
         ))}
       </ul>
-      <div className="sidebar-footer">
+      </nav>
+      <footer className="sidebar-footer">
         <hr className="sidebar-footer-divider" />
         <div className="sidebar-footer-row">
           <span className="sidebar-footer-text">Justintube v1.0-alpha</span>
@@ -135,6 +145,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
               rel="noopener noreferrer"
               className="sidebar-footer-link"
               aria-label="Code Repository"
+              title="Code Repository"
             >
               <GithubIcon size={18} title="Code Repository" />
             </a>
@@ -144,6 +155,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
               rel="noopener noreferrer"
               className="sidebar-footer-link"
               aria-label="API Docs"
+              title="API Docs"
             >
               <Braces size={18} aria-label="API Docs" />
             </a>
@@ -152,8 +164,8 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
         <div className="sidebar-footer-row">
           <span className="sidebar-footer-text">©2026 @jtav1</span>
         </div>
-      </div>
-    </nav>
+      </footer>
+    </div>
   )
 }
 

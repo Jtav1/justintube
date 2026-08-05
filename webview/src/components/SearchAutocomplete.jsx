@@ -6,7 +6,10 @@ import './SearchAutocomplete.css'
 const SUGGESTION_LIMIT = 15
 const DEBOUNCE_MS = 200
 
+let idCounter = 0
+
 function SearchAutocomplete({ value, onChange }) {
+  const [instanceId] = useState(() => `search-autocomplete-${++idCounter}`)
   const navigate = useNavigate()
   const [suggestions, setSuggestions] = useState([])
   const [open, setOpen] = useState(false)
@@ -111,13 +114,18 @@ function SearchAutocomplete({ value, onChange }) {
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
+        aria-controls={`${instanceId}-listbox`}
+        aria-activedescendant={
+          open && activeIndex >= 0 ? `${instanceId}-option-${activeIndex}` : undefined
+        }
       />
       {open && suggestions.length > 0 && (
-        <ul className="search-autocomplete-dropdown" role="listbox">
+        <ul className="search-autocomplete-dropdown" role="listbox" id={`${instanceId}-listbox`}>
           {suggestions.map((suggestion, index) => (
             <li key={suggestion.id} role="presentation">
               <button
                 type="button"
+                id={`${instanceId}-option-${index}`}
                 role="option"
                 aria-selected={index === activeIndex}
                 className={`search-autocomplete-item${index === activeIndex ? ' search-autocomplete-item-active' : ''}`}

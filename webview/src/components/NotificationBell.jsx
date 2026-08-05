@@ -8,6 +8,7 @@ import {
   getNotificationPreferences,
 } from '../api/notifications.js'
 import { useToast } from '../context/useToast.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import NotificationItem from './NotificationItem.jsx'
 import './NotificationBell.css'
 
@@ -93,6 +94,8 @@ function NotificationBell() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
 
+  useDismissablePopover(open, () => setOpen(false), toggleRef)
+
   useEffect(() => {
     if (!open) {
       return undefined
@@ -140,6 +143,7 @@ function NotificationBell() {
         className="notification-bell-toggle"
         onClick={handleToggle}
         aria-label="Notifications"
+        title="Notifications"
         aria-haspopup="true"
         aria-expanded={open}
         ref={toggleRef}
@@ -180,6 +184,7 @@ function NotificationBell() {
               to="/settings#notification-settings"
               className="notification-bell-settings"
               aria-label="Notification settings"
+              title="Notification settings"
               onClick={() => setOpen(false)}
             >
               <Settings size={16} />

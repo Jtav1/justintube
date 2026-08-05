@@ -126,14 +126,37 @@ export async function updateVideo(id, updates) {
 }
 
 /**
- * Replaces the private-access grant list for a video. The video's visibility
- * must currently be "private". Usable by the video owner or a moderator/admin.
+ * Replaces the editor list for a video. Unlike viewers, editors are
+ * meaningful (and settable) regardless of the video's visibility.
+ * Usable by the video owner or a moderator/admin.
  * @param {number} id
  * @param {string[]} usernames
- * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null}>}>}
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null, permission: string}>}>}
  */
-export async function setVideoAccess(id, usernames) {
-  const res = await apiClient.put(`/api/v1/videos/${id}/access`, { usernames })
+export async function setVideoEditors(id, usernames) {
+  const res = await apiClient.put(`/api/v1/videos/${id}/editors`, { usernames })
+  return res.data
+}
+
+/**
+ * Replaces the private-viewer list for a video. The video's visibility must
+ * currently be "private". Usable by the video owner or a moderator/admin.
+ * @param {number} id
+ * @param {string[]} usernames
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null, permission: string}>}>}
+ */
+export async function setVideoViewers(id, usernames) {
+  const res = await apiClient.put(`/api/v1/videos/${id}/viewers`, { usernames })
+  return res.data
+}
+
+/**
+ * Lists the private-access grants for a video. Owner or admin only.
+ * @param {number} id
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null, permission: string}>}>}
+ */
+export async function getVideoAccess(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/access`)
   return res.data
 }
 

@@ -32,6 +32,13 @@
   }
 }
 
+.sidebar-nav-wrap {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-height: 0;
+}
+
 .sidebar-nav {
   list-style: none;
   margin: 0;

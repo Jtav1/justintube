@@ -4,6 +4,7 @@ import { csrfProtection } from "../lib/auth/csrf.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
+  AccessPermission,
   OriginalUpload,
   PlaylistAccess,
   PlaylistItem,
@@ -14,12 +15,17 @@ import {
   VideoThumbnail,
 } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
-import { canViewPlaylist } from "../lib/playlist-access.js";
+import { canEditPlaylist, canViewPlaylist } from "../lib/playlist-access.js";
 import { removePlaylistDocument, syncPlaylistIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
-import { isAdmin, isOwnerOrAdmin } from "../lib/video-access.js";
+import { isAdmin, isOwnerOrAdmin, resolveViewerPermission } from "../lib/video-access.js";
+import {
+  loadReactionCountsByUploadId,
+  loadTagsByUploadId,
+  loadViewerPermissionsByUploadId,
+  serializeVideo,
+} from "./videos.js";
 import { loadHiddenUploadIds } from "../lib/video-hidden.js";
-import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
 
 /**
  * Parses a route param as a positive integer.
@@ -53,10 +59,14 @@ function sendNotFound(res) {
  *
  * @param {import('sequelize').Model} playlist USER_PLAYLISTS row.
  * @param {number} itemCount Number of PLAYLIST_ITEMS rows for this playlist.
+ * @param {object} [options] Optional extra fields.
+ * @param {"owner"|"edit"|"view"} [options.viewerPermission] The requesting user's effective
+ *   permission level, when known (see {@link resolveViewerPermission}). Only attached when
+ *   explicitly passed — omitted from the payload entirely otherwise.
  * @returns {object} Public playlist payload.
  */
-function serializePlaylist(playlist, itemCount) {
-  return {
+function serializePlaylist(playlist, itemCount, options = {}) {
+  const payload = {
     id: playlist.id,
     name: playlist.title,
     description: playlist.description ?? null,
@@ -74,21 +84,101 @@ function serializePlaylist(playlist, itemCount) {
     createdAt: playlist.createdAt,
     updatedAt: playlist.updatedAt,
   };
+  if (options.viewerPermission !== undefined) {
+    payload.viewerPermission = options.viewerPermission;
+  }
+  return payload;
 }
 
 /**
- * Returns whether the given user has a PLAYLIST_ACCESS grant on the playlist.
+ * Loads the caller's PLAYLIST_ACCESS grant row for a playlist, if any,
+ * including its AccessPermission so callers can inspect the grant's
+ * permission level.
+ *
+ * @param {number} playlistId USER_PLAYLISTS id.
+ * @param {number|null|undefined} userId Authenticated user id.
+ * @returns {Promise<import('sequelize').Model|null>} The grant row, or null.
+ */
+async function loadAccessGrant(playlistId, userId) {
+  if (!userId) {
+    return null;
+  }
+  return PlaylistAccess.findOne({
+    where: { playlistId, userId },
+    include: [{ model: AccessPermission }],
+  });
+}
+
+/**
+ * Returns whether the given user has a PLAYLIST_ACCESS grant on the playlist
+ * (view or edit level - either is sufficient to view a private playlist).
  *
  * @param {number} playlistId USER_PLAYLISTS id.
  * @param {number|null|undefined} userId Authenticated user id.
  * @returns {Promise<boolean>} True when a grant row exists.
  */
 async function userHasAccessGrant(playlistId, userId) {
-  if (!userId) {
-    return false;
+  return Boolean(await loadAccessGrant(playlistId, userId));
+}
+
+/**
+ * Returns whether the given user's PLAYLIST_ACCESS grant is specifically
+ * "edit"-level (sufficient to update metadata/items, see canEditPlaylist).
+ *
+ * @param {number} playlistId USER_PLAYLISTS id.
+ * @param {number|null|undefined} userId Authenticated user id.
+ * @returns {Promise<boolean>} True when an "edit" grant row exists.
+ */
+async function userHasEditGrant(playlistId, userId) {
+  const grant = await loadAccessGrant(playlistId, userId);
+  return grant?.AccessPermission?.name === "edit";
+}
+
+/**
+ * Batch-resolves the caller's effective permission level ("owner"/"edit"/"view")
+ * for a set of playlists, using a single PLAYLIST_ACCESS+AccessPermission
+ * query (scoped to the non-owned ids) rather than one grant lookup per row.
+ * Mirrors `loadViewerPermissionsByUploadId` (see webapi/routes/videos.js).
+ *
+ * @param {import('sequelize').Model[]} playlists USER_PLAYLISTS rows.
+ * @param {import('sequelize').Model|null|undefined} user Authenticated user.
+ * @param {import('sequelize').Model|null|undefined} role Authenticated role.
+ * @returns {Promise<Map<number, "owner"|"edit"|"view">>} Map of playlist id to permission level.
+ */
+async function loadViewerPermissionsByPlaylistId(playlists, user, role) {
+  const result = new Map();
+  if (!user) {
+    for (const playlist of playlists) {
+      result.set(playlist.id, "view");
+    }
+    return result;
   }
-  const grant = await PlaylistAccess.findOne({ where: { playlistId, userId } });
-  return Boolean(grant);
+
+  let editGrantedIds = new Set();
+  if (!isAdmin(role)) {
+    const nonOwnedIds = playlists
+      .filter((playlist) => Number(playlist.userId) !== Number(user.id))
+      .map((playlist) => playlist.id);
+    if (nonOwnedIds.length > 0) {
+      const grants = await PlaylistAccess.findAll({
+        where: { userId: user.id, playlistId: { [Op.in]: nonOwnedIds } },
+        include: [{ model: AccessPermission, required: true }],
+      });
+      editGrantedIds = new Set(
+        grants
+          .filter((grant) => grant.AccessPermission.name === "edit")
+          .map((grant) => grant.playlistId),
+      );
+    }
+  }
+
+  for (const playlist of playlists) {
+    result.set(
+      playlist.id,
+      resolveViewerPermission(user, role, playlist.userId, editGrantedIds.has(playlist.id)),
+    );
+  }
+  return result;
 }
 
 /**
@@ -213,6 +303,7 @@ export async function buildPlaylistsPage(rows, count, { page, limit, user, role 
     }),
   );
   const thumbnailsByPlaylistId = new Map(thumbnailEntries);
+  const viewerPermissionByPlaylistId = await loadViewerPermissionsByPlaylistId(rows, user, role);
 
   return {
     items: rows.map((playlist) => ({
@@ -233,6 +324,7 @@ export async function buildPlaylistsPage(rows, count, { page, limit, user, role 
       latestVideoId: thumbnailsByPlaylistId.get(playlist.id)?.latestVideoId ?? null,
       lastAddedAt: playlist.lastAddedAt ?? null,
       createdAt: playlist.createdAt,
+      viewerPermission: viewerPermissionByPlaylistId.get(playlist.id),
     })),
     page,
     limit,
@@ -321,7 +413,7 @@ export function createPlaylistsRouter() {
       });
       syncPlaylistIndex(playlist.id);
 
-      res.status(201).json(serializePlaylist(playlist, 0));
+      res.status(201).json(serializePlaylist(playlist, 0, { viewerPermission: "owner" }));
     } catch (err) {
       console.error("createPlaylist failed:", err);
       res.status(500).json({
@@ -461,11 +553,20 @@ export function createPlaylistsRouter() {
         return;
       }
 
-      const hasGrant = await userHasAccessGrant(playlist.id, req.user?.id);
-      if (!canViewPlaylist(req.user, req.authRole, playlist, hasGrant)) {
+      const grant = await loadAccessGrant(playlist.id, req.user?.id);
+      if (!canViewPlaylist(req.user, req.authRole, playlist, Boolean(grant))) {
         sendNotFound(res);
         return;
       }
+
+      const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, playlist);
+      const hasEditGrant = !isOwnerAdmin && grant?.AccessPermission?.name === "edit";
+      const viewerPermission = resolveViewerPermission(
+        req.user,
+        req.authRole,
+        playlist.userId,
+        hasEditGrant,
+      );
 
       const items = await PlaylistItem.findAll({
         where: { playlistId: playlist.id },
@@ -490,11 +591,17 @@ export function createPlaylistsRouter() {
       const viewableUploadIds = viewableItems.map((item) => item.OriginalUpload.id);
       const tagsByUploadId = await loadTagsByUploadId(viewableUploadIds);
       const reactionCountsByUploadId = await loadReactionCountsByUploadId(viewableUploadIds);
+      const itemViewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+        viewableItems.map((item) => item.OriginalUpload),
+        req.user,
+        req.authRole,
+      );
 
-      const payload = serializePlaylist(playlist, viewableItems.length);
+      const payload = serializePlaylist(playlist, viewableItems.length, { viewerPermission });
       payload.items = viewableItems.map((item) =>
         serializeVideo(item.OriginalUpload, item.OriginalUpload.VideoMetadata, {
           tags: tagsByUploadId.get(item.OriginalUpload.id) || [],
+          viewerPermission: itemViewerPermissionByUploadId.get(item.OriginalUpload.id),
           ...reactionCountsByUploadId.get(item.OriginalUpload.id),
         }),
       );
@@ -511,7 +618,11 @@ export function createPlaylistsRouter() {
 
   /**
    * PATCH /playlists/:id — updatePlaylist
-   * Auth: required. Owner or admin.
+   * Auth: required. Owner, admin, or a user with an "edit" PLAYLIST_ACCESS
+   * grant. A caller who is not the owner/admin (i.e. an edit-grantee) may
+   * update `name`/`description` but not `visibility` — including
+   * `visibility` in the body at all is rejected outright (the whole
+   * request, not just that field).
    *
    * @openapi
    * /api/v1/playlists/{id}:
@@ -533,7 +644,7 @@ export function createPlaylistsRouter() {
    *       "200":
    *         description: Updated playlist
    *       "403":
-   *         description: Not the owner or an admin
+   *         description: Not the owner/admin/edit-grantee, or an edit-grantee attempted to change visibility
    *       "404":
    *         description: Playlist not found
    */
@@ -553,15 +664,28 @@ export function createPlaylistsRouter() {
         sendNotFound(res);
         return;
       }
-      if (!isOwnerOrAdmin(req.user, req.authRole, playlist)) {
+
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+
+      const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, playlist);
+      const hasEditGrant = isOwnerAdmin ? false : await userHasEditGrant(playlist.id, req.user.id);
+
+      if (!isOwnerAdmin && !hasEditGrant) {
         res.status(403).json({
           error: "forbidden",
-          message: "Only the playlist owner or an admin can update this playlist.",
+          message: "Only the playlist owner, an admin, or a user with edit access can update this playlist.",
         });
         return;
       }
 
-      const body = req.body && typeof req.body === "object" ? req.body : {};
+      if (!isOwnerAdmin && body.visibility !== undefined) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the playlist owner or an admin can change this playlist's visibility.",
+        });
+        return;
+      }
+
       const updates = {};
 
       if (body.name !== undefined) {
@@ -596,7 +720,11 @@ export function createPlaylistsRouter() {
       syncPlaylistIndex(playlist.id);
 
       const itemCount = await PlaylistItem.count({ where: { playlistId: playlist.id } });
-      res.status(200).json(serializePlaylist(playlist, itemCount));
+      res.status(200).json(
+        serializePlaylist(playlist, itemCount, {
+          viewerPermission: isOwnerAdmin ? "owner" : "edit",
+        }),
+      );
     } catch (err) {
       console.error("updatePlaylist failed:", err);
       res.status(500).json({
@@ -675,7 +803,8 @@ export function createPlaylistsRouter() {
 
   /**
    * POST /playlists/:id/items — addPlaylistItem
-   * Auth: required. Playlist owner only.
+   * Auth: required. Playlist owner, admin, or a user with an "edit"
+   * PLAYLIST_ACCESS grant.
    *
    * @openapi
    * /api/v1/playlists/{id}/items:
@@ -707,7 +836,7 @@ export function createPlaylistsRouter() {
    *       "200":
    *         description: Updated item count
    *       "403":
-   *         description: Not the playlist owner or an admin
+   *         description: Not the playlist owner, an admin, or an edit-grantee
    *       "404":
    *         description: Playlist not found
    *       "409":
@@ -729,10 +858,12 @@ export function createPlaylistsRouter() {
         sendNotFound(res);
         return;
       }
-      if (!isOwnerOrAdmin(req.user, req.authRole, playlist)) {
+      const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, playlist);
+      const hasEditGrant = isOwnerAdmin ? false : await userHasEditGrant(playlist.id, req.user.id);
+      if (!canEditPlaylist(req.user, req.authRole, playlist, hasEditGrant)) {
         res.status(403).json({
           error: "forbidden",
-          message: "Only the playlist owner or an admin can add items to this playlist.",
+          message: "Only the playlist owner, an admin, or a user with edit access can add items to this playlist.",
         });
         return;
       }
@@ -795,7 +926,8 @@ export function createPlaylistsRouter() {
 
   /**
    * DELETE /playlists/:id/items/:videoId — removePlaylistItem
-   * Auth: required. Playlist owner only.
+   * Auth: required. Playlist owner, admin, or a user with an "edit"
+   * PLAYLIST_ACCESS grant.
    *
    * @openapi
    * /api/v1/playlists/{id}/items/{videoId}:
@@ -822,7 +954,7 @@ export function createPlaylistsRouter() {
    *       "200":
    *         description: Updated item count
    *       "403":
-   *         description: Not the playlist owner or an admin
+   *         description: Not the playlist owner, an admin, or an edit-grantee
    *       "404":
    *         description: Playlist not found
    */
@@ -843,10 +975,12 @@ export function createPlaylistsRouter() {
         sendNotFound(res);
         return;
       }
-      if (!isOwnerOrAdmin(req.user, req.authRole, playlist)) {
+      const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, playlist);
+      const hasEditGrant = isOwnerAdmin ? false : await userHasEditGrant(playlist.id, req.user.id);
+      if (!canEditPlaylist(req.user, req.authRole, playlist, hasEditGrant)) {
         res.status(403).json({
           error: "forbidden",
-          message: "Only the playlist owner or an admin can remove items from this playlist.",
+          message: "Only the playlist owner, an admin, or a user with edit access can remove items from this playlist.",
         });
         return;
       }
@@ -895,7 +1029,7 @@ export function createPlaylistsRouter() {
    *           type: integer
    *     responses:
    *       "200":
-   *         description: Access grant list
+   *         description: Access grant list, each item including its "view"/"edit" permission
    *       "403":
    *         description: Not the owner or an admin
    *       "404":
@@ -927,14 +1061,18 @@ export function createPlaylistsRouter() {
 
       const grants = await PlaylistAccess.findAll({
         where: { playlistId: playlist.id },
-        include: [{ model: User, required: true }],
+        include: [
+          { model: User, required: true },
+          { model: AccessPermission, required: true },
+        ],
         order: [["id", "ASC"]],
       });
 
       res.status(200).json({
-        items: grants.map((grant) =>
-          serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
-        ),
+        items: grants.map((grant) => ({
+          ...serializeUserRef(grant.userId, grant.User.username, grant.User.displayName),
+          permission: grant.AccessPermission.name,
+        })),
       });
     } catch (err) {
       console.error("listPlaylistAccess failed:", err);
@@ -947,7 +1085,11 @@ export function createPlaylistsRouter() {
 
   /**
    * POST /playlists/:id/access — addPlaylistAccess
-   * Auth: required. Owner or admin. Grants a single user access to a private playlist.
+   * Auth: required. Owner or admin. Grants a single user access to a private
+   * playlist at a given permission level (`"view"` or `"edit"`, defaults to
+   * `"view"`). Calling this again for a user who already has a grant updates
+   * their permission level (upsert) rather than erroring, so an owner can
+   * promote/demote an existing grantee through the same endpoint.
    *
    * @openapi
    * /api/v1/playlists/{id}/access:
@@ -975,9 +1117,13 @@ export function createPlaylistsRouter() {
    *             properties:
    *               username:
    *                 type: string
+   *               permission:
+   *                 type: string
+   *                 enum: [view, edit]
+   *                 default: view
    *     responses:
    *       "200":
-   *         description: Grant created (or already existed)
+   *         description: Grant created or updated
    *       "400":
    *         description: Invalid body
    *       "403":
@@ -1019,6 +1165,18 @@ export function createPlaylistsRouter() {
         return;
       }
 
+      const permissionRows = await AccessPermission.findAll();
+      const permissionByName = new Map(permissionRows.map((p) => [p.name, p]));
+      const permissionName = body.permission === undefined ? "view" : String(body.permission);
+      const permissionRow = permissionByName.get(permissionName);
+      if (!permissionRow) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: `permission must be one of: ${[...permissionByName.keys()].join(", ")}.`,
+        });
+        return;
+      }
+
       const targetUser = await User.findOne({ where: { username } });
       if (!targetUser) {
         res.status(404).json({
@@ -1036,13 +1194,18 @@ export function createPlaylistsRouter() {
         return;
       }
 
-      await PlaylistAccess.findOrCreate({
+      const [grant, created] = await PlaylistAccess.findOrCreate({
         where: { playlistId: playlist.id, userId: targetUser.id },
+        defaults: { permissionId: permissionRow.id },
       });
+      if (!created && grant.permissionId !== permissionRow.id) {
+        await grant.update({ permissionId: permissionRow.id });
+      }
 
       res.status(200).json({
         ...serializeUserRef(targetUser.id, targetUser.username, targetUser.displayName),
         granted: true,
+        permission: permissionRow.name,
       });
     } catch (err) {
       console.error("addPlaylistAccess failed:", err);

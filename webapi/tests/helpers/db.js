@@ -4,6 +4,7 @@ import { hashVerificationToken } from "../../lib/auth/email-verification.js";
 import { query } from "../../lib/db.js";
 import { generateVideoId } from "../../lib/video-id.js";
 import {
+  AccessPermission,
   Comment,
   ContentTag,
   FeaturedVideo,
@@ -199,23 +200,27 @@ export async function seedPlaylist(overrides = {}) {
 }
 
 /**
- * Inserts a PLAYLIST_ACCESS row granting a user permission to view a private
- * playlist.
+ * Inserts a PLAYLIST_ACCESS row granting a user permission to view (or edit)
+ * a private playlist.
  *
  * @param {object} [overrides] Partial column values to override the defaults.
  * @param {number} overrides.playlistId Owning playlist id.
  * @param {number} overrides.userId Granted user id.
+ * @param {string} [overrides.permission] "view" or "edit" (defaults to "view").
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded grant's id and values.
  */
 export async function seedPlaylistAccess(overrides = {}) {
+  const { permission = "view", ...rest } = overrides;
+  const permissionRow = await AccessPermission.findOne({ where: { name: permission } });
   const record = {
     playlistId: null,
     userId: null,
-    ...overrides,
+    permissionId: permissionRow.id,
+    ...rest,
   };
 
   const row = await PlaylistAccess.create(record);
-  return asSeedResult(row, record);
+  return asSeedResult(row, { ...record, permission });
 }
 
 /**
@@ -346,11 +351,11 @@ export async function seedVideoLike(originalUploadId, overrides = {}) {
 }
 
 /**
- * Inserts a USER_VIEW_HISTORY row (a single watch event) for an existing
- * upload, applying defaults for any omitted field. No unique constraint on
- * this table - callers can seed multiple rows for the same
- * originalUploadId/userId pair to simulate repeat views (pass distinct
- * `createdAt` overrides to control ordering).
+ * Inserts (or, on a repeat originalUploadId/userId pair, updates) a
+ * USER_VIEW_HISTORY row for an existing upload, applying defaults for any
+ * omitted field. There is a unique constraint on (userId, originalUploadId) -
+ * pass distinct `updatedAt` overrides to control ordering across rows instead
+ * of seeding the same pair twice.
  *
  * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
  * @param {object} [overrides] Partial column values to override the defaults.
@@ -364,7 +369,12 @@ export async function seedUserViewHistory(originalUploadId, overrides = {}) {
     ...overrides,
   };
 
-  const row = await UserViewHistory.create(record);
+  const existing = await UserViewHistory.findOne({
+    where: { originalUploadId: record.originalUploadId, userId: record.userId },
+  });
+  const row = existing
+    ? await existing.update(record)
+    : await UserViewHistory.create(record);
   return asSeedResult(row, record);
 }
 
@@ -428,16 +438,25 @@ export async function seedFeaturedVideo(originalUploadId) {
 }
 
 /**
- * Inserts a VIDEO_ACCESS row granting a user permission to view a private upload.
+ * Inserts a VIDEO_ACCESS row granting a user permission to view (or edit) a
+ * private upload.
  *
  * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
  * @param {number} userId Id of the USERS row receiving access.
- * @returns {Promise<{id: number, originalUploadId: number, userId: number}>}
- *   The seeded grant's id and foreign keys.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.permission] "view" or "edit" (defaults to "view").
+ * @returns {Promise<{id: number, originalUploadId: number, userId: number, permission: string}>}
+ *   The seeded grant's id, foreign keys, and permission name.
  */
-export async function seedVideoAccess(originalUploadId, userId) {
-  const row = await VideoAccess.create({ originalUploadId, userId });
-  return { id: row.id, originalUploadId, userId };
+export async function seedVideoAccess(originalUploadId, userId, overrides = {}) {
+  const { permission = "view" } = overrides;
+  const permissionRow = await AccessPermission.findOne({ where: { name: permission } });
+  const row = await VideoAccess.create({
+    originalUploadId,
+    userId,
+    permissionId: permissionRow.id,
+  });
+  return { id: row.id, originalUploadId, userId, permission };
 }
 
 /**

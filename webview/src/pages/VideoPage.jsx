@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getVideo, unhideVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
-import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
@@ -11,7 +10,6 @@ import PlaylistQueue from '../components/PlaylistQueue.jsx'
 import './VideoPage.css'
 
 function VideoPage() {
-  const { user } = useAuth()
   const { error: toastError } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -48,6 +46,7 @@ function VideoPage() {
             setHiddenByViewer(true)
           } else {
             toastError('Failed to load video. Does this video exist?')
+            setError('This video is unavailable right now.')
           }
           toastError('This video is unavailable right now.')
         }
@@ -63,7 +62,7 @@ function VideoPage() {
     return () => {
       cancelled = true
     }
-  }, [videoId, reloadCount])
+  }, [videoId, reloadCount, toastError])
 
   async function handleUnhide() {
     try {
@@ -72,7 +71,8 @@ function VideoPage() {
     } catch {
       // Leave the hidden notice in place; the user can retry.
     }
-  }, [videoId, toastError])
+  }
+
 
   useEffect(() => {
     let cancelled = false
@@ -101,8 +101,8 @@ function VideoPage() {
     }
   }, [playlistId])
 
-  const canEditPlaylist = Boolean(playlist && user)
-    && (String(user.id) === String(playlist.owner?.id) || user.role === 'admin')
+  const canEditPlaylist = Boolean(playlist)
+    && (playlist.viewerPermission === 'owner' || playlist.viewerPermission === 'edit')
 
   async function handleRemoveFromPlaylist() {
     try {

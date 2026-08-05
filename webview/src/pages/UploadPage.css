@@ -59,6 +59,10 @@
   }
 }
 
+.upload-card .required-mark {
+  color: var(--error, #d33);
+}
+
 @media (max-width: 640px) {
   .upload-card {
     padding: 16px;
@@ -173,6 +177,20 @@
   margin: 0;
   font-size: 13px;
   color: var(--text);
+}
+
+.upload-link-button {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.upload-link-button:hover {
+  text-decoration: underline;
 }
 
 .upload-thumbnail-picker {

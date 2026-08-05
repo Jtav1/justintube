@@ -43,6 +43,14 @@ export function ThemeProvider({ children }) {
   const [themes, setThemes] = useState([])
   const [loading, setLoading] = useState(true)
 
+  async function loadThemes() {
+    const { items, selectedThemeId } = await getThemes()
+    const active = pickActiveTheme(items, selectedThemeId)
+    setThemes(items)
+    setTheme(active)
+    applyThemeColors(active)
+  }
+
   useEffect(() => {
     let cancelled = false
 
@@ -71,6 +79,14 @@ export function ThemeProvider({ children }) {
     }
   }, [])
 
+  async function refreshThemes() {
+    try {
+      await loadThemes()
+    } catch (err) {
+      console.error('Failed to refresh themes:', err)
+    }
+  }
+
   async function selectTheme(themeId) {
     const target = themes.find((item) => item.id === themeId)
     if (!target) {
@@ -91,7 +107,7 @@ export function ThemeProvider({ children }) {
   }
 
   return (
-    <ThemeContext.Provider value={{ theme, themes, loading, selectTheme }}>
+    <ThemeContext.Provider value={{ theme, themes, loading, selectTheme, refreshThemes }}>
       {children}
     </ThemeContext.Provider>
   )
