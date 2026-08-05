@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import { getFeaturedVideos, getNewestVideos } from '../api/videos.js'
+import { useToast } from '../context/useToast.js'
 import VideoCard from '../components/VideoCard.jsx'
 import './VideoListing.css'
 
@@ -14,11 +15,11 @@ const FEATURED_MIN_CARD_WIDTH = 180
 const FEATURED_GRID_GAP = 10
 
 function VideoListing() {
+  const { error: toastError } = useToast()
   const [featured, setFeatured] = useState([])
   const [recent, setRecent] = useState([])
   const [visibleCount, setVisibleCount] = useState(PAGE_LIMIT)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
   const [featuredColumns, setFeaturedColumns] = useState(1)
   const featuredGridRef = useRef(null)
 
@@ -50,7 +51,6 @@ function VideoListing() {
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const [featuredData, recentData] = await Promise.all([
           getFeaturedVideos(),
@@ -62,7 +62,7 @@ function VideoListing() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load videos.')
+          toastError('Failed to load videos.')
         }
       } finally {
         if (!cancelled) {
@@ -76,7 +76,7 @@ function VideoListing() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [toastError])
 
   const visibleRecent = recent.slice(0, visibleCount)
   const featuredOverflowing = featured.length > featuredColumns
@@ -86,8 +86,7 @@ function VideoListing() {
 
   return (
     <section className="video-listing">
-      {error && <p className="video-listing-error">{error}</p>}
-      {!loading && featured.length === 0 && recent.length === 0 && !error && (
+      {!loading && featured.length === 0 && recent.length === 0 && (
         <p className="video-listing-empty">No videos yet.</p>
       )}
 

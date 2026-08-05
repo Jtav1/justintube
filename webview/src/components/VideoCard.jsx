@@ -44,7 +44,13 @@ function VideoCard({
   const [hidden, setHidden] = useState(false)
   const [hideError, setHideError] = useState(false)
 
-  const canEdit = Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
+  // List-fetched videos don't carry viewerPermission (see webapi's
+  // scope note on list endpoints), so fall back to the client-side
+  // owner/admin check there; singular-fetch contexts get the accurate
+  // owner-or-edit-grantee answer for free.
+  const canEdit = video.viewerPermission
+    ? video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
+    : Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
 
   useEffect(() => {
     const el = titleRef.current

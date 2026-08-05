@@ -3,13 +3,14 @@ import {
   getNotificationPreferences,
   updateNotificationPreferences,
 } from '../api/notifications.js'
+import { useToast } from '../context/useToast.js'
 import './NotificationSettings.css'
 
 function NotificationSettings() {
+  const { error: toastError } = useToast()
   const [preferences, setPreferences] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [status, setStatus] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -24,7 +25,8 @@ function NotificationSettings() {
         }
       } catch {
         if (!cancelled) {
-          setLoadError('Failed to load notification settings.')
+          setLoadError('Notification settings are unavailable right now.')
+          toastError('Failed to load notification settings.')
         }
       } finally {
         if (!cancelled) {
@@ -38,10 +40,9 @@ function NotificationSettings() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [toastError])
 
   async function handleToggle(notificationType, field, value) {
-    setStatus(null)
     setPreferences((prev) =>
       prev.map((p) => (p.notificationType === notificationType ? { ...p, [field]: value } : p)),
     )
@@ -53,7 +54,7 @@ function NotificationSettings() {
           p.notificationType === notificationType ? { ...p, [field]: !value } : p,
         ),
       )
-      setStatus({ type: 'error', message: 'Failed to save notification setting.' })
+      toastError('Failed to save notification setting.')
     }
   }
 
@@ -62,7 +63,7 @@ function NotificationSettings() {
       <h1>Notification Settings</h1>
 
       {loading && <p className="settings-status">Loading...</p>}
-      {loadError && <p className="settings-status settings-status-error">{loadError}</p>}
+      {loadError && <p className="settings-status">{loadError}</p>}
 
       {preferences && (
         <div className="notification-settings-list">
@@ -109,16 +110,6 @@ function NotificationSettings() {
             </div>
           ))}
         </div>
-      )}
-
-      {status && (
-        <p
-          className={
-            status.type === 'error' ? 'settings-status settings-status-error' : 'settings-status'
-          }
-        >
-          {status.message}
-        </p>
       )}
     </section>
   )

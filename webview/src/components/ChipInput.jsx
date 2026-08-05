@@ -11,6 +11,10 @@ import './ChipInput.css'
  * Suggestion mode (pass `suggestions` + `onSelectSuggestion`, used for the
  * private-video recipient picker): matches are rendered in a dropdown below
  * the input and clicking one adds it as a chip.
+ *
+ * Pass `renderChipExtra(chip)` to render extra content per chip between its
+ * label and remove button (used for the recipient picker's view/edit
+ * permission select).
  */
 function ChipInput({
   chips,
@@ -23,6 +27,7 @@ function ChipInput({
   onSelectSuggestion,
   suggestionsLoading,
   inputMaxLength,
+  renderChipExtra,
 }) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const wrapRef = useRef(null)
@@ -72,6 +77,7 @@ function ChipInput({
         {chips.map((chip) => (
           <span key={chip.key} className="chip-input-chip">
             {chip.label}
+            {renderChipExtra?.(chip)}
             <button
               type="button"
               className="chip-input-remove"

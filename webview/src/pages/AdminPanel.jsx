@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import { adminBroadcastNotification } from '../api/admin.js'
 import './AdminPanel.css'
 
 function AdminPanel() {
   const { user, loading: authLoading } = useAuth()
+  const { success, error: toastError } = useToast()
 
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
-  const [status, setStatus] = useState(null)
 
   if (authLoading) {
     return (
@@ -39,21 +40,14 @@ function AdminPanel() {
     }
 
     setSending(true)
-    setStatus(null)
     try {
       const result = await adminBroadcastNotification(title.trim(), message.trim())
       setTitle('')
       setMessage('')
-      setStatus({
-        type: 'success',
-        message: `Notification sent to ${result.notifiedCount} user(s).`,
-      })
+      success(`Notification sent to ${result.notifiedCount} user(s).`)
     } catch (err) {
       const code = err.response?.data?.error
-      setStatus({
-        type: 'error',
-        message: code === 'invalid_body' ? err.response.data.message : 'Failed to send notification.',
-      })
+      toastError(code === 'invalid_body' ? err.response.data.message : 'Failed to send notification.')
     } finally {
       setSending(false)
     }
@@ -92,16 +86,6 @@ function AdminPanel() {
             {sending ? 'Sending...' : 'Send to all users'}
           </button>
         </form>
-
-        {status && (
-          <p
-            className={
-              status.type === 'error' ? 'settings-status settings-status-error' : 'settings-status'
-            }
-          >
-            {status.message}
-          </p>
-        )}
       </div>
     </section>
   )

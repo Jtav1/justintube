@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react'
 import { listUsers } from '../api/users.js'
+import { useToast } from '../context/useToast.js'
 import UserCard from '../components/UserCard.jsx'
 import './UsersList.css'
 
 const PAGE_LIMIT = 24
 
 function UsersList() {
+  const { error: toastError } = useToast()
   const [items, setItems] = useState([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await listUsers({ page, limit: PAGE_LIMIT })
         if (!cancelled) {
@@ -26,7 +26,7 @@ function UsersList() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load users.')
+          toastError('Failed to load users.')
         }
       } finally {
         if (!cancelled) {
@@ -40,12 +40,11 @@ function UsersList() {
     return () => {
       cancelled = true
     }
-  }, [page])
+  }, [page, toastError])
 
   return (
     <section className="users-listing">
-      {error && <p className="users-listing-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && items.length === 0 && (
         <p className="users-listing-empty">No users yet.</p>
       )}
       <div className="users-listing-list">

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { getUserChannel } from '../api/users.js'
 import { listUserPlaylists } from '../api/playlists.js'
+import { useToast } from '../context/useToast.js'
 import PlaylistCard from '../components/PlaylistCard.jsx'
 import './UserPlaylists.css'
 
@@ -9,6 +10,7 @@ const PAGE_LIMIT = 24
 
 function UserPlaylists() {
   const { username } = useParams()
+  const { error: toastError } = useToast()
 
   const [displayName, setDisplayName] = useState(null)
   const [userError, setUserError] = useState(null)
@@ -17,7 +19,6 @@ function UserPlaylists() {
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -31,6 +32,7 @@ function UserPlaylists() {
       } catch {
         if (!cancelled) {
           setUserError('User not found.')
+          toastError('Failed to load this user.')
         }
       }
     }
@@ -40,14 +42,13 @@ function UserPlaylists() {
     return () => {
       cancelled = true
     }
-  }, [username])
+  }, [username, toastError])
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await listUserPlaylists(username, { page, limit: PAGE_LIMIT })
         if (!cancelled) {
@@ -56,7 +57,7 @@ function UserPlaylists() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load playlists.')
+          toastError('Failed to load playlists.')
         }
       } finally {
         if (!cancelled) {
@@ -70,7 +71,7 @@ function UserPlaylists() {
     return () => {
       cancelled = true
     }
-  }, [username, page])
+  }, [username, page, toastError])
 
   if (userError) {
     return (
@@ -86,8 +87,7 @@ function UserPlaylists() {
         {displayName ? `${displayName}'s Playlists` : 'Playlists'}
       </h1>
 
-      {error && <p className="user-playlists-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && items.length === 0 && (
         <p className="user-playlists-empty">No playlists yet.</p>
       )}
       <div className="user-playlists-grid">

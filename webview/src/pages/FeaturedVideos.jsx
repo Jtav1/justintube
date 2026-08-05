@@ -1,22 +1,22 @@
 import { useEffect, useState } from 'react'
 import { getFeaturedVideos } from '../api/videos.js'
+import { useToast } from '../context/useToast.js'
 import VideoCard from '../components/VideoCard.jsx'
 import './VideoListing.css'
 
 const PAGE_LIMIT = 24
 
 function FeaturedVideos() {
+  const { error: toastError } = useToast()
   const [featured, setFeatured] = useState([])
   const [visibleCount, setVisibleCount] = useState(PAGE_LIMIT)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await getFeaturedVideos()
         if (!cancelled) {
@@ -24,7 +24,7 @@ function FeaturedVideos() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load videos.')
+          toastError('Failed to load videos.')
         }
       } finally {
         if (!cancelled) {
@@ -38,14 +38,13 @@ function FeaturedVideos() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [toastError])
 
   const visibleFeatured = featured.slice(0, visibleCount)
 
   return (
     <section className="video-listing">
-      {error && <p className="video-listing-error">{error}</p>}
-      {!loading && featured.length === 0 && !error && (
+      {!loading && featured.length === 0 && (
         <p className="video-listing-empty">No featured videos yet.</p>
       )}
 

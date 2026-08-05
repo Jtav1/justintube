@@ -3,8 +3,9 @@ import { sequelize } from "../db.js";
 import { timestampColumn } from "./attribute-helpers.js";
 
 /**
- * PLAYLIST_ACCESS table model. Grants a specific user permission to view a
- * private playlist. Unique per (playlist, user) so a grant is never duplicated.
+ * PLAYLIST_ACCESS table model. Grants a specific user access to a private
+ * playlist at a given permission level (see ACCESS_PERMISSIONS - "view" or
+ * "edit"). Unique per (playlist, user) so a grant is never duplicated.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -21,6 +22,10 @@ export const PlaylistAccess = sequelize.define(
       allowNull: false,
     },
     userId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+    },
+    permissionId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
     },

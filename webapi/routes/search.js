@@ -15,6 +15,7 @@ import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { loadHiddenUploadIds } from "../lib/video-hidden.js";
 import { buildPlaylistsPage } from "./playlists.js";
 import { loadUploadCountsByUserId, serializeUserListItem } from "./users.js";
+import { loadViewerPermissionsByUploadId } from "./videos.js";
 
 /**
  * Maximum page size for GET /search.
@@ -289,9 +290,11 @@ function parseAdvancedSearchQuery(query) {
  * Maps a raw Meilisearch hit to the public search result DTO.
  *
  * @param {object} hit Document as stored in the `videos` index.
+ * @param {"owner"|"edit"|"view"} [viewerPermission] The requesting caller's effective
+ *   permission level for this video (see {@link loadViewerPermissionsByUploadId}).
  * @returns {object} Public search result payload.
  */
-function serializeHit(hit) {
+function serializeHit(hit, viewerPermission) {
   return {
     id: hit.id,
     videoId: hit.videoId,
@@ -309,6 +312,7 @@ function serializeHit(hit) {
     thumbnailUrl: hit.thumbnailUrl ?? null,
     createdAt: hit.createdAt,
     updatedAt: hit.updatedAt,
+    viewerPermission,
   };
 }
 
@@ -469,8 +473,13 @@ export function createSearchRouter() {
       const result = await searchVideos(parsed);
       const hiddenUploadIds = await loadHiddenUploadIds(req.user?.id);
       const hits = (result.hits || []).filter((hit) => !hiddenUploadIds.has(hit.id));
+      const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+        hits.map((hit) => ({ id: hit.id, userId: hit.userId })),
+        req.user,
+        req.authRole,
+      );
       res.status(200).json({
-        items: hits.map(serializeHit),
+        items: hits.map((hit) => serializeHit(hit, viewerPermissionByUploadId.get(hit.id))),
         page: result.page ?? parsed.page,
         limit: result.hitsPerPage ?? parsed.limit,
         totalHits: result.totalHits ?? 0,
@@ -625,6 +634,14 @@ export function createSearchRouter() {
       const videos = (videoResult.hits || [])
         .filter((hit) => !hiddenUploadIds.has(hit.id))
         .map(serializeHit);
+      const videoViewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+        videoHits.map((hit) => ({ id: hit.id, userId: hit.userId })),
+        req.user,
+        req.authRole,
+      );
+      const videos = videoHits.map((hit) =>
+        serializeHit(hit, videoViewerPermissionByUploadId.get(hit.id)),
+      );   
 
       const playlistHits = playlistResult.hits || [];
       const playlistIds = playlistHits.map((hit) => hit.id);

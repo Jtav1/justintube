@@ -33,10 +33,6 @@
   background: var(--accent-bg);
 }
 
-.notifications-page-error {
-  color: #d33;
-}
-
 .notifications-page-empty {
   color: var(--text);
 }

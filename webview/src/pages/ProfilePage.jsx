@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowRight, Pencil, UserRound } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import apiClient from '../api/client.js'
 import { resendVerification } from '../api/auth.js'
 import {
@@ -41,6 +42,7 @@ const SORT_OPTIONS = [
 function ProfilePage() {
   const { username } = useParams()
   const { user: authUser } = useAuth()
+  const { success, error: toastError } = useToast()
   const fileInputRef = useRef(null)
   const avatarFileInputRef = useRef(null)
 
@@ -67,16 +69,12 @@ function ProfilePage() {
   const [editingBio, setEditingBio] = useState(false)
   const [bioDraft, setBioDraft] = useState('')
   const [savingField, setSavingField] = useState(false)
-  const [fieldError, setFieldError] = useState(null)
 
   const [resendingVerification, setResendingVerification] = useState(false)
-  const [resendStatus, setResendStatus] = useState(null)
 
   const [grantingUploader, setGrantingUploader] = useState(false)
-  const [grantUploaderStatus, setGrantUploaderStatus] = useState(null)
 
   const [updatingRole, setUpdatingRole] = useState(false)
-  const [roleUpdateError, setRoleUpdateError] = useState(null)
 
   const resetKeyRef = useRef(null)
 
@@ -111,7 +109,9 @@ function ProfilePage() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load profile.')
+          const message = page === 1 ? 'Failed to load profile.' : 'Failed to load more videos.'
+          setError(message)
+          toastError(message)
         }
       } finally {
         if (!cancelled) {
@@ -125,7 +125,7 @@ function ProfilePage() {
     return () => {
       cancelled = true
     }
-  }, [username, sort, page])
+  }, [username, sort, page, toastError])
 
   useEffect(() => {
     let cancelled = false
@@ -212,14 +212,13 @@ function ProfilePage() {
 
   async function handleResendVerification() {
     setResendingVerification(true)
-    setResendStatus(null)
     try {
       if (isOwnProfile) {
         await resendVerification()
       } else {
         await adminResendUserVerification(profile.user.id)
       }
-      setResendStatus({ type: 'success', message: 'Verification email sent.' })
+      success('Verification email sent.')
     } catch (err) {
       const code = err.response?.data?.error
       const message =
@@ -228,7 +227,7 @@ function ProfilePage() {
           : code === 'already_verified'
             ? 'This account is already verified.'
             : 'Failed to send verification email.'
-      setResendStatus({ type: 'error', message })
+      toastError(message)
     } finally {
       setResendingVerification(false)
     }
@@ -236,13 +235,12 @@ function ProfilePage() {
 
   async function handleGrantUploader() {
     setGrantingUploader(true)
-    setGrantUploaderStatus(null)
     try {
       await adminGrantUploader(profile.user.id)
       setProfile((prev) => ({ ...prev, user: { ...prev.user, uploader: true } }))
-      setGrantUploaderStatus({ type: 'success', message: 'Uploader access granted.' })
+      success('Uploader access granted.')
     } catch {
-      setGrantUploaderStatus({ type: 'error', message: 'Failed to grant uploader access.' })
+      toastError('Failed to grant uploader access.')
     } finally {
       setGrantingUploader(false)
     }
@@ -260,6 +258,7 @@ function ProfilePage() {
       setSubscribed(result.subscribed)
     } catch (err) {
       console.error('Failed to update subscription:', err)
+      toastError('Failed to update subscription.')
     } finally {
       setSubscribePending(false)
     }
@@ -267,12 +266,12 @@ function ProfilePage() {
 
   async function handleRoleChange(role) {
     setUpdatingRole(true)
-    setRoleUpdateError(null)
     try {
       const updated = await adminUpdateUserRole(profile.user.id, role)
       setProfile((prev) => ({ ...prev, user: { ...prev.user, role: updated.role } }))
+      success('Role updated.')
     } catch {
-      setRoleUpdateError('Failed to update role.')
+      toastError('Failed to update role.')
     } finally {
       setUpdatingRole(false)
     }
@@ -280,19 +279,16 @@ function ProfilePage() {
 
   function startEditName() {
     setNameDraft(profile.user.displayName || '')
-    setFieldError(null)
     setEditingName(true)
   }
 
   function startEditBio() {
     setBioDraft(profile.user.bio || '')
-    setFieldError(null)
     setEditingBio(true)
   }
 
   async function saveField(field, value) {
     setSavingField(true)
-    setFieldError(null)
     try {
       const updated = await updateUserProfile(profile.user.id, { [field]: value })
       setProfile((prev) => ({
@@ -301,8 +297,9 @@ function ProfilePage() {
       }))
       setEditingName(false)
       setEditingBio(false)
+      success('Profile updated.')
     } catch {
-      setFieldError('Failed to save changes.')
+      toastError('Failed to save changes.')
     } finally {
       setSavingField(false)
     }
@@ -318,8 +315,9 @@ function ProfilePage() {
     try {
       const { avatarFilename } = await updateUserAvatar(profile.user.id, file)
       setProfile((prev) => ({ ...prev, user: { ...prev.user, avatarFilename } }))
+      success('Avatar updated.')
     } catch {
-      setError('Failed to upload avatar.')
+      toastError('Failed to upload avatar.')
     } finally {
       setAvatarUploading(false)
     }
@@ -335,8 +333,9 @@ function ProfilePage() {
     try {
       const { bannerFilename } = await updateUserBanner(profile.user.id, file)
       setProfile((prev) => ({ ...prev, user: { ...prev.user, bannerFilename } }))
+      success('Banner updated.')
     } catch {
-      setError('Failed to upload banner.')
+      toastError('Failed to upload banner.')
     } finally {
       setBannerUploading(false)
     }
@@ -350,8 +349,9 @@ function ProfilePage() {
     try {
       await deleteUserBanner(profile.user.id)
       setProfile((prev) => ({ ...prev, user: { ...prev.user, bannerFilename: null } }))
+      success('Banner removed.')
     } catch {
-      setError('Failed to remove banner.')
+      toastError('Failed to remove banner.')
     } finally {
       setBannerUploading(false)
     }
@@ -366,7 +366,7 @@ function ProfilePage() {
   }
 
   if (error && !profile) {
-    return <p className="profile-status profile-status-error">{error}</p>
+    return <p className="profile-status">{error}</p>
   }
 
   if (!profile) {
@@ -574,9 +574,6 @@ function ProfilePage() {
         )}
       </div>
 
-      {fieldError && <p className="profile-status profile-status-error">{fieldError}</p>}
-      {roleUpdateError && <p className="profile-status profile-status-error">{roleUpdateError}</p>}
-
       {canResendVerification && (
         <div className="profile-verification-row">
           <button
@@ -587,17 +584,6 @@ function ProfilePage() {
           >
             {resendingVerification ? 'Sending...' : 'Resend verification email'}
           </button>
-          {resendStatus && (
-            <p
-              className={
-                resendStatus.type === 'error'
-                  ? 'profile-status profile-status-error'
-                  : 'profile-status'
-              }
-            >
-              {resendStatus.message}
-            </p>
-          )}
         </div>
       )}
 
@@ -611,17 +597,6 @@ function ProfilePage() {
           >
             {grantingUploader ? 'Granting...' : 'Grant uploader access'}
           </button>
-          {grantUploaderStatus && (
-            <p
-              className={
-                grantUploaderStatus.type === 'error'
-                  ? 'profile-status profile-status-error'
-                  : 'profile-status'
-              }
-            >
-              {grantUploaderStatus.message}
-            </p>
-          )}
         </div>
       )}
 
@@ -664,8 +639,7 @@ function ProfilePage() {
         </label>
       </div>
 
-      {error && <p className="profile-status profile-status-error">{error}</p>}
-      {!loading && videos.items.length === 0 && !error && (
+      {!loading && videos.items.length === 0 && (
         <p className="profile-status">No videos yet.</p>
       )}
       <div className="profile-videos-grid">

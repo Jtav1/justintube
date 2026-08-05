@@ -29,7 +29,12 @@ import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { isAdmin, isModeratorOrAdmin } from "../lib/video-access.js";
 import { loadHiddenUploadIds } from "../lib/video-hidden.js";
 import { buildPlaylistsPage } from "./playlists.js";
-import { loadReactionCountsByUploadId, loadTagsByUploadId, serializeVideo } from "./videos.js";
+import {
+  loadReactionCountsByUploadId,
+  loadTagsByUploadId,
+  loadViewerPermissionsByUploadId,
+  serializeVideo,
+} from "./videos.js";
 
 /**
  * Absolute path to the directory where banner images are stored
@@ -427,16 +432,17 @@ function serializeChannelUser(user, { isPrivileged = false, subscriberCount = 0 
  *
  * @param {number} userId Target user's id.
  * @param {{page: number, limit: number}} pagination Parsed pagination.
- * @param {{isPrivileged?: boolean, viewerUserId?: number|null, sort?: string}} [options]
+ * @param {{isPrivileged?: boolean, viewerUserId?: number|null, viewerUser?: import('sequelize').Model|null, viewerRole?: import('sequelize').Model|null, sort?: string}} [options]
  *   `isPrivileged`: owner-or-admin, unlocks every visibility. `viewerUserId`: authenticated
- *   viewer's id, used to look up access grants. `sort`: one of `USER_VIDEOS_SORT_OPTIONS`.
+ *   viewer's id, used to look up access grants. `viewerUser`/`viewerRole`: authenticated caller,
+ *   used to attach each item's `viewerPermission`. `sort`: one of `USER_VIDEOS_SORT_OPTIONS`.
  * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
  *   Paginated video list envelope.
  */
 async function loadUserPublicVideosPage(
   userId,
   pagination,
-  { isPrivileged = false, viewerUserId = null, sort = "newest" } = {},
+  { isPrivileged = false, viewerUserId = null, viewerUser = null, viewerRole = null, sort = "newest" } = {},
 ) {
   const { page, limit } = pagination;
 
@@ -488,11 +494,18 @@ async function loadUserPublicVideosPage(
   const uploadIds = rows.map((upload) => upload.id);
   const tagsByUploadId = await loadTagsByUploadId(uploadIds);
   const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
+  // isPrivileged means the viewer is either this channel's owner or an admin,
+  // so every video on the channel is "owner"-level for them - no need for a
+  // per-video grant lookup in that case.
+  const viewerPermissionByUploadId = isPrivileged
+    ? new Map(rows.map((upload) => [upload.id, "owner"]))
+    : await loadViewerPermissionsByUploadId(rows, viewerUser, viewerRole);
 
   return {
     items: rows.map((upload) =>
       serializeVideo(upload, upload.VideoMetadata, {
         tags: tagsByUploadId.get(upload.id) || [],
+        viewerPermission: viewerPermissionByUploadId.get(upload.id),
         ...reactionCountsByUploadId.get(upload.id),
       }),
     ),
@@ -735,6 +748,8 @@ export function createUsersRouter() {
         loadUserPublicVideosPage(user.id, pagination, {
           isPrivileged,
           viewerUserId: req.user?.id ?? null,
+          viewerUser: req.user ?? null,
+          viewerRole: req.authRole ?? null,
           sort: sortResult.sort,
         }),
         Subscription.count({ where: { subscribedToId: user.id } }),
@@ -828,6 +843,8 @@ export function createUsersRouter() {
       const videos = await loadUserPublicVideosPage(user.id, pagination, {
         isPrivileged,
         viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
         sort: sortResult.sort,
       });
       res.status(200).json(videos);

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Pencil, UserRound, MailCheck, MailWarning, Video, VideoOff } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import apiClient from '../api/client.js'
 import { resendVerification, changePassword } from '../api/auth.js'
 import { getMySettings, updateMySettings } from '../api/me.js'
@@ -18,6 +19,7 @@ const MIN_PASSWORD_LENGTH = 8
 
 function AccountSettings() {
   const { user: authUser, loading: authLoading, refreshUser } = useAuth()
+  const { success, error: toastError } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
   const bannerFileInputRef = useRef(null)
@@ -31,19 +33,16 @@ function AccountSettings() {
   const [bio, setBio] = useState('')
   const [email, setEmail] = useState('')
   const [savingAccount, setSavingAccount] = useState(false)
-  const [accountStatus, setAccountStatus] = useState(null)
 
   const [bannerUploading, setBannerUploading] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
 
   const [resendingVerification, setResendingVerification] = useState(false)
-  const [resendStatus, setResendStatus] = useState(null)
 
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [changingPassword, setChangingPassword] = useState(false)
-  const [passwordStatus, setPasswordStatus] = useState(null)
 
   useEffect(() => {
     if (!authLoading && !authUser) {
@@ -71,7 +70,8 @@ function AccountSettings() {
         }
       } catch {
         if (!cancelled) {
-          setLoadError('Failed to load account settings.')
+          setLoadError('Account settings are unavailable right now.')
+          toastError('Failed to load account settings.')
         }
       } finally {
         if (!cancelled) {
@@ -85,7 +85,7 @@ function AccountSettings() {
     return () => {
       cancelled = true
     }
-  }, [authLoading, authUser])
+  }, [authLoading, authUser, toastError])
 
   useEffect(() => {
     if (loading || !location.hash) {
@@ -98,7 +98,6 @@ function AccountSettings() {
   async function handleSaveAccount(event) {
     event.preventDefault()
     setSavingAccount(true)
-    setAccountStatus(null)
     try {
       // Only send fields that actually changed - re-submitting an unchanged
       // value (e.g. a legacy email that predates format validation) shouldn't
@@ -114,7 +113,7 @@ function AccountSettings() {
         changes.email = email
       }
       if (Object.keys(changes).length === 0) {
-        setAccountStatus({ type: 'success', message: 'Nothing to save.' })
+        success('Nothing to save.')
         return
       }
 
@@ -124,14 +123,14 @@ function AccountSettings() {
       setBio(updated.bio || '')
       setEmail(updated.email)
       await refreshUser()
-      setAccountStatus({ type: 'success', message: 'Account settings saved.' })
+      success('Account settings saved.')
     } catch (err) {
       const code = err.response?.data?.error
       const message =
         code === 'conflict'
           ? (err.response?.data?.message || 'Username or email already in use.')
           : (err.response?.data?.message || 'Failed to save account settings.')
-      setAccountStatus({ type: 'error', message })
+      toastError(message)
     } finally {
       setSavingAccount(false)
     }
@@ -148,8 +147,9 @@ function AccountSettings() {
       const { avatarFilename } = await updateUserAvatar(settings.id, file)
       setSettings((prev) => ({ ...prev, avatarFilename }))
       await refreshUser()
+      success('Avatar updated.')
     } catch {
-      setAccountStatus({ type: 'error', message: 'Failed to upload avatar.' })
+      toastError('Failed to upload avatar.')
     } finally {
       setAvatarUploading(false)
     }
@@ -164,8 +164,9 @@ function AccountSettings() {
       await deleteUserAvatar(settings.id)
       setSettings((prev) => ({ ...prev, avatarFilename: null }))
       await refreshUser()
+      success('Avatar removed.')
     } catch {
-      setAccountStatus({ type: 'error', message: 'Failed to remove avatar.' })
+      toastError('Failed to remove avatar.')
     } finally {
       setAvatarUploading(false)
     }
@@ -181,8 +182,9 @@ function AccountSettings() {
     try {
       const { bannerFilename } = await updateUserBanner(settings.id, file)
       setSettings((prev) => ({ ...prev, bannerFilename }))
+      success('Banner updated.')
     } catch {
-      setAccountStatus({ type: 'error', message: 'Failed to upload banner.' })
+      toastError('Failed to upload banner.')
     } finally {
       setBannerUploading(false)
     }
@@ -196,8 +198,9 @@ function AccountSettings() {
     try {
       await deleteUserBanner(settings.id)
       setSettings((prev) => ({ ...prev, bannerFilename: null }))
+      success('Banner removed.')
     } catch {
-      setAccountStatus({ type: 'error', message: 'Failed to remove banner.' })
+      toastError('Failed to remove banner.')
     } finally {
       setBannerUploading(false)
     }
@@ -205,10 +208,9 @@ function AccountSettings() {
 
   async function handleResendVerification() {
     setResendingVerification(true)
-    setResendStatus(null)
     try {
       await resendVerification()
-      setResendStatus({ type: 'success', message: 'Verification email sent.' })
+      success('Verification email sent.')
     } catch (err) {
       const code = err.response?.data?.error
       const message =
@@ -217,7 +219,7 @@ function AccountSettings() {
           : code === 'already_verified'
             ? 'This account is already verified.'
             : 'Failed to send verification email.'
-      setResendStatus({ type: 'error', message })
+      toastError(message)
     } finally {
       setResendingVerification(false)
     }
@@ -225,17 +227,13 @@ function AccountSettings() {
 
   async function handleChangePassword(event) {
     event.preventDefault()
-    setPasswordStatus(null)
 
     if (newPassword.length < MIN_PASSWORD_LENGTH) {
-      setPasswordStatus({
-        type: 'error',
-        message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
-      })
+      toastError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
       return
     }
     if (newPassword !== confirmNewPassword) {
-      setPasswordStatus({ type: 'error', message: 'New passwords do not match.' })
+      toastError('New passwords do not match.')
       return
     }
 
@@ -245,13 +243,13 @@ function AccountSettings() {
       setCurrentPassword('')
       setNewPassword('')
       setConfirmNewPassword('')
-      setPasswordStatus({ type: 'success', message: 'Password changed.' })
+      success('Password changed.')
     } catch (err) {
       const message =
         err.response?.status === 401
           ? 'Current password is incorrect.'
           : 'Failed to change password.'
-      setPasswordStatus({ type: 'error', message })
+      toastError(message)
     } finally {
       setChangingPassword(false)
     }
@@ -272,9 +270,7 @@ function AccountSettings() {
   if (loadError || !settings) {
     return (
       <section className="settings-page">
-        <p className="settings-status settings-status-error">
-          {loadError || 'Failed to load account settings.'}
-        </p>
+        <p className="settings-status">{loadError || 'Account settings are unavailable right now.'}</p>
       </section>
     )
   }
@@ -391,17 +387,6 @@ function AccountSettings() {
             >
               {resendingVerification ? 'Sending...' : 'Resend verification email'}
             </button>
-            {resendStatus && (
-              <p
-                className={
-                  resendStatus.type === 'error'
-                    ? 'settings-status settings-status-error'
-                    : 'settings-status'
-                }
-              >
-                {resendStatus.message}
-              </p>
-            )}
           </div>
         )}
 
@@ -431,18 +416,6 @@ function AccountSettings() {
             onChange={(event) => setEmail(event.target.value)}
             required
           />
-
-          {accountStatus && (
-            <p
-              className={
-                accountStatus.type === 'error'
-                  ? 'settings-status settings-status-error'
-                  : 'settings-status'
-              }
-            >
-              {accountStatus.message}
-            </p>
-          )}
 
           <button type="submit" className="settings-submit" disabled={savingAccount}>
             {savingAccount ? 'Saving...' : 'Save changes'}
@@ -483,18 +456,6 @@ function AccountSettings() {
             onChange={(event) => setConfirmNewPassword(event.target.value)}
             required
           />
-
-          {passwordStatus && (
-            <p
-              className={
-                passwordStatus.type === 'error'
-                  ? 'settings-status settings-status-error'
-                  : 'settings-status'
-              }
-            >
-              {passwordStatus.message}
-            </p>
-          )}
 
           <button type="submit" className="settings-submit" disabled={changingPassword}>
             {changingPassword ? 'Changing...' : 'Change password'}

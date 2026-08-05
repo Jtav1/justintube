@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { UploadCloud } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import {
   uploadVideoFile,
   importVideoUrl,
   updateVideo,
   setVideoAccess,
+  getVideoAccess,
   setVideoFeatured,
   getImportStatus,
   updateVideoThumbnail,
@@ -60,6 +62,7 @@ function isAudioFile(file) {
 
 function UploadPage() {
   const { user, loading: authLoading } = useAuth()
+  const { success, error: toastError } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const fileInputRef = useRef(null)
@@ -71,6 +74,8 @@ function UploadPage() {
   const [editLoading, setEditLoading] = useState(isEditMode)
   const [editError, setEditError] = useState(null)
   const [editForbidden, setEditForbidden] = useState(false)
+  // A fresh upload's creator is always its owner; only edit mode can set this false.
+  const [viewerIsOwnerOrAdmin, setViewerIsOwnerOrAdmin] = useState(true)
 
   const [file, setFile] = useState(null)
   const [dragActive, setDragActive] = useState(false)
@@ -90,7 +95,6 @@ function UploadPage() {
   const [recipients, setRecipients] = useState([])
 
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState(null)
 
   const [importAvailable, setImportAvailable] = useState(true)
 
@@ -124,20 +128,37 @@ function UploadPage() {
         if (cancelled) {
           return
         }
-        const canEdit = user.role === 'admin' || video.uploader?.userId === user.id
-        if (!canEdit) {
+        const canEditMetadata = video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
+        if (!canEditMetadata) {
           setEditForbidden(true)
           return
         }
+        const isOwnerAdmin = video.viewerPermission === 'owner'
+        setViewerIsOwnerOrAdmin(isOwnerAdmin)
         setEditUpload(video)
         setTitle(video.title ?? '')
         setDescription(video.description ?? '')
         setVisibility(video.visibility ?? 'public')
         setTags(video.tags ?? [])
         setFeatured(Boolean(video.featured))
+
+        if (isOwnerAdmin && video.visibility === 'private') {
+          const { items } = await getVideoAccess(video.id)
+          if (!cancelled) {
+            setRecipients(
+              items.map((item) => ({
+                userId: item.userId,
+                username: item.username,
+                displayName: item.displayName,
+                permission: item.permission,
+              })),
+            )
+          }
+        }
       } catch {
         if (!cancelled) {
-          setEditError('Failed to load this video.')
+          setEditError('This video is unavailable right now.')
+          toastError('Failed to load this video.')
         }
       } finally {
         if (!cancelled) {
@@ -151,7 +172,7 @@ function UploadPage() {
     return () => {
       cancelled = true
     }
-  }, [isEditMode, editVideoId, authLoading, user])
+  }, [isEditMode, editVideoId, authLoading, user, toastError])
 
   useEffect(() => {
     if (isEditMode) {
@@ -221,9 +242,10 @@ function UploadPage() {
       return
     }
     if (TERMINAL_UPLOAD_STATUSES.has(processingStatus.status) && processingStatus.status !== 'failed') {
+      success('Video is ready!')
       navigate(`/users/${user.username}`)
     }
-  }, [trackingId, processingStatus, navigate, user.username])
+  }, [trackingId, processingStatus, navigate, user.username, success])
 
   const recipientSearchActive = visibility === 'private' && recipientQuery.trim().length > 0
 
@@ -272,7 +294,7 @@ function UploadPage() {
       <section className="upload-page">
         <div className="upload-card">
           <h1>Edit Video</h1>
-          <p className="upload-error">{editError}</p>
+          <p className="upload-hint">{editError}</p>
         </div>
       </section>
     )
@@ -365,13 +387,19 @@ function UploadPage() {
     if (!match) {
       return
     }
-    setRecipients((prev) => [...prev, match])
+    setRecipients((prev) => [...prev, { ...match, permission: 'view' }])
     setRecipientQuery('')
     setRecipientSuggestions([])
   }
 
   function removeRecipient(userId) {
     setRecipients((prev) => prev.filter((r) => r.userId !== Number(userId)))
+  }
+
+  function updateRecipientPermission(userId, permission) {
+    setRecipients((prev) =>
+      prev.map((r) => (r.userId === Number(userId) ? { ...r, permission } : r)),
+    )
   }
 
   const submitDisabled = isEditMode
@@ -401,7 +429,6 @@ function UploadPage() {
     }
 
     setSubmitting(true)
-    setSubmitError(null)
 
     let createdId
     if (isEditMode) {
@@ -420,7 +447,7 @@ function UploadPage() {
           : await importVideoUrl(url.trim(), { skipThumbnail: Boolean(thumbnailFile) })
         createdId = uploaded.id
       } catch {
-        setSubmitError(
+        toastError(
           file
             ? 'Failed to upload the file. Please try again.'
             : 'Failed to import the video from that URL. Please try again.',
@@ -432,14 +459,17 @@ function UploadPage() {
     }
 
     try {
-      await updateVideo(createdId, {
+      const updatePayload = {
         title: title.trim(),
         description: description.trim() || null,
-        visibility,
         tags,
-      })
+      }
+      if (viewerIsOwnerOrAdmin) {
+        updatePayload.visibility = visibility
+      }
+      await updateVideo(createdId, updatePayload)
     } catch {
-      setSubmitError(
+      toastError(
         isEditMode
           ? 'Failed to save your changes. Please try again.'
           : `Your video was uploaded but its details could not be saved. ` +
@@ -453,7 +483,7 @@ function UploadPage() {
       try {
         await updateVideoThumbnail(createdId, thumbnailFile)
       } catch {
-        setSubmitError(
+        toastError(
           'Your video was uploaded and configured, but the custom thumbnail could not be saved. ' +
             'You can try uploading it again from your profile.',
         )
@@ -462,14 +492,14 @@ function UploadPage() {
       }
     }
 
-    if (visibility === 'private' && recipients.length > 0) {
+    if (viewerIsOwnerOrAdmin && visibility === 'private') {
       try {
         await setVideoAccess(
           createdId,
-          recipients.map((r) => r.username),
+          recipients.map((r) => ({ username: r.username, permission: r.permission })),
         )
       } catch {
-        setSubmitError(
+        toastError(
           'Your video was uploaded and configured, but sharing with specific users failed. ' +
             'You can manage access from your profile.',
         )
@@ -482,9 +512,7 @@ function UploadPage() {
       try {
         await setVideoFeatured(createdId, featured)
       } catch {
-        setSubmitError(
-          'Your video was saved, but its featured status could not be updated.',
-        )
+        toastError('Your video was saved, but its featured status could not be updated.')
         setSubmitting(false)
         return
       }
@@ -493,6 +521,7 @@ function UploadPage() {
     setSubmitting(false)
 
     if (isEditMode) {
+      success('Changes saved.')
       navigate(`/video?v=${editVideoId}`)
       return
     }
@@ -660,6 +689,7 @@ function UploadPage() {
           id="upload-visibility"
           value={visibility}
           onChange={(event) => setVisibility(event.target.value)}
+          disabled={isEditMode && !viewerIsOwnerOrAdmin}
         >
           {VISIBILITY_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
@@ -667,6 +697,9 @@ function UploadPage() {
             </option>
           ))}
         </select>
+        {isEditMode && !viewerIsOwnerOrAdmin && (
+          <p className="upload-hint">Only the owner or an admin can change visibility.</p>
+        )}
 
         {isAdmin && (
           <label className="upload-checkbox">
@@ -679,7 +712,7 @@ function UploadPage() {
           </label>
         )}
 
-        {visibility === 'private' && (
+        {viewerIsOwnerOrAdmin && visibility === 'private' && (
           <div className="upload-field-group">
             <label>Share with</label>
             <ChipInput
@@ -698,6 +731,16 @@ function UploadPage() {
               onSelectSuggestion={addRecipient}
               suggestionsLoading={recipientSearchLoading}
               placeholder="Search by username or display name..."
+              renderChipExtra={(chip) => (
+                <select
+                  className="chip-input-permission"
+                  value={recipients.find((r) => String(r.userId) === chip.key)?.permission ?? 'view'}
+                  onChange={(event) => updateRecipientPermission(chip.key, event.target.value)}
+                >
+                  <option value="view">View</option>
+                  <option value="edit">Edit</option>
+                </select>
+              )}
             />
           </div>
         )}
@@ -718,8 +761,6 @@ function UploadPage() {
         {uploadPercent != null && (
           <ProgressBar value={uploadPercent} label={`Uploading (${uploadPercent}%)...`} />
         )}
-
-        {submitError && <p className="upload-error">{submitError}</p>}
 
         <button type="submit" className="upload-submit" disabled={submitDisabled}>
           {isEditMode

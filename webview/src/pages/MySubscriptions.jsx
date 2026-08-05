@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../context/useToast.js'
 import { listMySubscriptions } from '../api/users.js'
 import UserCard from '../components/UserCard.jsx'
 import './UsersList.css'
@@ -8,11 +9,11 @@ const PAGE_LIMIT = 24
 
 function MySubscriptions() {
   const { user, loading: authLoading } = useAuth()
+  const { error: toastError } = useToast()
   const [items, setItems] = useState([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
 
   useEffect(() => {
     if (!user) {
@@ -23,7 +24,6 @@ function MySubscriptions() {
 
     async function load() {
       setLoading(true)
-      setError(null)
       try {
         const data = await listMySubscriptions({ page, limit: PAGE_LIMIT })
         if (!cancelled) {
@@ -32,7 +32,7 @@ function MySubscriptions() {
         }
       } catch {
         if (!cancelled) {
-          setError('Failed to load your subscriptions.')
+          toastError('Failed to load your subscriptions.')
         }
       } finally {
         if (!cancelled) {
@@ -46,7 +46,7 @@ function MySubscriptions() {
     return () => {
       cancelled = true
     }
-  }, [user, page])
+  }, [user, page, toastError])
 
   if (authLoading) {
     return null
@@ -62,8 +62,7 @@ function MySubscriptions() {
 
   return (
     <section className="users-listing">
-      {error && <p className="users-listing-error">{error}</p>}
-      {!loading && items.length === 0 && !error && (
+      {!loading && items.length === 0 && (
         <p className="users-listing-empty">You haven't subscribed to anyone yet.</p>
       )}
       <div className="users-listing-list">

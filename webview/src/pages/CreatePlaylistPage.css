@@ -78,10 +78,10 @@
   flex-shrink: 0;
 }
 
-.create-playlist-error {
+.create-playlist-hint {
   margin: 0;
   font-size: 14px;
-  color: #d33;
+  color: var(--text);
 }
 
 .create-playlist-submit {

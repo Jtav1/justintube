@@ -1,4 +1,5 @@
 import { sequelize } from "../db.js";
+import { AccessPermission } from "./access-permission.js";
 import { Comment } from "./comment.js";
 import { ContentTag } from "./content-tag.js";
 import { EmailVerificationToken } from "./email-verification-token.js";
@@ -257,10 +258,27 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
+  AccessPermission.hasMany(VideoAccess, {
+    foreignKey: "permissionId",
+  });
+  
+  VideoAccess.belongsTo(AccessPermission, {
+    foreignKey: "permissionId",
+  });
+
+  AccessPermission.hasMany(PlaylistAccess, {
+    foreignKey: "permissionId",
+  });
+  
+  PlaylistAccess.belongsTo(AccessPermission, {
+    foreignKey: "permissionId",
+  });
+  
   User.hasMany(UserHiddenVideo, {
     foreignKey: "userId",
     onDelete: "CASCADE",
   });
+  
   UserHiddenVideo.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "CASCADE",
@@ -270,6 +288,7 @@ function registerAssociations() {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
+  
   UserHiddenVideo.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -279,6 +298,7 @@ function registerAssociations() {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
+  
   ContentTag.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -288,6 +308,7 @@ function registerAssociations() {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
+  
   Comment.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
@@ -297,6 +318,7 @@ function registerAssociations() {
     foreignKey: "userId",
     onDelete: "SET NULL",
   });
+  
   Comment.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "SET NULL",
@@ -418,6 +440,7 @@ registerAssociations();
  * @type {object}
  */
 export const models = {
+  AccessPermission,
   Role,
   User,
   EmailVerificationToken,
@@ -452,6 +475,7 @@ export const models = {
 };
 
 export {
+  AccessPermission,
   Comment,
   ContentTag,
   EmailVerificationToken,
