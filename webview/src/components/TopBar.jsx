@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Menu, MoreVertical, Palette, Search, UserRound, Video } from 'lucide-react'
+import { Menu, MessageSquareWarning, MoreVertical, Palette, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
@@ -203,6 +203,21 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             <Video size={18} />
             <span>Upload</span>
           </Link>
+        )}
+        {user && (
+          <button
+            type="button"
+            className="topbar-report-btn"
+            aria-label="Report an issue"
+            title="Report an issue"
+            onClick={() =>
+              navigate('/reports/new', {
+                state: { reportType: 'website', link: window.location.href },
+              })
+            }
+          >
+            <MessageSquareWarning size={20} />
+          </button>
         )}
         {user && <NotificationBell />}
         <div className="topbar-theme" ref={themeMenuRef}>

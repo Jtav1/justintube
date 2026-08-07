@@ -100,6 +100,19 @@ describe("reports", () => {
     expect(websiteRes.body).toMatchObject({ reportType: "website", videoId: null, reportedUser: { userId: null } });
   });
 
+  test("creates a report with no link", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_report_no_link";
+    await seedUserWithRoleAndKey("viewer", rawKey);
+
+    const res = await client
+      .post("/api/v1/reports")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ reportType: "system", description: "No link provided." });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ reportType: "system", link: null });
+  });
+
   test("rejects invalid reportType and missing fields", async () => {
     const client = createTestClient();
     const rawKey = "jt_test_report_invalid";

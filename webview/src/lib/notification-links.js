@@ -11,6 +11,7 @@ const TARGET_LINK_BUILDERS = {
   moderation: (target) => `/video?v=${encodeURIComponent(target)}`,
   subscription: (target) => `/video?v=${encodeURIComponent(target)}`,
   subscriber: () => `/subscribers`,
+  report: (target) => `/reports/${encodeURIComponent(target)}`,
 }
 
 /**

@@ -3,8 +3,9 @@ import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
-import { Report, User } from "../lib/models/index.js";
+import { Report, Role, User } from "../lib/models/index.js";
 import { REPORT_TYPE_VALUES } from "../lib/models/constants.js";
+import { createNotification } from "../lib/notifications.js";
 import { parsePagination } from "../lib/pagination.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 
@@ -119,6 +120,32 @@ function parseRequiredText(raw, fieldName, maxLength) {
 }
 
 /**
+ * Parses an optional nullable string field with a max length. Missing,
+ * null, or blank input is treated as "not provided" (null), not an error.
+ *
+ * @param {unknown} raw Body field value.
+ * @param {string} fieldName Field name for error messages.
+ * @param {number} maxLength Maximum allowed length.
+ * @returns {{ok: true, value: string|null}|{ok: false, message: string}} Parsed value or error.
+ */
+function parseOptionalText(raw, fieldName, maxLength) {
+  if (raw === undefined || raw === null) {
+    return { ok: true, value: null };
+  }
+  const value = String(raw).trim();
+  if (!value) {
+    return { ok: true, value: null };
+  }
+  if (value.length > maxLength) {
+    return {
+      ok: false,
+      message: `${fieldName} must be at most ${maxLength} characters.`,
+    };
+  }
+  return { ok: true, value };
+}
+
+/**
  * Parses an optional nullable positive integer target id field.
  *
  * @param {unknown} raw Body field value.
@@ -153,7 +180,7 @@ function parseCreateReportBody(body) {
     return reportType;
   }
 
-  const link = parseRequiredText(body.link, "link", MAX_LINK_LENGTH);
+  const link = parseOptionalText(body.link, "link", MAX_LINK_LENGTH);
   if (!link.ok) {
     return link;
   }
@@ -268,6 +295,42 @@ function parseModerateBody(body) {
 }
 
 /**
+ * Notifies the reporter that their report was submitted, and every
+ * admin/moderator that a new report needs triage. Never throws -
+ * `createNotification` swallows its own delivery failures.
+ *
+ * @param {import('sequelize').Model} report Newly created Report row.
+ * @param {number} actorUserId Id of the user who filed the report.
+ * @returns {Promise<void>} Resolves once delivery has been attempted.
+ */
+async function notifyReportCreated(report, actorUserId) {
+  const moderators = await User.findAll({
+    attributes: ["id"],
+    include: [{ model: Role, where: { name: ["admin", "moderator"] }, attributes: [] }],
+  });
+
+  await Promise.all([
+    createNotification({
+      recipientUserId: report.reporterUserId,
+      typeName: "report",
+      title: "Report submitted",
+      message: "Your report has been submitted and will be reviewed by a moderator.",
+      target: String(report.id),
+    }),
+    ...moderators.map((moderator) =>
+      createNotification({
+        recipientUserId: moderator.id,
+        actorUserId,
+        typeName: "report",
+        title: "New report filed",
+        message: `A new ${report.reportType} report was filed and needs review.`,
+        target: String(report.id),
+      }),
+    ),
+  ]);
+}
+
+/**
  * Builds the reports router: create, self-service update/close, moderator
  * triage, and admin deletion.
  *
@@ -299,12 +362,12 @@ export function createReportsRouter() {
    *         application/json:
    *           schema:
    *             type: object
-   *             required: [reportType, link, description]
+   *             required: [reportType, description]
    *             properties:
    *               reportType:
    *                 type: string
    *                 enum: [video, user, playlist, website, system]
-   *               link: { type: string, maxLength: 2048 }
+   *               link: { type: string, maxLength: 2048, nullable: true }
    *               description: { type: string, maxLength: 1000 }
    *               videoId: { type: integer, minimum: 1 }
    *               reportedUserId: { type: integer, minimum: 1 }
@@ -334,6 +397,7 @@ export function createReportsRouter() {
         reporterUserId: req.user.id,
       });
       const row = await Report.findByPk(created.id, { include: REPORT_USER_INCLUDES });
+      await notifyReportCreated(row, req.user.id);
       res.status(201).json(serializeReport(row));
     } catch (err) {
       console.error("createReport failed:", err);

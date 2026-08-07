@@ -147,6 +147,23 @@
   display: flex;
 }
 
+.topbar-report-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.topbar-report-btn:hover {
+  background: var(--accent-bg);
+}
+
 .topbar-theme-toggle {
   display: inline-flex;
   align-items: center;

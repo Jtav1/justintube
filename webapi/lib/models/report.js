@@ -24,7 +24,7 @@ export const Report = sequelize.define(
     reportType: constrainedString(REPORT_TYPE_VALUES, { allowNull: false }),
     link: {
       type: DataTypes.STRING(2048),
-      allowNull: false,
+      allowNull: true,
     },
     videoId: {
       type: DataTypes.INTEGER.UNSIGNED,
