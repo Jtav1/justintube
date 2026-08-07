@@ -115,6 +115,12 @@ const DEFAULT_NOTIFICATION_TYPES = [
     defaultEmailEnabled: true,
     inAppLocked: true,
   },
+  {
+    name: "report",
+    description: "Report submissions and moderator updates",
+    defaultEnabled: true,
+    defaultEmailEnabled: true,
+  },
 ];
 
 /**

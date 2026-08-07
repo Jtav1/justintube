@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getVideo, unhideVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
+import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
@@ -10,6 +11,7 @@ import PlaylistQueue from '../components/PlaylistQueue.jsx'
 import './VideoPage.css'
 
 function VideoPage() {
+  const { user } = useAuth()
   const { error: toastError } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -104,6 +106,17 @@ function VideoPage() {
   const canEditPlaylist = Boolean(playlist)
     && (playlist.viewerPermission === 'owner' || playlist.viewerPermission === 'edit')
 
+  function handleReport() {
+    navigate('/reports/new', {
+      state: {
+        reportType: 'video',
+        videoId: video.id,
+        playlistId: playlist?.id,
+        link: window.location.href,
+      },
+    })
+  }
+
   async function handleRemoveFromPlaylist() {
     try {
       await removePlaylistItem(playlist.id, video.id)
@@ -136,6 +149,7 @@ function VideoPage() {
             <VideoPlayer
               video={video}
               onRemoveFromPlaylist={canEditPlaylist ? handleRemoveFromPlaylist : undefined}
+              onReport={user ? handleReport : undefined}
             />
             <VideoComments video={video} />
           </div>

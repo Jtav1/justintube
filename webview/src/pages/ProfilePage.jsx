@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { ArrowRight, Pencil, UserRound } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ArrowRight, MessageSquareWarning, Pencil, UserRound } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import apiClient from '../api/client.js'
@@ -43,6 +43,7 @@ function ProfilePage() {
   const { username } = useParams()
   const { user: authUser } = useAuth()
   const { success, error: toastError } = useToast()
+  const navigate = useNavigate()
   const fileInputRef = useRef(null)
   const avatarFileInputRef = useRef(null)
 
@@ -209,6 +210,13 @@ function ProfilePage() {
   )
   const canGrantUploader = Boolean(isAdminViewer && profile?.user?.uploader === false)
   const canSubscribe = Boolean(authUser) && !isOwnProfile && profile?.user?.id != null
+  const canReportProfile = Boolean(authUser) && !isOwnProfile && profile?.user?.id != null
+
+  function handleReportProfile() {
+    navigate('/reports/new', {
+      state: { reportType: 'user', reportedUserId: profile.user.id, link: window.location.href },
+    })
+  }
 
   async function handleResendVerification() {
     setResendingVerification(true)
@@ -392,35 +400,50 @@ function ProfilePage() {
         className="profile-banner"
         style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
       >
-        {canManageProfile && (
+        {(canManageProfile || canReportProfile) && (
           <div className="profile-banner-actions">
-            <button
-              type="button"
-              className="profile-banner-edit"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={bannerUploading}
-              aria-label="Change banner image"
-              title="Change banner image"
-            >
-              <Pencil size={16} />
-            </button>
-            {bannerUrl && (
+            {canManageProfile && (
+              <>
+                <button
+                  type="button"
+                  className="profile-banner-edit"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={bannerUploading}
+                  aria-label="Change banner image"
+                  title="Change banner image"
+                >
+                  <Pencil size={16} />
+                </button>
+                {bannerUrl && (
+                  <button
+                    type="button"
+                    className="profile-banner-remove"
+                    onClick={handleBannerDelete}
+                    disabled={bannerUploading}
+                  >
+                    Remove
+                  </button>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="profile-banner-file-input"
+                  onChange={handleBannerFileChange}
+                />
+              </>
+            )}
+            {canReportProfile && (
               <button
                 type="button"
-                className="profile-banner-remove"
-                onClick={handleBannerDelete}
-                disabled={bannerUploading}
+                className="profile-banner-report"
+                onClick={handleReportProfile}
+                aria-label="Report this user"
+                title="Report this user"
               >
-                Remove
+                <MessageSquareWarning size={16} />
               </button>
             )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="profile-banner-file-input"
-              onChange={handleBannerFileChange}
-            />
           </div>
         )}
 

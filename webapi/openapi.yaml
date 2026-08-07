@@ -17,6 +17,8 @@ tags:
     description: Media upload
   - name: Videos
     description: Video discovery, metadata, engagement, and access
+  - name: Reports
+    description: User-filed policy reports against videos, users, playlists, or the site
   - name: Internal
     description: Processing-service callbacks (INTERNAL_SERVICE_TOKEN)
 components:

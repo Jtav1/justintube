@@ -6,6 +6,7 @@ import {
   Link as LinkIcon,
   ListMinus,
   ListPlus,
+  MessageSquareWarning,
   Pencil,
   Repeat,
   Settings2,
@@ -47,7 +48,7 @@ function pickDefaultRendition(renditions) {
   )
 }
 
-function VideoPlayer({ video, onRemoveFromPlaylist }) {
+function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
   const { user } = useAuth()
   const { error: toastError } = useToast()
   const navigate = useNavigate()
@@ -609,6 +610,17 @@ function VideoPlayer({ video, onRemoveFromPlaylist }) {
               onClick={onRemoveFromPlaylist}
             >
               <ListMinus size={18} />
+            </button>
+          )}
+          {onReport && (
+            <button
+              type="button"
+              className="video-player-icon-btn"
+              aria-label="Report"
+              title="Report"
+              onClick={onReport}
+            >
+              <MessageSquareWarning size={18} />
             </button>
           )}
           <div className="video-player-reaction-group">

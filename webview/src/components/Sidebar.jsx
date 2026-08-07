@@ -60,11 +60,9 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
         : null,
     },
     { key: 'subscribers', label: 'Subscribers', icon: UserCheck, to: user ? '/subscribers' : null },
+    { key: 'reports', label: 'Reports', icon: MessageSquareWarning, to: user ? '/reports' : null },
     ...(user?.role === 'admin'
       ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
-      : []),
-    ...((user?.role === 'moderator' || user?.role === 'admin')
-      ? [{ key: 'reports', label: "Reports", icon: MessageSquareWarning, to: null }]
       : []),
   ]
 
