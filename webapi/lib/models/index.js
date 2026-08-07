@@ -10,6 +10,7 @@ import { NotificationType } from "./notification-type.js";
 import { OriginalUpload } from "./original-upload.js";
 import { PlaylistAccess } from "./playlist-access.js";
 import { PlaylistItem } from "./playlist-item.js";
+import { Report } from "./report.js";
 import { Role } from "./role.js";
 import { SsoProvider } from "./sso-provider.js";
 import { StaticPage } from "./static-page.js";
@@ -430,6 +431,57 @@ function registerAssociations() {
     targetKey: "mediacmsUserId",
     onDelete: "CASCADE",
   });
+
+  User.hasMany(Report, {
+    as: "ReportsFiled",
+    foreignKey: "reporterUserId",
+    onDelete: "SET NULL",
+  });
+  Report.belongsTo(User, {
+    as: "Reporter",
+    foreignKey: "reporterUserId",
+    onDelete: "SET NULL",
+  });
+
+  User.hasMany(Report, {
+    as: "ReportsReceived",
+    foreignKey: "reportedUserId",
+    onDelete: "SET NULL",
+  });
+  Report.belongsTo(User, {
+    as: "ReportedUser",
+    foreignKey: "reportedUserId",
+    onDelete: "SET NULL",
+  });
+
+  User.hasMany(Report, {
+    as: "ReportComments",
+    foreignKey: "commenterUserId",
+    onDelete: "SET NULL",
+  });
+  Report.belongsTo(User, {
+    as: "Commenter",
+    foreignKey: "commenterUserId",
+    onDelete: "SET NULL",
+  });
+
+  OriginalUpload.hasMany(Report, {
+    foreignKey: "videoId",
+    onDelete: "SET NULL",
+  });
+  Report.belongsTo(OriginalUpload, {
+    foreignKey: "videoId",
+    onDelete: "SET NULL",
+  });
+
+  UserPlaylist.hasMany(Report, {
+    foreignKey: "playlistId",
+    onDelete: "SET NULL",
+  });
+  Report.belongsTo(UserPlaylist, {
+    foreignKey: "playlistId",
+    onDelete: "SET NULL",
+  });
 }
 
 registerAssociations();
@@ -455,6 +507,7 @@ export const models = {
   UserPlaylist,
   PlaylistItem,
   PlaylistAccess,
+  Report,
   VideoLike,
   VideoAccess,
   ContentTag,
@@ -486,6 +539,7 @@ export {
   OriginalUpload,
   PlaylistAccess,
   PlaylistItem,
+  Report,
   Role,
   SsoProvider,
   StaticPage,

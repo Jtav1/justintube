@@ -55,3 +55,11 @@ export const MEDIA_TYPE_VALUES = ["video", "audio"];
  * @type {string[]}
  */
 export const SEARCH_INDEX_STATUS_VALUES = ["pending", "indexed"];
+
+/**
+ * Allowed REPORTS.report_type values, covering every entity a user can flag
+ * for policy review plus non-entity-scoped "website"/"system" reports.
+ *
+ * @type {string[]}
+ */
+export const REPORT_TYPE_VALUES = ["video", "user", "playlist", "website", "system"];

@@ -8,6 +8,7 @@ import { createNotificationPreferencesRouter } from "./notification-preferences.
 import { createNotificationsRouter } from "./notifications.js";
 import { createPagesRouter } from "./pages.js";
 import { createPlaylistsRouter } from "./playlists.js";
+import { createReportsRouter } from "./reports.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
 import { createThemesRouter } from "./themes.js";
@@ -107,6 +108,7 @@ export function createApiRouter() {
   router.use(createUsersRouter());
   router.use(createSearchRouter());
   router.use(createPlaylistsRouter());
+  router.use(createReportsRouter());
   registerStubRoutes(router);
   return router;
 }

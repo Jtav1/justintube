@@ -207,6 +207,16 @@ Internal (ingest server callbacks; Bearer `INTERNAL_SERVICE_TOKEN`, mirrors the 
 - [x] `DELETE /api/v1/admin/config/:name` — adminDeleteSystemConfig
 - [x] `POST /api/v1/admin/notifications/broadcast` — adminBroadcastNotification
 
+### Reports
+
+- [x] `POST /api/v1/reports` — createReport
+- [x] `GET /api/v1/reports/mine` — listMyReports
+- [x] `GET /api/v1/reports` — listReports (moderator/admin, filterable by resolved)
+- [x] `GET /api/v1/reports/:id` — getReport (moderator/admin)
+- [x] `PATCH /api/v1/reports/:id` — updateReport (owner: description, one-way close)
+- [x] `PATCH /api/v1/reports/:id/moderate` — moderateReport (moderator/admin: resolved + comment)
+- [x] `DELETE /api/v1/reports/:id` — deleteReport (admin only)
+
 ### Themes
 
 - [x] `GET /api/v1/themes` — listThemes

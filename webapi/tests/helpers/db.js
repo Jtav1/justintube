@@ -15,6 +15,7 @@ import {
   OriginalUpload,
   PlaylistAccess,
   PlaylistItem,
+  Report,
   Role,
   SsoProvider,
   StaticPage,
@@ -73,6 +74,7 @@ const RESET_MODELS = [
   UserIdentity,
   UserApiKey,
   EmailVerificationToken,
+  Report,
   User,
   SsoProvider,
   StaticPage,
@@ -781,6 +783,41 @@ export async function seedTheme(overrides = {}) {
   };
 
   const row = await Theme.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a REPORTS row, applying defaults for any omitted field.
+ *
+ * @param {number} reporterUserId Id of the reporting USERS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.reportType] One of REPORT_TYPE_VALUES.
+ * @param {string} [overrides.link] Client-supplied page URL.
+ * @param {string} [overrides.description] Report description.
+ * @param {number|null} [overrides.videoId] Reported ORIGINAL_UPLOADS id.
+ * @param {number|null} [overrides.reportedUserId] Reported USERS id.
+ * @param {number|null} [overrides.playlistId] Reported USER_PLAYLISTS id.
+ * @param {boolean} [overrides.resolved] Resolution state.
+ * @param {string|null} [overrides.comment] Moderator comment text.
+ * @param {number|null} [overrides.commenterUserId] Commenting moderator/admin id.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded report's id and values.
+ */
+export async function seedReport(reporterUserId, overrides = {}) {
+  const record = {
+    reporterUserId,
+    reportType: "video",
+    link: "https://example.com/videos/sample",
+    description: "sample report",
+    videoId: null,
+    reportedUserId: null,
+    playlistId: null,
+    resolved: false,
+    comment: null,
+    commenterUserId: null,
+    ...overrides,
+  };
+
+  const row = await Report.create(record);
   return asSeedResult(row, record);
 }
 
