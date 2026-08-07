@@ -57,7 +57,7 @@
   display: flex;
   justify-content: center;
   padding: 0 20px;
-  order: 3;
+  order: 2;
 }
 
 .topbar-search {
@@ -112,14 +112,14 @@
   align-items: center;
   gap: 12px;
   font-size: 14px;
-  order: 4;
+  order: 3;
   flex: 0 0 auto;
 }
 
 .topbar-user-slot {
   display: flex;
   align-items: center;
-  order: 5;
+  order: 4;
   flex: 0 0 auto;
 }
 
@@ -255,6 +255,8 @@
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
+  order: 5;
+  flex: 0 0 auto;
 }
 
 .topbar-logout:hover {
@@ -282,7 +284,7 @@
   .topbar {
     display: grid;
     grid-template-columns: auto 1fr auto auto;
-    grid-template-areas: 'left . user toggle' 'right right right right' 'search search search search';
+    grid-template-areas: 'left . user toggle' 'right right right logout' 'search search search search';
     row-gap: 8px;
     padding: 10px 12px;
   }
@@ -316,7 +318,8 @@
   }
 
   .topbar-center,
-  .topbar-right {
+  .topbar-right,
+  .topbar-logout {
     display: none;
   }
 
@@ -331,6 +334,12 @@
     gap: 4px;
     display: flex;
     flex-wrap: wrap;
+  }
+
+  .topbar-menu-open .topbar-logout {
+    grid-area: logout;
+    display: inline-flex;
+    align-self: start;
   }
 
   .topbar-search {

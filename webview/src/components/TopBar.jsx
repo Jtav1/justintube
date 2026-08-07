@@ -224,12 +224,12 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             </div>
           )}
         </div>
-        {user && (
-          <button type="button" className="topbar-logout" onClick={logout}>
-            Log out
-          </button>
-        )}
       </div>
+      {user && (
+        <button type="button" className="topbar-logout" onClick={logout}>
+          Log out
+        </button>
+      )}
     </header>
   )
 }
