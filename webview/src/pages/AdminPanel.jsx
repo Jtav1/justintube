@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useTheme } from '../context/useTheme.js'
 import { adminBroadcastNotification } from '../api/admin.js'
 import { deleteTheme } from '../api/themes.js'
+import { getTranscodeProfiles, deleteTranscodeProfile } from '../api/transcode-profiles.js'
 import './AdminPanel.css'
 import './AdminThemes.css'
+import './AdminTranscodeProfiles.css'
 
 function AdminPanel() {
   const { user, loading: authLoading } = useAuth()
@@ -18,6 +20,35 @@ function AdminPanel() {
   const [sending, setSending] = useState(false)
 
   const [deletingThemeId, setDeletingThemeId] = useState(null)
+
+  const [profiles, setProfiles] = useState([])
+  const [profilesLoading, setProfilesLoading] = useState(true)
+  const [deletingProfileId, setDeletingProfileId] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadProfiles() {
+      try {
+        const data = await getTranscodeProfiles()
+        if (!cancelled) {
+          setProfiles(data.items)
+        }
+      } catch {
+        if (!cancelled) {
+          toastError('Failed to load transcoding profiles.')
+        }
+      } finally {
+        if (!cancelled) {
+          setProfilesLoading(false)
+        }
+      }
+    }
+    loadProfiles()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (authLoading) {
     return (
@@ -56,6 +87,25 @@ function AdminPanel() {
     }
   }
 
+  async function handleDeleteProfile(profile) {
+    if (deletingProfileId) {
+      return
+    }
+    if (!window.confirm(`Delete the transcoding profile "${profile.resolutionName} (${profile.mediaType})"? This cannot be undone.`)) {
+      return
+    }
+    setDeletingProfileId(profile.id)
+    try {
+      await deleteTranscodeProfile(profile.id)
+      setProfiles((prev) => prev.filter((item) => item.id !== profile.id))
+      success('Transcoding profile deleted.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to delete transcoding profile.')
+    } finally {
+      setDeletingProfileId(null)
+    }
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
     if (sending) {
@@ -81,7 +131,7 @@ function AdminPanel() {
 
   return (
     <section className="settings-page">
-      <div className="settings-columns">
+      <div className="admin-panel-columns">
         <div className="settings-card">
           <h1>Admin Panel</h1>
           <h2>Broadcast a notification</h2>
@@ -143,6 +193,35 @@ function AdminPanel() {
                     disabled={deletingThemeId === item.id}
                   >
                     {deletingThemeId === item.id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <h2>Manage Transcoding Profiles</h2>
+          <Link to="/control-panel/transcode-profiles/new" className="settings-submit admin-profiles-create-link">
+            Create Profile
+          </Link>
+          <div className="admin-profiles-list">
+            {profilesLoading && <p className="settings-status">Loading transcoding profiles...</p>}
+            {!profilesLoading && profiles.map((item) => (
+              <div className="admin-profiles-row" key={item.id}>
+                <span className="admin-profiles-name">
+                  {item.resolutionName} &middot; {item.outputWidth}x{item.outputHeight} &middot;{' '}
+                  {item.videoCodec}/{item.audioCodec} &middot; {item.outputContainer}
+                </span>
+                <span className="admin-profiles-badge">{item.mediaType}</span>
+                <div className="admin-profiles-actions">
+                  <Link to={`/control-panel/transcode-profiles/${item.id}/edit`}>Edit</Link>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteProfile(item)}
+                    disabled={deletingProfileId === item.id}
+                  >
+                    {deletingProfileId === item.id ? 'Deleting...' : 'Delete'}
                   </button>
                 </div>
               </div>

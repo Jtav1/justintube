@@ -10,6 +10,7 @@ import CreatePlaylistPage from './pages/CreatePlaylistPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
 import ControlPanelPage from './pages/AdminPanel.jsx'
 import AdminThemesPage from './pages/AdminThemes.jsx'
+import AdminTranscodeProfilesPage from './pages/AdminTranscodeProfiles.jsx'
 import ReportsPage from './pages/ReportsPage.jsx'
 import ReportForm from './pages/ReportForm.jsx'
 import UserPlaylistsPage from './pages/UserPlaylists.jsx'
@@ -51,6 +52,8 @@ function App() {
         <Route path="/control-panel" element={<ControlPanelPage />} />
         <Route path="/control-panel/themes/new" element={<AdminThemesPage />} />
         <Route path="/control-panel/themes/:id/edit" element={<AdminThemesPage />} />
+        <Route path="/control-panel/transcode-profiles/new" element={<AdminTranscodeProfilesPage />} />
+        <Route path="/control-panel/transcode-profiles/:id/edit" element={<AdminTranscodeProfilesPage />} />
         <Route path="/video" element={<VideoPage />} />
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />
