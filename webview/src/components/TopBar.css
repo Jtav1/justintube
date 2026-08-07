@@ -1,7 +1,7 @@
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   background-color: var(--bg);
@@ -17,6 +17,12 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  order: 1;
+  flex: 0 0 auto;
+}
+
+.topbar-mobile-toggle {
+  display: none;
 }
 
 .topbar-toggle {
@@ -52,6 +58,7 @@
   display: flex;
   justify-content: center;
   padding: 0 20px;
+  order: 2;
 }
 
 .topbar-search {
@@ -106,6 +113,15 @@
   align-items: center;
   gap: 12px;
   font-size: 14px;
+  order: 3;
+  flex: 0 0 auto;
+}
+
+.topbar-user-slot {
+  display: flex;
+  align-items: center;
+  order: 4;
+  flex: 0 0 auto;
 }
 
 .topbar-upload {
@@ -240,6 +256,8 @@
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
+  order: 5;
+  flex: 0 0 auto;
 }
 
 .topbar-logout:hover {
@@ -266,8 +284,8 @@
 @media (max-width: 640px) {
   .topbar {
     display: grid;
-    grid-template-columns: auto 1fr auto;
-    grid-template-areas: 'left . right' 'search search search';
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-areas: 'left . user toggle' 'right right right logout' 'search search search search';
     row-gap: 8px;
     padding: 10px 12px;
   }
@@ -277,14 +295,52 @@
     gap: 8px;
   }
 
-  .topbar-center {
-    grid-area: search;
-    padding: 0;
+  .topbar-user-slot {
+    grid-area: user;
   }
 
-  .topbar-right {
+  .topbar-mobile-toggle {
+    grid-area: toggle;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-h);
+    cursor: pointer;
+  }
+
+  .topbar-mobile-toggle:hover,
+  .topbar-mobile-toggle[aria-expanded='true'] {
+    background: var(--accent-bg);
+  }
+
+  .topbar-center,
+  .topbar-right,
+  .topbar-logout {
+    display: none;
+  }
+
+  .topbar-menu-open .topbar-center {
+    grid-area: search;
+    padding: 0;
+    display: flex;
+  }
+
+  .topbar-menu-open .topbar-right {
     grid-area: right;
     gap: 4px;
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .topbar-menu-open .topbar-logout {
+    grid-area: logout;
+    display: inline-flex;
+    align-self: start;
   }
 
   .topbar-search {

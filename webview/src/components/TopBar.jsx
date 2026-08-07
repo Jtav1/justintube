@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Menu, Palette, Search, UserRound, Video } from 'lucide-react'
+import { Menu, MoreVertical, Palette, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
@@ -21,6 +21,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef(null)
   const userToggleRef = useRef(null)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   // Keeps the search box in sync with the URL only on the results page -
   // elsewhere it's free local state that starts empty on navigation. Adjusted
@@ -84,7 +85,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
 
   return (
     <header
-      className="topbar"
+      className={`topbar${mobileMenuOpen ? ' topbar-menu-open' : ''}`}
       style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}
     >
       <div className="topbar-left">
@@ -132,6 +133,62 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
           </svg>
         </Link>
       </div>
+      <div className="topbar-user-slot">
+        {user ? (
+          <div className="topbar-user" ref={userMenuRef}>
+            <button
+              type="button"
+              className="topbar-user-button"
+              onClick={() => setUserMenuOpen((open) => !open)}
+              aria-haspopup="true"
+              aria-expanded={userMenuOpen}
+              ref={userToggleRef}
+            >
+              {user.avatarFilename ? (
+                <img className="topbar-avatar" src={avatarUrl} alt="" />
+              ) : (
+                <span className="topbar-avatar topbar-avatar-placeholder">
+                  <UserRound size={18} />
+                </span>
+              )}
+              <span className="topbar-username">{user.displayName || user.username}</span>
+            </button>
+            {userMenuOpen && (
+              <div className="topbar-user-menu" role="menu">
+                <Link
+                  to={`/users/${user.username}`}
+                  className="topbar-user-menu-item"
+                  onClick={() => setUserMenuOpen(false)}
+                >
+                  My Profile
+                </Link>
+                <Link
+                  to="/settings"
+                  className="topbar-user-menu-item"
+                  onClick={() => setUserMenuOpen(false)}
+                >
+                  Settings
+                </Link>
+              </div>
+            )}
+          </div>
+        ) : (
+          <Link to="/login" className="topbar-login">
+            Log in
+          </Link>
+        )}
+      </div>
+      <button
+        type="button"
+        className="topbar-mobile-toggle"
+        onClick={() => setMobileMenuOpen((open) => !open)}
+        aria-label="More options"
+        title="More options"
+        aria-haspopup="true"
+        aria-expanded={mobileMenuOpen}
+      >
+        <MoreVertical size={20} />
+      </button>
       <div className="topbar-center">
         <form className="topbar-search" onSubmit={handleSearchSubmit}>
           <SearchAutocomplete value={query} onChange={setQuery} />
@@ -167,55 +224,12 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             </div>
           )}
         </div>
-        {user ? (
-          <>
-            <div className="topbar-user" ref={userMenuRef}>
-              <button
-                type="button"
-                className="topbar-user-button"
-                onClick={() => setUserMenuOpen((open) => !open)}
-                aria-haspopup="true"
-                aria-expanded={userMenuOpen}
-                ref={userToggleRef}
-              >
-                {user.avatarFilename ? (
-                  <img className="topbar-avatar" src={avatarUrl} alt="" />
-                ) : (
-                  <span className="topbar-avatar topbar-avatar-placeholder">
-                    <UserRound size={18} />
-                  </span>
-                )}
-                <span className="topbar-username">{user.displayName || user.username}</span>
-              </button>
-              {userMenuOpen && (
-                <div className="topbar-user-menu" role="menu">
-                  <Link
-                    to={`/users/${user.username}`}
-                    className="topbar-user-menu-item"
-                    onClick={() => setUserMenuOpen(false)}
-                  >
-                    My Profile
-                  </Link>
-                  <Link
-                    to="/settings"
-                    className="topbar-user-menu-item"
-                    onClick={() => setUserMenuOpen(false)}
-                  >
-                    Settings
-                  </Link>
-                </div>
-              )}
-            </div>
-            <button type="button" className="topbar-logout" onClick={logout}>
-              Log out
-            </button>
-          </>
-        ) : (
-          <Link to="/login" className="topbar-login">
-            Log in
-          </Link>
-        )}
       </div>
+      {user && (
+        <button type="button" className="topbar-logout" onClick={logout}>
+          Log out
+        </button>
+      )}
     </header>
   )
 }

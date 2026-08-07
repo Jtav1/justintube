@@ -660,17 +660,18 @@ export function createSearchRouter() {
           loadHiddenUploadIds(req.user?.id),
         ]);
 
-      const videos = (videoResult.hits || [])
-        .filter((hit) => !hiddenUploadIds.has(hit.id))
-        .map((hit) =>
-          serializeHit(hit, videoViewerPermissionByUploadId.get(hit.id)),
-        );
+      const videoHits = (videoResult.hits || []).filter(
+        (hit) => !hiddenUploadIds.has(hit.id),
+      );
       const videoViewerPermissionByUploadId =
         await loadViewerPermissionsByUploadId(
           videoHits.map((hit) => ({ id: hit.id, userId: hit.userId })),
           req.user,
           req.authRole,
         );
+      const videos = videoHits.map((hit) =>
+        serializeHit(hit, videoViewerPermissionByUploadId.get(hit.id)),
+      );
 
       const playlistHits = playlistResult.hits || [];
       const playlistIds = playlistHits.map((hit) => hit.id);
