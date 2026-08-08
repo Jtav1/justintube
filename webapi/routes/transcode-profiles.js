@@ -4,6 +4,7 @@ import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { MEDIA_TYPE_VALUES, RESOLUTION_VALUES } from "../lib/models/constants.js";
 import { TranscodeProfile, User } from "../lib/models/index.js";
+import { getProcessingHealth } from "../lib/processing-client.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 
 /**
@@ -48,6 +49,7 @@ function parsePositiveInt(raw) {
  *   outputContainer: string,
  *   videoCodec: string,
  *   audioCodec: string,
+ *   hardwareAccelerated: boolean,
  *   creator: {userId: number|null, username: string|null, displayName: string|null},
  *   createdAt: Date,
  *   updatedAt: Date
@@ -64,6 +66,7 @@ function serializeTranscodeProfile(row) {
     outputContainer: row.outputContainer,
     videoCodec: row.videoCodec,
     audioCodec: row.audioCodec,
+    hardwareAccelerated: Boolean(row.hardwareAccelerated),
     creator: serializeUserRef(row.creatorUserId, row.Creator?.username, row.Creator?.displayName),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -205,6 +208,27 @@ function parseToken(raw, fieldName, required) {
 }
 
 /**
+ * Parses an optional hardwareAccelerated flag. Defaults to `false` when
+ * absent (matching the model column's default), both on create and update.
+ *
+ * @param {unknown} raw Body hardwareAccelerated value.
+ * @returns {{ok: true, value?: boolean}|{ok: false, message: string}}
+ *   Parsed value or error.
+ */
+function parseHardwareAccelerated(raw) {
+  if (raw === undefined) {
+    return { ok: true };
+  }
+  if (typeof raw !== "boolean") {
+    return {
+      ok: false,
+      message: "hardwareAccelerated must be a boolean.",
+    };
+  }
+  return { ok: true, value: raw };
+}
+
+/**
  * Builds create or partial-update fields for a transcode profile.
  *
  * @param {Record<string, unknown>} body Request body.
@@ -330,6 +354,18 @@ function parseTranscodeProfileBody(body, options) {
     patch.audioCodec = audioCodec.value;
   }
 
+  if (Object.prototype.hasOwnProperty.call(body, "hardwareAccelerated")) {
+    const hardwareAccelerated = parseHardwareAccelerated(
+      body.hardwareAccelerated,
+    );
+    if (!hardwareAccelerated.ok) {
+      return hardwareAccelerated;
+    }
+    patch.hardwareAccelerated = hardwareAccelerated.value;
+  } else if (required) {
+    patch.hardwareAccelerated = false;
+  }
+
   if (Object.prototype.hasOwnProperty.call(body, "creatorUserId")) {
     const creator = parseOptionalPositiveInt(
       body.creatorUserId,
@@ -352,7 +388,7 @@ function parseTranscodeProfileBody(body, options) {
     return {
       ok: false,
       message:
-        "At least one of description, resolutionName, mediaType, outputHeight, outputWidth, outputContainer, videoCodec, audioCodec, or creatorUserId is required.",
+        "At least one of description, resolutionName, mediaType, outputHeight, outputWidth, outputContainer, videoCodec, audioCodec, hardwareAccelerated, or creatorUserId is required.",
     };
   }
 
@@ -418,6 +454,64 @@ export function createTranscodeProfilesRouter() {
   );
 
   /**
+   * Reports whether the processing service currently has hardware-accelerated
+   * transcoding enabled/configured, and which encoders it accepts. Lets the
+   * admin UI grey out the hardware-accelerated toggle and constrain the
+   * codec picker when hardware transcoding isn't actually available - purely
+   * advisory, does not gate profile CRUD itself.
+   * GET /api/v1/admin/transcode-profiles/hardware-status
+   * Auth: session cookie or Bearer API key; admin role required.
+   *
+   * @openapi
+   * /api/v1/admin/transcode-profiles/hardware-status:
+   *   get:
+   *     tags: [Admin]
+   *     summary: Check current hardware-accelerated transcoding availability
+   *     operationId: adminTranscodeProfilesHardwareStatus
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: Processing-service hardware transcoding availability
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 available: { type: boolean }
+   *                 enabled: { type: boolean }
+   *                 encoders: { type: array, items: { type: string } }
+   *       401:
+   *         description: Not authenticated
+   *       403:
+   *         description: Not an admin
+   *
+   * @param {import('express').Request} _req Incoming request (unused).
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 with hardware availability info.
+   */
+  router.get(
+    "/admin/transcode-profiles/hardware-status",
+    requireAuth,
+    requireAdmin,
+    async (_req, res) => {
+      const health = await getProcessingHealth();
+      const hardwareAcceleration =
+        health.ok && health.body?.hardwareAcceleration
+          ? health.body.hardwareAcceleration
+          : { enabled: false, encoders: [] };
+      res.status(200).json({
+        available: health.ok,
+        enabled: Boolean(hardwareAcceleration.enabled),
+        encoders: Array.isArray(hardwareAcceleration.encoders)
+          ? hardwareAcceleration.encoders
+          : [],
+      });
+    },
+  );
+
+  /**
    * Creates a new transcode profile.
    * POST /api/v1/admin/transcode-profiles
    * Auth: session cookie or Bearer API key; admin role required.
@@ -460,6 +554,7 @@ export function createTranscodeProfilesRouter() {
    *               outputContainer: { type: string }
    *               videoCodec: { type: string }
    *               audioCodec: { type: string }
+   *               hardwareAccelerated: { type: boolean, default: false }
    *               creatorUserId: { type: integer, nullable: true, minimum: 1 }
    *     responses:
    *       201:
@@ -550,6 +645,7 @@ export function createTranscodeProfilesRouter() {
    *               outputContainer: { type: string }
    *               videoCodec: { type: string }
    *               audioCodec: { type: string }
+   *               hardwareAccelerated: { type: boolean, default: false }
    *               creatorUserId: { type: integer, nullable: true, minimum: 1 }
    *     responses:
    *       200:

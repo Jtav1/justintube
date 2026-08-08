@@ -15,7 +15,11 @@ import {
   probeVideoDuration,
   shouldSkipProfileForSource,
 } from "../lib/probe.js";
-import { validateTranscodeBatchRequest } from "../lib/transcode.js";
+import {
+  getTranscodeConfig,
+  shouldSkipHardwareProfile,
+  validateTranscodeBatchRequest,
+} from "../lib/transcode.js";
 
 /**
  * Creates the transcode router (`POST /`, `GET /:jobId`, `DELETE /:jobId` when
@@ -43,7 +47,10 @@ export function createTranscodeRouter({
    * `{ filename, jobs: [...] }` body.
    *
    * Profiles that would upscale the source (output width/height greater than
-   * the probed source) are skipped; remaining jobs are enqueued normally.
+   * the probed source) are skipped, as are hardware-accelerated profiles
+   * when hardware transcoding isn't currently usable on this deployment or
+   * this profile's codec isn't in the configured encoder allowlist;
+   * remaining jobs are enqueued normally.
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -105,6 +112,7 @@ export function createTranscodeRouter({
       const accepted = [];
       /** @type {Array<{ jobId: string, profileId: number, reason: string }>} */
       const skipped = [];
+      const hardwareConfig = getTranscodeConfig();
 
       for (const job of jobs) {
         if (job.kind === "rendition" && shouldSkipProfileForSource(job.profile, source)) {
@@ -114,6 +122,20 @@ export function createTranscodeRouter({
             reason: "profile_exceeds_source_resolution",
           });
           continue;
+        }
+        if (job.kind === "rendition") {
+          const hardwareSkipReason = shouldSkipHardwareProfile(
+            job.profile,
+            hardwareConfig,
+          );
+          if (hardwareSkipReason) {
+            skipped.push({
+              jobId: job.jobId,
+              profileId: job.profile.id,
+              reason: hardwareSkipReason,
+            });
+            continue;
+          }
         }
         accepted.push(job);
       }

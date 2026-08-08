@@ -57,6 +57,12 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} outputContainer Output container / extension (e.g. mp4).
  * @property {string} videoCodec Requested video codec name.
  * @property {string} audioCodec Requested audio codec name.
+ * @property {boolean} hardwareAccelerated Whether this profile requests
+ *   hardware-accelerated encoding. Routing is per-profile: a job is only
+ *   skipped/rejected for hardware reasons when this is true (see
+ *   {@link shouldSkipHardwareProfile}); software profiles are always
+ *   encoded in software regardless of the deployment's global hardware
+ *   configuration.
  */
 
 /**
@@ -122,6 +128,25 @@ function requireSafeToken(value, fieldName) {
     );
   }
   return trimmed;
+}
+
+/**
+ * Asserts that `value` is a boolean when present, defaulting to `false` when
+ * absent (older/legacy callers may omit the field entirely).
+ *
+ * @param {unknown} value Candidate boolean.
+ * @param {string} fieldName Field label for error messages.
+ * @returns {boolean} Validated boolean, defaulting to `false`.
+ * @throws {TranscodeValidationError} When a non-boolean value is present.
+ */
+function requireBoolean(value, fieldName) {
+  if (value === undefined) {
+    return false;
+  }
+  if (typeof value !== "boolean") {
+    throw new TranscodeValidationError(`${fieldName} must be a boolean`);
+  }
+  return value;
 }
 
 /**
@@ -212,42 +237,17 @@ export function getTranscodeConfig() {
 }
 
 /**
- * Validates that transcoding is enabled and that a hardware profile requests
- * one of the configured hardware encoders.
- *
- * @param {string} videoCodec Validated profile video codec.
- * @returns {ReturnType<typeof getTranscodeConfig>} Active transcode config.
- * @throws {TranscodeValidationError} When transcoding is disabled or a
- *   hardware encoder is not allowed.
- */
-function validateTranscodeMode(videoCodec) {
-  const config = getTranscodeConfig();
-
-  if (!config.enabled) {
-    throw new TranscodeValidationError("transcoding is disabled");
-  }
-
-  if (
-    config.useHardware &&
-    !config.hardwareEncoders.includes(videoCodec)
-  ) {
-    const accepted = config.hardwareEncoders.length
-      ? config.hardwareEncoders.join(", ")
-      : "none";
-    throw new TranscodeValidationError(
-      `profile.videoCodec must be one of the configured hardware encoders: ${accepted}`,
-    );
-  }
-
-  return config;
-}
-
-/**
  * Validates the nested `profile` object from a transcode request body.
+ * Hardware availability/encoder-allowlist gating is NOT performed here - it's
+ * a per-job routing decision made later by {@link shouldSkipHardwareProfile}
+ * once the source has been probed, not a request-shape validation concern
+ * (a batch shouldn't fail entirely just because one job's hardware profile
+ * isn't currently runnable).
  *
  * @param {unknown} profile Raw profile payload.
  * @returns {TranscodeProfilePayload} Validated profile fields.
- * @throws {TranscodeValidationError} When any required field is invalid.
+ * @throws {TranscodeValidationError} When any required field is invalid, or
+ *   transcoding is disabled entirely.
  */
 export function validateTranscodeProfile(profile) {
   if (profile === null || typeof profile !== "object" || Array.isArray(profile)) {
@@ -268,10 +268,42 @@ export function validateTranscodeProfile(profile) {
     ).toLowerCase(),
     videoCodec: requireSafeToken(body.videoCodec, "profile.videoCodec"),
     audioCodec: requireSafeToken(body.audioCodec, "profile.audioCodec"),
+    hardwareAccelerated: requireBoolean(
+      body.hardwareAccelerated,
+      "profile.hardwareAccelerated",
+    ),
   };
 
-  validateTranscodeMode(validated.videoCodec);
+  if (!getTranscodeConfig().enabled) {
+    throw new TranscodeValidationError("transcoding is disabled");
+  }
+
   return validated;
+}
+
+/**
+ * Decides whether a hardware-accelerated profile should be skipped rather
+ * than enqueued, because hardware transcoding isn't usable on this
+ * deployment right now, or because this profile's videoCodec isn't one of
+ * the currently configured hardware encoders. Software profiles
+ * (`hardwareAccelerated: false`) are never skipped by this check regardless
+ * of the deployment's global hardware configuration.
+ *
+ * @param {TranscodeProfilePayload} profile Validated profile fields.
+ * @param {ReturnType<typeof getTranscodeConfig>} config Current transcode config.
+ * @returns {string|null} A skip reason string, or null when the job should run.
+ */
+export function shouldSkipHardwareProfile(profile, config) {
+  if (!profile.hardwareAccelerated) {
+    return null;
+  }
+  if (!config.useHardware) {
+    return "hardware_transcoding_unavailable";
+  }
+  if (!config.hardwareEncoders.includes(profile.videoCodec)) {
+    return "hardware_encoder_not_configured";
+  }
+  return null;
 }
 
 /**
@@ -478,7 +510,10 @@ export function buildOutputFilename(uuid, outputContainer) {
 }
 
 /**
- * Builds the ffmpeg argument list for a scale + re-encode job.
+ * Builds the ffmpeg argument list for a scale + re-encode job. Only ever
+ * called for jobs that already passed the routes-level
+ * {@link shouldSkipHardwareProfile} check, so `profile.hardwareAccelerated
+ * === true` here implies hardware is actually configured and usable.
  *
  * @param {object} options Transcode execution options.
  * @param {string} options.inputPath Absolute path to the source file.
@@ -487,18 +522,17 @@ export function buildOutputFilename(uuid, outputContainer) {
  * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
  */
 export function buildFfmpegArgs({ inputPath, outputPath, profile }) {
-  const config = validateTranscodeMode(profile.videoCodec);
-  const videoEncoder = config.useHardware
+  const videoEncoder = profile.hardwareAccelerated
     ? profile.videoCodec
     : resolveVideoEncoder(profile.videoCodec);
   const audioEncoder = resolveAudioEncoder(profile.audioCodec);
 
-  const inputArgs = config.useHardware
+  const inputArgs = profile.hardwareAccelerated
     ? [
         "-hwaccel",
         resolveHardwareAccelerator(profile.videoCodec),
         "-hwaccel_device",
-        config.hardwareDevice,
+        getTranscodeConfig().hardwareDevice,
       ]
     : [];
 
@@ -534,8 +568,9 @@ const THUMBNAIL_MAX_HEIGHT = 480;
 
 /**
  * Builds the ffmpeg argument list for a single-frame thumbnail extraction.
- * Deliberately bypasses `validateTranscodeMode`/hardware-acceleration gating
- * (see `validateTranscodeJob`) — this is a lightweight frame grab, not a real
+ * Deliberately bypasses the transcoding-enabled/hardware-acceleration gating
+ * in `validateTranscodeProfile`/`shouldSkipHardwareProfile` (see
+ * `validateTranscodeJob`) — this is a lightweight frame grab, not a real
  * transcode, and `ENABLE_TRANSCODING=false` shouldn't block it.
  *
  * Scales down (never up) to fit within {@link THUMBNAIL_MAX_WIDTH}x

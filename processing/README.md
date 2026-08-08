@@ -37,12 +37,19 @@ Callbacks to the Web API require:
 
 Transcoding is controlled through `.env`:
 
-- `ENABLE_TRANSCODING=true` enables software transcoding by default.
+- `ENABLE_TRANSCODING=true` enables transcoding at all (software or hardware).
 - `ENABLE_HW_ACCELERATED_TRANSCODING=true` and a non-empty
-  `GPU_ACCELERATION_DEVICE` switch video encoding to hardware mode.
+  `GPU_ACCELERATION_DEVICE` make hardware-accelerated encoding *available* on
+  this deployment.
 - `HW_ACCELERATED_TRANSCODING_ENCODERS` must be a JSON array such as
-  `["h264_qsv","hevc_qsv"]`. In hardware mode, `profile.videoCodec` must
-  exactly match an encoder in that allowlist.
+  `["h264_qsv","hevc_qsv"]` — the allowlist of encoder names hardware jobs may use.
+
+These three vars govern which profiles **can** run in hardware, not whether any
+given job **does** — that's decided per-job by the incoming `profile.hardwareAccelerated`
+boolean (set on the `TranscodeProfile` in the Web API). Software profiles
+(`hardwareAccelerated: false`) always encode in software regardless of the above.
+A hardware profile whose job isn't currently runnable is skipped, not treated as
+a request error — see `skipped[].reason` below.
 
 ## Run
 
@@ -64,8 +71,19 @@ the case where that boundary doesn't hold.
 
 ### `GET /health`
 
-Liveness probe. Includes whether a Redis-backed queue is configured. Not
-gated by the internal token.
+Liveness probe. Includes whether a Redis-backed queue is configured, and current
+hardware-accelerated transcoding availability:
+
+```json
+{
+  "status": "ok",
+  "redis": "configured",
+  "hardwareAcceleration": { "enabled": true, "encoders": ["h264_qsv", "hevc_qsv"] }
+}
+```
+
+Not gated by the internal token. Polled by the Web API's
+`GET /admin/transcode-profiles/hardware-status` to shape the admin profile UI.
 
 ### `POST /download`
 
@@ -102,7 +120,8 @@ Legacy single-profile body:
     "outputWidth": 1280,
     "outputContainer": "mp4",
     "videoCodec": "h264",
-    "audioCodec": "aac"
+    "audioCodec": "aac",
+    "hardwareAccelerated": false
   }
 }
 ```
@@ -122,7 +141,8 @@ Batch body (preferred; used by the Web API after upload):
         "outputWidth": 1280,
         "outputContainer": "mp4",
         "videoCodec": "h264",
-        "audioCodec": "aac"
+        "audioCodec": "aac",
+        "hardwareAccelerated": false
       }
     }
   ]
@@ -158,10 +178,21 @@ Success (`202`) for a batch:
 }
 ```
 
-When a batch includes profiles larger than the source video (width or height),
-those jobs are listed under `skipped` with reason
-`profile_exceeds_source_resolution` and are **not** queued. Remaining profiles
-are processed normally. The response also includes probed `source` dimensions.
+Jobs that can't run are listed under `skipped` (with a `reason`) rather than
+failing the whole request; remaining jobs in the batch are processed normally.
+Reasons:
+
+- `profile_exceeds_source_resolution` — the profile's output width/height
+  exceeds the probed source video.
+- `hardware_transcoding_unavailable` — the profile has `hardwareAccelerated: true`,
+  but this deployment doesn't currently have hardware transcoding enabled/configured
+  (`ENABLE_HW_ACCELERATED_TRANSCODING`/`GPU_ACCELERATION_DEVICE`).
+- `hardware_encoder_not_configured` — the profile has `hardwareAccelerated: true`
+  and hardware transcoding is enabled, but this profile's `videoCodec` isn't in
+  the `HW_ACCELERATED_TRANSCODING_ENCODERS` allowlist.
+
+Software profiles (`hardwareAccelerated: false`) are never skipped for hardware
+reasons. The response also includes probed `source` dimensions.
 
 When a job finishes, the worker runs `stat` + `ffprobe`, then POSTs metadata to
 `{API_BASE_URL}/internal/file-versions/:jobId/complete` (Bearer

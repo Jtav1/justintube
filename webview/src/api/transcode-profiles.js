@@ -10,11 +10,23 @@ export async function getTranscodeProfiles() {
 }
 
 /**
+ * Reports whether the processing service currently has hardware-accelerated
+ * transcoding enabled, and which encoders it accepts. Purely advisory - used
+ * to shape the create/edit form, not to gate profile CRUD itself.
+ * @returns {Promise<{available: boolean, enabled: boolean, encoders: string[]}>}
+ */
+export async function getTranscodeHardwareStatus() {
+  const res = await apiClient.get('/api/v1/admin/transcode-profiles/hardware-status')
+  return res.data
+}
+
+/**
  * Creates a transcode profile. Admin only.
  * @param {{
  *   description?: string|null, resolutionName: string, mediaType?: string,
  *   outputHeight: number, outputWidth: number,
  *   outputContainer: string, videoCodec: string, audioCodec: string,
+ *   hardwareAccelerated?: boolean,
  * }} fields
  * @returns {Promise<object>}
  */

@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import express from "express";
 import { requireInternalToken } from "./lib/require-internal-token.js";
+import { getTranscodeConfig } from "./lib/transcode.js";
 import { createDownloadRouter } from "./routes/download.js";
 import { createTranscodeRouter } from "./routes/transcode.js";
 import {
@@ -29,16 +30,25 @@ export function createApp(options = {}) {
   app.use(express.json());
 
   /**
-   * Liveness / readiness probe for deploy and docker-compose checks.
+   * Liveness / readiness probe for deploy and docker-compose checks. Also
+   * reports current hardware-accelerated transcoding availability so webapi
+   * can surface it to the admin UI (see webapi's
+   * `GET /admin/transcode-profiles/hardware-status`) without duplicating
+   * env-var parsing across services.
    *
    * @param {import('express').Request} _req Incoming request (unused).
    * @param {import('express').Response} res Express response.
    * @returns {void} Sends JSON health payload including queue readiness.
    */
   app.get("/health", (_req, res) => {
+    const { useHardware, hardwareEncoders } = getTranscodeConfig();
     res.json({
       status: "ok",
       redis: transcodeQueue ? "configured" : "unavailable",
+      hardwareAcceleration: {
+        enabled: useHardware,
+        encoders: hardwareEncoders,
+      },
     });
   });
 

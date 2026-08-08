@@ -11,6 +11,7 @@ import {
   resolveAudioEncoder,
   resolveHardwareAccelerator,
   resolveVideoEncoder,
+  shouldSkipHardwareProfile,
   validateTranscodeBatchRequest,
   validateTranscodeJob,
   validateTranscodeProfile,
@@ -54,6 +55,7 @@ describe("validateTranscodeProfile / validateTranscodeRequest", () => {
       profile: {
         ...validProfile,
         outputContainer: "mp4",
+        hardwareAccelerated: false,
       },
     });
   });
@@ -93,7 +95,11 @@ describe("validateTranscodeProfile / validateTranscodeRequest", () => {
           jobId,
           outputFilename: `${jobId}.mp4`,
           kind: "rendition",
-          profile: { ...validProfile, outputContainer: "mp4" },
+          profile: {
+            ...validProfile,
+            outputContainer: "mp4",
+            hardwareAccelerated: false,
+          },
         },
       ],
     });
@@ -270,6 +276,7 @@ describe("ffmpeg helpers", () => {
         outputContainer: "mp4",
         videoCodec: "h264_qsv",
         audioCodec: "aac",
+        hardwareAccelerated: true,
       },
     });
 
@@ -293,13 +300,60 @@ describe("ffmpeg helpers", () => {
     ]);
   });
 
-  test("rejects hardware encoders outside the configured allowlist", () => {
+  test("shouldSkipHardwareProfile: never skips a software profile regardless of global hardware config", () => {
+    process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "false";
+    const config = getTranscodeConfig();
+    expect(
+      shouldSkipHardwareProfile(
+        { videoCodec: "h264", hardwareAccelerated: false },
+        config,
+      ),
+    ).toBeNull();
+  });
+
+  test("shouldSkipHardwareProfile: skips a hardware profile when hardware transcoding is off", () => {
+    process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "false";
+    const config = getTranscodeConfig();
+    expect(
+      shouldSkipHardwareProfile(
+        { videoCodec: "h264_qsv", hardwareAccelerated: true },
+        config,
+      ),
+    ).toBe("hardware_transcoding_unavailable");
+  });
+
+  test("shouldSkipHardwareProfile: skips a hardware profile whose codec isn't in the encoder allowlist", () => {
     process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "true";
     process.env.GPU_ACCELERATION_DEVICE = "/dev/dri/renderD128";
     process.env.HW_ACCELERATED_TRANSCODING_ENCODERS =
       '["h264_qsv","hevc_qsv"]';
+    const config = getTranscodeConfig();
+    expect(
+      shouldSkipHardwareProfile(
+        { videoCodec: "libx264", hardwareAccelerated: true },
+        config,
+      ),
+    ).toBe("hardware_encoder_not_configured");
+  });
 
-    expect(() =>
+  test("shouldSkipHardwareProfile: allows a hardware profile whose codec is allowlisted", () => {
+    process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "true";
+    process.env.GPU_ACCELERATION_DEVICE = "/dev/dri/renderD128";
+    process.env.HW_ACCELERATED_TRANSCODING_ENCODERS =
+      '["h264_qsv","hevc_qsv"]';
+    const config = getTranscodeConfig();
+    expect(
+      shouldSkipHardwareProfile(
+        { videoCodec: "h264_qsv", hardwareAccelerated: true },
+        config,
+      ),
+    ).toBeNull();
+  });
+
+  test("validateTranscodeProfile no longer throws for a hardware profile when global hardware mode is off (routing, not validation, decides skip)", () => {
+    process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "false";
+
+    expect(
       validateTranscodeProfile({
         id: 3,
         outputHeight: 480,
@@ -307,10 +361,9 @@ describe("ffmpeg helpers", () => {
         outputContainer: "mp4",
         videoCodec: "libx264",
         audioCodec: "aac",
+        hardwareAccelerated: true,
       }),
-    ).toThrow(
-      "profile.videoCodec must be one of the configured hardware encoders",
-    );
+    ).toMatchObject({ hardwareAccelerated: true, videoCodec: "libx264" });
   });
 
   test("rejects requests when transcoding is disabled", () => {

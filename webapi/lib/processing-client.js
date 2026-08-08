@@ -38,6 +38,9 @@ const DOWNLOAD_REQUEST_TIMEOUT_MS =
  * @property {string} outputContainer Output container / extension (e.g. mp4).
  * @property {string} videoCodec Requested video codec name.
  * @property {string} audioCodec Requested audio codec name.
+ * @property {boolean} hardwareAccelerated Whether this profile requests
+ *   hardware-accelerated encoding (routed/skipped per-profile by the
+ *   processing service, not gated by a single global deployment mode).
  */
 
 /**

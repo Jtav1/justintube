@@ -238,6 +238,11 @@ async function ensureSqliteMissingColumns() {
       ddl: "`media_type` VARCHAR(16) NOT NULL DEFAULT 'video'",
     },
     {
+      table: "TRANSCODE_PROFILES",
+      column: "hardware_accelerated",
+      ddl: "`hardware_accelerated` TINYINT(1) NOT NULL DEFAULT 0",
+    },
+    {
       table: "ORIGINAL_UPLOADS",
       column: "search_index_status",
       ddl: "`search_index_status` VARCHAR(16) NOT NULL DEFAULT 'pending'",

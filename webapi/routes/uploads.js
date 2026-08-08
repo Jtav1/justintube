@@ -13,7 +13,10 @@ import {
   mimeTypeForContainer,
   plannedTranscodedStoragePath,
 } from "../lib/media-meta.js";
-import { markUploadFileVersionsFailed } from "../lib/file-versions.js";
+import {
+  markUploadFileVersionsFailed,
+  toTranscodeProfilePayload,
+} from "../lib/file-versions.js";
 import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, sequelize } from "../lib/models/index.js";
 import { generateUniqueVideoId } from "../lib/video-id.js";
 import {
@@ -215,24 +218,6 @@ function describeDownloadFailure(download) {
     return download.error || "The processing service is unreachable.";
   }
   return download.error || "Failed to download the video from the provided URL.";
-}
-
-/**
- * Maps a Sequelize TranscodeProfile row to the processing API profile payload.
- *
- * @private
- * @param {import('sequelize').Model} row Transcode profile model instance.
- * @returns {import('../lib/processing-client.js').TranscodeProfilePayload} Profile body.
- */
-function toTranscodeProfilePayload(row) {
-  return {
-    id: row.id,
-    outputHeight: row.outputHeight,
-    outputWidth: row.outputWidth,
-    outputContainer: row.outputContainer,
-    videoCodec: row.videoCodec,
-    audioCodec: row.audioCodec,
-  };
 }
 
 /**

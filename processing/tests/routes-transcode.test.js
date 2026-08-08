@@ -31,6 +31,7 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
     outputContainer: "mp4",
     videoCodec: "h264",
     audioCodec: "aac",
+    hardwareAccelerated: false,
   };
 
   beforeAll(() => {
@@ -127,6 +128,51 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
         jobId: jobB.jobId,
         outputFilename: jobB.outputFilename,
         profileId: 2,
+      },
+    ]);
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+  });
+
+  test("skips a hardware-accelerated profile when hardware transcoding is unavailable, queuing the rest of the batch", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const app = createTestApp(queue);
+    const softwareJob = {
+      jobId: "33333333-3333-3333-3333-333333333333",
+      outputFilename: "33333333-3333-3333-3333-333333333333.mp4",
+      profile,
+    };
+    const hardwareJob = {
+      jobId: "44444444-4444-4444-4444-444444444444",
+      outputFilename: "44444444-4444-4444-4444-444444444444.mp4",
+      profile: {
+        ...profile,
+        id: 2,
+        videoCodec: "h264_qsv",
+        hardwareAccelerated: true,
+      },
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [softwareJob, hardwareJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.success).toBe(true);
+    expect(res.body.jobs).toEqual([
+      {
+        jobId: softwareJob.jobId,
+        outputFilename: softwareJob.outputFilename,
+        profileId: 1,
+      },
+    ]);
+    expect(res.body.skipped).toEqual([
+      {
+        jobId: hardwareJob.jobId,
+        profileId: 2,
+        reason: "hardware_transcoding_unavailable",
       },
     ]);
     expect(queue.addBulk).toHaveBeenCalledTimes(1);

@@ -4,6 +4,7 @@ import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import {
   getTranscodeProfiles,
+  getTranscodeHardwareStatus,
   createTranscodeProfile,
   updateTranscodeProfile,
   deleteTranscodeProfile,
@@ -97,6 +98,9 @@ function AdminTranscodeProfiles() {
   const [outputContainer, setOutputContainer] = useState('')
   const [videoCodec, setVideoCodec] = useState('')
   const [audioCodec, setAudioCodec] = useState('')
+  const [hardwareAccelerated, setHardwareAccelerated] = useState(false)
+
+  const [hwStatus, setHwStatus] = useState({ available: false, enabled: false, encoders: [] })
 
   const [loaded, setLoaded] = useState(!isEditMode)
   const [submitting, setSubmitting] = useState(false)
@@ -128,6 +132,24 @@ function AdminTranscodeProfiles() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    async function loadHardwareStatus() {
+      try {
+        const data = await getTranscodeHardwareStatus()
+        if (!cancelled) {
+          setHwStatus(data)
+        }
+      } catch {
+        // Advisory only - form still works with the hardware toggle disabled.
+      }
+    }
+    loadHardwareStatus()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     function populateFromProfile() {
       if (!isEditMode || profilesLoading || loaded) {
         return
@@ -142,6 +164,7 @@ function AdminTranscodeProfiles() {
         setOutputContainer(target.outputContainer)
         setVideoCodec(target.videoCodec)
         setAudioCodec(target.audioCodec)
+        setHardwareAccelerated(Boolean(target.hardwareAccelerated))
       }
       setLoaded(true)
     }
@@ -226,6 +249,7 @@ function AdminTranscodeProfiles() {
         outputContainer: outputContainer.trim(),
         videoCodec: videoCodec.trim(),
         audioCodec: audioCodec.trim(),
+        hardwareAccelerated,
       }
       if (isEditMode) {
         await updateTranscodeProfile(profileId, fields)
@@ -363,10 +387,25 @@ function AdminTranscodeProfiles() {
             disabled={submitting}
           />
 
+          <label className="admin-profiles-checkbox">
+            <input
+              type="checkbox"
+              checked={hardwareAccelerated}
+              disabled={submitting || !hwStatus.enabled}
+              onChange={(event) => setHardwareAccelerated(event.target.checked)}
+            />
+            Hardware-accelerated
+          </label>
+          {!hwStatus.enabled && (
+            <p className="admin-profiles-hint">
+              Hardware transcoding isn't currently enabled on this server.
+            </p>
+          )}
+
           <SelectOrCustom
             id="admin-profile-video-codec"
             label="Video Codec"
-            options={VIDEO_CODEC_OPTIONS}
+            options={hardwareAccelerated ? hwStatus.encoders : VIDEO_CODEC_OPTIONS}
             value={videoCodec}
             onChange={setVideoCodec}
             disabled={submitting}
