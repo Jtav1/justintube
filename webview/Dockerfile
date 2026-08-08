@@ -14,13 +14,16 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 
 # nginx:1.27-alpine ships an unprivileged "nginx" user (uid 101); non-root
-# can't bind port 80, so nginx.conf listens on 8080 instead.
-RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx /etc/nginx/conf.d \
+# can't bind port 80, so nginx.conf listens on 8080 instead. shadow + su-exec
+# back docker-entrypoint.sh's PUID/PGID reconciliation.
+RUN apk add --no-cache shadow su-exec \
+  && chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx /etc/nginx/conf.d \
   && touch /var/run/nginx.pid \
   && chown nginx:nginx /var/run/nginx.pid \
   && chmod +x /docker-entrypoint.sh
 
-USER nginx
+# Stays root here; docker-entrypoint.sh reconciles to PUID/PGID and drops
+# privileges via su-exec before exec'ing nginx.
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

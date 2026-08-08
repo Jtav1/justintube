@@ -25,18 +25,23 @@ RUN apk add --no-cache \
 ENV NODE_ENV=production
 EXPOSE 3001
 
-# Non-root user matching api image (uid/gid 1001); shared volume mount points.
-RUN addgroup -g 1001 -S app \
+# Non-root user matching api image (uid/gid 1001); shared volume mount
+# points. shadow + su-exec back docker-entrypoint.sh's PUID/PGID reconciliation.
+RUN apk add --no-cache shadow su-exec \
+  && addgroup -g 1001 -S app \
   && adduser -u 1001 -S app -G app \
   && mkdir -p /data/shared /media/original /media/transcoded \
   && chown -R app:app /data/shared /media
 
 COPY --from=builder --chown=app:app /app/node_modules ./node_modules
 COPY --chown=app:app . .
-
-USER app
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --spider -q http://127.0.0.1:3001/health || exit 1
 
+# Stays root here; docker-entrypoint.sh reconciles to PUID/PGID and drops
+# privileges via su-exec before exec'ing the CMD below.
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["npm", "run", "serve"]
