@@ -98,6 +98,27 @@
   color: var(--text);
 }
 
+.admin-profiles-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.admin-profiles-checkbox input {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.admin-profiles-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
 .admin-profiles-delete {
   margin-top: 8px;
   background: none;

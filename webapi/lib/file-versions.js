@@ -146,6 +146,24 @@ export async function findFileVersionByUuid(uuid) {
 }
 
 /**
+ * Maps a Sequelize TranscodeProfile row to the processing API profile payload.
+ *
+ * @param {import('sequelize').Model} row Transcode profile model instance.
+ * @returns {import('./processing-client.js').TranscodeProfilePayload} Profile body.
+ */
+export function toTranscodeProfilePayload(row) {
+  return {
+    id: row.id,
+    outputHeight: row.outputHeight,
+    outputWidth: row.outputWidth,
+    outputContainer: row.outputContainer,
+    videoCodec: row.videoCodec,
+    audioCodec: row.audioCodec,
+    hardwareAccelerated: Boolean(row.hardwareAccelerated),
+  };
+}
+
+/**
  * Loads the transcode profile payload fields needed to re-enqueue a job.
  *
  * @param {number} profileId TRANSCODE_PROFILES id.
@@ -156,12 +174,5 @@ export async function loadTranscodeProfilePayload(profileId) {
   if (!row) {
     return null;
   }
-  return {
-    id: row.id,
-    outputHeight: row.outputHeight,
-    outputWidth: row.outputWidth,
-    outputContainer: row.outputContainer,
-    videoCodec: row.videoCodec,
-    audioCodec: row.audioCodec,
-  };
+  return toTranscodeProfilePayload(row);
 }

@@ -49,6 +49,11 @@ export const TranscodeProfile = sequelize.define(
       type: DataTypes.STRING(32),
       allowNull: false,
     },
+    hardwareAccelerated: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     creatorUserId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,

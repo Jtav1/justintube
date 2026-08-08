@@ -123,6 +123,7 @@ describe("admin transcode profiles", () => {
       outputContainer: "mp4",
       videoCodec: "h264",
       audioCodec: "aac",
+      hardwareAccelerated: false,
       description: "created by admin",
       creator: { userId: admin.id, username: admin.username, displayName: null },
     });
@@ -231,6 +232,66 @@ describe("admin transcode profiles", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.mediaType).toBe("audio");
+  });
+
+  test("create accepts hardwareAccelerated true", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_hw_create";
+    await seedUserWithRoleAndKey("admin", rawKey);
+
+    const res = await client
+      .post("/api/v1/admin/transcode-profiles")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send(validCreateBody({ videoCodec: "h264_qsv", hardwareAccelerated: true }));
+
+    expect(res.status).toBe(201);
+    expect(res.body.hardwareAccelerated).toBe(true);
+  });
+
+  test("rejects a non-boolean hardwareAccelerated on create", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_hw_bad";
+    await seedUserWithRoleAndKey("admin", rawKey);
+
+    const res = await client
+      .post("/api/v1/admin/transcode-profiles")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send(validCreateBody({ hardwareAccelerated: "yes" }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("PATCH updates hardwareAccelerated", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_hw_patch";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const profile = await seedTranscodeProfile({ hardwareAccelerated: false });
+
+    const res = await client
+      .patch(`/api/v1/admin/transcode-profiles/${profile.id}`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ hardwareAccelerated: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.hardwareAccelerated).toBe(true);
+  });
+
+  test("hardware-status reports unavailable when the processing service is unreachable", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_tp_hw_status";
+    await seedUserWithRoleAndKey("admin", rawKey);
+
+    const res = await client
+      .get("/api/v1/admin/transcode-profiles/hardware-status")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      available: false,
+      enabled: false,
+      encoders: [],
+    });
   });
 
   test("returns 404 for unknown profile on update and delete", async () => {

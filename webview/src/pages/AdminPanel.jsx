@@ -214,6 +214,9 @@ function AdminPanel() {
                   {item.videoCodec}/{item.audioCodec} &middot; {item.outputContainer}
                 </span>
                 <span className="admin-profiles-badge">{item.mediaType}</span>
+                {item.hardwareAccelerated && (
+                  <span className="admin-profiles-badge">HW</span>
+                )}
                 <div className="admin-profiles-actions">
                   <Link to={`/control-panel/transcode-profiles/${item.id}/edit`}>Edit</Link>
                   <button
