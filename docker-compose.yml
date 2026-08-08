@@ -182,6 +182,13 @@ services:
     # as defense-in-depth. Uncomment below only for local debugging.
     # ports:
     #   - "${PROCESSING_PORT:-3001}:3001"
+    # Passes the host's GPU render node through for hardware-accelerated
+    # transcoding (see ENABLE_HW_ACCELERATED_TRANSCODING/GPU_ACCELERATION_DEVICE
+    # in processing/.env). Commented out by default since most dev machines
+    # don't have this device - uncomment and adjust the path to match your
+    # GPU (`ls /dev/dri/` to find it) to test hardware transcoding locally.
+    # devices:
+    #   - /dev/dri/renderD128:/dev/dri/renderD128
     volumes:
       - media-data:/media
     healthcheck:
