@@ -24,6 +24,7 @@ const ROUTE_TITLES = [
   { test: (p) => p === '/featured', title: 'Featured' },
   { test: (p) => p === '/users', title: 'Users' },
   { test: (p) => p === '/search', title: 'Search' },
+  { test: (p) => p === '/settings/api-keys', title: 'API Keys' },
   { test: (p) => p === '/settings', title: 'Settings' },
   { test: (p) => p.startsWith('/subscriptions'), title: 'Subscriptions' },
   { test: (p) => p === '/subscribers', title: 'Subscribers' },

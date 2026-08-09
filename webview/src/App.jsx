@@ -19,6 +19,7 @@ import FeaturedVideosPage from './pages/FeaturedVideos.jsx'
 import UsersListPage from './pages/UsersList.jsx'
 import SearchResultsPage from './pages/SearchResults.jsx'
 import AccountSettingsPage from './pages/AccountSettings.jsx'
+import ApiKeysPage from './pages/ApiKeysPage.jsx'
 import SubscriptionsPage from './pages/UserSubscriptions.jsx'
 import MySubscriptionsPage from './pages/MySubscriptions.jsx'
 import SubscribersPage from './pages/Subscribers.jsx'
@@ -67,6 +68,7 @@ function App() {
         <Route path="/users" element={<UsersListPage />} />
         <Route path="/search" element={<SearchResultsPage />} />
         <Route path="/settings" element={<AccountSettingsPage />} />
+        <Route path="/settings/api-keys" element={<ApiKeysPage />} />
         <Route path="/subscriptions" element={<SubscriptionsPage />} />
         <Route path="/subscriptions/mine" element={<MySubscriptionsPage />} />
         <Route path="/subscribers" element={<SubscribersPage />} />
