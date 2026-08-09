@@ -57,7 +57,8 @@ const AUTH_CONTEXT_CACHE = Symbol("authContext");
  * @returns {Promise<{
  *   user: import('sequelize').Model,
  *   role: import('sequelize').Model|null,
- *   authMethod: "session"|"api_key"
+ *   authMethod: "session"|"api_key",
+ *   apiKeyScopes: string[]|null
  * }|null>} Auth context, or null when unauthenticated / locked.
  */
 async function resolveAuth(req) {
@@ -71,6 +72,7 @@ async function resolveAuth(req) {
       user: result.user,
       role: result.role,
       authMethod: "api_key",
+      apiKeyScopes: result.scopes,
     };
   }
 
@@ -84,6 +86,9 @@ async function resolveAuth(req) {
     user: result.user,
     role: result.role,
     authMethod: "session",
+    // Session auth is the account owner directly; scopes only constrain
+    // delegated API-key credentials, so null here means "unrestricted".
+    apiKeyScopes: null,
   };
 }
 
@@ -97,7 +102,8 @@ async function resolveAuth(req) {
  * @returns {Promise<{
  *   user: import('sequelize').Model,
  *   role: import('sequelize').Model|null,
- *   authMethod: "session"|"api_key"
+ *   authMethod: "session"|"api_key",
+ *   apiKeyScopes: string[]|null
  * }|null>} Auth context, or null when unauthenticated / locked.
  */
 export async function getAuthContext(req) {
@@ -123,6 +129,7 @@ export async function optionalAuth(req, _res, next) {
       req.user = result.user;
       req.authRole = result.role;
       req.authMethod = result.authMethod;
+      req.apiKeyScopes = result.apiKeyScopes;
     }
     next();
   } catch (err) {
@@ -133,7 +140,8 @@ export async function optionalAuth(req, _res, next) {
 
 /**
  * Express middleware that requires a valid session cookie or user API key.
- * Sets `req.user`, `req.authRole`, and `req.authMethod` (`"session"` | `"api_key"`).
+ * Sets `req.user`, `req.authRole`, `req.authMethod` (`"session"` | `"api_key"`), and
+ * `req.apiKeyScopes` (`null` for session auth; the key's granted scope names for API-key auth).
  *
  * @param {import('express').Request} req Incoming request.
  * @param {import('express').Response} res Express response.
@@ -154,6 +162,7 @@ export async function requireAuth(req, res, next) {
     req.user = result.user;
     req.authRole = result.role;
     req.authMethod = result.authMethod;
+    req.apiKeyScopes = result.apiKeyScopes;
     next();
   } catch (err) {
     console.error("requireAuth failed:", err);

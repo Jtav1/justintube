@@ -6,6 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import { Op } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
 import { Theme, User, sequelize } from "../lib/models/index.js";
@@ -547,7 +548,7 @@ export function createThemesRouter() {
    *       "403":
    *         description: Forbidden (non-admin attempted `system`/`isDefault`)
    */
-  router.post("/themes", requireAuth, themeImageFields, async (req, res) => {
+  router.post("/themes", requireAuth, requireApiKeyScope("content_edit"), themeImageFields, async (req, res) => {
     try {
       const parsed = parseThemeBody(req.body || {}, { required: true });
       if (!parsed.ok) {
@@ -675,7 +676,7 @@ export function createThemesRouter() {
    *       "404":
    *         description: Not found
    */
-  router.patch("/themes/:id", requireAuth, themeImageFields, async (req, res) => {
+  router.patch("/themes/:id", requireAuth, requireApiKeyScope("content_edit"), themeImageFields, async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -830,7 +831,7 @@ export function createThemesRouter() {
    *       "404":
    *         description: Not found
    */
-  router.delete("/themes/:id", requireAuth, async (req, res) => {
+  router.delete("/themes/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -973,7 +974,7 @@ export function createThemesRouter() {
    *       "403":
    *         description: Forbidden (theme not selectable by this caller)
    */
-  router.put("/me/theme", requireAuth, async (req, res) => {
+  router.put("/me/theme", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const body = req.body || {};
       if (!Object.prototype.hasOwnProperty.call(body, "themeId")) {

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
@@ -384,7 +385,7 @@ export function createReportsRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 201 with created report, or error.
    */
-  router.post("/reports", requireAuth, async (req, res) => {
+  router.post("/reports", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     const parsed = parseCreateReportBody(req.body || {});
     if (!parsed.ok) {
       res.status(400).json({ error: "invalid_body", message: parsed.message });
@@ -503,7 +504,7 @@ export function createReportsRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 with `{ items, page, limit, total }`, or error.
    */
-  router.get("/reports", requireAuth, requireModerator, async (req, res) => {
+  router.get("/reports", requireAuth, requireModerator, requireApiKeyScope("full_access"), async (req, res) => {
     const pagination = parsePagination(req.query);
     if (!pagination.ok) {
       res.status(400).json({ error: "invalid_query", message: pagination.message });
@@ -574,7 +575,7 @@ export function createReportsRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 with report record, or error.
    */
-  router.get("/reports/:id", requireAuth, requireModerator, async (req, res) => {
+  router.get("/reports/:id", requireAuth, requireModerator, requireApiKeyScope("full_access"), async (req, res) => {
     const id = parsePositiveInt(req.params.id);
     if (id === null) {
       res.status(400).json({ error: "invalid_id", message: "id must be a positive integer." });
@@ -640,7 +641,7 @@ export function createReportsRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 with updated report, or error.
    */
-  router.patch("/reports/:id", requireAuth, async (req, res) => {
+  router.patch("/reports/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     const id = parsePositiveInt(req.params.id);
     if (id === null) {
       res.status(400).json({ error: "invalid_id", message: "id must be a positive integer." });
@@ -718,7 +719,7 @@ export function createReportsRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 with updated report, or error.
    */
-  router.patch("/reports/:id/moderate", requireAuth, requireModerator, async (req, res) => {
+  router.patch("/reports/:id/moderate", requireAuth, requireModerator, requireApiKeyScope("full_access"), async (req, res) => {
     const id = parsePositiveInt(req.params.id);
     if (id === null) {
       res.status(400).json({ error: "invalid_id", message: "id must be a positive integer." });
@@ -787,7 +788,7 @@ export function createReportsRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 `{ success: true }`, or error.
    */
-  router.delete("/reports/:id", requireAuth, requireAdmin, async (req, res) => {
+  router.delete("/reports/:id", requireAuth, requireAdmin, requireApiKeyScope("full_access"), async (req, res) => {
     const id = parsePositiveInt(req.params.id);
     if (id === null) {
       res.status(400).json({ success: false, error: "invalid_id", message: "id must be a positive integer." });

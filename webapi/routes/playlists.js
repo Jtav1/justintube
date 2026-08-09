@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Op, col, fn } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
@@ -378,7 +379,7 @@ export function createPlaylistsRouter() {
    *       "400":
    *         description: Invalid body
    */
-  router.post("/playlists", requireAuth, async (req, res) => {
+  router.post("/playlists", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const body = req.body && typeof req.body === "object" ? req.body : {};
       const name = String(body.name ?? "").trim();
@@ -648,7 +649,7 @@ export function createPlaylistsRouter() {
    *       "404":
    *         description: Playlist not found
    */
-  router.patch("/playlists/:id", requireAuth, async (req, res) => {
+  router.patch("/playlists/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -762,7 +763,7 @@ export function createPlaylistsRouter() {
    *       "404":
    *         description: Playlist not found
    */
-  router.delete("/playlists/:id", requireAuth, async (req, res) => {
+  router.delete("/playlists/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -842,7 +843,7 @@ export function createPlaylistsRouter() {
    *       "409":
    *         description: Video is already in the playlist
    */
-  router.post("/playlists/:id/items", requireAuth, async (req, res) => {
+  router.post("/playlists/:id/items", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -958,7 +959,7 @@ export function createPlaylistsRouter() {
    *       "404":
    *         description: Playlist not found
    */
-  router.delete("/playlists/:id/items/:videoId", requireAuth, async (req, res) => {
+  router.delete("/playlists/:id/items/:videoId", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       const videoId = parsePositiveInt(req.params.videoId);
@@ -1131,7 +1132,7 @@ export function createPlaylistsRouter() {
    *       "404":
    *         description: Playlist or user not found
    */
-  router.post("/playlists/:id/access", requireAuth, async (req, res) => {
+  router.post("/playlists/:id/access", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -1249,7 +1250,7 @@ export function createPlaylistsRouter() {
    *       "404":
    *         description: Playlist not found
    */
-  router.delete("/playlists/:id/access/:userId", requireAuth, async (req, res) => {
+  router.delete("/playlists/:id/access/:userId", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       const userId = parsePositiveInt(req.params.userId);

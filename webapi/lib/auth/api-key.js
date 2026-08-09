@@ -1,6 +1,6 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Op } from "sequelize";
-import { Role, User, UserApiKey } from "../models/index.js";
+import { ApiKeyScope, Role, User, UserApiKey, UserApiKeyScope } from "../models/index.js";
 
 /**
  * Number of trailing asterisks appended after the stored key prefix in list UIs.
@@ -58,29 +58,17 @@ export function maskApiKeyPrefix(keyPrefix) {
 }
 
 /**
- * Compares two hex digests in constant time when lengths match.
- *
- * @param {string} a First hex digest.
- * @param {string} b Second hex digest.
- * @returns {boolean} True when digests are equal.
- */
-function safeEqualHex(a, b) {
-  const left = Buffer.from(String(a), "utf8");
-  const right = Buffer.from(String(b), "utf8");
-  if (left.length !== right.length) {
-    return false;
-  }
-  return timingSafeEqual(left, right);
-}
-
-/**
- * Resolves an active (non-expired, non-revoked) API key to its owning user and
- * role. Returns null when the key is missing, invalid, expired, revoked, or
- * the owner is locked.
+ * Resolves an active (non-expired, non-revoked) API key to its owning user,
+ * role, and granted scope names. Returns null when the key is missing,
+ * invalid, expired, revoked, or the owner is locked.
  *
  * @param {string} rawKey Plaintext API key from Authorization Bearer.
- * @returns {Promise<{user: import('sequelize').Model, role: import('sequelize').Model|null, apiKey: import('sequelize').Model}|null>}
- *   Authenticated user context, or null when auth fails.
+ * @returns {Promise<{
+ *   user: import('sequelize').Model,
+ *   role: import('sequelize').Model|null,
+ *   apiKey: import('sequelize').Model,
+ *   scopes: string[]
+ * }|null>} Authenticated key context, or null when auth fails.
  */
 export async function findUserByApiKey(rawKey) {
   const trimmed = String(rawKey || "").trim();
@@ -101,10 +89,15 @@ export async function findUserByApiKey(rawKey) {
         required: true,
         include: [{ model: Role, required: false }],
       },
+      {
+        model: UserApiKeyScope,
+        required: false,
+        include: [{ model: ApiKeyScope, required: true }],
+      },
     ],
   });
 
-  if (!row || !safeEqualHex(row.keyHash, keyHash)) {
+  if (!row) {
     return null;
   }
 
@@ -118,5 +111,7 @@ export async function findUserByApiKey(rawKey) {
     return null;
   }
 
-  return { user, role, apiKey: row };
+  const scopes = (row.UserApiKeyScopes || []).map((grant) => grant.ApiKeyScope.name);
+
+  return { user, role, apiKey: row, scopes };
 }

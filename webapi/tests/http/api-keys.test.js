@@ -93,7 +93,7 @@ describe("me / api-keys routes", () => {
     const res = await agent
       .post("/api/v1/me/api-keys")
       .set("X-CSRF-Token", csrfToken)
-      .send({ name: "ci-bot" });
+      .send({ name: "ci-bot", scopes: ["view_only"] });
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("forbidden");
@@ -117,7 +117,11 @@ describe("me / api-keys routes", () => {
     const create = await agent
       .post("/api/v1/me/api-keys")
       .set("X-CSRF-Token", csrfToken)
-      .send({ name: "ci-bot", description: "CI access" });
+      .send({
+        name: "ci-bot",
+        description: "CI access",
+        scopes: ["content_edit", "content_edit", "profile_edit"],
+      });
 
     expect(create.status).toBe(201);
     expect(create.body.name).toBe("ci-bot");
@@ -127,6 +131,7 @@ describe("me / api-keys routes", () => {
     expect(create.body.keyDisplay).toContain("*");
     expect(create.body.keyHash).toBeUndefined();
     expect(create.body.keyPrefix).toBeUndefined();
+    expect(create.body.scopes.sort()).toEqual(["content_edit", "profile_edit"]);
 
     const list = await agent.get("/api/v1/me/api-keys");
     expect(list.status).toBe(200);
@@ -137,6 +142,93 @@ describe("me / api-keys routes", () => {
       true,
     );
     expect(list.body.items[0].keyDisplay).toContain("*");
+    expect(list.body.items[0].scopes.sort()).toEqual(["content_edit", "profile_edit"]);
+  });
+
+  test("create rejects missing or invalid scopes", async () => {
+    const passwordHash = await hashPassword("password123");
+    await seedUser({
+      username: "badscopes",
+      email: "badscopes@example.com",
+      passwordHash,
+      emailVerified: true,
+      uploader: true,
+    });
+    const agent = createTestAgent();
+    const csrfToken = await loginSession(agent, {
+      username: "badscopes",
+      password: "password123",
+    });
+
+    const missing = await agent
+      .post("/api/v1/me/api-keys")
+      .set("X-CSRF-Token", csrfToken)
+      .send({ name: "no-scopes" });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toBe("invalid_body");
+
+    const invalid = await agent
+      .post("/api/v1/me/api-keys")
+      .set("X-CSRF-Token", csrfToken)
+      .send({ name: "bad-scope", scopes: ["superuser"] });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toBe("invalid_body");
+  });
+
+  test("a lesser-scoped key cannot create, update, or revoke keys", async () => {
+    const owner = await seedUser({
+      username: "scoped_owner",
+      email: "scoped_owner@example.com",
+      emailVerified: true,
+      uploader: true,
+    });
+    const limited = await seedUserApiKey(owner.id, "jt_content_edit_only_key1", {
+      scopes: ["content_edit"],
+    });
+    const client = createTestClient();
+
+    const create = await client
+      .post("/api/v1/me/api-keys")
+      .set("Authorization", `Bearer ${limited.rawKey}`)
+      .send({ name: "escalate", scopes: ["full_access"] });
+    expect(create.status).toBe(403);
+    expect(create.body.error).toBe("insufficient_scope");
+
+    const update = await client
+      .patch(`/api/v1/me/api-keys/${limited.id}`)
+      .set("Authorization", `Bearer ${limited.rawKey}`)
+      .send({ name: "renamed" });
+    expect(update.status).toBe(403);
+    expect(update.body.error).toBe("insufficient_scope");
+
+    const revoke = await client
+      .delete(`/api/v1/me/api-keys/${limited.id}`)
+      .set("Authorization", `Bearer ${limited.rawKey}`);
+    expect(revoke.status).toBe(403);
+    expect(revoke.body.error).toBe("insufficient_scope");
+  });
+
+  test("a view_only-scoped key can read but not mutate content", async () => {
+    const owner = await seedUser({
+      username: "scoped_reader",
+      email: "scoped_reader@example.com",
+    });
+    const readOnly = await seedUserApiKey(owner.id, "jt_view_only_scope_key01", {
+      scopes: ["view_only"],
+    });
+    const client = createTestClient();
+
+    const read = await client
+      .get("/api/v1/me/videos")
+      .set("Authorization", `Bearer ${readOnly.rawKey}`);
+    expect(read.status).toBe(200);
+
+    const mutate = await client
+      .post("/api/v1/playlists")
+      .set("Authorization", `Bearer ${readOnly.rawKey}`)
+      .send({ name: "should not be created" });
+    expect(mutate.status).toBe(403);
+    expect(mutate.body.error).toBe("insufficient_scope");
   });
 
   test("list only returns the caller's keys", async () => {
@@ -249,6 +341,7 @@ describe("me / api-keys routes", () => {
       .set("X-CSRF-Token", csrfToken)
       .send({
         name: "expired-on-create",
+        scopes: ["view_only"],
         expiresAt: new Date(Date.now() - 60_000).toISOString(),
       });
 

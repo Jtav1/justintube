@@ -5,6 +5,7 @@ import { extname, isAbsolute, join, resolve } from "node:path";
 import { Router } from "express";
 import multer from "multer";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { requireUploader } from "../lib/auth/require-uploader.js";
 import {
@@ -882,6 +883,7 @@ export function createUploadRouter() {
     requireAuth,
     csrfProtection,
     requireUploader,
+    requireApiKeyScope("content_edit"),
     upload.single("file"),
     uploadVideo,
   );
@@ -945,7 +947,14 @@ export function createUploadRouter() {
    *       403:
    *         description: Uploader access required
    */
-  router.post("/videos/import", requireAuth, csrfProtection, requireUploader, importVideo);
+  router.post(
+    "/videos/import",
+    requireAuth,
+    csrfProtection,
+    requireUploader,
+    requireApiKeyScope("content_edit"),
+    importVideo,
+  );
 
   /**
    * GET /api/v1/videos/import/status — importStatus

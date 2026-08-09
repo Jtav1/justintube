@@ -6,6 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import { Op } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import { mimeTypeForImage } from "../lib/media-meta.js";
@@ -384,7 +385,7 @@ export function createMeRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the updated account metadata or an error response.
    */
-  router.patch("/me", requireAuth, async (req, res) => {
+  router.patch("/me", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const parsed = parseMeUpdate(req.body);
       if (!parsed.ok) {
@@ -810,7 +811,7 @@ export function createMeRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 204 empty or an error response.
    */
-  router.delete("/me/history", requireAuth, async (req, res) => {
+  router.delete("/me/history", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       await UserViewHistory.destroy({ where: { userId: req.user.id } });
       res.status(204).send();
@@ -861,7 +862,7 @@ export function createMeRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 204 empty or an error response.
    */
-  router.delete("/me/history/:id", requireAuth, async (req, res) => {
+  router.delete("/me/history/:id", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -1283,6 +1284,7 @@ export function createMeRouter() {
   router.post(
     "/me/avatar",
     requireAuth,
+    requireApiKeyScope("profile_edit"),
     avatarUpload.single("file"),
     async (req, res) => {
       try {
@@ -1326,7 +1328,7 @@ export function createMeRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
-  router.delete("/me/avatar", requireAuth, async (req, res) => {
+  router.delete("/me/avatar", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       if (req.user.avatarFilename) {
         await unlink(join(avatarsDir, req.user.avatarFilename)).catch(() => {});

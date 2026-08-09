@@ -6,6 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import { Op, col, fn, literal } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
@@ -2064,6 +2065,7 @@ export function createVideosRouter() {
   router.post(
     "/videos/:id/thumbnail",
     requireAuth,
+    requireApiKeyScope("content_edit"),
     thumbnailUpload.single("file"),
     async (req, res) => {
       try {
@@ -2178,7 +2180,7 @@ export function createVideosRouter() {
    *       "403":
    *         description: Not the owner/admin/edit-grantee, or an edit-grantee attempted to change visibility
    */
-  router.patch("/videos/:id", requireAuth, async (req, res) => {
+  router.patch("/videos/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -2329,7 +2331,7 @@ export function createVideosRouter() {
    *       "200":
    *         description: Deleted
    */
-  router.delete("/videos/:id", requireAuth, async (req, res) => {
+  router.delete("/videos/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -2400,6 +2402,7 @@ export function createVideosRouter() {
     "/videos/:id/delist",
     requireAuth,
     requireModerator,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       try {
         const id = parsePositiveInt(req.params.id);
@@ -2492,6 +2495,7 @@ export function createVideosRouter() {
     "/videos/:id/featured",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       try {
         const id = parsePositiveInt(req.params.id);
@@ -2732,7 +2736,7 @@ export function createVideosRouter() {
    *       "400":
    *         description: Invalid body or unknown username
    */
-  router.put("/videos/:id/editors", requireAuth, async (req, res) => {
+  router.put("/videos/:id/editors", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -2833,7 +2837,7 @@ export function createVideosRouter() {
    *       "400":
    *         description: Invalid body, unknown username, or the video is not currently private
    */
-  router.put("/videos/:id/viewers", requireAuth, async (req, res) => {
+  router.put("/videos/:id/viewers", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -3000,7 +3004,7 @@ export function createVideosRouter() {
    *                 disliked:
    *                   type: boolean
    */
-  router.post("/videos/:id/like", requireAuth, async (req, res) => {
+  router.post("/videos/:id/like", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -3083,7 +3087,7 @@ export function createVideosRouter() {
    *                 disliked:
    *                   type: boolean
    */
-  router.post("/videos/:id/dislike", requireAuth, async (req, res) => {
+  router.post("/videos/:id/dislike", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -3161,7 +3165,7 @@ export function createVideosRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the resulting hidden state or an error response.
    */
-  router.post("/videos/:id/hide", requireAuth, async (req, res) => {
+  router.post("/videos/:id/hide", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
       if (!loaded) {
@@ -3234,7 +3238,7 @@ export function createVideosRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the resulting hidden state or an error response.
    */
-  router.delete("/videos/:id/hide", requireAuth, async (req, res) => {
+  router.delete("/videos/:id/hide", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
       if (!loaded) {
@@ -3289,7 +3293,7 @@ export function createVideosRouter() {
    *       "404":
    *         description: Video not found or inaccessible
    */
-  router.post("/videos/:id/comments", requireAuth, async (req, res) => {
+  router.post("/videos/:id/comments", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -3496,6 +3500,7 @@ export function createVideosRouter() {
   router.patch(
     "/videos/:id/comments/:commentId",
     requireAuth,
+    requireApiKeyScope("content_edit"),
     async (req, res) => {
       try {
         const id = parsePositiveInt(req.params.id);
@@ -3616,6 +3621,7 @@ export function createVideosRouter() {
   router.delete(
     "/videos/:id/comments/:commentId",
     requireAuth,
+    requireApiKeyScope("content_edit"),
     async (req, res) => {
       try {
         const id = parsePositiveInt(req.params.id);

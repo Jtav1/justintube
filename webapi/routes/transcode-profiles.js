@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { MEDIA_TYPE_VALUES, RESOLUTION_VALUES } from "../lib/models/constants.js";
@@ -434,6 +435,7 @@ export function createTranscodeProfilesRouter() {
     "/admin/transcode-profiles",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (_req, res) => {
       try {
         const rows = await TranscodeProfile.findAll({
@@ -495,6 +497,7 @@ export function createTranscodeProfilesRouter() {
     "/admin/transcode-profiles/hardware-status",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (_req, res) => {
       const health = await getProcessingHealth();
       const hardwareAcceleration =
@@ -574,6 +577,7 @@ export function createTranscodeProfilesRouter() {
     "/admin/transcode-profiles",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const parsed = parseTranscodeProfileBody(req.body || {}, {
         required: true,
@@ -667,6 +671,7 @@ export function createTranscodeProfilesRouter() {
     "/admin/transcode-profiles/:id",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const id = parsePositiveInt(req.params.id);
       if (id === null) {
@@ -755,6 +760,7 @@ export function createTranscodeProfilesRouter() {
     "/admin/transcode-profiles/:id",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const id = parsePositiveInt(req.params.id);
       if (id === null) {

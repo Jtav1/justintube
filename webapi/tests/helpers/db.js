@@ -5,6 +5,7 @@ import { query } from "../../lib/db.js";
 import { generateVideoId } from "../../lib/video-id.js";
 import {
   AccessPermission,
+  ApiKeyScope,
   Comment,
   ContentTag,
   FeaturedVideo,
@@ -25,6 +26,7 @@ import {
   TranscodeProfile,
   User,
   UserApiKey,
+  UserApiKeyScope,
   UserHiddenVideo,
   UserIdentity,
   UserNotificationSetting,
@@ -72,6 +74,7 @@ const RESET_MODELS = [
   Notification,
   UserNotificationSetting,
   UserIdentity,
+  UserApiKeyScope,
   UserApiKey,
   EmailVerificationToken,
   Report,
@@ -525,7 +528,9 @@ export async function seedUser(overrides = {}) {
 
 /**
  * Inserts a USER_API_KEYS row for an existing user. Hashes `rawKey` with
- * SHA-256; defaults to a far-future expiry and a null `revokedAt`.
+ * SHA-256; defaults to a far-future expiry, a null `revokedAt`, and the
+ * `full_access` scope (so existing Bearer-auth tests exercise an
+ * unrestricted key unless a test explicitly narrows `scopes`).
  *
  * @param {number} userId Owning USERS id.
  * @param {string} rawKey Plaintext API key used by tests in Authorization headers.
@@ -534,10 +539,12 @@ export async function seedUser(overrides = {}) {
  * @param {string|null} [overrides.description] Optional description.
  * @param {Date|string} [overrides.expiresAt] Expiry timestamp.
  * @param {Date|string|null} [overrides.revokedAt] Revocation timestamp (null = active).
+ * @param {string[]} [overrides.scopes] Scope names to grant (default `["full_access"]`).
  * @returns {Promise<{id: number, rawKey: string} & Record<string, unknown>>} Seeded key metadata plus rawKey.
  */
 export async function seedUserApiKey(userId, rawKey, overrides = {}) {
   const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  const { scopes = ["full_access"], ...columnOverrides } = overrides;
   const record = {
     userId,
     name: "test-key",
@@ -546,10 +553,14 @@ export async function seedUserApiKey(userId, rawKey, overrides = {}) {
     keyPrefix: apiKeyPrefix(rawKey),
     expiresAt: farFuture,
     revokedAt: null,
-    ...overrides,
+    ...columnOverrides,
   };
 
   const row = await UserApiKey.create(record);
+  const scopeRows = await ApiKeyScope.findAll({ where: { name: scopes } });
+  await UserApiKeyScope.bulkCreate(
+    scopeRows.map((scope) => ({ userApiKeyId: row.id, apiKeyScopeId: scope.id })),
+  );
   return { ...asSeedResult(row, record), rawKey };
 }
 
