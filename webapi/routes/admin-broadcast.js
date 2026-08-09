@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { User } from "../lib/models/index.js";
@@ -103,6 +104,7 @@ export function createAdminBroadcastRouter() {
     "/admin/notifications/broadcast",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const parsed = parseBroadcastBody(req.body);
       if (!parsed.ok) {

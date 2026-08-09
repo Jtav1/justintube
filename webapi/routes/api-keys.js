@@ -4,9 +4,19 @@ import {
   maskApiKeyPrefix,
 } from "../lib/auth/api-key.js";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import {
+  API_KEY_SCOPE_NAMES,
+  requireApiKeyScope,
+} from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
-import { User, UserApiKey } from "../lib/models/index.js";
+import { requireUploader } from "../lib/auth/require-uploader.js";
+import {
+  ApiKeyScope,
+  User,
+  UserApiKey,
+  UserApiKeyScope,
+} from "../lib/models/index.js";
 
 /**
  * Maximum length for an API key display name.
@@ -128,10 +138,64 @@ function parseNameAndDescription(body, options = {}) {
 }
 
 /**
+ * Parses and validates a `scopes` array from the request body against the
+ * known API key scope names. Duplicate names collapse to one grant.
+ *
+ * @param {unknown} raw Request body value.
+ * @returns {{ ok: true, scopes: string[] } | { ok: false, message: string }}
+ *   Parsed, deduped scope names or a validation error message.
+ */
+function parseScopes(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { ok: false, message: "scopes must be a non-empty array." };
+  }
+  const scopes = [...new Set(raw.map((scope) => String(scope)))];
+  const invalid = scopes.filter((scope) => !API_KEY_SCOPE_NAMES.includes(scope));
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      message: `Invalid scope(s): ${invalid.join(", ")}. Must be one of: ${API_KEY_SCOPE_NAMES.join(", ")}.`,
+    };
+  }
+  return { ok: true, scopes };
+}
+
+/**
+ * Replaces the scope grants on an API key with the given scope names.
+ *
+ * @param {number} userApiKeyId Id of the UserApiKey row.
+ * @param {string[]} scopeNames Validated scope names (see `parseScopes`).
+ * @returns {Promise<void>} Resolves once the join rows are (re)created.
+ */
+async function setKeyScopes(userApiKeyId, scopeNames) {
+  await UserApiKeyScope.destroy({ where: { userApiKeyId } });
+  const scopeRows = await ApiKeyScope.findAll({ where: { name: scopeNames } });
+  await UserApiKeyScope.bulkCreate(
+    scopeRows.map((scope) => ({ userApiKeyId, apiKeyScopeId: scope.id })),
+  );
+}
+
+/**
+ * Loads a UserApiKey row together with its granted scopes.
+ *
+ * @param {number} id UserApiKey primary key.
+ * @returns {Promise<import('sequelize').Model|null>} The row (with
+ *   `UserApiKeyScopes[].ApiKeyScope` populated), or null when missing.
+ */
+async function loadKeyWithScopes(id) {
+  return UserApiKey.findByPk(id, {
+    include: [
+      { model: UserApiKeyScope, include: [{ model: ApiKeyScope, required: true }] },
+    ],
+  });
+}
+
+/**
  * Maps a UserApiKey row to the public JSON shape. Never includes `keyHash` or
  * the plaintext key.
  *
- * @param {import('sequelize').Model} row UserApiKey instance.
+ * @param {import('sequelize').Model} row UserApiKey instance, with
+ *   `UserApiKeyScopes[].ApiKeyScope` eager-loaded (see `loadKeyWithScopes`).
  * @param {{ username?: string|null }} [extras] Optional admin-only fields.
  * @returns {{
  *   id: number,
@@ -139,6 +203,7 @@ function parseNameAndDescription(body, options = {}) {
  *   name: string,
  *   description: string|null,
  *   keyDisplay: string,
+ *   scopes: string[],
  *   expiresAt: Date,
  *   revokedAt: Date|null,
  *   createdAt: Date,
@@ -153,6 +218,7 @@ function serializeApiKey(row, extras = {}) {
     name: row.name,
     description: row.description ?? null,
     keyDisplay: maskApiKeyPrefix(row.keyPrefix),
+    scopes: (row.UserApiKeyScopes || []).map((grant) => grant.ApiKeyScope.name),
     expiresAt: row.expiresAt,
     revokedAt: row.revokedAt ?? null,
     createdAt: row.createdAt,
@@ -214,6 +280,9 @@ export function createApiKeysRouter() {
     try {
       const rows = await UserApiKey.findAll({
         where: { userId: req.user.id },
+        include: [
+          { model: UserApiKeyScope, include: [{ model: ApiKeyScope, required: true }] },
+        ],
         order: [["createdAt", "DESC"]],
       });
       res.json({ items: rows.map((row) => serializeApiKey(row)) });
@@ -229,8 +298,12 @@ export function createApiKeysRouter() {
   /**
    * Creates a new API key for the authenticated user. The plaintext `key` is
    * returned only in this response.
-   * POST /api/v1/me/api-keys with `{ name, description?, expiresAt? }`.
+   * POST /api/v1/me/api-keys with `{ name, scopes, description?, expiresAt? }`.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   * Requires uploader status and a verified email (or admin). When called via
+   * an API key (not a session), that key must itself carry `full_access` -
+   * a lesser-scoped key must not be able to mint new credentials, including
+   * ones scoped beyond itself.
    *
    * @openapi
    * /api/v1/me/api-keys:
@@ -249,9 +322,13 @@ export function createApiKeysRouter() {
    *         application/json:
    *           schema:
    *             type: object
-   *             required: [name]
+   *             required: [name, scopes]
    *             properties:
    *               name: { type: string, maxLength: 255 }
+   *               scopes:
+   *                 type: array
+   *                 minItems: 1
+   *                 items: { type: string, enum: [view_only, content_edit, profile_edit, full_access] }
    *               description: { type: string, maxLength: 2000, nullable: true }
    *               expiresAt: { type: string, format: date-time }
    *     responses:
@@ -261,53 +338,71 @@ export function createApiKeysRouter() {
    *         description: Invalid body
    *       401:
    *         description: Not authenticated
+   *       403:
+   *         description: Uploader access and a verified email are required, or the calling API key lacks full_access
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 201 `{ ...metadata, key }` or an error.
    */
-  router.post("/me/api-keys", requireAuth, async (req, res) => {
-    try {
-      const fields = parseNameAndDescription(req.body, { nameRequired: true });
-      if (!fields.ok) {
-        res.status(400).json({ error: "invalid_body", message: fields.message });
-        return;
+  router.post(
+    "/me/api-keys",
+    requireAuth,
+    requireUploader,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      try {
+        const fields = parseNameAndDescription(req.body, { nameRequired: true });
+        if (!fields.ok) {
+          res.status(400).json({ error: "invalid_body", message: fields.message });
+          return;
+        }
+
+        const scopesResult = parseScopes(req.body?.scopes);
+        if (!scopesResult.ok) {
+          res.status(400).json({ error: "invalid_body", message: scopesResult.message });
+          return;
+        }
+
+        const expiry = parseExpiresAt(req.body?.expiresAt);
+        if (!expiry.ok) {
+          res.status(400).json({ error: "invalid_body", message: expiry.message });
+          return;
+        }
+
+        const { rawKey, keyHash, keyPrefix } = generateApiKey();
+        const row = await UserApiKey.create({
+          userId: req.user.id,
+          name: fields.name,
+          description: fields.hasDescription ? fields.description : null,
+          keyHash,
+          keyPrefix,
+          expiresAt: expiry.expiresAt,
+          revokedAt: null,
+        });
+        await setKeyScopes(row.id, scopesResult.scopes);
+        const full = await loadKeyWithScopes(row.id);
+
+        res.status(201).json({
+          ...serializeApiKey(full),
+          key: rawKey,
+        });
+      } catch (err) {
+        console.error("createMyApiKey failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to create API key.",
+        });
       }
-
-      const expiry = parseExpiresAt(req.body?.expiresAt);
-      if (!expiry.ok) {
-        res.status(400).json({ error: "invalid_body", message: expiry.message });
-        return;
-      }
-
-      const { rawKey, keyHash, keyPrefix } = generateApiKey();
-      const row = await UserApiKey.create({
-        userId: req.user.id,
-        name: fields.name,
-        description: fields.hasDescription ? fields.description : null,
-        keyHash,
-        keyPrefix,
-        expiresAt: expiry.expiresAt,
-        revokedAt: null,
-      });
-
-      res.status(201).json({
-        ...serializeApiKey(row),
-        key: rawKey,
-      });
-    } catch (err) {
-      console.error("createMyApiKey failed:", err);
-      res.status(500).json({
-        error: "internal_error",
-        message: "Failed to create API key.",
-      });
-    }
-  });
+    },
+  );
 
   /**
    * Updates metadata on an owned API key.
-   * PATCH /api/v1/me/api-keys/:id with `{ name?, description?, expiresAt? }`.
-   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   * PATCH /api/v1/me/api-keys/:id with `{ name?, scopes?, description?, expiresAt? }`.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions. When
+   * called via an API key, that key must itself carry `full_access` - a
+   * lesser-scoped key must not be able to re-scope any key (including itself).
    *
    * @openapi
    * /api/v1/me/api-keys/{id}:
@@ -332,6 +427,10 @@ export function createApiKeysRouter() {
    *             type: object
    *             properties:
    *               name: { type: string, maxLength: 255 }
+   *               scopes:
+   *                 type: array
+   *                 minItems: 1
+   *                 items: { type: string, enum: [view_only, content_edit, profile_edit, full_access] }
    *               description: { type: string, maxLength: 2000, nullable: true }
    *               expiresAt: { type: string, format: date-time }
    *     responses:
@@ -341,6 +440,8 @@ export function createApiKeysRouter() {
    *         description: Invalid body or id
    *       401:
    *         description: Not authenticated
+   *       403:
+   *         description: Calling API key lacks full_access
    *       404:
    *         description: Key not found
    *
@@ -348,81 +449,105 @@ export function createApiKeysRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends updated metadata or an error response.
    */
-  router.patch("/me/api-keys/:id", requireAuth, async (req, res) => {
-    try {
-      const id = parsePositiveInt(req.params.id);
-      if (id == null) {
-        res.status(400).json({
-          error: "invalid_id",
-          message: "id must be a positive integer.",
-        });
-        return;
-      }
-
-      const fields = parseNameAndDescription(req.body, { nameRequired: false });
-      if (!fields.ok) {
-        res.status(400).json({ error: "invalid_body", message: fields.message });
-        return;
-      }
-
-      const hasExpiresAt = Object.prototype.hasOwnProperty.call(
-        req.body || {},
-        "expiresAt",
-      );
-      /** @type {Date|undefined} */
-      let expiresAt;
-      if (hasExpiresAt) {
-        const expiry = parseExpiresAt(req.body.expiresAt, { required: true });
-        if (!expiry.ok) {
-          res
-            .status(400)
-            .json({ error: "invalid_body", message: expiry.message });
+  router.patch(
+    "/me/api-keys/:id",
+    requireAuth,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
           return;
         }
-        expiresAt = expiry.expiresAt;
-      }
 
-      if (!fields.hasName && !fields.hasDescription && !hasExpiresAt) {
-        res.status(400).json({
-          error: "invalid_body",
-          message: "Provide at least one of name, description, or expiresAt.",
+        const fields = parseNameAndDescription(req.body, { nameRequired: false });
+        if (!fields.ok) {
+          res.status(400).json({ error: "invalid_body", message: fields.message });
+          return;
+        }
+
+        const hasScopes = Object.prototype.hasOwnProperty.call(
+          req.body || {},
+          "scopes",
+        );
+        /** @type {string[]|undefined} */
+        let scopes;
+        if (hasScopes) {
+          const scopesResult = parseScopes(req.body.scopes);
+          if (!scopesResult.ok) {
+            res.status(400).json({ error: "invalid_body", message: scopesResult.message });
+            return;
+          }
+          scopes = scopesResult.scopes;
+        }
+
+        const hasExpiresAt = Object.prototype.hasOwnProperty.call(
+          req.body || {},
+          "expiresAt",
+        );
+        /** @type {Date|undefined} */
+        let expiresAt;
+        if (hasExpiresAt) {
+          const expiry = parseExpiresAt(req.body.expiresAt, { required: true });
+          if (!expiry.ok) {
+            res
+              .status(400)
+              .json({ error: "invalid_body", message: expiry.message });
+            return;
+          }
+          expiresAt = expiry.expiresAt;
+        }
+
+        if (!fields.hasName && !fields.hasDescription && !hasExpiresAt && !hasScopes) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: "Provide at least one of name, description, expiresAt, or scopes.",
+          });
+          return;
+        }
+
+        const row = await UserApiKey.findOne({
+          where: { id, userId: req.user.id },
         });
-        return;
-      }
+        if (!row) {
+          res.status(404).json({
+            error: "not_found",
+            message: "API key not found.",
+          });
+          return;
+        }
 
-      const row = await UserApiKey.findOne({
-        where: { id, userId: req.user.id },
-      });
-      if (!row) {
-        res.status(404).json({
-          error: "not_found",
-          message: "API key not found.",
+        /** @type {Record<string, unknown>} */
+        const patch = {};
+        if (fields.hasName) {
+          patch.name = fields.name;
+        }
+        if (fields.hasDescription) {
+          patch.description = fields.description;
+        }
+        if (hasExpiresAt) {
+          patch.expiresAt = expiresAt;
+        }
+
+        await row.update(patch);
+        if (hasScopes) {
+          await setKeyScopes(row.id, scopes);
+        }
+        const full = await loadKeyWithScopes(row.id);
+        res.json(serializeApiKey(full));
+      } catch (err) {
+        console.error("updateMyApiKey failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to update API key.",
         });
-        return;
       }
-
-      /** @type {Record<string, unknown>} */
-      const patch = {};
-      if (fields.hasName) {
-        patch.name = fields.name;
-      }
-      if (fields.hasDescription) {
-        patch.description = fields.description;
-      }
-      if (hasExpiresAt) {
-        patch.expiresAt = expiresAt;
-      }
-
-      await row.update(patch);
-      res.json(serializeApiKey(row));
-    } catch (err) {
-      console.error("updateMyApiKey failed:", err);
-      res.status(500).json({
-        error: "internal_error",
-        message: "Failed to update API key.",
-      });
-    }
-  });
+    },
+  );
 
   /**
    * Soft-revokes an API key owned by the authenticated user.
@@ -451,6 +576,8 @@ export function createApiKeysRouter() {
    *         description: Invalid id
    *       401:
    *         description: Not authenticated
+   *       403:
+   *         description: Calling API key lacks full_access
    *       404:
    *         description: Key not found
    *
@@ -458,41 +585,46 @@ export function createApiKeysRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
-  router.delete("/me/api-keys/:id", requireAuth, async (req, res) => {
-    try {
-      const id = parsePositiveInt(req.params.id);
-      if (id == null) {
-        res.status(400).json({
-          success: false,
-          error: "invalid_id",
-          message: "id must be a positive integer.",
-        });
-        return;
-      }
+  router.delete(
+    "/me/api-keys/:id",
+    requireAuth,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            success: false,
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
 
-      const row = await UserApiKey.findOne({
-        where: { id, userId: req.user.id },
-      });
-      if (!row) {
-        res.status(404).json({
-          success: false,
-          error: "not_found",
-          message: "API key not found.",
+        const row = await UserApiKey.findOne({
+          where: { id, userId: req.user.id },
         });
-        return;
-      }
+        if (!row) {
+          res.status(404).json({
+            success: false,
+            error: "not_found",
+            message: "API key not found.",
+          });
+          return;
+        }
 
-      await softRevoke(row);
-      res.status(200).json({ success: true });
-    } catch (err) {
-      console.error("revokeMyApiKey failed:", err);
-      res.status(500).json({
-        success: false,
-        error: "internal_error",
-        message: "Failed to revoke API key.",
-      });
-    }
-  });
+        await softRevoke(row);
+        res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("revokeMyApiKey failed:", err);
+        res.status(500).json({
+          success: false,
+          error: "internal_error",
+          message: "Failed to revoke API key.",
+        });
+      }
+    },
+  );
 
   /**
    * Lists all user API keys for administrators (masked keyDisplay only).
@@ -519,7 +651,7 @@ export function createApiKeysRouter() {
    *       401:
    *         description: Not authenticated
    *       403:
-   *         description: Not an admin
+   *         description: Not an admin, or the calling API key lacks full_access
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -529,6 +661,7 @@ export function createApiKeysRouter() {
     "/admin/api-keys",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       try {
         /** @type {Record<string, unknown>} */
@@ -547,7 +680,10 @@ export function createApiKeysRouter() {
 
         const rows = await UserApiKey.findAll({
           where,
-          include: [{ model: User, required: true, attributes: ["id", "username"] }],
+          include: [
+            { model: User, required: true, attributes: ["id", "username"] },
+            { model: UserApiKeyScope, include: [{ model: ApiKeyScope, required: true }] },
+          ],
           order: [["createdAt", "DESC"]],
         });
 
@@ -594,7 +730,7 @@ export function createApiKeysRouter() {
    *       401:
    *         description: Not authenticated
    *       403:
-   *         description: Not an admin
+   *         description: Not an admin, or the calling API key lacks full_access
    *       404:
    *         description: Key not found
    *
@@ -606,6 +742,7 @@ export function createApiKeysRouter() {
     "/admin/api-keys/:id",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       try {
         const id = parsePositiveInt(req.params.id);

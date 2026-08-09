@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { SystemConfig } from "../lib/models/index.js";
@@ -100,7 +101,7 @@ export function createSystemConfigRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 with config array, or error.
    */
-  router.get("/admin/config", requireAuth, requireAdmin, async (_req, res) => {
+  router.get("/admin/config", requireAuth, requireAdmin, requireApiKeyScope("full_access"), async (_req, res) => {
     try {
       const rows = await SystemConfig.findAll({
         order: [["name", "ASC"]],
@@ -152,6 +153,7 @@ export function createSystemConfigRouter() {
     "/admin/config/:name",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const parsed = parseConfigName(req.params.name);
       if (!parsed.ok) {
@@ -231,6 +233,7 @@ export function createSystemConfigRouter() {
     "/admin/config/:name",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const parsedName = parseConfigName(req.params.name);
       if (!parsedName.ok) {
@@ -312,6 +315,7 @@ export function createSystemConfigRouter() {
     "/admin/config/:name",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const parsed = parseConfigName(req.params.name);
       if (!parsed.ok) {

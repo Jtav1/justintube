@@ -41,6 +41,15 @@ async function loadSessionUser(userId) {
 }
 
 /**
+ * Per-request cache key for the resolved auth context, so middleware that
+ * runs earlier in the chain (e.g. the global rate limiter) and `requireAuth`
+ * itself don't each re-run the session/API-key lookup for the same request.
+ *
+ * @type {symbol}
+ */
+const AUTH_CONTEXT_CACHE = Symbol("authContext");
+
+/**
  * Resolves the authenticated user from a Bearer API key or session cookie.
  *
  * @private
@@ -48,7 +57,8 @@ async function loadSessionUser(userId) {
  * @returns {Promise<{
  *   user: import('sequelize').Model,
  *   role: import('sequelize').Model|null,
- *   authMethod: "session"|"api_key"
+ *   authMethod: "session"|"api_key",
+ *   apiKeyScopes: string[]|null
  * }|null>} Auth context, or null when unauthenticated / locked.
  */
 async function resolveAuth(req) {
@@ -62,6 +72,7 @@ async function resolveAuth(req) {
       user: result.user,
       role: result.role,
       authMethod: "api_key",
+      apiKeyScopes: result.scopes,
     };
   }
 
@@ -75,7 +86,31 @@ async function resolveAuth(req) {
     user: result.user,
     role: result.role,
     authMethod: "session",
+    // Session auth is the account owner directly; scopes only constrain
+    // delegated API-key credentials, so null here means "unrestricted".
+    apiKeyScopes: null,
   };
+}
+
+/**
+ * Resolves (and caches on `req`) the auth context for the current request.
+ * Safe to call multiple times per request - e.g. from a rate-limit `skip`
+ * check and later from `requireAuth` - without repeating the session/API-key
+ * lookup.
+ *
+ * @param {import('express').Request} req Incoming request.
+ * @returns {Promise<{
+ *   user: import('sequelize').Model,
+ *   role: import('sequelize').Model|null,
+ *   authMethod: "session"|"api_key",
+ *   apiKeyScopes: string[]|null
+ * }|null>} Auth context, or null when unauthenticated / locked.
+ */
+export async function getAuthContext(req) {
+  if (!(AUTH_CONTEXT_CACHE in req)) {
+    req[AUTH_CONTEXT_CACHE] = await resolveAuth(req);
+  }
+  return req[AUTH_CONTEXT_CACHE];
 }
 
 /**
@@ -89,11 +124,12 @@ async function resolveAuth(req) {
  */
 export async function optionalAuth(req, _res, next) {
   try {
-    const result = await resolveAuth(req);
+    const result = await getAuthContext(req);
     if (result) {
       req.user = result.user;
       req.authRole = result.role;
       req.authMethod = result.authMethod;
+      req.apiKeyScopes = result.apiKeyScopes;
     }
     next();
   } catch (err) {
@@ -104,7 +140,8 @@ export async function optionalAuth(req, _res, next) {
 
 /**
  * Express middleware that requires a valid session cookie or user API key.
- * Sets `req.user`, `req.authRole`, and `req.authMethod` (`"session"` | `"api_key"`).
+ * Sets `req.user`, `req.authRole`, `req.authMethod` (`"session"` | `"api_key"`), and
+ * `req.apiKeyScopes` (`null` for session auth; the key's granted scope names for API-key auth).
  *
  * @param {import('express').Request} req Incoming request.
  * @param {import('express').Response} res Express response.
@@ -113,7 +150,7 @@ export async function optionalAuth(req, _res, next) {
  */
 export async function requireAuth(req, res, next) {
   try {
-    const result = await resolveAuth(req);
+    const result = await getAuthContext(req);
     if (!result) {
       res.status(401).json({
         error: "unauthorized",
@@ -125,6 +162,7 @@ export async function requireAuth(req, res, next) {
     req.user = result.user;
     req.authRole = result.role;
     req.authMethod = result.authMethod;
+    req.apiKeyScopes = result.apiKeyScopes;
     next();
   } catch (err) {
     console.error("requireAuth failed:", err);

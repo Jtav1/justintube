@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Op } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { Notification, NotificationType } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
@@ -181,7 +182,7 @@ export function createNotificationsRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
-  router.post("/notifications/read", requireAuth, async (req, res) => {
+  router.post("/notifications/read", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const parsed = parseMarkReadBody(req.body);
       if (!parsed.ok) {

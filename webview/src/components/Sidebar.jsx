@@ -38,10 +38,27 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
   )
   const isOnSubscriptionsPath =
     location.pathname === '/subscriptions' || location.pathname.startsWith('/subscriptions/')
+  const isOnUserProfilePath = isOwnProfilePath || location.pathname === '/settings/api-keys'
+  // Only verified uploaders may create/manage API keys (server-enforced too -
+  // see requireUploader on POST /me/api-keys), so hide the link otherwise.
+  const canManageApiKeys = Boolean(user?.uploader && user?.emailVerified)
 
   const navItems = [
     { key: 'home', label: 'Home', icon: Home, to: '/', end: true },
-    { key: 'profile', label: 'My Profile', icon: User, to: ownProfilePath },
+    {
+      key: 'profile',
+      label: 'User Profile',
+      icon: User,
+      to: ownProfilePath,
+      children: isOnUserProfilePath
+        ? [
+            { key: 'profile-main', label: 'Main Page', to: ownProfilePath, end: true },
+            ...(canManageApiKeys
+              ? [{ key: 'profile-api-keys', label: 'API Keys', to: '/settings/api-keys' }]
+              : []),
+          ]
+        : null,
+    },
     { key: 'playlists', label: 'Playlists', icon: ListVideo, to: '/playlists' },
     { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : null },
     { key: 'history', label: 'History', icon: History, to: user ? '/history' : null },

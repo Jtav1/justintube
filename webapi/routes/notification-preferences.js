@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import {
   NotificationType,
@@ -235,6 +236,7 @@ export function createNotificationPreferencesRouter() {
   router.patch(
     "/me/notification-preferences",
     requireAuth,
+    requireApiKeyScope("profile_edit"),
     async (req, res) => {
       try {
         const types = await loadActiveNotificationTypes();

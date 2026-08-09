@@ -3,6 +3,7 @@ import { Op } from "sequelize";
 import { hashPassword } from "../lib/auth/password.js";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { createVerificationToken } from "../lib/auth/email-verification.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { serializeUser } from "../lib/auth/serialize-user.js";
@@ -383,7 +384,7 @@ export function createAdminUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 with items/total/limit/offset, or error.
    */
-  router.get("/admin/users", requireAuth, requireAdmin, async (req, res) => {
+  router.get("/admin/users", requireAuth, requireAdmin, requireApiKeyScope("full_access"), async (req, res) => {
     const pagination = parsePagination(req.query.limit, req.query.offset);
     if (!pagination.ok) {
       res.status(400).json({
@@ -479,6 +480,7 @@ export function createAdminUsersRouter() {
     "/admin/users/:id",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       const userId = parsePositiveInt(req.params.id);
       if (userId === null) {
@@ -657,6 +659,7 @@ export function createAdminUsersRouter() {
     "/admin/users/:id/password",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       try {
         const userId = parsePositiveInt(req.params.id);
@@ -759,6 +762,7 @@ export function createAdminUsersRouter() {
     "/admin/users/:id/resend-verification",
     requireAuth,
     requireAdmin,
+    requireApiKeyScope("full_access"),
     async (req, res) => {
       try {
         const userId = parsePositiveInt(req.params.id);

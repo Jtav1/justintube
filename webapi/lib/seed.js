@@ -1,5 +1,6 @@
 import {
   AccessPermission,
+  ApiKeyScope,
   NotificationType,
   Role,
   Theme,
@@ -47,6 +48,38 @@ const DEFAULT_ACCESS_PERMISSIONS = [
     description:
       "Can view and update metadata/content (and, for playlists, add/remove items), " +
       "but cannot delete, change visibility, or manage sharing.",
+  },
+];
+
+/**
+ * The standard API key scopes seeded into the API_KEY_SCOPES table.
+ * Referenced by USER_API_KEY_SCOPES.apiKeyScopeId. "full_access" is a
+ * superset of the other three rather than something combined with them.
+ *
+ * @type {Array<{name: string, description: string}>}
+ */
+const DEFAULT_API_KEY_SCOPES = [
+  {
+    name: "view_only",
+    description: "Read-only access to endpoints the key owner can already view.",
+  },
+  {
+    name: "content_edit",
+    description:
+      "Create, update, and delete the key owner's videos, playlists, comments, and " +
+      "other content, plus content-interaction actions (likes, hides, reports).",
+  },
+  {
+    name: "profile_edit",
+    description:
+      "Update the key owner's own profile, avatar/banner, theme, notification " +
+      "preferences, and subscriptions.",
+  },
+  {
+    name: "full_access",
+    description:
+      "Full account-equivalent access, including admin actions (if the owner is an " +
+      "admin) and managing the owner's own API keys.",
   },
 ];
 
@@ -192,6 +225,7 @@ export async function seedReferenceData() {
     });
   }
   await seedAccessPermissions();
+  await seedApiKeyScopes();
   await seedNotificationTypes();
   await disableDeprecatedNotificationTypes();
 }
@@ -209,6 +243,23 @@ export async function seedReferenceData() {
 export async function seedAccessPermissions() {
   for (const { name, description } of DEFAULT_ACCESS_PERMISSIONS) {
     await AccessPermission.findOrCreate({
+      where: { name },
+      defaults: { description },
+    });
+  }
+}
+
+/**
+ * Inserts the standard API key scopes ("view_only", "content_edit",
+ * "profile_edit", "full_access") into the API_KEY_SCOPES table if they are
+ * not already present. Uses findOrCreate so it is idempotent and safe to run
+ * on every startup.
+ *
+ * @returns {Promise<void>} Resolves once the default API key scopes have been seeded.
+ */
+export async function seedApiKeyScopes() {
+  for (const { name, description } of DEFAULT_API_KEY_SCOPES) {
+    await ApiKeyScope.findOrCreate({
       where: { name },
       defaults: { description },
     });

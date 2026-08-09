@@ -6,6 +6,7 @@ import { Router } from "express";
 import multer from "multer";
 import { Op, col, fn } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { buildPublicLink } from "../lib/email/mailer.js";
@@ -999,7 +1000,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the subscription state or an error response.
    */
-  router.post("/users/:id/subscribe", requireAuth, async (req, res) => {
+  router.post("/users/:id/subscribe", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1078,7 +1079,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the subscription state or an error response.
    */
-  router.delete("/users/:id/subscribe", requireAuth, async (req, res) => {
+  router.delete("/users/:id/subscribe", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1192,7 +1193,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the updated user's role or an error response.
    */
-  router.post("/users/:id/ban", requireAuth, requireAdmin, async (req, res) => {
+  router.post("/users/:id/ban", requireAuth, requireAdmin, requireApiKeyScope("full_access"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1263,7 +1264,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the updated user's role or an error response.
    */
-  router.delete("/users/:id/ban", requireAuth, requireAdmin, async (req, res) => {
+  router.delete("/users/:id/ban", requireAuth, requireAdmin, requireApiKeyScope("full_access"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1416,7 +1417,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the updated banner filename or an error response.
    */
-  router.post("/users/:id/banner", requireAuth, bannerUpload.single("file"), async (req, res) => {
+  router.post("/users/:id/banner", requireAuth, requireApiKeyScope("profile_edit"), bannerUpload.single("file"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1485,7 +1486,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
-  router.delete("/users/:id/banner", requireAuth, async (req, res) => {
+  router.delete("/users/:id/banner", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1646,7 +1647,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the updated avatar filename or an error response.
    */
-  router.post("/users/:id/avatar", requireAuth, avatarUpload.single("file"), async (req, res) => {
+  router.post("/users/:id/avatar", requireAuth, requireApiKeyScope("profile_edit"), avatarUpload.single("file"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1715,7 +1716,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
    */
-  router.delete("/users/:id/avatar", requireAuth, async (req, res) => {
+  router.delete("/users/:id/avatar", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {
@@ -1802,7 +1803,7 @@ export function createUsersRouter() {
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends the updated displayName/bio or an error response.
    */
-  router.patch("/users/:id/profile", requireAuth, async (req, res) => {
+  router.patch("/users/:id/profile", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
     try {
       const targetId = parsePositiveInt(req.params.id);
       if (targetId === null) {

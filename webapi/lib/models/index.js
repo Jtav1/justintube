@@ -1,5 +1,6 @@
 import { sequelize } from "../db.js";
 import { AccessPermission } from "./access-permission.js";
+import { ApiKeyScope } from "./api-key-scope.js";
 import { Comment } from "./comment.js";
 import { ContentTag } from "./content-tag.js";
 import { EmailVerificationToken } from "./email-verification-token.js";
@@ -21,6 +22,7 @@ import { Theme } from "./theme.js";
 import { TranscodeProfile } from "./transcode-profile.js";
 import { User } from "./user.js";
 import { UserApiKey } from "./user-api-key.js";
+import { UserApiKeyScope } from "./user-api-key-scope.js";
 import { UserHiddenVideo } from "./user-hidden-video.js";
 import { UserIdentity } from "./user-identity.js";
 import { UserNotificationSetting } from "./user-notification-setting.js";
@@ -65,6 +67,22 @@ function registerAssociations() {
   UserApiKey.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "CASCADE",
+  });
+
+  UserApiKey.hasMany(UserApiKeyScope, {
+    foreignKey: "userApiKeyId",
+    onDelete: "CASCADE",
+  });
+  UserApiKeyScope.belongsTo(UserApiKey, {
+    foreignKey: "userApiKeyId",
+    onDelete: "CASCADE",
+  });
+
+  ApiKeyScope.hasMany(UserApiKeyScope, {
+    foreignKey: "apiKeyScopeId",
+  });
+  UserApiKeyScope.belongsTo(ApiKeyScope, {
+    foreignKey: "apiKeyScopeId",
   });
 
   User.hasOne(StreamKey, {
@@ -493,10 +511,12 @@ registerAssociations();
  */
 export const models = {
   AccessPermission,
+  ApiKeyScope,
   Role,
   User,
   EmailVerificationToken,
   UserApiKey,
+  UserApiKeyScope,
   SsoProvider,
   UserIdentity,
   OriginalUpload,
@@ -529,6 +549,7 @@ export const models = {
 
 export {
   AccessPermission,
+  ApiKeyScope,
   Comment,
   ContentTag,
   EmailVerificationToken,
@@ -550,6 +571,7 @@ export {
   TranscodeProfile,
   User,
   UserApiKey,
+  UserApiKeyScope,
   UserHiddenVideo,
   UserIdentity,
   UserNotificationSetting,
