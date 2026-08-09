@@ -6,6 +6,7 @@ import {
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
+import { requireUploader } from "../lib/auth/require-uploader.js";
 import { User, UserApiKey } from "../lib/models/index.js";
 
 /**
@@ -231,6 +232,7 @@ export function createApiKeysRouter() {
    * returned only in this response.
    * POST /api/v1/me/api-keys with `{ name, description?, expiresAt? }`.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   * Requires uploader status and a verified email (or admin).
    *
    * @openapi
    * /api/v1/me/api-keys:
@@ -261,12 +263,14 @@ export function createApiKeysRouter() {
    *         description: Invalid body
    *       401:
    *         description: Not authenticated
+   *       403:
+   *         description: Uploader access and a verified email are required
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 201 `{ ...metadata, key }` or an error.
    */
-  router.post("/me/api-keys", requireAuth, async (req, res) => {
+  router.post("/me/api-keys", requireAuth, requireUploader, async (req, res) => {
     try {
       const fields = parseNameAndDescription(req.body, { nameRequired: true });
       if (!fields.ok) {

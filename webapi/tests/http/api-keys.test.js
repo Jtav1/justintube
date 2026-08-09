@@ -83,11 +83,35 @@ describe("me / api-keys routes", () => {
     expect(res.body.error).toBe("unauthorized");
   });
 
-  test("create returns plaintext key once; list returns masked keyDisplay only", async () => {
+  test("create rejects non-uploader or unverified users", async () => {
     const agent = createTestAgent();
     const { csrfToken } = await registerSession(agent, {
+      username: "nonuploader",
+      email: "nonuploader@example.com",
+    });
+
+    const res = await agent
+      .post("/api/v1/me/api-keys")
+      .set("X-CSRF-Token", csrfToken)
+      .send({ name: "ci-bot" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
+  test("create returns plaintext key once; list returns masked keyDisplay only", async () => {
+    const passwordHash = await hashPassword("password123");
+    await seedUser({
       username: "keyowner",
       email: "keyowner@example.com",
+      passwordHash,
+      emailVerified: true,
+      uploader: true,
+    });
+    const agent = createTestAgent();
+    const csrfToken = await loginSession(agent, {
+      username: "keyowner",
+      password: "password123",
     });
 
     const create = await agent
@@ -206,10 +230,18 @@ describe("me / api-keys routes", () => {
   });
 
   test("create rejects past expiresAt", async () => {
-    const agent = createTestAgent();
-    const { csrfToken } = await registerSession(agent, {
+    const passwordHash = await hashPassword("password123");
+    await seedUser({
       username: "past_exp",
       email: "past_exp@example.com",
+      passwordHash,
+      emailVerified: true,
+      uploader: true,
+    });
+    const agent = createTestAgent();
+    const csrfToken = await loginSession(agent, {
+      username: "past_exp",
+      password: "password123",
     });
 
     const res = await agent

@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { createCorsOptions } from "./lib/auth/cors.js";
+import { getAuthContext } from "./lib/auth/require-auth.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
 import { ensureSchema } from "./lib/schema.js";
@@ -57,6 +58,13 @@ export function createApp() {
       max: 300,
       standardHeaders: true,
       legacyHeaders: false,
+      // Requests authenticated with a valid user API key are exempt from this
+      // (and any other client-facing) rate limit - API key holders are trusted
+      // callers, distinct from anonymous/session traffic this limiter targets.
+      skip: async (req) => {
+        const auth = await getAuthContext(req);
+        return auth?.authMethod === "api_key";
+      },
     }),
   );
 
