@@ -1,0 +1,20 @@
+{
+  "name": "migration-tools",
+  "version": "1.0.0",
+  "description": "One-off scripts for migrating data into justintube from other platforms.",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "scripts": {
+    "migrate:mediacms": "node migrate-user-videos.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pg": "^8.13.1"
+  }
+}
