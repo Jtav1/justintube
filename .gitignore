@@ -25,3 +25,4 @@ migration-tools/state/*
 !migration-tools/state/.gitkeep
 migration-tools/logs/*
 !migration-tools/logs/.gitkeep
+migration-tools/node_modules
