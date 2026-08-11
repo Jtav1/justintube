@@ -3,7 +3,9 @@ import { createAdminBroadcastRouter } from "./admin-broadcast.js";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createLivestreamsRouter } from "./livestreams.js";
 import { createMeRouter } from "./me.js";
+import { createMeStreamKeyRouter } from "./me-stream-key.js";
 import { createNotificationPreferencesRouter } from "./notification-preferences.js";
 import { createNotificationsRouter } from "./notifications.js";
 import { createPagesRouter } from "./pages.js";
@@ -60,18 +62,6 @@ export function registerStubRoutes(router) {
   r("get", "/videos/:id/reaction", "getVideoReaction");
   r("delete", "/videos/:id/reaction", "clearVideoReaction");
 
-  // Me / stream key (OBS / RTMP ingest credential)
-  r("get", "/me/stream-key", "getMyStreamKey");
-  r("post", "/me/stream-key/rotate", "rotateMyStreamKey");
-  r("delete", "/me/stream-key", "revokeMyStreamKey");
-
-  // Livestreaming
-  r("get", "/livestreams", "listLivestreams");
-  r("get", "/livestreams/:id", "getLivestream");
-  r("patch", "/livestreams/:id", "updateLivestream");
-  r("get", "/livestreams/:id/playback", "getLivestreamPlayback");
-  r("get", "/users/:username/live", "getUserLiveStatus");
-
   // CAST
   r("post", "/cast", "createCastSpace");
   r("post", "/cast/join", "joinCastSpace");
@@ -96,6 +86,8 @@ export function createApiRouter() {
   router.use(createUploadRouter());
   router.use(createApiKeysRouter());
   router.use(createMeRouter());
+  router.use(createMeStreamKeyRouter());
+  router.use(createLivestreamsRouter());
   router.use(createNotificationPreferencesRouter());
   router.use(createNotificationsRouter());
   router.use(createPagesRouter());

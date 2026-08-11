@@ -35,6 +35,22 @@ export function formatViewCount(count) {
   return `${compact} view${n === 1 ? '' : 's'}`
 }
 
+/**
+ * Compacts a livestream viewer count, e.g. 1234 -> "1.2K watching".
+ * @param {number|null|undefined} count
+ * @returns {string}
+ */
+export function formatViewerCount(count) {
+  const n = Number(count) || 0
+  let compact = String(n)
+  if (n >= 1_000_000) {
+    compact = `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  } else if (n >= 1_000) {
+    compact = `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`
+  }
+  return `${compact} watching`
+}
+
 const RELATIVE_UNITS = [
   { unit: 'year', seconds: 31536000 },
   { unit: 'month', seconds: 2592000 },

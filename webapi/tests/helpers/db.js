@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey, apiKeyPrefix } from "../../lib/auth/api-key.js";
 import { hashVerificationToken } from "../../lib/auth/email-verification.js";
+import { hashStreamKey } from "../../lib/auth/stream-key.js";
 import { query } from "../../lib/db.js";
 import { generateVideoId } from "../../lib/video-id.js";
 import {
@@ -11,6 +12,7 @@ import {
   FeaturedVideo,
   EmailVerificationToken,
   FileVersion,
+  Livestream,
   Notification,
   NotificationType,
   OriginalUpload,
@@ -20,6 +22,7 @@ import {
   Role,
   SsoProvider,
   StaticPage,
+  StreamKey,
   Subscription,
   SystemConfig,
   Theme,
@@ -77,6 +80,8 @@ const RESET_MODELS = [
   UserApiKeyScope,
   UserApiKey,
   EmailVerificationToken,
+  Livestream,
+  StreamKey,
   Report,
   User,
   SsoProvider,
@@ -829,6 +834,61 @@ export async function seedReport(reporterUserId, overrides = {}) {
   };
 
   const row = await Report.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a STREAM_KEYS row for an existing user. Hashes `rawKey` with
+ * SHA-256, mirroring `seedUserApiKey`.
+ *
+ * @param {number} userId Owning USERS id.
+ * @param {string} rawKey Plaintext stream key used by tests.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {Date|string|null} [overrides.lastUsedAt] Last-used timestamp.
+ * @param {Date|string|null} [overrides.revokedAt] Revocation timestamp (null = active).
+ * @returns {Promise<{id: number, rawKey: string} & Record<string, unknown>>} Seeded key metadata plus rawKey.
+ */
+export async function seedStreamKey(userId, rawKey, overrides = {}) {
+  const record = {
+    userId,
+    keyHash: hashStreamKey(rawKey),
+    keyPrefix: rawKey.slice(0, 8),
+    lastUsedAt: null,
+    revokedAt: null,
+    ...overrides,
+  };
+
+  const row = await StreamKey.create(record);
+  return { ...asSeedResult(row, record), rawKey };
+}
+
+/**
+ * Inserts a LIVESTREAMS row for an existing user, applying defaults for any
+ * omitted field.
+ *
+ * @param {number} userId Owning USERS id.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string|null} [overrides.title] Stream title.
+ * @param {string|null} [overrides.description] Stream description.
+ * @param {string} [overrides.visibility] Visibility label.
+ * @param {string} [overrides.status] "offline" or "live".
+ * @param {number} [overrides.viewerCount] Current viewer count.
+ * @param {Date|string|null} [overrides.startedAt] Timestamp the stream last went live.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded livestream's id and values.
+ */
+export async function seedLivestream(userId, overrides = {}) {
+  const record = {
+    userId,
+    title: null,
+    description: null,
+    visibility: "private",
+    status: "offline",
+    viewerCount: 0,
+    startedAt: null,
+    ...overrides,
+  };
+
+  const row = await Livestream.create(record);
   return asSeedResult(row, record);
 }
 
