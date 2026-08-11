@@ -190,6 +190,11 @@ Reasons:
 - `hardware_encoder_not_configured` — the profile has `hardwareAccelerated: true`
   and hardware transcoding is enabled, but this profile's `videoCodec` isn't in
   the `HW_ACCELERATED_TRANSCODING_ENCODERS` allowlist.
+- `profile_orientation_mismatch` — the profile's orientation (horizontal:
+  `outputWidth > outputHeight`, vertical: `outputHeight > outputWidth`) doesn't
+  match the probed source's orientation. Square profiles/sources are
+  orientation-agnostic and are never skipped for this reason. Checked last,
+  after the resolution and hardware checks above.
 
 Software profiles (`hardwareAccelerated: false`) are never skipped for hardware
 reasons. The response also includes probed `source` dimensions.

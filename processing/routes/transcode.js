@@ -13,6 +13,7 @@ import {
 import {
   probeVideoDimensions,
   probeVideoDuration,
+  shouldSkipProfileForOrientation,
   shouldSkipProfileForSource,
 } from "../lib/probe.js";
 import {
@@ -49,8 +50,9 @@ export function createTranscodeRouter({
    * Profiles that would upscale the source (output width/height greater than
    * the probed source) are skipped, as are hardware-accelerated profiles
    * when hardware transcoding isn't currently usable on this deployment or
-   * this profile's codec isn't in the configured encoder allowlist;
-   * remaining jobs are enqueued normally.
+   * this profile's codec isn't in the configured encoder allowlist. Finally,
+   * profiles whose orientation (horizontal/vertical) doesn't match the
+   * source's orientation are skipped; remaining jobs are enqueued normally.
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -136,6 +138,17 @@ export function createTranscodeRouter({
             });
             continue;
           }
+        }
+        if (
+          job.kind === "rendition" &&
+          shouldSkipProfileForOrientation(job.profile, source)
+        ) {
+          skipped.push({
+            jobId: job.jobId,
+            profileId: job.profile.id,
+            reason: "profile_orientation_mismatch",
+          });
+          continue;
         }
         accepted.push(job);
       }
