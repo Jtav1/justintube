@@ -30,6 +30,8 @@ function AccountSettings() {
   const [loadError, setLoadError] = useState(null)
 
   const [username, setUsername] = useState('')
+  const [userid, setUserid] = useState('')
+
   const [bio, setBio] = useState('')
   const [email, setEmail] = useState('')
   const [savingAccount, setSavingAccount] = useState(false)
@@ -65,6 +67,7 @@ function AccountSettings() {
         if (!cancelled) {
           setSettings(data)
           setUsername(data.username)
+          setUserid(data.id);
           setBio(data.bio || '')
           setEmail(data.email)
         }
@@ -286,7 +289,7 @@ function AccountSettings() {
     <section className="settings-page">
       <div className="settings-columns">
       <div className="settings-card">
-        <h1>Account Settings</h1>
+        <h1>Account Settings (user id: {userid})</h1>
 
         <div
           className="settings-banner"

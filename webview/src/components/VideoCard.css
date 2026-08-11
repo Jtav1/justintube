@@ -133,6 +133,10 @@
   text-decoration: underline;
 }
 
+.video-card-visibility {
+  text-transform: capitalize;
+}
+
 .video-card-menu {
   position: relative;
   flex-shrink: 0;

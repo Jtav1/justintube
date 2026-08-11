@@ -5,11 +5,6 @@ const apiBaseURL =
   import.meta.env.VITE_API_BASE_URL ||
   "http://localhost:3000";
 
-console.log("[justintube] API base URL:", apiBaseURL);
-console.log(window.__RUNTIME_CONFIG__?.API_BASE_URL);
-console.log(import.meta.env.VITE_API_BASE_URL);
-console.log("http://localhost:3000");
-
 const apiClient = axios.create({
   baseURL: apiBaseURL,
   withCredentials: true,
@@ -31,5 +26,18 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status >= 500) {
+      console.error(
+        `API 500 error: ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
+        error.response.data,
+      );
+    }
+    return Promise.reject(error);
+  },
+);
 
 export default apiClient;

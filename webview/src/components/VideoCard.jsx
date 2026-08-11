@@ -231,6 +231,9 @@ function VideoCard({
             ) : (
               <>{formatViewCount(video.viewCount)} &middot; {formatRelativeDate(video.createdAt)}</>
             )}
+            {video.visibility && video.visibility !== 'public' && (
+              <> &middot; <span className="video-card-visibility">{video.visibility}</span></>
+            )}
           </p>
         </div>
         {!hideMenu && (

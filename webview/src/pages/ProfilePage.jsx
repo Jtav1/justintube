@@ -507,6 +507,7 @@ function ProfilePage() {
                 {user.displayName && (
                   <span className="profile-username-handle"> ({user.username})</span>
                 )}
+                {' '}<span className="profile-user-id">User # {user.id}</span>
                 {!isAdminViewer && user.role && (
                   <span className="profile-username-role"> - role: {user.role}</span>
                 )}
