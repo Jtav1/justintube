@@ -329,6 +329,51 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
     expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
   });
 
+  test("skips profiles whose orientation does not match the source", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: 1920,
+      videoHeight: 1080,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const horizontalJob = {
+      jobId: "33333333-3333-3333-3333-333333333333",
+      outputFilename: "33333333-3333-3333-3333-333333333333.mp4",
+      profile,
+    };
+    const verticalJob = {
+      jobId: "44444444-4444-4444-4444-444444444444",
+      outputFilename: "44444444-4444-4444-4444-444444444444.mp4",
+      profile: { ...profile, id: 2, outputHeight: 1080, outputWidth: 608 },
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [horizontalJob, verticalJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.jobs).toEqual([
+      {
+        jobId: horizontalJob.jobId,
+        outputFilename: horizontalJob.outputFilename,
+        profileId: 1,
+      },
+    ]);
+    expect(res.body.skipped).toEqual([
+      {
+        jobId: verticalJob.jobId,
+        profileId: 2,
+        reason: "profile_orientation_mismatch",
+      },
+    ]);
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
   test("does not enqueue when every profile exceeds the source", async () => {
     const queue = {
       addBulk: jest.fn(),

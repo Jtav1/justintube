@@ -133,6 +133,40 @@ export function shouldSkipProfileForSource(profile, source) {
 }
 
 /**
+ * Returns true when `profile`'s orientation (horizontal: width > height,
+ * vertical: height > width) does not match the source's orientation. Square
+ * dimensions (width === height), for either the profile or the source, are
+ * treated as orientation-agnostic and never cause a skip.
+ *
+ * @param {{ outputWidth: number, outputHeight: number }} profile Target profile dims.
+ * @param {{ videoWidth: number|null, videoHeight: number|null }} source
+ *   Probed source stream dimensions.
+ * @returns {boolean} `true` when this profile should be skipped.
+ */
+export function shouldSkipProfileForOrientation(profile, source) {
+  const sourceWidth = source?.videoWidth;
+  const sourceHeight = source?.videoHeight;
+  if (
+    !Number.isInteger(sourceWidth) ||
+    sourceWidth <= 0 ||
+    !Number.isInteger(sourceHeight) ||
+    sourceHeight <= 0 ||
+    sourceWidth === sourceHeight
+  ) {
+    // Cannot compare, or source is square — do not skip (fail open).
+    return false;
+  }
+
+  if (profile.outputWidth === profile.outputHeight) {
+    return false;
+  }
+
+  const sourceIsHorizontal = sourceWidth > sourceHeight;
+  const profileIsHorizontal = profile.outputWidth > profile.outputHeight;
+  return sourceIsHorizontal !== profileIsHorizontal;
+}
+
+/**
  * Probes a media file with ffprobe and returns its duration in whole seconds.
  *
  * @param {string} filePath Absolute path to the media file.

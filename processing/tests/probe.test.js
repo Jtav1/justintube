@@ -2,6 +2,7 @@ import { describe, expect, test } from "@jest/globals";
 import {
   heightToResolution,
   mimeTypeForContainer,
+  shouldSkipProfileForOrientation,
   shouldSkipProfileForSource,
 } from "../lib/probe.js";
 
@@ -67,6 +68,62 @@ describe("shouldSkipProfileForSource", () => {
       shouldSkipProfileForSource(
         { outputWidth: 1920, outputHeight: 1080 },
         { videoWidth: null, videoHeight: null },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("shouldSkipProfileForOrientation", () => {
+  test("skips vertical profiles for a horizontal source", () => {
+    const source = { videoWidth: 1920, videoHeight: 1080 };
+    expect(
+      shouldSkipProfileForOrientation(
+        { outputWidth: 1080, outputHeight: 1920 },
+        source,
+      ),
+    ).toBe(true);
+  });
+
+  test("skips horizontal profiles for a vertical source", () => {
+    const source = { videoWidth: 1080, videoHeight: 1920 };
+    expect(
+      shouldSkipProfileForOrientation(
+        { outputWidth: 1920, outputHeight: 1080 },
+        source,
+      ),
+    ).toBe(true);
+  });
+
+  test("keeps profiles matching the source orientation", () => {
+    const source = { videoWidth: 1920, videoHeight: 1080 };
+    expect(
+      shouldSkipProfileForOrientation(
+        { outputWidth: 1280, outputHeight: 720 },
+        source,
+      ),
+    ).toBe(false);
+  });
+
+  test("does not skip when source dimensions are unknown", () => {
+    expect(
+      shouldSkipProfileForOrientation(
+        { outputWidth: 1080, outputHeight: 1920 },
+        { videoWidth: null, videoHeight: null },
+      ),
+    ).toBe(false);
+  });
+
+  test("does not skip for a square source or square profile", () => {
+    expect(
+      shouldSkipProfileForOrientation(
+        { outputWidth: 1080, outputHeight: 1920 },
+        { videoWidth: 1000, videoHeight: 1000 },
+      ),
+    ).toBe(false);
+    expect(
+      shouldSkipProfileForOrientation(
+        { outputWidth: 1000, outputHeight: 1000 },
+        { videoWidth: 1920, videoHeight: 1080 },
       ),
     ).toBe(false);
   });
