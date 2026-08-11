@@ -6,8 +6,7 @@
 # Pin explicitly and bump deliberately - hook config keys have moved across
 # MediaMTX versions, so re-verify streaming/mediamtx.yml against this
 # version's docs/bundled default config before bumping.
-ARG MEDIAMTX_VERSION=v1.20.0
-FROM bluenviron/mediamtx:${MEDIAMTX_VERSION} AS mediamtx
+FROM bluenviron/mediamtx:1.20.0 AS mediamtx
 
 FROM alpine:3.20
 RUN apk add --no-cache curl jq
