@@ -188,6 +188,27 @@ export function createApp() {
     res.status(404).json({ error: "not_found", message: "No route matched." });
   });
 
+  /**
+   * Catch-all error handler. Logs the cause of any unhandled error (including
+   * async errors Express 5 forwards automatically) so it's visible in the
+   * Docker log console, then responds with the standard error envelope if a
+   * response hasn't already been sent.
+   *
+   * @param {Error} err The error that was thrown or forwarded via next(err).
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @param {import('express').NextFunction} next Express next function.
+   * @returns {void} Sends 500 `{ error: "internal_error", message }`.
+   */
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => {
+    console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
+    if (res.headersSent) {
+      return;
+    }
+    res.status(500).json({ error: "internal_error", message: "Internal server error." });
+  });
+
   return app;
 }
 

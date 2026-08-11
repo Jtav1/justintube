@@ -27,4 +27,17 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status >= 500) {
+      console.error(
+        `API 500 error: ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
+        error.response.data,
+      );
+    }
+    return Promise.reject(error);
+  },
+);
+
 export default apiClient;
