@@ -16,6 +16,6 @@ if [ "$(id -u app)" != "$PUID" ]; then
   usermod -o -u "$PUID" app
 fi
 
-chown -R app:app /app /media /data/shared
+chown -R app:app /app /media /sitedata /data/shared
 
 exec su-exec app "$@"

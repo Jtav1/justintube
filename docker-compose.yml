@@ -2,7 +2,7 @@ services:
   # Bundled MySQL used when running the full stack with Docker Compose.
   # (Local development instead uses SQLite via `npm run dev` in ./webapi.)
   db:
-    image: mysql:8.4
+    image: justintube-db:latest
     container_name: justintube-db
     restart: unless-stopped
     environment:
@@ -17,7 +17,6 @@ services:
     # (see docs/deployment.md).
     volumes:
       - db-data:/var/lib/mysql
-      - ./webapi/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
         [
