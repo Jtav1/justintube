@@ -14,6 +14,7 @@ Manual tracking of API route implementation progress across the two backend serv
 - [x] `GET /health` — liveness probe
 - [x] `GET /openapi.json` — OpenAPI document
 - [x] `GET /docs` — Scalar API reference UI
+- [x] `GET /api/v1/config` — getPublicConfig (public runtime feature flags, e.g. `livestreamEnabled`, for the webview to read since it has no access to webapi's env vars)
 
 ### Internal (processing callbacks)
 
@@ -165,6 +166,13 @@ dynamically add/remove a stable `live/{userId}` MediaMTX path (via MediaMTX's
 own control API) that re-pulls the just-published stream, so
 `getLivestreamPlayback` can build a playback URL from `userId` alone without
 ever needing the raw stream key.
+
+The whole feature is gated behind `ENABLE_LIVESTREAM` (`webapi/lib/livestream-config.js`):
+when not `"true"`, the public routes below and the internal callbacks are
+never mounted (`webapi/routes/stubs.js`, `webapi/index.js`), so requests to
+them 404 rather than 501 — they're deliberately disabled, not unimplemented.
+The webview reads the flag via `GET /api/v1/config` and hides the Go Live /
+watch-live UI accordingly.
 
 - [x] `GET /api/v1/me/stream-key` — getMyStreamKey
 - [x] `POST /api/v1/me/stream-key/rotate` — rotateMyStreamKey (invalidates the old key; also find-or-creates the caller's LIVESTREAMS row)

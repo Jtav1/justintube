@@ -7,6 +7,7 @@ import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { createCorsOptions } from "./lib/auth/cors.js";
 import { getAuthContext } from "./lib/auth/require-auth.js";
+import { livestreamEnabled } from "./lib/livestream-config.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
 import { ensureSchema } from "./lib/schema.js";
@@ -178,7 +179,12 @@ export function createApp() {
   // with no path restriction, which would otherwise intercept every
   // /internal/* request - including this one - before it ever reached a
   // matching route.
-  app.use("/internal", createInternalLivestreamsRouter());
+  // Gated on ENABLE_LIVESTREAM, matching the public livestream routes in
+  // routes/stubs.js - when disabled, these callbacks are unmounted and any
+  // request to them falls through to the app-level 404 handler below.
+  if (livestreamEnabled()) {
+    app.use("/internal", createInternalLivestreamsRouter());
+  }
   app.use("/internal", createInternalFileVersionsRouter());
   app.use("/internal", createInternalThumbnailsRouter());
   app.use("/api/v1", createApiRouter());

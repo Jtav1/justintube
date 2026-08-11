@@ -89,6 +89,16 @@ services:
 Note `redis` requires `--requirepass` (wired from `REDIS_PASSWORD`) and
 `AUTH`; most Redis GUIs will prompt for a password.
 
+Unlike `db`/`redis`/`search`, the `streaming` service (only relevant when
+`ENABLE_LIVESTREAM=true`) publishes ports `1935` (RTMP ingest) and `8888`
+(HLS playback) **by design** — OBS (or any RTMP encoder) and viewers'
+browsers both need to reach it directly from outside the Docker host, unlike
+`processing`'s internal-only API. Set `RTMP_INGEST_URL`/`HLS_BASE_URL` in
+`.env` to this host's real public hostname/IP (not `localhost`) and make sure
+those two ports are actually forwarded through any router/firewall in front
+of it, or streamers/viewers will fail to connect even though the container
+itself is healthy.
+
 ## 6. CORS configuration
 
 `CORS_ORIGIN` is a comma-separated allowlist of browser origins allowed to

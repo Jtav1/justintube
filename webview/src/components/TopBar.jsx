@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Menu, MessageSquareWarning, MoreVertical, Palette, Radio, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
 import apiClient from '../api/client.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import SearchAutocomplete from './SearchAutocomplete.jsx'
@@ -11,6 +12,7 @@ import './TopBar.css'
 
 function TopBar({ onToggleSidebar, backgroundUrl }) {
   const { user, logout } = useAuth()
+  const { livestreamEnabled } = useSiteConfig()
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -204,7 +206,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             <span>Upload</span>
           </Link>
         )}
-        {canUpload && (
+        {canUpload && livestreamEnabled && (
           <Link to="/go-live" className="topbar-golive">
             <Radio size={18} />
             <span>Go Live</span>
