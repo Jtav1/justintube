@@ -20,8 +20,8 @@ EXPOSE 3000
 RUN apk add --no-cache shadow su-exec \
   && addgroup -g 1001 -S app \
   && adduser -u 1001 -S app -G app \
-  && mkdir -p /media /data/shared \
-  && chown -R app:app /media /data/shared
+  && mkdir -p /media /sitedata /data/shared \
+  && chown -R app:app /media /sitedata /data/shared
 
 # Copy installed dependencies from builder, setting ownership as files are laid down
 COPY --from=builder --chown=app:app /app/node_modules ./node_modules

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import { getFeaturedVideos, getNewestVideos } from '../api/videos.js'
+import { listLivestreams } from '../api/livestreams.js'
 import { useToast } from '../context/useToast.js'
 import VideoCard from '../components/VideoCard.jsx'
+import LiveStreamCard from '../components/LiveStreamCard.jsx'
 import './VideoListing.css'
 
 const PAGE_LIMIT = 24
@@ -16,6 +18,7 @@ const FEATURED_GRID_GAP = 10
 
 function VideoListing() {
   const { error: toastError } = useToast()
+  const [live, setLive] = useState([])
   const [featured, setFeatured] = useState([])
   const [recent, setRecent] = useState([])
   const [visibleCount, setVisibleCount] = useState(PAGE_LIMIT)
@@ -69,6 +72,17 @@ function VideoListing() {
           setLoading(false)
         }
       }
+
+      // A "Live Now" section is a nice-to-have on top of the main listing -
+      // fail silently rather than toasting an error for it.
+      try {
+        const liveData = await listLivestreams({ limit: 12 })
+        if (!cancelled) {
+          setLive(liveData.items)
+        }
+      } catch {
+        // ignore
+      }
     }
 
     load()
@@ -86,8 +100,19 @@ function VideoListing() {
 
   return (
     <section className="video-listing">
-      {!loading && featured.length === 0 && recent.length === 0 && (
+      {!loading && live.length === 0 && featured.length === 0 && recent.length === 0 && (
         <p className="video-listing-empty">No videos yet.</p>
+      )}
+
+      {live.length > 0 && (
+        <div className="video-listing-section">
+          <h2 className="video-listing-section-title">Live Now</h2>
+          <div className="video-listing-grid">
+            {live.map((livestream) => (
+              <LiveStreamCard key={livestream.id} livestream={livestream} />
+            ))}
+          </div>
+        </div>
       )}
 
       {featured.length > 0 && (

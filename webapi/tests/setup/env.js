@@ -23,6 +23,7 @@ process.env.SITEDATA_STORAGE_DIRECTORY = join(scratchDir, "sitedata");
 process.env.FILETYPES_ALLOWED = "mp4,webm,mkv,mp3,wav";
 process.env.AVATAR_FILETYPES_ALLOWED = "jpg,jpeg,png,webp";
 process.env.PROCESSING_API_URL = "http://processing.test:3001";
+process.env.HLS_BASE_URL = "http://hls.test:8888";
 process.env.INTERNAL_SERVICE_TOKEN = "test-internal-token";
 process.env.TRANSCODE_RECONCILE_ENABLED = "false";
 process.env.SESSION_SECRET = "test-session-secret";

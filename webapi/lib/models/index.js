@@ -6,6 +6,7 @@ import { ContentTag } from "./content-tag.js";
 import { EmailVerificationToken } from "./email-verification-token.js";
 import { FeaturedVideo } from "./featured-video.js";
 import { FileVersion } from "./file-version.js";
+import { Livestream } from "./livestream.js";
 import { Notification } from "./notification.js";
 import { NotificationType } from "./notification-type.js";
 import { OriginalUpload } from "./original-upload.js";
@@ -90,6 +91,15 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
   StreamKey.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasOne(Livestream, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  Livestream.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "CASCADE",
   });
@@ -539,6 +549,7 @@ export const models = {
   UserNotificationSetting,
   StaticPage,
   StreamKey,
+  Livestream,
   SystemConfig,
   Theme,
   VideoTransferMapping,
@@ -555,6 +566,7 @@ export {
   EmailVerificationToken,
   FeaturedVideo,
   FileVersion,
+  Livestream,
   Notification,
   NotificationType,
   OriginalUpload,

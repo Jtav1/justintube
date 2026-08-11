@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Menu, MessageSquareWarning, MoreVertical, Palette, Search, UserRound, Video } from 'lucide-react'
+import { Menu, MessageSquareWarning, MoreVertical, Palette, Radio, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
@@ -202,6 +202,12 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
           <Link to="/upload" className="topbar-upload">
             <Video size={18} />
             <span>Upload</span>
+          </Link>
+        )}
+        {canUpload && (
+          <Link to="/go-live" className="topbar-golive">
+            <Radio size={18} />
+            <span>Go Live</span>
           </Link>
         )}
         {user && (

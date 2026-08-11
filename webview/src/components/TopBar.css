@@ -142,6 +142,24 @@
   background: var(--accent-border);
 }
 
+.topbar-golive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--error-border);
+  background: var(--error-bg);
+  color: var(--error);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.topbar-golive:hover {
+  background: var(--error-border);
+}
+
 .topbar-theme {
   position: relative;
   display: flex;
@@ -370,11 +388,13 @@
   }
 
   .topbar-upload span,
+  .topbar-golive span,
   .topbar-username {
     display: none;
   }
 
-  .topbar-upload {
+  .topbar-upload,
+  .topbar-golive {
     padding: 6px 8px;
   }
 

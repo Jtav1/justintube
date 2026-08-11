@@ -159,7 +159,20 @@ version can start failing to download from a given site over time. Bump the
 pins in `processing/Dockerfile` deliberately when that happens, rather than
 switching back to always-latest.
 
-## 12. Health checks & startup ordering
+## 12. Storage directory provisioning
+
+`webapi` and `processing` both run as a non-root `app` user (uid/gid 1001 by
+default, reconciled to `PUID`/`PGID` env vars at container start — see each
+`docker-entrypoint.sh`). On first boot against a bind-mounted host path that
+doesn't exist yet (as in `docker-compose-prod.yml`), Docker creates the mount
+point as `root`; each entrypoint then `chown -R`s its writable mount points
+(`/media`, `/sitedata`, `/data/shared`) to the `app` user before dropping
+privileges, and the app itself creates the subdirectories it needs
+(`original/`, `transcoded/`, `thumbnails/`, `avatars/`, `banners/`,
+`themes/`) at startup. No manual `mkdir`/`chown` on the host is required for
+any of these paths, including on a completely fresh deployment.
+
+## 13. Health checks & startup ordering
 
 `db`, `redis`, `search`, `webapi`, and `processing` all have Docker
 `healthcheck:` blocks. `webapi` waits for `db` and `processing` to report
@@ -167,7 +180,7 @@ healthy before starting; `webview` waits for `webapi`. `docker compose ps`
 shows each service's health status — expect a `starting` → `healthy`
 transition over the first ~15-30 seconds per service.
 
-## 13. Explicitly out of scope
+## 14. Explicitly out of scope
 
 - **TLS termination** — assumed external (see §2).
 - **Secrets management/vaulting** — `.env` is a plain file; for a real
@@ -186,7 +199,7 @@ transition over the first ~15-30 seconds per service.
   design (`concurrency: 1`); running multiple `processing` replicas isn't
   tested or documented here.
 
-## 14. Known constraints
+## 15. Known constraints
 
 - The webview's Content-Security-Policy leaves `connect-src`, `img-src`, and
   `media-src` permissive (`'self' *`) rather than scoped to the real API

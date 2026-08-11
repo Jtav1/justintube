@@ -171,8 +171,15 @@ export function createApp() {
     );
   }
 
-  app.use("/internal", createInternalFileVersionsRouter());
+  // Mounted first: unlike the other two internal routers, this one has a
+  // route (mediamtx-auth) that's deliberately NOT Bearer-gated (MediaMTX's
+  // authHTTPAddress webhook can't send an Authorization header). The other
+  // two routers apply their requireInternalToken as a blanket `router.use`
+  // with no path restriction, which would otherwise intercept every
+  // /internal/* request - including this one - before it ever reached a
+  // matching route.
   app.use("/internal", createInternalLivestreamsRouter());
+  app.use("/internal", createInternalFileVersionsRouter());
   app.use("/internal", createInternalThumbnailsRouter());
   app.use("/api/v1", createApiRouter());
 
