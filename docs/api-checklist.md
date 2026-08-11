@@ -145,31 +145,36 @@ Future
 - [x] `POST /api/v1/playlists/:id/access` — addPlaylistAccess
 - [x] `DELETE /api/v1/playlists/:id/access/:userId` — removePlaylistAccess
 
-### Livestreaming (FUTURE)
+### Livestreaming
 
-Requires a new RTMP/ingest component (e.g. MediaMTX or nginx-rtmp) sitting in
-front of the webapi — Express can't terminate RTMP itself. OBS pushes to that
-ingest server using a per-user stream key (dedicated `STREAM_KEYS` table, same
+The webapi application layer (stream keys, the `LIVESTREAMS` model, the
+public routes, and the internal ingest callbacks) is implemented. **A real
+RTMP/ingest component (e.g. MediaMTX or nginx-rtmp) in front of the webapi is
+still not built** — Express can't terminate RTMP itself — so
+`getLivestreamPlayback` always returns a null `playbackUrl` and nothing calls
+`/internal/livestreams/*` yet outside of tests. OBS would push to that future
+ingest server using a per-user stream key (`STREAM_KEYS` table, same
 hash/prefix/revoke pattern as `USER_API_KEYS` but scoped to publish-only so a
-leaked key can't be used to call the rest of the API). The ingest server calls
-the `/internal/livestreams/*` callbacks below the same way `processing` calls
-`/internal/file-versions/*` today.
+leaked key can't be used to call the rest of the API). The ingest server would
+call the `/internal/livestreams/*` callbacks below the same way `processing`
+calls `/internal/file-versions/*` today.
 
-- [ ] `GET /api/v1/me/stream-key` — getMyStreamKey
-- [ ] `POST /api/v1/me/stream-key/rotate` — rotateMyStreamKey (invalidates the old key)
-- [ ] `DELETE /api/v1/me/stream-key` — revokeMyStreamKey
+- [x] `GET /api/v1/me/stream-key` — getMyStreamKey
+- [x] `POST /api/v1/me/stream-key/rotate` — rotateMyStreamKey (invalidates the old key; also find-or-creates the caller's LIVESTREAMS row)
+- [x] `DELETE /api/v1/me/stream-key` — revokeMyStreamKey
+- [x] `GET /api/v1/me/livestream` — getMyLivestream (not in the original design; added so the Go Live page can load/edit stream details before any ingest server exists to create the row via `/internal/livestreams/authorize`)
 
-- [ ] `GET /api/v1/livestreams` — listLivestreams (currently-live public streams)
-- [ ] `GET /api/v1/livestreams/:id` — getLivestream (status, viewer count, playback info)
-- [ ] `PATCH /api/v1/livestreams/:id` — updateLivestream (title/description/visibility)
-- [ ] `GET /api/v1/livestreams/:id/playback` — getLivestreamPlayback (resolves the HLS manifest URL; enforces the same visibility/access-grant checks as `canViewVideo`)
-- [ ] `GET /api/v1/users/:username/live` — getUserLiveStatus (channel-page "LIVE" badge)
+- [x] `GET /api/v1/livestreams` — listLivestreams (currently-live public streams)
+- [x] `GET /api/v1/livestreams/:id` — getLivestream (status, viewer count, playback info)
+- [x] `PATCH /api/v1/livestreams/:id` — updateLivestream (title/description/visibility)
+- [x] `GET /api/v1/livestreams/:id/playback` — getLivestreamPlayback (playbackUrl is null until an ingest server exists)
+- [x] `GET /api/v1/users/:username/live` — getUserLiveStatus (channel-page "LIVE" badge)
 
 Internal (ingest server callbacks; Bearer `INTERNAL_SERVICE_TOKEN`, mirrors the processing-callback pattern above):
 
-- [ ] `POST /internal/livestreams/authorize` — livestreamAuthorize (on-publish webhook: validates the stream key, finds/creates the LIVESTREAMS row)
-- [ ] `POST /internal/livestreams/:id/start` — livestreamStart
-- [ ] `POST /internal/livestreams/:id/stop` — livestreamStop (optionally hands the recording to `processing` to become a normal VOD)
+- [x] `POST /internal/livestreams/authorize` — livestreamAuthorize (on-publish webhook: validates the stream key, finds/creates the LIVESTREAMS row)
+- [x] `POST /internal/livestreams/:id/start` — livestreamStart
+- [x] `POST /internal/livestreams/:id/stop` — livestreamStop (recording handoff to `processing` for VOD is still future work)
 
 ### CAST (FUTURE)
 
