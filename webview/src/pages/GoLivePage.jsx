@@ -205,8 +205,8 @@ function GoLivePage() {
 
         <p className="golive-hint">
           Configure your stream, then plug the RTMP details below into OBS (or any RTMP-compatible
-          encoder) to publish. No ingest server is deployed yet, so publishing won&apos;t work
-          end-to-end until one is - this page reserves the setup for when it is.
+          encoder) to publish - the Server value goes in OBS&apos;s &quot;Server&quot; field, and
+          your stream key goes in its &quot;Stream Key&quot; field.
         </p>
 
         {revealedKey && (

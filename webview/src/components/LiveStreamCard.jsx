@@ -5,13 +5,12 @@ import './LiveStreamCard.css'
 
 /**
  * Display card for a currently-live stream, rendered alongside VideoCard in
- * listings. No HLS preview/thumbnail exists yet (no ingest server produces
- * one - see docs/api-checklist.md "Livestreaming"), so the thumbnail area
+ * listings. No HLS preview/thumbnail exists yet, so the thumbnail area
  * always shows a placeholder for now.
  */
 function LiveStreamCard({ livestream, orientation = 'vertical' }) {
   const streamerName = livestream.streamer?.displayName || livestream.streamer?.username
-  const streamPath = `/users/${livestream.streamer?.username}`
+  const streamPath = `/live/${livestream.id}`
 
   return (
     <article className={`livestream-card livestream-card-${orientation}`}>

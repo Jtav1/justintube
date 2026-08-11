@@ -148,16 +148,23 @@ Future
 ### Livestreaming
 
 The webapi application layer (stream keys, the `LIVESTREAMS` model, the
-public routes, and the internal ingest callbacks) is implemented. **A real
-RTMP/ingest component (e.g. MediaMTX or nginx-rtmp) in front of the webapi is
-still not built** — Express can't terminate RTMP itself — so
-`getLivestreamPlayback` always returns a null `playbackUrl` and nothing calls
-`/internal/livestreams/*` yet outside of tests. OBS would push to that future
-ingest server using a per-user stream key (`STREAM_KEYS` table, same
-hash/prefix/revoke pattern as `USER_API_KEYS` but scoped to publish-only so a
-leaked key can't be used to call the rest of the API). The ingest server would
-call the `/internal/livestreams/*` callbacks below the same way `processing`
-calls `/internal/file-versions/*` today.
+public routes, and the internal ingest callbacks) is implemented, and a real
+RTMP/HLS ingest component now sits in front of webapi: the `streaming`
+service (`streaming/`), a Dockerized MediaMTX instance. OBS pushes to it
+using a per-user stream key (`STREAM_KEYS` table, same hash/prefix/revoke
+pattern as `USER_API_KEYS` but scoped to publish-only so a leaked key can't
+be used to call the rest of the API) — OBS's "Server" field is the same
+`RTMP_INGEST_URL` for every user, and its "Stream Key" field is the raw
+secret, since OBS always concatenates the two into one publish path. MediaMTX
+validates each publish attempt against `POST
+/internal/livestreams/mediamtx-auth` (its `authHTTPAddress` webhook — see
+`streaming/mediamtx.yml`), then calls the `/internal/livestreams/*` lifecycle
+callbacks below via `streaming/scripts/on-{publish,unpublish}.sh`, the same
+way `processing` calls `/internal/file-versions/*`. Those scripts also
+dynamically add/remove a stable `live/{userId}` MediaMTX path (via MediaMTX's
+own control API) that re-pulls the just-published stream, so
+`getLivestreamPlayback` can build a playback URL from `userId` alone without
+ever needing the raw stream key.
 
 - [x] `GET /api/v1/me/stream-key` — getMyStreamKey
 - [x] `POST /api/v1/me/stream-key/rotate` — rotateMyStreamKey (invalidates the old key; also find-or-creates the caller's LIVESTREAMS row)
@@ -167,12 +174,13 @@ calls `/internal/file-versions/*` today.
 - [x] `GET /api/v1/livestreams` — listLivestreams (currently-live public streams)
 - [x] `GET /api/v1/livestreams/:id` — getLivestream (status, viewer count, playback info)
 - [x] `PATCH /api/v1/livestreams/:id` — updateLivestream (title/description/visibility)
-- [x] `GET /api/v1/livestreams/:id/playback` — getLivestreamPlayback (playbackUrl is null until an ingest server exists)
+- [x] `GET /api/v1/livestreams/:id/playback` — getLivestreamPlayback (HLS playbackUrl when live, derived from `HLS_BASE_URL` + userId; null when offline)
 - [x] `GET /api/v1/users/:username/live` — getUserLiveStatus (channel-page "LIVE" badge)
 
 Internal (ingest server callbacks; Bearer `INTERNAL_SERVICE_TOKEN`, mirrors the processing-callback pattern above):
 
 - [x] `POST /internal/livestreams/authorize` — livestreamAuthorize (on-publish webhook: validates the stream key, finds/creates the LIVESTREAMS row)
+- [x] `POST /internal/livestreams/mediamtx-auth` — livestreamMediamtxAuth (MediaMTX's `authHTTPAddress` publish-time gate; query-string-token auth since MediaMTX can't send an Authorization header)
 - [x] `POST /internal/livestreams/:id/start` — livestreamStart
 - [x] `POST /internal/livestreams/:id/stop` — livestreamStop (recording handoff to `processing` for VOD is still future work)
 

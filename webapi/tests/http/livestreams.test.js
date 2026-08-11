@@ -156,15 +156,26 @@ describe("livestreams routes", () => {
     expect(res.body.error).toBe("invalid_body");
   });
 
-  test("playback returns a null playbackUrl placeholder", async () => {
+  test("playback returns an HLS playbackUrl derived from userId when live", async () => {
     const owner = await seedUser({ username: "playback-owner", email: "playback@example.com" });
     const stream = await seedLivestream(owner.id, { status: "live", visibility: "public" });
 
     const client = createTestClient();
     const res = await client.get(`/api/v1/livestreams/${stream.id}/playback`);
     expect(res.status).toBe(200);
-    expect(res.body.playbackUrl).toBeNull();
     expect(res.body.status).toBe("live");
+    expect(res.body.playbackUrl).toBe(`http://hls.test:8888/live/${owner.id}/index.m3u8`);
+  });
+
+  test("playback returns a null playbackUrl when offline", async () => {
+    const owner = await seedUser({ username: "playback-offline", email: "playback-offline@example.com" });
+    const stream = await seedLivestream(owner.id, { status: "offline", visibility: "public" });
+
+    const client = createTestClient();
+    const res = await client.get(`/api/v1/livestreams/${stream.id}/playback`);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("offline");
+    expect(res.body.playbackUrl).toBeNull();
   });
 
   test("users/:username/live reports false when offline", async () => {

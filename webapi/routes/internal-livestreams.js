@@ -54,6 +54,34 @@ function parsePositiveInt(raw) {
 }
 
 /**
+ * Looks up a raw stream key, rejecting missing/revoked keys, and
+ * find-or-creates the owner's LIVESTREAMS row, touching `lastUsedAt`.
+ * Shared by the Bearer-gated `authorize` route and the query-token-gated
+ * `mediamtx-auth` route so both stay consistent with a single lookup path.
+ *
+ * @private
+ * @param {string} rawKey Raw stream key as presented by the publisher.
+ * @returns {Promise<{keyRow: object, livestream: object}|null>}
+ *   The matched STREAM_KEYS row and its LIVESTREAMS row, or null when the key is invalid/revoked.
+ */
+async function resolveAndTouchStreamKey(rawKey) {
+  const keyRow = await StreamKey.findOne({
+    where: { keyHash: hashStreamKey(rawKey) },
+  });
+  if (!keyRow || keyRow.revokedAt) {
+    return null;
+  }
+
+  const [livestream] = await Livestream.findOrCreate({
+    where: { userId: keyRow.userId },
+    defaults: { userId: keyRow.userId },
+  });
+  await keyRow.update({ lastUsedAt: new Date() });
+
+  return { keyRow, livestream };
+}
+
+/**
  * Builds the router for RTMP ingest server → API livestream lifecycle
  * callbacks.
  *
@@ -61,7 +89,6 @@ function parsePositiveInt(raw) {
  */
 export function createInternalLivestreamsRouter() {
   const router = Router();
-  router.use(requireInternalToken);
 
   /**
    * POST /internal/livestreams/authorize — livestreamAuthorize
@@ -69,9 +96,9 @@ export function createInternalLivestreamsRouter() {
    * stream key. Validates the key against STREAM_KEYS and find-or-creates the
    * LIVESTREAMS row for that user; the row stays `offline` until `/start` is
    * called separately once the ingest server confirms the publish succeeded.
-   * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
+   * Auth: Bearer INTERNAL_SERVICE_TOKEN.
    */
-  router.post("/livestreams/authorize", async (req, res) => {
+  router.post("/livestreams/authorize", requireInternalToken, async (req, res) => {
     try {
       const streamKey = String(req.body?.streamKey || "");
       if (!streamKey) {
@@ -82,10 +109,8 @@ export function createInternalLivestreamsRouter() {
         return;
       }
 
-      const keyRow = await StreamKey.findOne({
-        where: { keyHash: hashStreamKey(streamKey) },
-      });
-      if (!keyRow || keyRow.revokedAt) {
+      const resolved = await resolveAndTouchStreamKey(streamKey);
+      if (!resolved) {
         res.status(403).json({
           error: "forbidden",
           message: "Invalid or revoked stream key.",
@@ -93,13 +118,7 @@ export function createInternalLivestreamsRouter() {
         return;
       }
 
-      const [livestream] = await Livestream.findOrCreate({
-        where: { userId: keyRow.userId },
-        defaults: { userId: keyRow.userId },
-      });
-      await keyRow.update({ lastUsedAt: new Date() });
-
-      res.status(200).json({ livestreamId: livestream.id, userId: keyRow.userId });
+      res.status(200).json({ livestreamId: resolved.livestream.id, userId: resolved.keyRow.userId });
     } catch (err) {
       console.error("livestreamAuthorize failed:", err);
       res.status(500).json({
@@ -110,11 +129,57 @@ export function createInternalLivestreamsRouter() {
   });
 
   /**
+   * POST /internal/livestreams/mediamtx-auth — livestreamMediamtxAuth
+   * Called by MediaMTX's `authHTTPAddress` webhook on every publish attempt.
+   * MediaMTX can't send an `Authorization` header on this call, so it's gated
+   * by a token in the query string instead of `requireInternalToken`. Body is
+   * MediaMTX's fixed shape: `{ action, path, ... }`. OBS concatenates its
+   * "Server" and "Stream Key" fields into one publish path, so the raw stream
+   * key itself *is* the path segment (`live/{rawKey}`) - there's no separate
+   * userId to cross-check, since possession of a valid, unrevoked key is
+   * itself the identity check. Response body is ignored by MediaMTX - only
+   * the status code matters.
+   */
+  router.post("/livestreams/mediamtx-auth", async (req, res) => {
+    try {
+      const expected = process.env.INTERNAL_SERVICE_TOKEN || "";
+      const provided = String(req.query?.token || "");
+      if (!expected || !timingSafeStringEqual(expected, provided)) {
+        res.status(401).end();
+        return;
+      }
+
+      if (req.body?.action !== "publish") {
+        res.status(403).end();
+        return;
+      }
+
+      const pathMatch = /^live\/(.+)$/.exec(String(req.body?.path || ""));
+      const rawKey = pathMatch ? pathMatch[1] : "";
+      if (!rawKey) {
+        res.status(403).end();
+        return;
+      }
+
+      const resolved = await resolveAndTouchStreamKey(rawKey);
+      if (!resolved) {
+        res.status(403).end();
+        return;
+      }
+
+      res.status(200).end();
+    } catch (err) {
+      console.error("livestreamMediamtxAuth failed:", err);
+      res.status(500).end();
+    }
+  });
+
+  /**
    * POST /internal/livestreams/:id/start — livestreamStart
    * Flips a livestream to `live` and records `startedAt`.
-   * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
+   * Auth: Bearer INTERNAL_SERVICE_TOKEN.
    */
-  router.post("/livestreams/:id/start", async (req, res) => {
+  router.post("/livestreams/:id/start", requireInternalToken, async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {
@@ -146,9 +211,9 @@ export function createInternalLivestreamsRouter() {
    * recording handoff, this is where it would be triggered - see the
    * "Livestreaming (FUTURE)" note in docs/api-checklist.md. Not built yet;
    * out of scope until that pipeline exists.
-   * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
+   * Auth: Bearer INTERNAL_SERVICE_TOKEN.
    */
-  router.post("/livestreams/:id/stop", async (req, res) => {
+  router.post("/livestreams/:id/stop", requireInternalToken, async (req, res) => {
     try {
       const id = parsePositiveInt(req.params.id);
       if (id == null) {

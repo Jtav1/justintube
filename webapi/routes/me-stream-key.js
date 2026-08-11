@@ -12,6 +12,7 @@ import { Livestream, StreamKey } from "../lib/models/index.js";
  * @param {import('sequelize').Model} row StreamKey instance.
  * @returns {{
  *   keyDisplay: string,
+ *   ingestUrl: string|null,
  *   createdAt: Date,
  *   lastUsedAt: Date|null,
  *   revokedAt: Date|null
@@ -20,6 +21,9 @@ import { Livestream, StreamKey } from "../lib/models/index.js";
 function serializeStreamKey(row) {
   return {
     keyDisplay: maskStreamKeyPrefix(row.keyPrefix),
+    // Same ingest URL for every user - OBS concatenates Server + "/" +
+    // Stream Key itself, so the raw key (pasted into OBS's separate "Stream
+    // Key" field) is what makes the resulting publish path unique per user.
     ingestUrl: process.env.RTMP_INGEST_URL || null,
     createdAt: row.createdAt,
     lastUsedAt: row.lastUsedAt ?? null,

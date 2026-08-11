@@ -70,6 +70,16 @@ export async function updateLivestream(id, body) {
 }
 
 /**
+ * Fetches HLS playback info for a livestream.
+ * @param {string|number} id
+ * @returns {Promise<{status: string, playbackUrl: string|null}>}
+ */
+export async function getLivestreamPlayback(id) {
+  const res = await apiClient.get(`/api/v1/livestreams/${id}/playback`)
+  return res.data
+}
+
+/**
  * Fetches a user's current live status, for a channel-page "LIVE" badge.
  * @param {string} username
  * @returns {Promise<{live: boolean, livestreamId?: number, title?: string|null, viewerCount?: number}>}

@@ -407,10 +407,12 @@ export function createLivestreamsRouter() {
   });
 
   /**
-   * Resolves playback info for a livestream. No RTMP/HLS ingest server exists
-   * yet (see `docs/api-checklist.md` "Livestreaming (FUTURE)"), so this
-   * currently always returns a null `playbackUrl` once visibility passes -
-   * it reserves the contract shape rather than serving real media.
+   * Resolves playback info for a livestream. The MediaMTX ingest server
+   * (see `docs/api-checklist.md` "Livestreaming") publishes each user's
+   * channel to a stable `live/{userId}` path and serves its HLS manifest at
+   * that same path under HLS_BASE_URL, so `playbackUrl` is derived directly
+   * from `row.userId` - no ingest-server lookup needed, and it's null
+   * whenever the channel isn't currently live.
    * GET /api/v1/livestreams/:id/playback
    * Auth: optional (visibility rules apply, same as GET /livestreams/:id).
    *
@@ -427,7 +429,7 @@ export function createLivestreamsRouter() {
    *         schema: { type: integer }
    *     responses:
    *       200:
-   *         description: Playback info (playbackUrl is null until an ingest server is wired up)
+   *         description: Playback info (playbackUrl is an HLS manifest URL when live, otherwise null)
    *       400:
    *         description: Invalid id
    *       404:
@@ -451,11 +453,11 @@ export function createLivestreamsRouter() {
         return;
       }
 
+      const hlsBaseUrl = process.env.HLS_BASE_URL || "";
       res.json({
         status: row.status,
-        // No ingest server produces an HLS manifest yet; this is a contract
-        // placeholder for when one exists (see docs/api-checklist.md).
-        playbackUrl: null,
+        playbackUrl:
+          row.status === "live" && hlsBaseUrl ? `${hlsBaseUrl}/live/${row.userId}/index.m3u8` : null,
       });
     } catch (err) {
       console.error("getLivestreamPlayback failed:", err);

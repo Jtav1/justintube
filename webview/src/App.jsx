@@ -7,6 +7,7 @@ import VerifyEmailPage from './pages/VerifyEmailPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
 import UploadPage from './pages/UploadPage.jsx'
 import GoLivePage from './pages/GoLivePage.jsx'
+import LiveWatchPage from './pages/LiveWatchPage.jsx'
 import CreatePlaylistPage from './pages/CreatePlaylistPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
 import ControlPanelPage from './pages/AdminPanel.jsx'
@@ -60,6 +61,7 @@ function App() {
         <Route path="/users/:username" element={<ProfilePage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/go-live" element={<GoLivePage />} />
+        <Route path="/live/:id" element={<LiveWatchPage />} />
         <Route path="/playlists/new" element={<CreatePlaylistPage />} />
         <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
         <Route path="/users/:username/playlists" element={<UserPlaylistsPage />} />

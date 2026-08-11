@@ -118,3 +118,69 @@ describe("/internal/livestreams", () => {
     expect(res.status).toBe(404);
   });
 });
+
+/**
+ * HTTP tests for MediaMTX's authHTTPAddress webhook. Unlike the other
+ * internal routes, this one is gated by a query-string token (MediaMTX
+ * can't send an Authorization header) and speaks MediaMTX's fixed webhook
+ * body shape `{ action, path }` rather than `{ streamKey }`.
+ */
+describe("/internal/livestreams/mediamtx-auth", () => {
+  /** @type {ReturnType<typeof createTestClient>} */
+  let client;
+
+  beforeAll(async () => {
+    await setupSchema();
+    client = createTestClient();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  test("rejects a missing/wrong token", async () => {
+    const res = await client
+      .post("/internal/livestreams/mediamtx-auth")
+      .send({ action: "publish", path: "live/sk_whatever" });
+    expect(res.status).toBe(401);
+  });
+
+  test("rejects non-publish actions", async () => {
+    const res = await client
+      .post(`/internal/livestreams/mediamtx-auth?token=${TOKEN}`)
+      .send({ action: "read", path: "live/sk_whatever" });
+    expect(res.status).toBe(403);
+  });
+
+  test("rejects an unknown stream key", async () => {
+    const res = await client
+      .post(`/internal/livestreams/mediamtx-auth?token=${TOKEN}`)
+      .send({ action: "publish", path: "live/sk_does_not_exist" });
+    expect(res.status).toBe(403);
+  });
+
+  test("accepts a valid stream key embedded in the publish path", async () => {
+    const user = await seedUser({ username: "mtx-user", email: "mtx@example.com" });
+    await seedStreamKey(user.id, "sk_mediamtx_valid_key");
+
+    const res = await client
+      .post(`/internal/livestreams/mediamtx-auth?token=${TOKEN}`)
+      .send({ action: "publish", path: "live/sk_mediamtx_valid_key" });
+    expect(res.status).toBe(200);
+
+    const keys = await queryRows("SELECT last_used_at FROM STREAM_KEYS WHERE user_id = :userId", {
+      userId: user.id,
+    });
+    expect(keys[0].last_used_at).not.toBeNull();
+  });
+
+  test("rejects a revoked stream key", async () => {
+    const user = await seedUser({ username: "mtx-revoked", email: "mtx-revoked@example.com" });
+    await seedStreamKey(user.id, "sk_mediamtx_revoked_key", { revokedAt: new Date() });
+
+    const res = await client
+      .post(`/internal/livestreams/mediamtx-auth?token=${TOKEN}`)
+      .send({ action: "publish", path: "live/sk_mediamtx_revoked_key" });
+    expect(res.status).toBe(403);
+  });
+});
