@@ -32,20 +32,14 @@ const TITLE_FONT_WEIGHT = 600
 const TITLE_SHRINK_PX = 4
 
 /**
- * Picks the default rendition to play: the highest non-"original" resolution
- * when transcodes exist, otherwise falls back to "original".
+ * Picks the default rendition to play: always "original" when available,
+ * otherwise falls back to whatever rendition is first.
  *
  * @param {Array<{resolution: string, height: number|null}>} renditions Available renditions.
  * @returns {object|undefined} The rendition to select by default.
  */
 function pickDefaultRendition(renditions) {
-  const transcoded = renditions.filter((r) => r.resolution !== 'original')
-  if (transcoded.length === 0) {
-    return renditions.find((r) => r.resolution === 'original') ?? renditions[0]
-  }
-  return transcoded.reduce((best, current) =>
-    (current.height ?? 0) > (best.height ?? 0) ? current : best,
-  )
+  return renditions.find((r) => r.resolution === 'original') ?? renditions[0]
 }
 
 function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
