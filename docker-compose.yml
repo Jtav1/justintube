@@ -89,6 +89,9 @@ services:
       PROCESSING_API_URL: http://processing:3001
       DOWNLOAD_REQUEST_TIMEOUT_MS: ${DOWNLOAD_REQUEST_TIMEOUT_MS:-900000}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
+      # Livestreaming feature flag - leave false unless the `streaming`
+      # service (below) is actually deployed and reachable.
+      ENABLE_LIVESTREAM: ${ENABLE_LIVESTREAM:-false}
       # RTMP ingest server (streaming service, below) and its HLS output.
       RTMP_INGEST_URL: ${RTMP_INGEST_URL:-rtmp://localhost:1935/live}
       HLS_BASE_URL: ${HLS_BASE_URL:-http://localhost:8888}

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { livestreamEnabled } from "../lib/livestream-config.js";
 import { createAdminBroadcastRouter } from "./admin-broadcast.js";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
@@ -10,6 +11,7 @@ import { createNotificationPreferencesRouter } from "./notification-preferences.
 import { createNotificationsRouter } from "./notifications.js";
 import { createPagesRouter } from "./pages.js";
 import { createPlaylistsRouter } from "./playlists.js";
+import { createPublicConfigRouter } from "./public-config.js";
 import { createReportsRouter } from "./reports.js";
 import { createSearchRouter } from "./search.js";
 import { createSystemConfigRouter } from "./system-config.js";
@@ -86,11 +88,18 @@ export function createApiRouter() {
   router.use(createUploadRouter());
   router.use(createApiKeysRouter());
   router.use(createMeRouter());
-  router.use(createMeStreamKeyRouter());
-  router.use(createLivestreamsRouter());
+  // Gated on ENABLE_LIVESTREAM: when disabled, these paths are simply never
+  // mounted, so requests fall through to the app-level 404 handler (same
+  // approach as ENABLE_API_DOCS gating /docs in index.js). The internal
+  // ingest-server callbacks are gated the same way in index.js.
+  if (livestreamEnabled()) {
+    router.use(createMeStreamKeyRouter());
+    router.use(createLivestreamsRouter());
+  }
   router.use(createNotificationPreferencesRouter());
   router.use(createNotificationsRouter());
   router.use(createPagesRouter());
+  router.use(createPublicConfigRouter());
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
   router.use(createAdminBroadcastRouter());

@@ -4,6 +4,7 @@ import { ArrowRight } from 'lucide-react'
 import { getFeaturedVideos, getNewestVideos } from '../api/videos.js'
 import { listLivestreams } from '../api/livestreams.js'
 import { useToast } from '../context/useToast.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
 import VideoCard from '../components/VideoCard.jsx'
 import LiveStreamCard from '../components/LiveStreamCard.jsx'
 import './VideoListing.css'
@@ -18,6 +19,7 @@ const FEATURED_GRID_GAP = 10
 
 function VideoListing() {
   const { error: toastError } = useToast()
+  const { livestreamEnabled } = useSiteConfig()
   const [live, setLive] = useState([])
   const [featured, setFeatured] = useState([])
   const [recent, setRecent] = useState([])
@@ -74,14 +76,17 @@ function VideoListing() {
       }
 
       // A "Live Now" section is a nice-to-have on top of the main listing -
-      // fail silently rather than toasting an error for it.
-      try {
-        const liveData = await listLivestreams({ limit: 12 })
-        if (!cancelled) {
-          setLive(liveData.items)
+      // fail silently rather than toasting an error for it. Skipped entirely
+      // when livestreaming is disabled, since the underlying route is unmounted.
+      if (livestreamEnabled) {
+        try {
+          const liveData = await listLivestreams({ limit: 12 })
+          if (!cancelled) {
+            setLive(liveData.items)
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
       }
     }
 
@@ -90,7 +95,7 @@ function VideoListing() {
     return () => {
       cancelled = true
     }
-  }, [toastError])
+  }, [toastError, livestreamEnabled])
 
   const visibleRecent = recent.slice(0, visibleCount)
   const featuredOverflowing = featured.length > featuredColumns
