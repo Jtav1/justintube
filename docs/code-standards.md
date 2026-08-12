@@ -1,200 +1,85 @@
 # JavaScript code standards
 
-Conventions for JavaScript in this repository (`webapi/`, `processing/`, and shared patterns). Prefer matching neighboring files over inventing a new style.
+Conventions for `webapi/` and `processing/`. Match neighboring files over inventing new style.
 
-Primary references:
-
-- Route factory + OpenAPI JSDoc: [`webapi/routes/api-keys.js`](webapi/routes/api-keys.js)
-- Auth middleware: [`webapi/lib/auth/require-auth.js`](webapi/lib/auth/require-auth.js), [`webapi/lib/auth/require-admin.js`](webapi/lib/auth/require-admin.js)
-- Sequelize model: [`webapi/lib/models/user-api-key.js`](webapi/lib/models/user-api-key.js)
-- Router mounting / stubs: [`webapi/routes/stubs.js`](webapi/routes/stubs.js)
+References: [`webapi/routes/api-keys.js`](webapi/routes/api-keys.js) (route + OpenAPI JSDoc),
+[`require-auth.js`](webapi/lib/auth/require-auth.js) / [`require-admin.js`](webapi/lib/auth/require-admin.js),
+[`user-api-key.js`](webapi/lib/models/user-api-key.js) (model), [`stubs.js`](webapi/routes/stubs.js) (mounting).
 
 ---
 
-## Language and tooling
+## Style
 
-- **JavaScript** with **ES modules** (`import` / `export`). Use **explicit `.js` extensions** in relative import paths (Node ESM).
-- **Semicolons** at the end of statements.
-- **Double quotes** for string literals.
-- Target **Node ≥ 20** (`webapi` engines field); prefer modern async/`await` APIs.
-
----
-
-## Indentation and whitespace
-
-- **2 spaces** per indentation level. Do not use tabs.
-- **One blank line** between logical sections (after imports, between unrelated blocks).
-- **One blank line** between import groups: third-party packages first, then a blank line, then local/project imports.
-- **Trailing commas** in multiline object literals, array literals, and parameter lists where it improves diffs.
-- Avoid trailing whitespace on lines.
-
----
-
-## Line length and wrapping
-
-- Prefer readable line breaks over very long lines. Indent continuations consistently (typically one extra level).
-- Keep chained calls one call per line when that stays clearer than a single long expression.
-
----
+- ESM (`import`/`export`), explicit `.js` extensions on relative imports. Semicolons. Double quotes. 2-space indent, no tabs. Node ≥ 20, `async`/`await`.
+- One blank line between logical sections and between import groups (third-party, then local).
+- Trailing commas in multiline literals/params. No trailing whitespace.
+- Break long lines for readability; one chained call per line when clearer.
 
 ## Naming
 
-- **Variables and functions:** `camelCase` (`hashApiKey`, `requireAuth`, `keyDisplay`).
-- **Module-scope constants:** `const` with `camelCase` or `UPPER_SNAKE` for true fixed literals (`DEFAULT_TTL_MS`, `MAX_NAME_LENGTH`).
-- **Files:**
-  - Libraries / helpers: **kebab-case** (`require-auth.js`, `user-api-key.js`, `api-key.js`).
-  - Route modules: **kebab-case** matching the resource (`api-keys.js`, `system-config.js`).
-- **Sequelize models:** PascalCase class name (`UserApiKey`); **table names** `UPPER_SNAKE_CASE` (`USER_API_KEYS`).
-- **JS attributes / JSON:** **camelCase** (`userId`, `expiresAt`, `keyDisplay`). DB columns are snake_case via Sequelize `field` mappings where needed.
-- **Error codes:** snake_case strings (`unauthorized`, `invalid_body`, `not_found`).
-
----
+- Variables/functions: `camelCase`. Module constants: `camelCase` or `UPPER_SNAKE` for fixed literals.
+- Files: kebab-case (`require-auth.js`, `api-keys.js`).
+- Sequelize model classes: PascalCase; table names: `UPPER_SNAKE_CASE`.
+- JSON/JS fields: `camelCase` (DB columns are snake_case via Sequelize `field` mappings).
+- Error codes: snake_case strings (`unauthorized`, `invalid_body`, `not_found`).
 
 ## Imports
 
-- Order: external packages first, blank line, then relative project imports.
-- Prefer **named imports** / **named exports**. Avoid unused imports.
-- Aggregate re-exports only when they clarify a public surface (e.g. `lib/models/index.js`).
+External packages, blank line, then relative imports. Named imports/exports preferred; no unused imports. Aggregate re-exports only where they clarify a public surface (`lib/models/index.js`).
 
----
+## Functions
 
-## Functions and exports
-
-- Prefer **named `function` declarations** for exported and private helpers:
-
-  ```js
-  export function createApiKeysRouter() { ... }
-
-  /**
-   * @private
-   */
-  function serializeApiKey(row) { ... }
-  ```
-
-- Route modules export a **factory** `createXxxRouter()` that returns an Express `Router`.
-- Use **`async`/`await`** for asynchronous work; avoid unnecessary `.then()` chains.
-- **Early returns** for guard clauses (`if (!row) { res.status(404)...; return; }`).
-
----
+- Named `function` declarations for exported/private helpers, not arrows.
+- Route modules export a `createXxxRouter()` factory returning an Express `Router`.
+- `async`/`await` over `.then()` chains. Early returns for guard clauses.
 
 ## Comments and JSDoc
 
-Document functions with a preceding `/** ... */` block that includes a short description, **`@param`** for each parameter (braced types), and **`@returns`** (type + brief meaning).
-
-### Inline comments
-
-- Use `//` for short “why” notes (non-obvious constraints, security choices).
-- Prefer a comment on its own line above the code it describes.
-
-### Exported and private functions
-
-```js
-/**
- * Soft-revokes an API key by setting `revokedAt` when not already revoked.
- *
- * @param {import('sequelize').Model} row UserApiKey instance.
- * @returns {Promise<void>} Resolves after the row is updated (or left unchanged).
- */
-async function softRevoke(row) { ... }
-```
-
-- Mark internal helpers with `@private` when they are not part of the module’s public API.
-- Route handler JSDoc should also state **HTTP method + path**, **body/query shape**, and **auth**.
-
-### OpenAPI on routes
-
-Document public HTTP endpoints with an inline `@openapi` YAML fragment in the handler JSDoc. The document is merged from [`webapi/openapi.yaml`](webapi/openapi.yaml) plus route annotations via `swagger-jsdoc` ([`webapi/lib/loadOpenApi.js`](webapi/lib/loadOpenApi.js)). Include `operationId`, `tags`, `security`, and main response codes.
-
----
+- Every function: `/** ... */` with a short description, `@param` per parameter (typed), `@returns`.
+- `@private` on internal helpers. Route handlers also note HTTP method + path, body/query shape, auth.
+- Inline `//` comments only for non-obvious "why" (constraints, security choices), on their own line above the code.
+- Public HTTP endpoints get an `@openapi` YAML fragment in the handler JSDoc (merged via `swagger-jsdoc`, see [`loadOpenApi.js`](webapi/lib/loadOpenApi.js)) with `operationId`, `tags`, `security`, response codes.
 
 ## Web API routes
 
-### Mounting
-
-- Implement routes in `webapi/routes/*.js` as `createXxxRouter()` factories.
-- Register real routers in [`createApiRouter()`](webapi/routes/stubs.js) **before** `registerStubRoutes`, so implementations override 501 placeholders.
-- When replacing a stub, **remove** the matching stub registration.
-- Base path for the public API is `/api/v1`. Internal service callbacks mount under `/internal`.
-
-### Auth
-
-- **`requireAuth`:** session cookie **or** `Authorization: Bearer` user API key. Sets `req.user`, `req.authRole`, `req.authMethod` (`"session"` | `"api_key"`).
-- **`requireAdmin`:** run **after** `requireAuth`; allows only `req.authRole.name === "admin"`.
-- **CSRF:** apply `csrfProtection` on routers that mutate state. Enforced for cookie sessions on unsafe methods; **skipped** when a Bearer token is present. Clients send `X-CSRF-Token`.
-- **Internal callbacks:** Bearer `INTERNAL_SERVICE_TOKEN` (see `internal-file-versions.js`).
-
-### Request validation
-
-- Hand-roll validation in handlers (coerce with `String(...)` / `Number(...)`, early `400` with a typed error). Match neighboring routes rather than introducing a new validation library without agreement.
-
-### Success responses
-
-- Lists: `{ items: [...] }`.
-- Creates: `201` with the created resource body.
-- Deletes / soft-revokes with no body: `204` via `res.status(204).end()`.
-- Never return secrets (`passwordHash`, `keyHash`, full API key plaintext except the one-time create response when designed that way).
-
-### Error responses
-
-Use a machine-readable snake_case `error` plus a human `message` (no `ok` flag):
-
-```js
-res.status(400).json({
-  error: "invalid_body",
-  message: "name is required.",
-});
-```
-
-Common codes: `unauthorized`, `forbidden`, `csrf_invalid`, `not_found`, `invalid_body`, `invalid_id`, `invalid_query`, `internal_error`, `not_implemented`.
-
-In `catch` blocks: `console.error("<operationId> failed:", err)` then `500` with `internal_error`.
-
----
+- Implement as `createXxxRouter()`, mount in [`createApiRouter()`](webapi/routes/stubs.js) before `registerStubRoutes`, and remove the matching stub. Public API base path `/api/v1`; internal callbacks under `/internal`.
+- **Auth:** `requireAuth` (session cookie or Bearer API key) sets `req.user`/`req.authRole`/`req.authMethod`. `requireAdmin` runs after it, requires `admin` role. `csrfProtection` on mutating routers (cookie sessions only, skipped for Bearer). Internal callbacks use Bearer `INTERNAL_SERVICE_TOKEN`.
+- **Validation:** hand-rolled in handlers (`String()`/`Number()` coercion, early `400`), matching neighboring routes — no validation library.
+- **Success:** lists as `{ items: [...] }`; creates `201`; deletes/soft-revokes `204` no body. Never return secrets (`passwordHash`, `keyHash`, full API key except one-time create response).
+- **Errors:** `{ error: "snake_case_code", message: "human text" }`, never `{ ok: false }`. Common codes: `unauthorized`, `forbidden`, `csrf_invalid`, `not_found`, `invalid_body`, `invalid_id`, `invalid_query`, `internal_error`, `not_implemented`. In `catch`: `console.error("<operationId> failed:", err)` then `500 internal_error`.
 
 ## Sequelize models (`webapi/lib/models`)
 
-- One model per file; register associations and re-exports in [`index.js`](webapi/lib/models/index.js).
-- Use `timestampColumn("created_at")` / `timestampColumn("updated_at")` from [`attribute-helpers.js`](webapi/lib/models/attribute-helpers.js).
-- Prefer `constrainedString([...])` over native ENUM when values must work under SQLite.
-- File-level JSDoc describing the table purpose, ending with `@type {import('sequelize').ModelStatic<...>}` on the exported model.
-- Soft “delete” for credentials/tokens is usually an explicit nullable timestamp (e.g. `revokedAt`), not Sequelize `paranoid`. Auth lookups must ignore revoked/expired rows.
-
-Schema is applied via `ensureSchema()` on boot — there is no separate migration runner for routine model additions.
-
----
+- One model per file; associations/re-exports in [`index.js`](webapi/lib/models/index.js).
+- Use `timestampColumn("created_at"/"updated_at")` from [`attribute-helpers.js`](webapi/lib/models/attribute-helpers.js).
+- Prefer `constrainedString([...])` over native ENUM (SQLite compatibility).
+- File-level JSDoc on table purpose, ending `@type {import('sequelize').ModelStatic<...>}`.
+- Soft-delete for credentials/tokens: nullable timestamp (e.g. `revokedAt`), not `paranoid`. Auth lookups must exclude revoked/expired rows.
+- Schema changes go through migrations, not `ensureSchema()` — see root `CLAUDE.md`.
 
 ## Testing
 
-- **Jest** with `@jest/globals` imports; HTTP tests use **supertest**.
-- Helpers: [`webapi/tests/helpers/app.js`](webapi/tests/helpers/app.js) (`createTestClient`, `createTestAgent`), [`webapi/tests/helpers/db.js`](webapi/tests/helpers/db.js) (`setupSchema`, `resetTables`, `seedXxx`).
-- Typical suite shape: `beforeAll(setupSchema)`, `afterEach(resetTables)`.
-- Use a cookie-jar agent + CSRF for session flows; Bearer API keys for key-auth flows.
-- Assert both status codes and `res.body.error` machine codes; assert secrets are absent from JSON bodies.
-
----
+- Jest (`@jest/globals`) + supertest. Helpers: [`tests/helpers/app.js`](webapi/tests/helpers/app.js) (`createTestClient`, `createTestAgent`), [`tests/helpers/db.js`](webapi/tests/helpers/db.js) (`setupSchema`, `resetTables`, `seedXxx`).
+- Typical shape: `beforeAll(setupSchema)`, `afterEach(resetTables)`. Cookie-jar agent + CSRF for session flows; Bearer key for API-key flows.
+- Assert status code, `res.body.error`, and absence of secrets in bodies.
 
 ## Processing API
 
-- Lives under `processing/` (yt-dlp / ffmpeg / queue). Same formatting, ESM, and JSDoc expectations as `webapi/`.
-- Keep service-to-service auth and callbacks aligned with the Web API’s `/internal` contract.
+`processing/` (yt-dlp/ffmpeg/queue) follows the same ESM/formatting/JSDoc rules. Keep service-to-service auth aligned with the `/internal` contract.
 
----
+## Avoid
 
-## What to avoid
+- Mixed quote styles or missing semicolons.
+- `{ ok: false, ... }` error envelopes.
+- Stale `501` stubs after a real router takes the path.
+- `keyHash`, full API keys, or password hashes in responses.
+- JSDoc that just restates the function name.
+- Unrelated refactors or drive-by renames bundled with a feature.
 
-- Mixing quote styles or omitting semicolons without project-wide agreement.
-- Returning `{ ok: false, ... }` error envelopes — use `{ error, message }`.
-- Leaving stale 501 stubs after a real router owns the same path.
-- Exposing `keyHash`, full API keys (except one-time create), or password hashes in responses.
-- JSDoc that only restates the function name — describe behavior, params, and return value.
-- Large unrelated refactors or drive-by renames in the same change as a feature.
+## New route checklist
 
----
-
-## Reference checklist for a new Web API route
-
-1. Implement `createXxxRouter()` with CSRF (if mutating), auth, `@openapi` JSDoc, and `{ error, message }` errors.
-2. Mount it in `createApiRouter()` before stubs; remove matching stubs.
-3. Add/adjust models only if needed; register associations in `models/index.js`.
+1. `createXxxRouter()` with CSRF (if mutating), auth, `@openapi` JSDoc, `{ error, message }` errors.
+2. Mount before stubs; remove matching stub.
+3. Add/adjust models if needed; register in `models/index.js`.
 4. Add HTTP tests under `webapi/tests/http/`.
 5. Check off the operation in [`API_Checklist.md`](API_Checklist.md).
