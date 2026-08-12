@@ -89,6 +89,13 @@ services:
       PROCESSING_API_URL: http://processing:3001
       DOWNLOAD_REQUEST_TIMEOUT_MS: ${DOWNLOAD_REQUEST_TIMEOUT_MS:-900000}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
+      # Set either of these to false to stop webapi from ever contacting the
+      # `processing` service below. Note this alone doesn't let you drop the
+      # `processing` block from this file: webapi's `depends_on` above still
+      # waits on it at startup - remove that dependency too (and the
+      # `processing` service block) if you want to run without it entirely.
+      ENABLE_TRANSCODING: ${ENABLE_TRANSCODING:-true}
+      ENABLE_VIDEO_IMPORTS: ${ENABLE_VIDEO_IMPORTS:-true}
       # Livestreaming feature flag - leave false unless the `streaming`
       # service (below) is actually deployed and reachable.
       ENABLE_LIVESTREAM: ${ENABLE_LIVESTREAM:-false}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
 import {
   getTranscodeProfiles,
   getTranscodeHardwareStatus,
@@ -83,9 +84,11 @@ function SelectOrCustom({ id, label, options, value, onChange, disabled }) {
 function AdminTranscodeProfiles() {
   const { user, loading: authLoading } = useAuth()
   const { success, error: toastError } = useToast()
+  const { transcodingEnabled } = useSiteConfig()
   const navigate = useNavigate()
   const { id: profileId } = useParams()
   const isEditMode = Boolean(profileId)
+  const readOnly = !transcodingEnabled
 
   const [profiles, setProfiles] = useState([])
   const [profilesLoading, setProfilesLoading] = useState(true)
@@ -223,7 +226,7 @@ function AdminTranscodeProfiles() {
 
   async function handleSubmit(event) {
     event.preventDefault()
-    if (submitting) {
+    if (submitting || readOnly) {
       return
     }
 
@@ -266,7 +269,7 @@ function AdminTranscodeProfiles() {
   }
 
   async function handleDelete() {
-    if (deleting) {
+    if (deleting || readOnly) {
       return
     }
     if (!window.confirm(`Delete the transcoding profile "${resolutionName} (${mediaType})"? This cannot be undone.`)) {
@@ -288,6 +291,13 @@ function AdminTranscodeProfiles() {
       <div className="settings-card">
         <h1>{isEditMode ? 'Edit Transcoding Profile' : 'Create Transcoding Profile'}</h1>
 
+        {readOnly && (
+          <p className="admin-profiles-hint">
+            Transcoding is disabled on this server (ENABLE_TRANSCODING=false) — this form is
+            read-only.
+          </p>
+        )}
+
         <form className="settings-form" onSubmit={handleSubmit}>
           <label htmlFor="admin-profile-description">Description</label>
           <input
@@ -296,7 +306,7 @@ function AdminTranscodeProfiles() {
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             maxLength={MAX_DESCRIPTION_LENGTH}
-            disabled={submitting}
+            disabled={submitting || readOnly}
           />
 
           <label htmlFor="admin-profile-resolution">
@@ -307,7 +317,7 @@ function AdminTranscodeProfiles() {
             value={resolutionName}
             onChange={(event) => handleResolutionChange(event.target.value)}
             required
-            disabled={submitting}
+            disabled={submitting || readOnly}
           >
             <option value="" disabled>
               Select resolution...
@@ -327,7 +337,7 @@ function AdminTranscodeProfiles() {
             value={mediaType}
             onChange={(event) => setMediaType(event.target.value)}
             required
-            disabled={submitting}
+            disabled={submitting || readOnly}
           >
             {MEDIA_TYPE_VALUES.map((value) => (
               <option key={value} value={value}>
@@ -350,14 +360,14 @@ function AdminTranscodeProfiles() {
                 value={outputWidth}
                 onChange={(event) => setOutputWidth(event.target.value)}
                 required
-                disabled={submitting}
+                disabled={submitting || readOnly}
               />
             </div>
             <button
               type="button"
               className="admin-profiles-swap"
               onClick={handleSwapDimensions}
-              disabled={submitting}
+              disabled={submitting || readOnly}
               title="Swap width and height (for vertical video)"
               aria-label="Swap width and height"
             >
@@ -373,7 +383,7 @@ function AdminTranscodeProfiles() {
                 value={outputHeight}
                 onChange={(event) => setOutputHeight(event.target.value)}
                 required
-                disabled={submitting}
+                disabled={submitting || readOnly}
               />
             </div>
           </div>
@@ -384,14 +394,14 @@ function AdminTranscodeProfiles() {
             options={CONTAINER_OPTIONS}
             value={outputContainer}
             onChange={setOutputContainer}
-            disabled={submitting}
+            disabled={submitting || readOnly}
           />
 
           <label className="admin-profiles-checkbox">
             <input
               type="checkbox"
               checked={hardwareAccelerated}
-              disabled={submitting || !hwStatus.enabled}
+              disabled={submitting || readOnly || !hwStatus.enabled}
               onChange={(event) => setHardwareAccelerated(event.target.checked)}
             />
             Hardware-accelerated
@@ -408,7 +418,7 @@ function AdminTranscodeProfiles() {
             options={hardwareAccelerated ? hwStatus.encoders : VIDEO_CODEC_OPTIONS}
             value={videoCodec}
             onChange={setVideoCodec}
-            disabled={submitting}
+            disabled={submitting || readOnly}
           />
 
           <SelectOrCustom
@@ -417,14 +427,14 @@ function AdminTranscodeProfiles() {
             options={AUDIO_CODEC_OPTIONS}
             value={audioCodec}
             onChange={setAudioCodec}
-            disabled={submitting}
+            disabled={submitting || readOnly}
           />
 
-          <button type="submit" className="settings-submit" disabled={submitting}>
+          <button type="submit" className="settings-submit" disabled={submitting || readOnly}>
             {submitting ? 'Saving...' : isEditMode ? 'Save Changes' : 'Create Profile'}
           </button>
 
-          {isEditMode && (
+          {isEditMode && !readOnly && (
             <button
               type="button"
               className="admin-profiles-delete"

@@ -4,6 +4,9 @@ import { SiteConfigContext } from './site-config-context.js'
 
 export function SiteConfigProvider({ children }) {
   const [livestreamEnabled, setLivestreamEnabled] = useState(false)
+  // Matches the webapi default (ENABLE_TRANSCODING defaults to true) so the
+  // UI doesn't briefly look disabled while this is still loading.
+  const [transcodingEnabled, setTranscodingEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -14,6 +17,7 @@ export function SiteConfigProvider({ children }) {
         const config = await getPublicConfig()
         if (!cancelled) {
           setLivestreamEnabled(Boolean(config.livestreamEnabled))
+          setTranscodingEnabled(config.transcodingEnabled !== false)
         }
       } catch (err) {
         console.error('Failed to load site config:', err)
@@ -32,7 +36,7 @@ export function SiteConfigProvider({ children }) {
   }, [])
 
   return (
-    <SiteConfigContext.Provider value={{ livestreamEnabled, loading }}>
+    <SiteConfigContext.Provider value={{ livestreamEnabled, transcodingEnabled, loading }}>
       {children}
     </SiteConfigContext.Provider>
   )
