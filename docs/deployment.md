@@ -141,6 +141,13 @@ promoted across environments with different API origins.
 only read by `npm run dev` for local non-Docker development — see
 `webview/README.md`.)
 
+`TRANSCODE_CONTAINER_OPTIONS` rides the same `config.js`/`window.__RUNTIME_CONFIG__`
+mechanism: a comma-separated list of curated defaults for the admin "Output
+Container" dropdown (`AdminTranscodeProfiles.jsx`). It's a UI convenience
+only — the server accepts any safe ffmpeg token for `outputContainer`, not a
+fixed enum — so this just controls what's offered before the "Other..."
+free-text fallback.
+
 `PUBLIC_API_URL` is the analogous var for `webapi` itself: read server-side
 (not injected into any container's config.js) to build absolute
 `og:image`/`og:video`/`twitter:player` URLs for the link-unfurl route

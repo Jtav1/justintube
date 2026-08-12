@@ -23,11 +23,15 @@ fi
 
 chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx
 
-# Writes the runtime API origin as a global before nginx serves the SPA, so
-# the same image works across environments without a rebuild (see
-# src/api/client.js and docs/deployment.md).
+# Writes the runtime API origin (and other env-tunable settings) as a global
+# before nginx serves the SPA, so the same image works across environments
+# without a rebuild (see src/api/client.js, AdminTranscodeProfiles.jsx, and
+# docs/deployment.md).
 cat > /usr/share/nginx/html/config.js <<EOF
-window.__RUNTIME_CONFIG__ = { API_BASE_URL: "${API_BASE_URL:-}" };
+window.__RUNTIME_CONFIG__ = {
+  API_BASE_URL: "${API_BASE_URL:-}",
+  TRANSCODE_CONTAINER_OPTIONS: "${TRANSCODE_CONTAINER_OPTIONS:-}"
+};
 EOF
 
 exec "$@"
