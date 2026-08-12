@@ -6,7 +6,7 @@ for local (non-compose) dev instructions.
 
 ## 1. Overview / architecture
 
-Six services, one Docker network:
+Seven services, one Docker network:
 
 | Service | Role | Reachable at |
 | --- | --- | --- |
@@ -15,11 +15,20 @@ Six services, one Docker network:
 | `search` | Meilisearch, used when `ENABLE_ADVANCED_SEARCH=true` | `search:7700` (internal only) |
 | `webapi` | Public API (`/api/v1`), internal callback API (`/internal`) | published on `PORT` (default 3000) |
 | `processing` | yt-dlp downloads + ffmpeg transcodes, BullMQ worker | internal only, called by `webapi` |
+| `streaming` | RTMP ingest + HLS output for livestreaming (MediaMTX); only functional when `ENABLE_LIVESTREAM=true` on `webapi` | published on `1935` (RTMP) and `8888` (HLS) |
 | `webview` | React SPA served by nginx | published on `WEBVIEW_PORT` (default 5173) |
 
 `webapi` and `processing` authenticate each other's callbacks with a shared
-`INTERNAL_SERVICE_TOKEN` Bearer token. `webview` talks to `webapi` directly
-from the browser (cross-origin), not through an nginx proxy.
+`INTERNAL_SERVICE_TOKEN` Bearer token (`streaming` uses the same token for its
+own callbacks — see §4). `webview` talks to `webapi` directly from the
+browser (cross-origin), not through an nginx proxy.
+
+All seven services start on `docker compose up`, regardless of feature flags
+— `ENABLE_LIVESTREAM=false` and `ENABLE_ADVANCED_SEARCH=false` disable the
+corresponding *app-level* features but don't stop `streaming`/`search` from
+running and (for `streaming`) publishing ports `1935`/`8888`. If you don't
+want a container running at all, comment out its service block (and remove
+any `depends_on` entry pointing at it — see §12 for `processing` specifically).
 
 ## 2. TLS (external, not included in this stack)
 
@@ -40,7 +49,7 @@ cp .env.example .env
 # edit .env: fill in every REQUIRED secret, set PUBLIC_APP_URL/PUBLIC_API_URL/
 # CORS_ORIGIN/API_BASE_URL to your real hostname(s)
 docker compose up -d --build
-docker compose ps   # wait for db/redis/search/webapi/processing to show healthy
+docker compose ps   # wait for db/redis/search/webapi/processing/streaming to show healthy (see §13)
 ```
 
 `docker compose up` fails immediately with a clear error naming the missing
@@ -54,7 +63,7 @@ no silent fallback to a weak default secret.
 | `MYSQL_ROOT_PASSWORD` | `db` | `openssl rand -hex 32` |
 | `MYSQL_PASSWORD` | `db`, `webapi` | `openssl rand -hex 32` |
 | `MEILI_MASTER_KEY` | `search`, `webapi` | `openssl rand -hex 32` |
-| `INTERNAL_SERVICE_TOKEN` | `webapi`, `processing` | `openssl rand -hex 32` |
+| `INTERNAL_SERVICE_TOKEN` | `webapi`, `processing`, `streaming` | `openssl rand -hex 32` |
 | `REDIS_PASSWORD` | `redis`, `processing` | `openssl rand -hex 32` |
 | `SESSION_SECRET` | `webapi` (cookie signing) | `openssl rand -hex 32` |
 
@@ -166,38 +175,58 @@ unfurl page falls back to a rich card with a thumbnail only, no inline play.
 picks up the same var. There's no TLS between `processing` and `redis` in
 this stack — both run on the internal compose network only.
 
-## 11. yt-dlp version pinning
+## 11. yt-dlp version
 
-`processing/Dockerfile` pins `yt-dlp` and `yt-dlp-ejs` to specific versions
-rather than installing latest on every image rebuild, for build
-reproducibility. Tradeoff: yt-dlp ships frequent fixes for site-extraction
-breakage (sites change their pages, yt-dlp has to keep up), so a pinned
-version can start failing to download from a given site over time. Bump the
-pins in `processing/Dockerfile` deliberately when that happens, rather than
-switching back to always-latest.
+`processing/Dockerfile` installs the latest `yt-dlp` and `yt-dlp-ejs` on
+every image build rather than pinning specific versions. Tradeoff: this
+trades build reproducibility (two builds from the same source on different
+days can pull different yt-dlp releases) for staying ahead of site-extraction
+breakage — sites change their pages often enough that a pinned version can
+silently start failing downloads from a given site over time. Rebuild the
+`processing` image periodically to pick up new yt-dlp releases, even without
+any code change in this repo.
 
-## 12. Storage directory provisioning
+## 12. Running without the `processing` container
+
+`ENABLE_TRANSCODING` and `ENABLE_VIDEO_IMPORTS` (both default `true` on
+`webapi`) gate every outbound call `webapi` makes to `processing`. Set either
+to `false` and `webapi` never attempts to reach it:
+
+- `ENABLE_TRANSCODING=false` — uploads finish immediately with only the
+  original file playable (no transcoded renditions, no generated thumbnail).
+- `ENABLE_VIDEO_IMPORTS=false` — `POST /videos/import` is rejected up front
+  and `GET /videos/import/status` always reports unavailable.
+
+Setting both to `false` is **not**, by itself, enough to stop running the
+`processing` container: `webapi`'s `depends_on: processing: condition:
+service_healthy` in `docker-compose.yml` still blocks `webapi` from starting
+until `processing` reports healthy. To actually remove `processing` from the
+stack, comment out (or delete) both the `processing` service block and that
+`depends_on` entry on `webapi`.
+
+## 13. Storage directory provisioning
 
 `webapi` and `processing` both run as a non-root `app` user (uid/gid 1001 by
 default, reconciled to `PUID`/`PGID` env vars at container start — see each
-`docker-entrypoint.sh`). On first boot against a bind-mounted host path that
-doesn't exist yet (as in `docker-compose-prod.yml`), Docker creates the mount
-point as `root`; each entrypoint then `chown -R`s its writable mount points
+`docker-entrypoint.sh`). On first boot against a fresh named volume or a
+bind-mounted host path that doesn't exist yet, Docker creates the mount point
+as `root`; each entrypoint then `chown -R`s its writable mount points
 (`/media`, `/sitedata`, `/data/shared`) to the `app` user before dropping
 privileges, and the app itself creates the subdirectories it needs
 (`original/`, `transcoded/`, `thumbnails/`, `avatars/`, `banners/`,
 `themes/`) at startup. No manual `mkdir`/`chown` on the host is required for
 any of these paths, including on a completely fresh deployment.
 
-## 13. Health checks & startup ordering
+## 14. Health checks & startup ordering
 
-`db`, `redis`, `search`, `webapi`, and `processing` all have Docker
-`healthcheck:` blocks. `webapi` waits for `db` and `processing` to report
-healthy before starting; `webview` waits for `webapi`. `docker compose ps`
-shows each service's health status — expect a `starting` → `healthy`
-transition over the first ~15-30 seconds per service.
+`db`, `redis`, `search`, `webapi`, `processing`, and `streaming` all have
+Docker `healthcheck:` blocks (`webview` is the only service without one).
+`webapi` waits for `db` and `processing` to report healthy before starting;
+`streaming` and `webview` both wait for `webapi`. `docker compose ps` shows
+each service's health status — expect a `starting` → `healthy` transition
+over the first ~15-30 seconds per service.
 
-## 14. Explicitly out of scope
+## 15. Explicitly out of scope
 
 - **TLS termination** — assumed external (see §2).
 - **Secrets management/vaulting** — `.env` is a plain file; for a real
@@ -216,7 +245,7 @@ transition over the first ~15-30 seconds per service.
   design (`concurrency: 1`); running multiple `processing` replicas isn't
   tested or documented here.
 
-## 15. Known constraints
+## 16. Known constraints
 
 - The webview's Content-Security-Policy leaves `connect-src`, `img-src`, and
   `media-src` permissive (`'self' *`) rather than scoped to the real API
@@ -228,10 +257,9 @@ transition over the first ~15-30 seconds per service.
 - **Link-unfurl: hardcoded internal proxy address.** `webview/nginx.conf`
   proxies bot requests to `http://webapi:3000` — the Docker Compose service
   DNS name. This only works when `webview` and `webapi` share a Docker
-  network (true of both `docker-compose.yml` and `docker-compose-prod.yml`
-  as shipped). Any topology where they don't share a network (webview
-  behind a CDN/static host, webapi on a different host/orchestrator) breaks
-  the proxy outright.
+  network (true of `docker-compose.yml` as shipped). Any topology where they
+  don't share a network (webview behind a CDN/static host, webapi on a
+  different host/orchestrator) breaks the proxy outright.
 - **Link-unfurl: User-Agent sniffing is best-effort.** The bot detection in
   `webview/nginx.conf` matches known, documented UA substrings (Slackbot,
   Twitterbot, Discordbot, etc.). Apple's iMessage link-preview fetcher in

@@ -13,9 +13,9 @@ FROM node:24-bookworm-slim
 WORKDIR /app
 
 # System deps: Python/pip for yt-dlp + ejs; ffmpeg strongly recommended by
-# yt-dlp. Versions are pinned for build reproducibility - yt-dlp ships
-# frequent site-compatibility fixes, so bump these deliberately rather than
-# silently pulling latest on every image rebuild.
+# yt-dlp. Always installs latest (not pinned) - yt-dlp ships frequent
+# site-compatibility fixes, and a pinned version can silently start failing
+# downloads from a given site as sites change their pages.
 #
 # intel-media-va-driver-non-free (the iHD VAAPI driver) + libmfx1 + libvpl2
 # (Intel Media SDK / oneVPL runtimes ffmpeg's *_qsv codecs link against) live
@@ -36,9 +36,9 @@ RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmwa
        libvpl2 \
        vainfo \
   && rm -rf /var/lib/apt/lists/* \
-  && pip install --no-cache-dir --break-system-packages \
-       yt-dlp==2026.7.4 \
-       yt-dlp-ejs==0.8.0
+  && pip install --no-cache-dir --break-system-packages --upgrade \
+       yt-dlp \
+       yt-dlp-ejs
 
 ENV NODE_ENV=production
 EXPOSE 3001

@@ -14,14 +14,14 @@ describe("ENABLE_LIVESTREAM gate", () => {
       process.env.ENABLE_LIVESTREAM = "true";
       const res = await createTestClient().get("/api/v1/config");
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ livestreamEnabled: true });
+      expect(res.body).toEqual({ livestreamEnabled: true, transcodingEnabled: true });
     });
 
     it("reports livestreamEnabled: false when ENABLE_LIVESTREAM is unset", async () => {
       delete process.env.ENABLE_LIVESTREAM;
       const res = await createTestClient().get("/api/v1/config");
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ livestreamEnabled: false });
+      expect(res.body).toEqual({ livestreamEnabled: false, transcodingEnabled: true });
     });
   });
 

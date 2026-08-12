@@ -43,18 +43,29 @@ docker compose up -d --build
 
 That should work; if it didn't then I have lost my way.
 
+I also do build the docker images myself in the github repo so you can delete the build sections in the docker-compose and just specify images that reference those.
+
 Compose brings up MySQL, Redis, Meilisearch, the processing service, the API, and the web view (shared media volume). `docker compose up` will refuse to start if a required secret in `.env` is left blank. See [processing/README.md](processing/README.md) for download/transcode details, and [docs/deployment.md](docs/deployment.md) for production hardening notes (TLS assumptions, secrets, network exposure, etc.). Currently all of these are required, I may in the future break it out and allow you to run the system without the extra containers and an existing DB. 
 
-### (DEV) Running the Web API by itself
+If you want to run less stuff you can remove the processing and search containers if you set the associated env vars to disabled in the .env (ENABLE_ADVANCED_SEARCH for Search, and ENABLE_TRANSCODING, ENABLE_VIDEO_IMPORTS for the Processing and Redis containers)
+
+Currently the system requires root access to initialize a DB. I may change this in the future to use an existing MySQL instance and DB if desired. 
+
+### (DEV) Running components individually
+
+If you create `.env` files in both the webapi and webview containers (based on their respective `.env.example` files) you can run each by doing a 
 
 ```bash
-cd webapi
-cp .env.example .env   # edit as needed
-npm install
-npm run dev            # loads .env, auto-reload via node --watch
-# npm run dev:compose  # auto-reload without reading .env
-npm test
+cd webapi/
+npm run dev
 ```
+
+```bash
+cd webview/
+npm run dev
+```
+
+This makes it super easy to test new stuff that doesn't rely on the other containers. You can also set the `webapi/` `.env` file to use sqlite instead of mysql for quick and easy spin-up. 
 
 Default listen port is `PORT` (3000). Useful URLs:
 
@@ -68,29 +79,6 @@ Default listen port is `PORT` (3000). Useful URLs:
 
 More detail: [webapi/README.md](webapi/README.md).
 
-### (DEV) Running the processing service
-
-```bash
-cd processing
-cp .env.example .env
-npm install
-npm run serve          # Node process on PORT (default 3001)
-# or: npm run dev / npm start — see processing/README.md
-```
-
-Needs Redis for transcode queue routes. Callbacks to the Web API use `API_BASE_URL` + `INTERNAL_SERVICE_TOKEN`.
-
-### (DEV) Running the web view
-
-```bash
-cd webview
-cp .env.example .env   # edit as needed
-npm install
-npm run dev            # Vite dev server
-```
-
-Default listen port is Vite's default (`5173`). Talks to the Web API via `VITE_API_BASE_URL`. More detail: [webview/README.md](webview/README.md).
-
 ## Project layout
 
 | Path | Role |
@@ -100,6 +88,8 @@ Default listen port is Vite's default (`5173`). Talks to the Web API via `VITE_A
 | [`webview/`](webview/) | Web frontend (React + Vite) |
 | [`docs/`](docs/) | Product notes, API checklist, [code standards](docs/code-standards.md), [deployment](docs/deployment.md) |
 | [`docker-compose.yml`](docker-compose.yml) | Full stack: MySQL, Redis, Meilisearch, API, processing, web view |
+
+If you're going to contribute, reference the code standards doc linked above. Or like tell your AI tool to read it and make sure your changes comply. Which is what I do. 
 
 ## License
 

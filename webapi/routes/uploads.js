@@ -18,6 +18,10 @@ import {
   markUploadFileVersionsFailed,
   toTranscodeProfilePayload,
 } from "../lib/file-versions.js";
+import {
+  transcodingEnabled,
+  videoImportsEnabled,
+} from "../lib/processing-features-config.js";
 import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, sequelize } from "../lib/models/index.js";
 import { generateUniqueVideoId } from "../lib/video-id.js";
 import {
@@ -247,6 +251,8 @@ function fileVersionResponseBody(version) {
  * processing jobs against an already-persisted ORIGINAL_UPLOADS row. Shared
  * by both `uploadVideo` (multipart) and `importVideo` (URL download) once
  * each has stored its source file under `original/` and created `upload`.
+ * When `transcodingEnabled()` is false, finishes immediately without
+ * contacting the processing service at all — see that early-return below.
  *
  * @private
  * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
@@ -258,6 +264,22 @@ function fileVersionResponseBody(version) {
  * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
  */
 async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail = false } = {}) {
+  if (!transcodingEnabled()) {
+    // Transcoding is disabled deployment-wide: never contact the processing
+    // service (it may not even be running). The original file stays
+    // playable via the "original" rendition, just without any transcoded
+    // FILE_VERSIONS or a generated thumbnail.
+    await upload.update({ status: "uploaded" });
+    await upload.reload();
+    return {
+      status: 201,
+      body: {
+        ...uploadResponseBody(upload),
+        fileVersions: [],
+      },
+    };
+  }
+
   const profiles = await TranscodeProfile.findAll({
     where: { mediaType: upload.mediaType },
   });
@@ -621,6 +643,14 @@ function validateImportUrl(url) {
  * @returns {Promise<void>} Sends 201 upload JSON, or an error status on failure.
  */
 async function importVideo(req, res) {
+  if (!videoImportsEnabled()) {
+    res.status(403).json({
+      error: "video_imports_disabled",
+      message: "URL import is disabled on this deployment.",
+    });
+    return;
+  }
+
   let url;
   try {
     url = validateImportUrl(req.body?.url);
@@ -960,7 +990,8 @@ export function createUploadRouter() {
    * GET /api/v1/videos/import/status — importStatus
    * Auth: required. Reports whether the processing service (which backs
    * `POST /videos/import`) is currently reachable and healthy, so clients can
-   * hide/disable URL-import UI when it isn't.
+   * hide/disable URL-import UI when it isn't. When `ENABLE_VIDEO_IMPORTS` is
+   * disabled, reports unavailable without contacting processing at all.
    *
    * @openapi
    * /api/v1/videos/import/status:
@@ -985,6 +1016,12 @@ export function createUploadRouter() {
    *         description: Not authenticated
    */
   router.get("/videos/import/status", requireAuth, async (_req, res) => {
+    if (!videoImportsEnabled()) {
+      // Disabled deployment-wide: report unavailable without pinging
+      // processing, which may not even be running.
+      res.status(200).json({ available: false });
+      return;
+    }
     const health = await getProcessingHealth();
     res.status(200).json({ available: health.ok });
   });
