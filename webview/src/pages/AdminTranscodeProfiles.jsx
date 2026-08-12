@@ -23,7 +23,22 @@ const RESOLUTION_DIMENSIONS = {
   '4kHD': { width: 3840, height: 2160 },
 }
 const MEDIA_TYPE_VALUES = ['video', 'audio']
-const CONTAINER_OPTIONS = ['mp4', 'webm']
+const DEFAULT_CONTAINER_OPTIONS = ['mp4', 'webm']
+// Curated defaults shown in the "Output Container" dropdown before falling
+// back to the "Other..." free-text token - not a server-side allowlist (see
+// requireSafeToken in processing/lib/transcode.js), so this only needs to
+// stay in sync with what admins commonly pick.
+const CONFIGURED_CONTAINER_OPTIONS = (
+  window.__RUNTIME_CONFIG__?.TRANSCODE_CONTAINER_OPTIONS ||
+  import.meta.env.VITE_TRANSCODE_CONTAINER_OPTIONS ||
+  ''
+)
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
+const CONTAINER_OPTIONS = CONFIGURED_CONTAINER_OPTIONS.length
+  ? CONFIGURED_CONTAINER_OPTIONS
+  : DEFAULT_CONTAINER_OPTIONS
 const VIDEO_CODEC_OPTIONS = ['h264', 'h265', 'vp9', 'vp8', 'av1']
 const AUDIO_CODEC_OPTIONS = ['aac', 'opus', 'mp3', 'vorbis', 'flac']
 
