@@ -7,6 +7,7 @@ import {
   uploadVideoFile,
   importVideoUrl,
   updateVideo,
+  deleteVideo,
   setVideoEditors,
   setVideoViewers,
   getVideoAccess,
@@ -102,6 +103,7 @@ function UploadPage() {
   const [editors, setEditors] = useState([])
 
   const [submitting, setSubmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const [importAvailable, setImportAvailable] = useState(true)
 
@@ -590,6 +592,27 @@ function UploadPage() {
     setTrackingId(createdId)
   }
 
+  async function handleDelete() {
+    if (deleting || submitting) {
+      return
+    }
+    if (!window.confirm(`Delete "${title || editUpload.title}"? This cannot be undone.`)) {
+      return
+    }
+
+    setDeleting(true)
+    try {
+      await deleteVideo(editUpload.id)
+    } catch {
+      toastError('Failed to delete the video. Please try again.')
+      setDeleting(false)
+      return
+    }
+
+    success('Video deleted.')
+    navigate(`/users/${user.username}`)
+  }
+
   if (trackingId) {
     const status = processingStatus?.status ?? 'downloading'
     const fileVersions = processingStatus?.fileVersions ?? []
@@ -852,6 +875,17 @@ function UploadPage() {
               ? 'Uploading...'
               : 'Upload'}
         </button>
+
+        {isEditMode && viewerIsOwnerOrAdmin && (
+          <button
+            type="button"
+            className="upload-delete"
+            onClick={handleDelete}
+            disabled={submitting || deleting}
+          >
+            {deleting ? 'Deleting...' : 'Delete Video'}
+          </button>
+        )}
       </form>
     </section>
   )
