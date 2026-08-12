@@ -182,6 +182,15 @@ export async function delistVideo(id) {
 }
 
 /**
+ * Permanently deletes a video. Usable by the video owner or an admin.
+ * @param {number} id
+ * @returns {Promise<void>}
+ */
+export async function deleteVideo(id) {
+  await apiClient.delete(`/api/v1/videos/${id}`)
+}
+
+/**
  * Imports a video from a remote URL via the processing service, creating an
  * ORIGINAL_UPLOADS row the same way uploadVideoFile does.
  * @param {string} url
