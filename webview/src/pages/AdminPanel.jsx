@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useTheme } from '../context/useTheme.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
 import { adminBroadcastNotification } from '../api/admin.js'
 import { deleteTheme } from '../api/themes.js'
 import { getTranscodeProfiles, deleteTranscodeProfile } from '../api/transcode-profiles.js'
@@ -14,6 +15,7 @@ function AdminPanel() {
   const { user, loading: authLoading } = useAuth()
   const { success, error: toastError } = useToast()
   const { themes, loading: themesLoading, refreshThemes } = useTheme()
+  const { transcodingEnabled } = useSiteConfig()
 
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
@@ -88,7 +90,7 @@ function AdminPanel() {
   }
 
   async function handleDeleteProfile(profile) {
-    if (deletingProfileId) {
+    if (deletingProfileId || !transcodingEnabled) {
       return
     }
     if (!window.confirm(`Delete the transcoding profile "${profile.resolutionName} (${profile.mediaType})"? This cannot be undone.`)) {
@@ -202,9 +204,17 @@ function AdminPanel() {
 
         <div className="settings-card">
           <h2>Manage Transcoding Profiles</h2>
-          <Link to="/control-panel/transcode-profiles/new" className="settings-submit admin-profiles-create-link">
-            Create Profile
-          </Link>
+          {!transcodingEnabled && (
+            <p className="admin-profiles-hint">
+              Transcoding is disabled on this server (ENABLE_TRANSCODING=false) — profile
+              management is read-only.
+            </p>
+          )}
+          {transcodingEnabled && (
+            <Link to="/control-panel/transcode-profiles/new" className="settings-submit admin-profiles-create-link">
+              Create Profile
+            </Link>
+          )}
           <div className="admin-profiles-list">
             {profilesLoading && <p className="settings-status">Loading transcoding profiles...</p>}
             {!profilesLoading && profiles.map((item) => (
@@ -217,16 +227,18 @@ function AdminPanel() {
                 {item.hardwareAccelerated && (
                   <span className="admin-profiles-badge">HW</span>
                 )}
-                <div className="admin-profiles-actions">
-                  <Link to={`/control-panel/transcode-profiles/${item.id}/edit`}>Edit</Link>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteProfile(item)}
-                    disabled={deletingProfileId === item.id}
-                  >
-                    {deletingProfileId === item.id ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
+                {transcodingEnabled && (
+                  <div className="admin-profiles-actions">
+                    <Link to={`/control-panel/transcode-profiles/${item.id}/edit`}>Edit</Link>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteProfile(item)}
+                      disabled={deletingProfileId === item.id}
+                    >
+                      {deletingProfileId === item.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
