@@ -44,6 +44,62 @@ function escapeHtml(value) {
 }
 
 /**
+ * Matches `[label](/relative/path)` markdown-style links, as embedded by
+ * notification messages that need in-app hyperlinks (e.g. the duplicate-
+ * upload admin notification in `webapi/routes/internal-original-uploads.js`
+ * - see `NotificationItem`/`parseNotificationMessage` in the webview, which
+ * render the same syntax as clickable `<Link>`s).
+ *
+ * @type {RegExp}
+ */
+const MARKDOWN_LINK_PATTERN = /\[([^\]]+)\]\((\/[^)]*)\)/g;
+
+/**
+ * Converts a notification message's markdown-style links into
+ * `"label (https://absolute/url)"` for the plain-text email body. A link
+ * whose path can't be resolved to an absolute URL (PUBLIC_APP_URL unset)
+ * falls back to just its label.
+ *
+ * @private
+ * @param {string} message Raw notification message, possibly containing
+ *   `[label](/path)` links.
+ * @returns {string} Plain-text message with links spelled out inline.
+ */
+function messageToPlainText(message) {
+  return message.replace(MARKDOWN_LINK_PATTERN, (_match, label, path) => {
+    const absolute = buildPublicLink(path);
+    return absolute ? `${label} (${absolute})` : label;
+  });
+}
+
+/**
+ * Converts a notification message's markdown-style links into real `<a>`
+ * tags for the HTML email body, HTML-escaping everything else (message
+ * text can come from user-supplied content, e.g. a moderator's note).
+ *
+ * @private
+ * @param {string} message Raw notification message, possibly containing
+ *   `[label](/path)` links.
+ * @returns {string} HTML-safe message with links rendered as `<a>` tags.
+ */
+function messageToHtml(message) {
+  let html = "";
+  let lastIndex = 0;
+  let match;
+  MARKDOWN_LINK_PATTERN.lastIndex = 0;
+  while ((match = MARKDOWN_LINK_PATTERN.exec(message)) !== null) {
+    html += escapeHtml(message.slice(lastIndex, match.index));
+    const absolute = buildPublicLink(match[2]);
+    html += absolute
+      ? `<a href="${escapeHtml(absolute)}">${escapeHtml(match[1])}</a>`
+      : escapeHtml(match[1]);
+    lastIndex = MARKDOWN_LINK_PATTERN.lastIndex;
+  }
+  html += escapeHtml(message.slice(lastIndex));
+  return html;
+}
+
+/**
  * Parses SMTP_SECURE env as a boolean (defaults to false). Must be exactly
  * "true" or "false" — nodemailer's `secure` option controls implicit TLS on
  * connect (port 465), not STARTTLS (port 587), so values like "TLS" do not
@@ -254,12 +310,12 @@ export async function sendNotificationEmail({ to, title, message, link = null })
   const publicUrl = String(process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
   const signature = `- justintube (<${publicUrl}>)`;
 
-  const textLines = [message, "", link ? `View it here: ${link}` : null].filter(
+  const textLines = [messageToPlainText(message), "", link ? `View it here: ${link}` : null].filter(
     (line) => line !== null,
   );
   const text = `${textLines.join("\n")}\n${signature}`;
   const htmlBody =
-    `<p>${escapeHtml(message)}</p>` +
+    `<p>${messageToHtml(message)}</p>` +
     (link ? `<p><a href="${link}">${link}</a></p>` : "") +
     `<p>${escapeHtml(signature)}</p>`;
 

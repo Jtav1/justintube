@@ -56,9 +56,12 @@ function videoIdFromHashJobId(jobId) {
 
 /**
  * Notifies every admin/moderator that a possible duplicate upload needs
- * review, linking to both the new upload and the existing match. Mirrors
- * `notifyReportCreated` in `webapi/routes/reports.js`. Never throws -
- * `createNotification` swallows its own delivery failures.
+ * review, linking to both the new upload and the existing match. The
+ * in-app message embeds `[label](/video?v=...)` markdown-style links -
+ * `NotificationItem` (webview) renders those as clickable in-app links
+ * rather than literal text. Mirrors `notifyReportCreated` in
+ * `webapi/routes/reports.js`. Never throws - `createNotification` swallows
+ * its own delivery failures.
  *
  * @private
  * @param {import('sequelize').Model} flag Newly created DuplicateUploadFlag row.
@@ -72,8 +75,8 @@ async function notifyDuplicateUploadFlagged(flag, newUpload, existingUpload) {
     include: [{ model: Role, where: { name: ["admin", "moderator"] }, attributes: [] }],
   });
 
-  const newLink = buildPublicLink(`/video?v=${encodeURIComponent(newUpload.videoId)}`);
-  const existingLink = buildPublicLink(`/video?v=${encodeURIComponent(existingUpload.videoId)}`);
+  const newVideoPath = `/video?v=${encodeURIComponent(newUpload.videoId)}`;
+  const existingVideoPath = `/video?v=${encodeURIComponent(existingUpload.videoId)}`;
 
   await Promise.all(
     moderators.map((moderator) =>
@@ -83,8 +86,9 @@ async function notifyDuplicateUploadFlagged(flag, newUpload, existingUpload) {
         title: "Possible duplicate upload flagged",
         message:
           `A new upload may duplicate an existing video and is pending review. ` +
-          `New upload: ${newLink} — Existing video: ${existingLink}`,
+          `[New upload](${newVideoPath}) — [Existing video](${existingVideoPath})`,
         target: String(flag.id),
+        link: buildPublicLink(newVideoPath),
       }),
     ),
   );

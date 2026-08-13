@@ -63,6 +63,15 @@ a.notification-item {
   overflow-wrap: break-word;
 }
 
+.notification-item-message-link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.notification-item-message-link:hover {
+  text-decoration: none;
+}
+
 .notification-item-time {
   margin: 4px 0 0;
   font-size: 12px;

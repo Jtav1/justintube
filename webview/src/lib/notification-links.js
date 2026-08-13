@@ -15,13 +15,25 @@ const TARGET_LINK_BUILDERS = {
 }
 
 /**
- * Builds the link a notification should navigate to, if any.
+ * Fallback link for notifications with no `target` - the all-notifications
+ * page, so every notification is clickable somewhere even when it has
+ * nothing more specific to point at.
+ * @type {string}
+ */
+const DEFAULT_LINK = '/notifications'
+
+/**
+ * Builds the link a notification should navigate to. Falls back to
+ * `DEFAULT_LINK` when there's no `target` to build a more specific link
+ * from; a `target` whose type has no matching builder still renders
+ * without a link (e.g. because the type embeds its own links in `message`
+ * instead, like "duplicate_upload").
  * @param {{ notificationType: string, target: string|null }} notification
  * @returns {string|null}
  */
 export function buildNotificationLink({ notificationType, target }) {
   if (!target) {
-    return null
+    return DEFAULT_LINK
   }
   const build = TARGET_LINK_BUILDERS[notificationType]
   return build ? build(target) : null
