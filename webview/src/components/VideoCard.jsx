@@ -307,7 +307,7 @@ function VideoCard({
                     className="video-card-menu-item"
                     onClick={handleHide}
                   >
-                    Hide Forever
+                    Never Show Me This Again
                     {hideError && ' — Failed, try again'}
                   </button>
                 )}
