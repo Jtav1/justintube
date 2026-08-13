@@ -130,6 +130,8 @@ export async function downloadUrl(url) {
   const stem = nextEpochStem(epoch);
   const outputTemplate = join(originalDir, `${stem}.%(ext)s`);
 
+  console.log(`[import ${stem}] started: ${validatedUrl}`);
+
   const args = [
     "--js-runtimes",
     "node",
@@ -155,18 +157,23 @@ export async function downloadUrl(url) {
         : err instanceof Error
           ? err.message
           : "yt-dlp failed";
+    console.error(`[import ${stem}] failed:`, stderr);
     throw new Error(stderr);
   }
 
   const filename = findStemFile(stem);
   if (!filename) {
-    throw new Error("yt-dlp finished but no output file was found");
+    const message = "yt-dlp finished but no output file was found";
+    console.error(`[import ${stem}] failed:`, message);
+    throw new Error(message);
   }
 
   const { videoWidth, videoHeight } = await probeVideoDimensions(
     join(originalDir, filename),
   );
   const hasVideo = videoWidth != null && videoHeight != null;
+
+  console.log(`[import ${stem}] completed: ${filename} (hasVideo=${hasVideo})`);
 
   return { filename, hasVideo };
 }

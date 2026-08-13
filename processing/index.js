@@ -76,9 +76,17 @@ async function main() {
   const queue = createTranscodeQueue(connection);
   const worker = createTranscodeWorker(connection);
 
+  worker.on("active", (job) => {
+    console.log(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) started`);
+  });
+
+  worker.on("completed", (job) => {
+    console.log(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) completed`);
+  });
+
   worker.on("failed", (job, err) => {
     console.error(
-      `transcode job ${job?.id ?? "unknown"} failed:`,
+      `[worker] job ${job?.id ?? "unknown"} (${job?.data?.kind || "rendition"}) failed:`,
       err?.message || err,
     );
     void notifyTranscodeJobFailed(job, err);
