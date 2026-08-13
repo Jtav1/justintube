@@ -4,12 +4,23 @@ import { createTestClient } from "../helpers/app.js";
 import { resetTables, seedUser, seedUserApiKey, setupSchema } from "../helpers/db.js";
 
 /**
+ * Waits for pending microtasks/timers to flush, so fire-and-forget calls
+ * kicked off during the request (but not awaited by the handler) have had a
+ * chance to run before assertions inspect them.
+ *
+ * @returns {Promise<void>} Resolves after a macrotask tick.
+ */
+function flushBackgroundWork() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
  * HTTP contract tests for the `ENABLE_DUPLICATE_UPLOAD_DETECTION` gate in
- * `routes/uploads.js` (`requestDuplicateCheck`). Verifies: disabled by
- * default (unchanged upload behavior); when enabled, an upload is parked in
- * "hashing" and only a hash job is enqueued (no rendition/thumbnail jobs
- * yet); and a failed hash-job enqueue call fails open, proceeding to the
- * normal transcode batch exactly as if the feature were off.
+ * `routes/uploads.js` (`enqueueDuplicateHashCheck`). Verifies: disabled by
+ * default (no hash job enqueued); when enabled, a hash job is enqueued in
+ * the background *in addition to* the normal transcode batch, without
+ * delaying or altering the upload response in any way; and a failed
+ * hash-job enqueue call is swallowed, never affecting the upload.
  */
 describe("ENABLE_DUPLICATE_UPLOAD_DETECTION gate", () => {
   /** @type {ReturnType<typeof createTestClient>} */
@@ -45,7 +56,7 @@ describe("ENABLE_DUPLICATE_UPLOAD_DETECTION gate", () => {
     await seedUserApiKey(uploaderUser.id, uploaderKey);
   }
 
-  test("defaults to off: an upload proceeds straight to transcode, never enqueuing a hash job", async () => {
+  test("defaults to off: an upload finalizes normally and never enqueues a hash job", async () => {
     const fetchMock = jest.fn(async (_url, options) => {
       const body = JSON.parse(String(options.body));
       expect(body.jobs.some((job) => job.kind === "hash")).toBe(false);
@@ -72,15 +83,28 @@ describe("ENABLE_DUPLICATE_UPLOAD_DETECTION gate", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.status).not.toBe("hashing");
+    await flushBackgroundWork();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("when enabled, parks the upload in hashing and enqueues only a hash job", async () => {
+  test("when enabled, finalizes the upload exactly as before and enqueues an extra hash job in the background", async () => {
     process.env.ENABLE_DUPLICATE_UPLOAD_DETECTION = "true";
+    const calls = [];
     const fetchMock = jest.fn(async (_url, options) => {
       const body = JSON.parse(String(options.body));
-      expect(body.jobs).toEqual([{ jobId: expect.stringMatching(/^hash-/), kind: "hash" }]);
-      return { ok: true, status: 202, json: async () => ({ success: true, jobs: [], skipped: [] }) };
+      calls.push(body);
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          success: true,
+          jobs: body.jobs.map((job) => ({
+            jobId: job.jobId,
+            outputFilename: job.outputFilename,
+            profileId: job.profile?.id ?? null,
+          })),
+        }),
+      };
     });
     globalThis.fetch = fetchMock;
 
@@ -90,13 +114,19 @@ describe("ENABLE_DUPLICATE_UPLOAD_DETECTION gate", () => {
       .set("Authorization", `Bearer ${uploaderKey}`)
       .attach("file", Buffer.from("tiny"), "clip.mp4");
 
+    // The response is identical to the feature-disabled case — the upload
+    // is never parked or delayed on the hash job.
     expect(res.status).toBe(201);
-    expect(res.body.status).toBe("hashing");
+    expect(res.body.status).not.toBe("hashing");
     expect(res.body.fileVersions).toEqual([]);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await flushBackgroundWork();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(calls.some((body) => body.jobs.some((job) => job.kind === "hash"))).toBe(true);
+    expect(calls.some((body) => body.jobs.every((job) => job.kind !== "hash"))).toBe(true);
   });
 
-  test("fails open when the hash-job enqueue call fails: proceeds to the normal transcode batch", async () => {
+  test("swallows a failed hash-job enqueue call: the upload is unaffected", async () => {
     process.env.ENABLE_DUPLICATE_UPLOAD_DETECTION = "true";
     const fetchMock = jest.fn(async (_url, options) => {
       const body = JSON.parse(String(options.body));
@@ -126,8 +156,8 @@ describe("ENABLE_DUPLICATE_UPLOAD_DETECTION gate", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.status).not.toBe("hashing");
-    // First call attempts the hash job (fails), second call is the normal
-    // finalize batch (fail-open fallback) - never left stuck.
+    expect(res.body.fileVersions).toEqual([]);
+    await flushBackgroundWork();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

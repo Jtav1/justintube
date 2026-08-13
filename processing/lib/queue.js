@@ -338,10 +338,10 @@ export async function removeTranscodeJob(queue, jobId) {
  * Notifies the API that a BullMQ job failed (best-effort). Thumbnail jobs
  * have no pending placeholder row to roll back (unlike FILE_VERSIONS, no
  * VIDEO_THUMBNAIL row exists until success), so a failed thumbnail job just
- * logs locally rather than calling back to the API. Hash jobs, unlike
- * thumbnails, DO need a callback on failure - the API parks the upload in a
- * "hashing" state waiting on this job and must be told to fail open (skip
- * dedup, proceed to transcode) rather than being left stuck indefinitely.
+ * logs locally rather than calling back to the API. Hash jobs also call back
+ * on failure purely so the API can log it — hashing runs entirely in the
+ * background after the upload is already live, so there is nothing to roll
+ * back or release either way.
  *
  * @param {import('bullmq').Job | undefined} job Failed job, when available.
  * @param {Error | undefined} err Failure reason.

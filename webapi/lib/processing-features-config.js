@@ -36,11 +36,11 @@ export function videoImportsEnabled() {
  * Returns whether duplicate-upload content-hash detection is enabled. Unlike
  * `transcodingEnabled()`/`videoImportsEnabled()`, this defaults *off* (an
  * opt-in feature, not existing default behavior). When true, every
- * upload/import is parked in a "hashing" state and a "hash" job is enqueued
- * with the processing service before any rendition/thumbnail jobs run; when
- * the processing service is unreachable or the hash job fails, callers must
- * fail open (skip dedup, proceed to transcoding) rather than block the
- * upload.
+ * upload/import gets a "hash" job enqueued with the processing service in
+ * the background, purely for later comparison — it never delays, gates, or
+ * otherwise affects the upload/import itself. A match surfaces only as a
+ * `DuplicateUploadFlag` plus an admin/moderator notification, never a
+ * change to the upload's own status.
  *
  * @returns {boolean} True only when ENABLE_DUPLICATE_UPLOAD_DETECTION is "true".
  */

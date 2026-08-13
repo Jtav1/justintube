@@ -14,7 +14,7 @@ import {
 } from "../lib/models/index.js";
 import { removeVideoDocument } from "../lib/search.js";
 import { parsePagination } from "../lib/pagination.js";
-import { finalizeUploadTranscodes, mediaDir } from "./uploads.js";
+import { mediaDir } from "./uploads.js";
 import { serializeVideo } from "./videos.js";
 
 /**
@@ -292,10 +292,13 @@ export function createDuplicateUploadFlagsRouter() {
   );
 
   /**
-   * Resolves a duplicate-upload flag: `kept_new` releases the new upload to
-   * transcode as normal; `kept_existing` hard-deletes the new upload (its
-   * ORIGINAL_UPLOADS row and cascades, plus its search-index entry) in favor
-   * of the existing video, mirroring `DELETE /videos/:id`.
+   * Resolves a duplicate-upload flag. Both uploads are already live (this
+   * feature never blocks or parks an upload — flags are created purely as a
+   * background review queue), so `kept_new` is simply a record-keeping
+   * no-op: it marks the flag resolved and leaves both videos as they are.
+   * `kept_existing` hard-deletes the new upload (its ORIGINAL_UPLOADS row
+   * and cascades, plus its search-index entry) in favor of the existing
+   * video, mirroring `DELETE /videos/:id`.
    * PATCH /api/v1/admin/duplicate-uploads/:id/moderate
    * Auth: session cookie or Bearer API key; moderator or admin role required.
    *
@@ -371,17 +374,11 @@ export function createDuplicateUploadFlagsRouter() {
           return;
         }
 
-        const newUpload = flag.newOriginalUploadId
-          ? await OriginalUpload.findByPk(flag.newOriginalUploadId)
-          : null;
-
-        if (newUpload) {
-          if (parsed.resolution === "kept_new") {
-            const storedFilename = `${newUpload.videoId}.${newUpload.fileExtension}`;
-            await finalizeUploadTranscodes(newUpload, storedFilename, {
-              skipThumbnail: Boolean(newUpload.skipThumbnail),
-            });
-          } else {
+        if (parsed.resolution === "kept_existing") {
+          const newUpload = flag.newOriginalUploadId
+            ? await OriginalUpload.findByPk(flag.newOriginalUploadId)
+            : null;
+          if (newUpload) {
             await unlink(join(mediaDir, newUpload.storagePath)).catch(() => {});
             const newUploadId = newUpload.id;
             await newUpload.destroy();

@@ -483,48 +483,45 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
 }
 
 /**
- * When duplicate-upload detection is enabled, parks `upload` in a "hashing"
- * state and enqueues a content-hash job with the processing service instead
- * of proceeding straight to {@link finalizeUploadTranscodes}. The eventual
- * outcome (no match -> finalize now; match -> park for moderator review) is
- * decided later by the `/internal/original-uploads/:jobId/hash-complete`
- * callback, once the hash job finishes.
+ * When duplicate-upload detection is enabled, fires off a content-hash job
+ * with the processing service for `upload` without affecting the upload
+ * itself in any way — the caller does not await this, the upload's status
+ * and response are never touched by it, and it never blocks or delays
+ * finalizing the upload for the user. Any match is discovered later, out of
+ * band, by the `/internal/original-uploads/:jobId/hash-complete` callback,
+ * which only records a `DuplicateUploadFlag` and notifies admins/moderators
+ * for manual review — it does not alter the (already-live) video.
  *
- * Fails open: when the feature is disabled, or the enqueue call itself
- * fails (processing unreachable, etc.), this returns `false` so the caller
- * proceeds to `finalizeUploadTranscodes` immediately, exactly as if
- * duplicate detection didn't exist. Detection must never block an upload.
+ * Best-effort: when the feature is disabled, or the enqueue call fails
+ * (processing unreachable, etc.), this just logs and gives up. A missed
+ * duplicate check is an acceptable outcome; an upload must never be blocked
+ * or delayed by it.
  *
  * @private
  * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
  * @param {string} storedFilename Basename of the source file under `original/`.
- * @param {{ skipThumbnail?: boolean }} [options] Forwarded to the deferred
- *   `finalizeUploadTranscodes` call once the hash job resolves.
- * @returns {Promise<boolean>} `true` when a hash job was enqueued (caller
- *   must NOT call `finalizeUploadTranscodes` itself); `false` when the
- *   caller should proceed immediately.
+ * @returns {void} Nothing — the hash job is enqueued in the background.
  */
-async function requestDuplicateCheck(upload, storedFilename, { skipThumbnail = false } = {}) {
+function enqueueDuplicateHashCheck(upload, storedFilename) {
   if (!duplicateUploadDetectionEnabled()) {
-    return false;
+    return;
   }
 
-  await upload.update({ status: "hashing", skipThumbnail });
-
-  const enqueue = await requestTranscodeBatch({
+  requestTranscodeBatch({
     filename: storedFilename,
     jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
-  });
-
-  if (!enqueue.ok) {
-    console.warn(
-      `[upload] duplicate-check enqueue failed for ${upload.videoId}, proceeding without dedup:`,
-      enqueue.error,
-    );
-    return false;
-  }
-
-  return true;
+  })
+    .then((enqueue) => {
+      if (!enqueue.ok) {
+        console.warn(
+          `[upload] duplicate-check enqueue failed for ${upload.videoId}:`,
+          enqueue.error,
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn(`[upload] duplicate-check enqueue threw for ${upload.videoId}:`, err);
+    });
 }
 
 /**
@@ -640,12 +637,7 @@ async function uploadVideo(req, res) {
     return;
   }
 
-  const duplicateCheckStarted = await requestDuplicateCheck(upload, file.filename, { skipThumbnail });
-  if (duplicateCheckStarted) {
-    await upload.reload();
-    res.status(201).json({ ...uploadResponseBody(upload), fileVersions: [] });
-    return;
-  }
+  enqueueDuplicateHashCheck(upload, file.filename);
 
   const result = await finalizeUploadTranscodes(upload, file.filename, { skipThumbnail });
   res.status(result.status).json(result.body);
@@ -859,10 +851,7 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
       storagePath,
     });
 
-    const duplicateCheckStarted = await requestDuplicateCheck(upload, storedFilename, { skipThumbnail });
-    if (duplicateCheckStarted) {
-      return;
-    }
+    enqueueDuplicateHashCheck(upload, storedFilename);
 
     await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
   } catch (err) {

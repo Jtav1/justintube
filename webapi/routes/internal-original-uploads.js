@@ -9,7 +9,6 @@ import {
   User,
 } from "../lib/models/index.js";
 import { createNotification } from "../lib/notifications.js";
-import { finalizeUploadTranscodes } from "./uploads.js";
 
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
@@ -102,8 +101,12 @@ export function createInternalOriginalUploadsRouter() {
   router.use(requireInternalToken);
 
   /**
-   * Records a computed content hash and either releases the upload to
-   * transcode (no match) or parks it pending moderator review (match found).
+   * Records a computed content hash for an already-live upload and, when it
+   * matches another upload's hash, creates a `DuplicateUploadFlag` and
+   * notifies admins/moderators for manual review. This never touches the
+   * upload's own status or transcode pipeline — hashing runs purely in the
+   * background after the upload has already been finalized for the user;
+   * the only visible side effect of a match is the notification.
    * POST /internal/original-uploads/:jobId/hash-complete with { contentHash }.
    * `:jobId` is `hash-<videoId>`. Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
    *
@@ -130,7 +133,7 @@ export function createInternalOriginalUploadsRouter() {
    *               contentHash: { type: string }
    *     responses:
    *       200:
-   *         description: Hash recorded; upload either finalized or parked pending review
+   *         description: Hash recorded; a review flag was created when it matched another upload
    *       404:
    *         description: Upload not found
    *
@@ -173,22 +176,16 @@ export function createInternalOriginalUploadsRouter() {
       where: {
         contentHash,
         id: { [Op.ne]: upload.id },
-        status: { [Op.notIn]: ["failed", "downloading", "hashing", "duplicate_pending"] },
+        status: { [Op.notIn]: ["failed", "downloading"] },
       },
       order: [["uploadedAt", "ASC"]],
     });
 
-    const storedFilename = `${upload.videoId}.${upload.fileExtension}`;
-
     if (!existing) {
-      await finalizeUploadTranscodes(upload, storedFilename, {
-        skipThumbnail: Boolean(upload.skipThumbnail),
-      });
       res.status(200).json({ success: true, status: "no_duplicate" });
       return;
     }
 
-    await upload.update({ status: "duplicate_pending" });
     const flag = await DuplicateUploadFlag.create({
       newOriginalUploadId: upload.id,
       existingOriginalUploadId: existing.id,
@@ -197,13 +194,14 @@ export function createInternalOriginalUploadsRouter() {
     });
     await notifyDuplicateUploadFlagged(flag, upload, existing);
 
-    res.status(200).json({ success: true, status: "duplicate_pending", flagId: flag.id });
+    res.status(200).json({ success: true, status: "duplicate_flagged", flagId: flag.id });
   });
 
   /**
-   * Fails open on a hash-computation failure: logs the error and releases
-   * the upload to transcode without dedup, rather than leaving it stuck in
-   * "hashing" forever.
+   * Logs a failed duplicate-upload content-hash job. Purely informational —
+   * the upload was never blocked on this job in the first place (hashing
+   * runs entirely in the background after the upload is already live), so
+   * there's nothing to release or roll back.
    * POST /internal/original-uploads/:jobId/hash-failed with { error? }.
    * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
    *
@@ -229,7 +227,7 @@ export function createInternalOriginalUploadsRouter() {
    *               error: { type: string }
    *     responses:
    *       200:
-   *         description: Upload released to transcode without dedup
+   *         description: Failure logged
    *       404:
    *         description: Upload not found
    *
@@ -258,17 +256,9 @@ export function createInternalOriginalUploadsRouter() {
 
     const message =
       req.body && typeof req.body.error === "string" ? req.body.error : "content hash job failed";
-    console.warn(
-      `[original-uploads] hash job failed for upload ${upload.videoId}, proceeding without dedup:`,
-      message,
-    );
+    console.warn(`[original-uploads] hash job failed for upload ${upload.videoId}:`, message);
 
-    const storedFilename = `${upload.videoId}.${upload.fileExtension}`;
-    await finalizeUploadTranscodes(upload, storedFilename, {
-      skipThumbnail: Boolean(upload.skipThumbnail),
-    });
-
-    res.status(200).json({ success: true, status: "no_duplicate" });
+    res.status(200).json({ success: true });
   });
 
   return router;

@@ -33,7 +33,7 @@ async function seedUserWithRoleAndKey(roleName, rawKey, overrides = {}) {
  *   Seeded flag and its two upload sides.
  */
 async function seedPendingFlag() {
-  const newUpload = await seedUpload({ status: "duplicate_pending", contentHash: "sha256:shared" });
+  const newUpload = await seedUpload({ status: "uploaded", contentHash: "sha256:shared" });
   await seedMetadata(newUpload.id, { title: "New upload" });
   const existingUpload = await seedUpload({ status: "uploaded", contentHash: "sha256:shared" });
   await seedMetadata(existingUpload.id, { title: "Existing video" });
@@ -134,34 +134,29 @@ describe("GET/PATCH /api/v1/admin/duplicate-uploads", () => {
     expect(res.body.error).toBe("not_found");
   });
 
-  test("moderate kept_new: releases the new upload to transcode and resolves the flag", async () => {
-    process.env.ENABLE_TRANSCODING = "false";
-    try {
-      const rawKey = "jt_test_dup_flags_kept_new";
-      const mod = await seedUserWithRoleAndKey("moderator", rawKey);
-      const { flag, newUpload } = await seedPendingFlag();
+  test("moderate kept_new: leaves both (already-live) uploads untouched and resolves the flag", async () => {
+    const rawKey = "jt_test_dup_flags_kept_new";
+    const mod = await seedUserWithRoleAndKey("moderator", rawKey);
+    const { flag, newUpload } = await seedPendingFlag();
 
-      const res = await client
-        .patch(`/api/v1/admin/duplicate-uploads/${flag.id}/moderate`)
-        .set("Authorization", `Bearer ${rawKey}`)
-        .send({ resolution: "kept_new", comment: "not actually a duplicate" });
+    const res = await client
+      .patch(`/api/v1/admin/duplicate-uploads/${flag.id}/moderate`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ resolution: "kept_new", comment: "not actually a duplicate" });
 
-      expect(res.status).toBe(200);
-      expect(res.body.status).toBe("resolved");
-      expect(res.body.resolution).toBe("kept_new");
-      expect(res.body.moderatorUserId).toBe(mod.id);
-      expect(res.body.moderatorComment).toBe("not actually a duplicate");
-      expect(res.body.newUpload).not.toBeNull();
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("resolved");
+    expect(res.body.resolution).toBe("kept_new");
+    expect(res.body.moderatorUserId).toBe(mod.id);
+    expect(res.body.moderatorComment).toBe("not actually a duplicate");
+    expect(res.body.newUpload).not.toBeNull();
 
-      const reloadedUpload = await OriginalUpload.findByPk(newUpload.id);
-      expect(reloadedUpload.status).toBe("uploaded");
+    const reloadedUpload = await OriginalUpload.findByPk(newUpload.id);
+    expect(reloadedUpload.status).toBe("uploaded");
 
-      const reloadedFlag = await DuplicateUploadFlag.findByPk(flag.id);
-      expect(reloadedFlag.status).toBe("resolved");
-      expect(reloadedFlag.resolvedAt).not.toBeNull();
-    } finally {
-      delete process.env.ENABLE_TRANSCODING;
-    }
+    const reloadedFlag = await DuplicateUploadFlag.findByPk(flag.id);
+    expect(reloadedFlag.status).toBe("resolved");
+    expect(reloadedFlag.resolvedAt).not.toBeNull();
   });
 
   test("moderate kept_existing: hard-deletes the new upload and keeps the existing one", async () => {

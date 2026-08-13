@@ -25,6 +25,11 @@ async function seedUserWithRole(roleName, overrides = {}) {
 
 /**
  * HTTP tests for processing -> API duplicate-upload content-hash callbacks.
+ * The upload is always already live/finalized by the time these callbacks
+ * fire (hashing runs entirely in the background after the upload response
+ * has already been sent) — so these only ever record the hash and, on a
+ * match, create a review flag + notification. Neither callback ever alters
+ * an upload's status.
  */
 describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed", () => {
   /** @type {ReturnType<typeof createTestClient>} */
@@ -36,12 +41,11 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
   });
 
   afterEach(async () => {
-    delete process.env.ENABLE_TRANSCODING;
     await resetTables();
   });
 
   test("rejects missing bearer token", async () => {
-    const upload = await seedUpload({ status: "hashing" });
+    const upload = await seedUpload({ status: "uploaded" });
     const res = await client
       .post(`/internal/original-uploads/hash-${upload.videoId}/hash-complete`)
       .send({ contentHash: "sha256:abc" });
@@ -57,9 +61,8 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
     expect(res.body.error).toBe("not_found");
   });
 
-  test("no match: records the hash and finalizes the upload without contacting processing", async () => {
-    process.env.ENABLE_TRANSCODING = "false";
-    const upload = await seedUpload({ status: "hashing" });
+  test("no match: records the hash and leaves the upload's status untouched", async () => {
+    const upload = await seedUpload({ status: "uploaded" });
     await seedMetadata(upload.id);
 
     const res = await client
@@ -77,13 +80,11 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
     expect(await DuplicateUploadFlag.count()).toBe(0);
   });
 
-  test("match found: parks pending review, creates a flag, and notifies admins/moderators only", async () => {
-    process.env.ENABLE_TRANSCODING = "false";
-
+  test("match found: creates a flag and notifies admins/moderators only, without touching either upload's status", async () => {
     const existing = await seedUpload({ status: "uploaded", contentHash: "sha256:shared-hash-value" });
     await seedMetadata(existing.id, { title: "Original video" });
 
-    const newUpload = await seedUpload({ status: "hashing" });
+    const newUpload = await seedUpload({ status: "processing" });
     await seedMetadata(newUpload.id, { title: "Possible duplicate" });
 
     const admin = await seedUserWithRole("admin");
@@ -96,11 +97,11 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
       .send({ contentHash: "sha256:shared-hash-value" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, status: "duplicate_pending" });
+    expect(res.body).toMatchObject({ success: true, status: "duplicate_flagged" });
     expect(typeof res.body.flagId).toBe("number");
 
     const reloaded = await OriginalUpload.findByPk(newUpload.id);
-    expect(reloaded.status).toBe("duplicate_pending");
+    expect(reloaded.status).toBe("processing");
 
     const flag = await DuplicateUploadFlag.findByPk(res.body.flagId);
     expect(flag).not.toBeNull();
@@ -118,15 +119,13 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
     expect(adminNotifications[0].message).toContain(existing.videoId);
   });
 
-  test("does not match against another upload still hashing or already duplicate_pending", async () => {
-    process.env.ENABLE_TRANSCODING = "false";
+  test("does not match against a failed or still-downloading upload", async () => {
+    const failed = await seedUpload({ status: "failed", contentHash: "sha256:shared-hash-value" });
+    await seedMetadata(failed.id);
+    const downloading = await seedUpload({ status: "downloading", contentHash: "sha256:shared-hash-value" });
+    await seedMetadata(downloading.id);
 
-    const stillHashing = await seedUpload({ status: "hashing", contentHash: "sha256:shared-hash-value" });
-    await seedMetadata(stillHashing.id);
-    const alreadyPending = await seedUpload({ status: "duplicate_pending", contentHash: "sha256:shared-hash-value" });
-    await seedMetadata(alreadyPending.id);
-
-    const newUpload = await seedUpload({ status: "hashing" });
+    const newUpload = await seedUpload({ status: "uploaded" });
     await seedMetadata(newUpload.id);
 
     const res = await client
@@ -138,9 +137,8 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
     expect(res.body.status).toBe("no_duplicate");
   });
 
-  test("hash-failed fails open: finalizes the upload without dedup", async () => {
-    process.env.ENABLE_TRANSCODING = "false";
-    const upload = await seedUpload({ status: "hashing" });
+  test("hash-failed just logs: leaves the upload untouched", async () => {
+    const upload = await seedUpload({ status: "processing" });
     await seedMetadata(upload.id);
 
     const res = await client
@@ -149,10 +147,10 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
       .send({ error: "ffmpeg crashed" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, status: "no_duplicate" });
+    expect(res.body).toMatchObject({ success: true });
 
     const reloaded = await OriginalUpload.findByPk(upload.id);
-    expect(reloaded.status).toBe("uploaded");
+    expect(reloaded.status).toBe("processing");
     expect(reloaded.contentHash).toBeNull();
   });
 });

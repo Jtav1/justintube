@@ -93,17 +93,6 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.STRING(128),
       allowNull: true,
     },
-    /**
-     * Mirrors the `skipThumbnail` option passed to the original upload/import
-     * request. Persisted (rather than threaded through call args) because the
-     * eventual `finalizeUploadTranscodes` call for a duplicate-checked upload
-     * happens later, outside the original request - from the hash-complete
-     * callback or a moderator's "keep new" resolution.
-     */
-    skipThumbnail: {
-      type: DataTypes.BOOLEAN,
-      allowNull: true,
-    },
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

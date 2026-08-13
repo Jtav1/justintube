@@ -2,13 +2,11 @@
 
 // Duplicate-upload detection: ORIGINAL_UPLOADS.content_hash stores the
 // ffmpeg decoded-video-stream sha256 hash computed by a "hash" job in
-// processing/ (see lib/models/original-upload.js); skip_thumbnail persists
-// the original upload/import request's skipThumbnail flag so it survives
-// the deferred finalizeUploadTranscodes() call made later from the
-// hash-complete callback or a moderator's "keep new" resolution, outside the
-// original request. DUPLICATE_UPLOAD_FLAGS is a REPORTS-style review-queue
-// table: one row per possible-duplicate match, reviewed by an admin/
-// moderator via PATCH /admin/duplicate-uploads/:id/moderate. See
+// processing/ (see lib/models/original-upload.js), run in the background
+// after an upload has already been finalized for the user. DUPLICATE_UPLOAD_FLAGS
+// is a REPORTS-style review-queue table: one row per possible-duplicate
+// match, reviewed by an admin/moderator via
+// PATCH /admin/duplicate-uploads/:id/moderate. See
 // lib/models/duplicate-upload-flag.js for the corresponding model.
 
 /** @type {import('sequelize-cli').Migration} */
@@ -21,10 +19,6 @@ module.exports = {
     await queryInterface.addIndex("ORIGINAL_UPLOADS", {
       fields: ["content_hash"],
       name: "idx_original_uploads_content_hash",
-    });
-    await queryInterface.addColumn("ORIGINAL_UPLOADS", "skip_thumbnail", {
-      type: Sequelize.BOOLEAN,
-      allowNull: true,
     });
 
     await queryInterface.createTable("DUPLICATE_UPLOAD_FLAGS", {
@@ -87,7 +81,6 @@ module.exports = {
 
   async down(queryInterface) {
     await queryInterface.dropTable("DUPLICATE_UPLOAD_FLAGS");
-    await queryInterface.removeColumn("ORIGINAL_UPLOADS", "skip_thumbnail");
     await queryInterface.removeIndex(
       "ORIGINAL_UPLOADS",
       "idx_original_uploads_content_hash",
