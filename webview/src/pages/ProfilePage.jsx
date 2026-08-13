@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowRight, MessageSquareWarning, Pencil, UserRound } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
 import apiClient from '../api/client.js'
 import { resendVerification } from '../api/auth.js'
 import {
@@ -369,6 +370,18 @@ function ProfilePage() {
     setSort(event.target.value)
   }
 
+  const hasMoreVideos = Boolean(profile) && page < profile.videos.totalPages
+
+  const handleLoadMoreVideos = useCallback(() => {
+    setPage((prev) => prev + 1)
+  }, [])
+
+  const loadMoreRef = useInfiniteScroll({
+    hasMore: hasMoreVideos,
+    loading,
+    onLoadMore: handleLoadMoreVideos,
+  })
+
   if (loading && !profile) {
     return <p className="profile-status">Loading...</p>
   }
@@ -675,16 +688,7 @@ function ProfilePage() {
           <VideoCard key={video.id} video={video} />
         ))}
       </div>
-      {page < videos.totalPages && (
-        <button
-          type="button"
-          className="profile-load-more"
-          disabled={loading}
-          onClick={() => setPage((prev) => prev + 1)}
-        >
-          {loading ? 'Loading...' : 'Load more'}
-        </button>
-      )}
+      {hasMoreVideos && <div className="profile-videos-scroll-sentinel" ref={loadMoreRef} />}
     </section>
   )
 }

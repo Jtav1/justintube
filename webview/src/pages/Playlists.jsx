@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { listPlaylists } from '../api/playlists.js'
 import { useToast } from '../context/useToast.js'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
 import PlaylistCard from '../components/PlaylistCard.jsx'
 import './Playlists.css'
 
@@ -42,6 +43,14 @@ function Playlists() {
     }
   }, [page, toastError])
 
+  const hasMore = page < totalPages
+
+  const handleLoadMore = useCallback(() => {
+    setPage((prev) => prev + 1)
+  }, [])
+
+  const loadMoreRef = useInfiniteScroll({ hasMore, loading, onLoadMore: handleLoadMore })
+
   return (
     <section className="playlists-listing">
       {!loading && items.length === 0 && (
@@ -52,16 +61,7 @@ function Playlists() {
           <PlaylistCard key={playlist.id} playlist={playlist} />
         ))}
       </div>
-      {page < totalPages && (
-        <button
-          type="button"
-          className="playlists-listing-load-more"
-          disabled={loading}
-          onClick={() => setPage((prev) => prev + 1)}
-        >
-          Load more
-        </button>
-      )}
+      {hasMore && <div className="playlists-listing-scroll-sentinel" ref={loadMoreRef} />}
     </section>
   )
 }
