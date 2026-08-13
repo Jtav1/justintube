@@ -50,6 +50,44 @@ function parseBroadcastBody(body) {
 }
 
 /**
+ * Maximum number of recipients accepted by a single targeted-notification
+ * request, mirroring the recipient caps used by other multi-user admin
+ * actions in this codebase.
+ *
+ * @type {number}
+ */
+const MAX_RECIPIENTS = 100;
+
+/**
+ * Validates a `POST /admin/notifications/moderation` request body.
+ *
+ * @param {unknown} body Parsed request body.
+ * @returns {{ok: true, title: string, message: string, userIds: number[]}|{ok: false, message: string}}
+ *   Validated title/message/userIds, or a validation error.
+ */
+function parseModerationBody(body) {
+  const parsedBroadcast = parseBroadcastBody(body);
+  if (!parsedBroadcast.ok) {
+    return parsedBroadcast;
+  }
+
+  const rawUserIds = Array.isArray(body?.userIds) ? body.userIds : null;
+  if (!rawUserIds || rawUserIds.length === 0) {
+    return { ok: false, message: "userIds must be a non-empty array." };
+  }
+  if (rawUserIds.length > MAX_RECIPIENTS) {
+    return { ok: false, message: `userIds must contain at most ${MAX_RECIPIENTS} entries.` };
+  }
+
+  const userIds = [...new Set(rawUserIds.map((id) => Number(id)))];
+  if (userIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+    return { ok: false, message: "userIds must contain only positive integers." };
+  }
+
+  return { ok: true, title: parsedBroadcast.title, message: parsedBroadcast.message, userIds };
+}
+
+/**
  * Builds the admin broadcast router (mounted under `/api/v1`).
  *
  * @returns {import('express').Router} Configured admin broadcast router.
@@ -132,6 +170,92 @@ export function createAdminBroadcastRouter() {
         res.status(500).json({
           error: "internal_error",
           message: "Failed to send broadcast notification.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Sends a moderation notification (type "moderation") to a specific set
+   * of users. Best-effort per recipient - `createNotification` never
+   * throws, so one bad row doesn't stop the rest. Recipients that don't
+   * exist are silently skipped rather than failing the whole request.
+   * POST /api/v1/admin/notifications/moderation
+   * Auth: session cookie or Bearer API key; admin role required.
+   *
+   * @openapi
+   * /api/v1/admin/notifications/moderation:
+   *   post:
+   *     tags: [Admin]
+   *     summary: Send a moderation notification to specific users
+   *     operationId: adminModerationNotification
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [title, message, userIds]
+   *             properties:
+   *               title: { type: string }
+   *               message: { type: string }
+   *               userIds:
+   *                 type: array
+   *                 items: { type: integer }
+   *     responses:
+   *       200:
+   *         description: Notification sent
+   *       400:
+   *         description: Invalid body
+   *       401:
+   *         description: Not authenticated
+   *       403:
+   *         description: Not an admin
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ success: true, notifiedCount }` or an error response.
+   */
+  router.post(
+    "/admin/notifications/moderation",
+    requireAuth,
+    requireAdmin,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      const parsed = parseModerationBody(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: "invalid_body", message: parsed.message });
+        return;
+      }
+
+      try {
+        const recipients = await User.findAll({
+          where: { id: parsed.userIds },
+          attributes: ["id"],
+        });
+
+        await Promise.all(
+          recipients.map((recipient) =>
+            createNotification({
+              recipientUserId: recipient.id,
+              typeName: "moderation",
+              title: parsed.title,
+              message: parsed.message,
+            }),
+          ),
+        );
+
+        res.status(200).json({ success: true, notifiedCount: recipients.length });
+      } catch (err) {
+        console.error("adminModerationNotification failed:", err);
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to send moderation notification.",
         });
       }
     },

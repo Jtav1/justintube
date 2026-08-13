@@ -4,12 +4,20 @@ import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useTheme } from '../context/useTheme.js'
 import { useSiteConfig } from '../context/useSiteConfig.js'
-import { adminBroadcastNotification } from '../api/admin.js'
+import { adminBroadcastNotification, adminModerationNotification } from '../api/admin.js'
 import { deleteTheme } from '../api/themes.js'
 import { getTranscodeProfiles, deleteTranscodeProfile } from '../api/transcode-profiles.js'
+import { searchUsers } from '../api/users.js'
+import ChipInput from '../components/ChipInput.jsx'
 import './AdminPanel.css'
 import './AdminThemes.css'
 import './AdminTranscodeProfiles.css'
+
+const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
+
+function recipientLabel(user) {
+  return user.displayName ? `${user.displayName} (${user.username})` : user.username
+}
 
 function AdminPanel() {
   const { user, loading: authLoading } = useAuth()
@@ -20,6 +28,11 @@ function AdminPanel() {
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
+  const [audience, setAudience] = useState('all')
+  const [recipientQuery, setRecipientQuery] = useState('')
+  const [recipientSuggestions, setRecipientSuggestions] = useState([])
+  const [recipientSearchLoading, setRecipientSearchLoading] = useState(false)
+  const [recipients, setRecipients] = useState([])
 
   const [deletingThemeId, setDeletingThemeId] = useState(null)
 
@@ -51,6 +64,29 @@ function AdminPanel() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const recipientSearchActive = audience === 'specific' && recipientQuery.trim().length > 0
+
+  useEffect(() => {
+    if (!recipientSearchActive) {
+      return undefined
+    }
+
+    const timer = setTimeout(async () => {
+      setRecipientSearchLoading(true)
+      try {
+        const { items } = await searchUsers(recipientQuery.trim(), { limit: 8 })
+        const alreadyAdded = new Set(recipients.map((r) => r.userId))
+        setRecipientSuggestions(items.filter((item) => !alreadyAdded.has(item.userId)))
+      } catch {
+        setRecipientSuggestions([])
+      } finally {
+        setRecipientSearchLoading(false)
+      }
+    }, RECIPIENT_SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  }, [recipientSearchActive, recipientQuery, recipients])
 
   if (authLoading) {
     return (
@@ -108,20 +144,51 @@ function AdminPanel() {
     }
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault()
-    if (sending) {
+  function addRecipient(userId) {
+    const match = recipientSuggestions.find((s) => s.userId === Number(userId))
+    if (!match) {
       return
     }
-    if (!window.confirm('Send this notification to every user? This cannot be undone.')) {
+    setRecipients((prev) => [...prev, match])
+    setRecipientQuery('')
+    setRecipientSuggestions([])
+  }
+
+  function removeRecipient(userId) {
+    setRecipients((prev) => prev.filter((r) => r.userId !== Number(userId)))
+  }
+
+  const notifySubmitDisabled =
+    sending || title.trim().length === 0 || message.trim().length === 0 ||
+    (audience === 'specific' && recipients.length === 0)
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    if (notifySubmitDisabled) {
+      return
+    }
+
+    const confirmMessage =
+      audience === 'all'
+        ? 'Send this notification to every user? This cannot be undone.'
+        : `Send this moderation notification to ${recipients.length} user(s)? This cannot be undone.`
+    if (!window.confirm(confirmMessage)) {
       return
     }
 
     setSending(true)
     try {
-      const result = await adminBroadcastNotification(title.trim(), message.trim())
+      const result =
+        audience === 'all'
+          ? await adminBroadcastNotification(title.trim(), message.trim())
+          : await adminModerationNotification(
+              title.trim(),
+              message.trim(),
+              recipients.map((r) => r.userId),
+            )
       setTitle('')
       setMessage('')
+      setRecipients([])
       success(`Notification sent to ${result.notifiedCount} user(s).`)
     } catch (err) {
       const code = err.response?.data?.error
@@ -136,9 +203,20 @@ function AdminPanel() {
       <div className="admin-panel-columns">
         <div className="settings-card">
           <h1>Admin Panel</h1>
-          <h2>Broadcast a notification</h2>
+          <h2>Send a notification</h2>
 
           <form className="settings-form" onSubmit={handleSubmit}>
+            <label htmlFor="admin-notify-audience">Send to</label>
+            <select
+              id="admin-notify-audience"
+              value={audience}
+              onChange={(event) => setAudience(event.target.value)}
+              disabled={sending}
+            >
+              <option value="all">All users (sitewide broadcast)</option>
+              <option value="specific">Specific users (moderation)</option>
+            </select>
+
             <label htmlFor="admin-broadcast-title">Title</label>
             <input
               id="admin-broadcast-title"
@@ -161,8 +239,35 @@ function AdminPanel() {
               disabled={sending}
             />
 
-            <button type="submit" className="settings-submit" disabled={sending}>
-              {sending ? 'Sending...' : 'Send to all users'}
+            {audience === 'specific' && (
+              <div className="upload-field-group">
+                <label>Recipients</label>
+                <ChipInput
+                  chips={recipients.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
+                  onRemove={removeRecipient}
+                  inputValue={recipientQuery}
+                  onInputChange={setRecipientQuery}
+                  suggestions={
+                    recipientSearchActive
+                      ? recipientSuggestions.map((s) => ({
+                          key: String(s.userId),
+                          label: recipientLabel(s),
+                        }))
+                      : []
+                  }
+                  onSelectSuggestion={addRecipient}
+                  suggestionsLoading={recipientSearchLoading}
+                  placeholder="Search by username or display name..."
+                />
+              </div>
+            )}
+
+            <button type="submit" className="settings-submit" disabled={notifySubmitDisabled}>
+              {sending
+                ? 'Sending...'
+                : audience === 'all'
+                  ? 'Send to all users'
+                  : 'Send to selected users'}
             </button>
           </form>
         </div>
