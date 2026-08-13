@@ -81,6 +81,8 @@ async function processThumbnailJob(job) {
   const { inputFilename, outputFilename, timestampSeconds } = job.data;
   const jobId = String(job.id);
 
+  console.log(`[thumbnail ${jobId}] processing started: ${inputFilename} -> ${outputFilename} @ ${timestampSeconds}s`);
+
   await job.updateProgress(10);
 
   const inputPath = resolveOriginalInputPath(inputFilename);
@@ -102,6 +104,8 @@ async function processThumbnailJob(job) {
 
   await job.updateProgress(100);
 
+  console.log(`[thumbnail ${jobId}] processing completed: ${outputFilename}`);
+
   return { outputFilename };
 }
 
@@ -120,6 +124,8 @@ async function processHashJob(job) {
   const { inputFilename } = job.data;
   const jobId = String(job.id);
 
+  console.log(`[hash ${jobId}] processing started: ${inputFilename}`);
+
   await job.updateProgress(20);
 
   const inputPath = resolveOriginalInputPath(inputFilename);
@@ -136,6 +142,8 @@ async function processHashJob(job) {
   }
 
   await job.updateProgress(100);
+
+  console.log(`[hash ${jobId}] processing completed: ${contentHash}`);
 
   return { contentHash };
 }
@@ -163,6 +171,8 @@ async function processRenditionJob(job) {
   const { inputFilename, outputFilename, profile } = job.data;
   const jobId = String(job.id);
 
+  console.log(`[rendition ${jobId}] processing started: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
+
   await job.updateProgress(10);
 
   const inputPath = resolveOriginalInputPath(inputFilename);
@@ -189,6 +199,8 @@ async function processRenditionJob(job) {
 
   await job.updateProgress(100);
 
+  console.log(`[rendition ${jobId}] processing completed: ${outputFilename} (${metadata.resolution ?? "unknown resolution"}, ${metadata.fileSizeBytes} bytes)`);
+
   return {
     outputFilename,
     profileId: profile.id,
@@ -210,10 +222,13 @@ async function processRenditionJob(job) {
  * @throws {Error} When the input is missing or ffmpeg fails.
  */
 export async function processTranscodeJob(job) {
-  if (job.data?.kind === "thumbnail") {
+  const kind = job.data?.kind || "rendition";
+  console.log(`[worker] dequeued job ${job.id} (${kind})`);
+
+  if (kind === "thumbnail") {
     return processThumbnailJob(job);
   }
-  if (job.data?.kind === "hash") {
+  if (kind === "hash") {
     return processHashJob(job);
   }
   return processRenditionJob(job);
@@ -254,6 +269,8 @@ export function createTranscodeWorker(
 export async function enqueueTranscodeJob(queue, options) {
   const { jobId, inputFilename, outputFilename, profile } = options;
 
+  console.log(`[rendition ${jobId}] enqueued: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
+
   return queue.add(
     "ffmpeg-transcode",
     { inputFilename, outputFilename, profile },
@@ -270,6 +287,13 @@ export async function enqueueTranscodeJob(queue, options) {
  * @returns {Promise<import('bullmq').Job[]>} Created BullMQ jobs.
  */
 export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
+  for (const job of jobs) {
+    console.log(
+      `[${job.kind} ${job.jobId}] enqueued: ${inputFilename} -> ${job.outputFilename}` +
+        (job.kind === "rendition" ? ` (profile ${job.profile?.id})` : ""),
+    );
+  }
+
   return queue.addBulk(
     jobs.map((job) => ({
       name:
@@ -307,6 +331,8 @@ export async function getTranscodeJobStatus(queue, jobId) {
   const progress =
     typeof job.progress === "number" ? job.progress : Number(job.progress) || 0;
 
+  console.log(`[job ${jobId}] status queried: state=${state}, progress=${progress}`);
+
   return {
     jobId: String(job.id),
     state,
@@ -328,9 +354,11 @@ export async function getTranscodeJobStatus(queue, jobId) {
 export async function removeTranscodeJob(queue, jobId) {
   const job = await queue.getJob(jobId);
   if (!job) {
+    console.log(`[job ${jobId}] remove requested: not found`);
     return false;
   }
   await job.remove();
+  console.log(`[job ${jobId}] removed`);
   return true;
 }
 
@@ -360,11 +388,12 @@ export async function notifyTranscodeJobFailed(job, err) {
         : "transcode failed";
 
   if (job?.data?.kind === "thumbnail") {
-    console.error(`thumbnail job ${jobId} failed:`, message);
+    console.error(`[thumbnail ${jobId}] processing failed:`, message);
     return;
   }
 
   if (job?.data?.kind === "hash") {
+    console.error(`[hash ${jobId}] processing failed:`, message);
     const notify = await notifyContentHashFailed(jobId, message);
     if (!notify.ok) {
       console.error(
@@ -375,6 +404,7 @@ export async function notifyTranscodeJobFailed(job, err) {
     return;
   }
 
+  console.error(`[rendition ${jobId}] processing failed:`, message);
   const notify = await notifyFileVersionFailed(jobId, message);
   if (!notify.ok) {
     console.error(

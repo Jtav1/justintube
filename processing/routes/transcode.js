@@ -67,6 +67,8 @@ export function createTranscodeRouter({
       const filename = validateInputFilename(rawFilename);
       const inputPath = resolveOriginalInputPath(filename);
 
+      console.log(`[transcode] batch request received: ${filename} (${jobs.length} job(s) requested)`);
+
       /** @type {{ videoWidth: number|null, videoHeight: number|null }} */
       let source = { videoWidth: null, videoHeight: null };
       try {
@@ -153,6 +155,13 @@ export function createTranscodeRouter({
         accepted.push(job);
       }
 
+      if (skipped.length > 0) {
+        console.log(
+          `[transcode] batch skipped ${skipped.length} job(s) for ${filename}:`,
+          skipped.map((s) => `${s.jobId}(${s.reason})`).join(", "),
+        );
+      }
+
       if (accepted.length > 0) {
         await enqueueTranscodeJobs(queue, filename, accepted);
       }
@@ -184,15 +193,21 @@ export function createTranscodeRouter({
         return;
       }
 
+      console.log(
+        `[transcode] batch request accepted: ${jobSummaries.length} job(s) enqueued, ${skipped.length} skipped for ${filename}`,
+      );
+
       res.status(202).json(payload);
     } catch (err) {
       if (err instanceof TranscodeValidationError) {
+        console.warn(`[transcode] batch request rejected: ${err.message}`);
         res.status(400).json({ success: false, error: err.message });
         return;
       }
 
       const message =
         err instanceof Error ? err.message : "failed to queue transcode";
+      console.error(`[transcode] batch request failed:`, message);
       res.status(500).json({ success: false, error: message });
     }
   });
@@ -231,6 +246,7 @@ export function createTranscodeRouter({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "failed to load job status";
+      console.error(`[transcode] status lookup failed:`, message);
       res.status(500).json({ success: false, error: message });
     }
   });
@@ -270,6 +286,7 @@ export function createTranscodeRouter({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "failed to remove job";
+      console.error(`[transcode] job removal failed:`, message);
       res.status(500).json({ success: false, error: message });
     }
   });
