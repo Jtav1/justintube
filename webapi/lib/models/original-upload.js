@@ -84,6 +84,26 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       defaultValue: "pending",
     }),
+    /**
+     * ffmpeg decoded-video-stream sha256 hash (`sha256:<hex>`), used for
+     * duplicate-upload detection. Null until a content-hash job completes;
+     * stays null forever when ENABLE_DUPLICATE_UPLOAD_DETECTION is off.
+     */
+    contentHash: {
+      type: DataTypes.STRING(128),
+      allowNull: true,
+    },
+    /**
+     * Mirrors the `skipThumbnail` option passed to the original upload/import
+     * request. Persisted (rather than threaded through call args) because the
+     * eventual `finalizeUploadTranscodes` call for a duplicate-checked upload
+     * happens later, outside the original request - from the hash-complete
+     * callback or a moderator's "keep new" resolution.
+     */
+    skipThumbnail: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+    },
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

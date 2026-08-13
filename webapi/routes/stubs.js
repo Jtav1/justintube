@@ -4,6 +4,7 @@ import { createAdminBroadcastRouter } from "./admin-broadcast.js";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createDuplicateUploadFlagsRouter } from "./duplicate-upload-flags.js";
 import { createLivestreamsRouter } from "./livestreams.js";
 import { createMeRouter } from "./me.js";
 import { createMeStreamKeyRouter } from "./me-stream-key.js";
@@ -110,6 +111,7 @@ export function createApiRouter() {
   router.use(createSearchRouter());
   router.use(createPlaylistsRouter());
   router.use(createReportsRouter());
+  router.use(createDuplicateUploadFlagsRouter());
   registerStubRoutes(router);
   return router;
 }

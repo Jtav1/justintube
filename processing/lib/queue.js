@@ -1,6 +1,8 @@
 import { stat } from "node:fs/promises";
 import { Queue, Worker } from "bullmq";
 import {
+  notifyContentHashComplete,
+  notifyContentHashFailed,
   notifyFileVersionComplete,
   notifyFileVersionFailed,
   notifyThumbnailComplete,
@@ -10,7 +12,7 @@ import {
   resolveThumbnailOutputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
-import { collectOutputMetadata } from "./probe.js";
+import { collectOutputMetadata, computeContentHash } from "./probe.js";
 import { buildFfmpegArgs, buildThumbnailFfmpegArgs, runFfmpeg } from "./transcode.js";
 
 /**
@@ -104,6 +106,41 @@ async function processThumbnailJob(job) {
 }
 
 /**
+ * Processes a single duplicate-upload content-hash job: probe the source
+ * file's decoded video stream with ffmpeg and notify the API of the result.
+ * No output file is written, so unlike rendition/thumbnail jobs there's
+ * nothing to resolve an output path for.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes `inputFilename`.
+ * @returns {Promise<{ contentHash: string }>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+async function processHashJob(job) {
+  const { inputFilename } = job.data;
+  const jobId = String(job.id);
+
+  await job.updateProgress(20);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const contentHash = await computeContentHash(inputPath);
+
+  await job.updateProgress(90);
+
+  const notify = await notifyContentHashComplete(jobId, { contentHash });
+  if (!notify.ok) {
+    console.error(
+      `failed to notify API of computed hash ${jobId}:`,
+      notify.error,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  return { contentHash };
+}
+
+/**
  * Processes a single rendition transcode job: resolve paths, run ffmpeg,
  * collect metadata, notify the API, and return the result payload.
  *
@@ -167,14 +204,17 @@ async function processRenditionJob(job) {
 /**
  * Processes a single queued job, dispatching on `job.data.kind`.
  *
- * @param {import('bullmq').Job} job BullMQ job (`data.kind` is `"thumbnail"`
- *   or `"rendition"`).
+ * @param {import('bullmq').Job} job BullMQ job (`data.kind` is `"thumbnail"`,
+ *   `"hash"`, or `"rendition"`).
  * @returns {Promise<object>} Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails.
  */
 export async function processTranscodeJob(job) {
   if (job.data?.kind === "thumbnail") {
     return processThumbnailJob(job);
+  }
+  if (job.data?.kind === "hash") {
+    return processHashJob(job);
   }
   return processRenditionJob(job);
 }
@@ -232,7 +272,12 @@ export async function enqueueTranscodeJob(queue, options) {
 export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
   return queue.addBulk(
     jobs.map((job) => ({
-      name: job.kind === "thumbnail" ? "ffmpeg-thumbnail" : "ffmpeg-transcode",
+      name:
+        job.kind === "thumbnail"
+          ? "ffmpeg-thumbnail"
+          : job.kind === "hash"
+            ? "ffmpeg-hash"
+            : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -293,7 +338,10 @@ export async function removeTranscodeJob(queue, jobId) {
  * Notifies the API that a BullMQ job failed (best-effort). Thumbnail jobs
  * have no pending placeholder row to roll back (unlike FILE_VERSIONS, no
  * VIDEO_THUMBNAIL row exists until success), so a failed thumbnail job just
- * logs locally rather than calling back to the API.
+ * logs locally rather than calling back to the API. Hash jobs, unlike
+ * thumbnails, DO need a callback on failure - the API parks the upload in a
+ * "hashing" state waiting on this job and must be told to fail open (skip
+ * dedup, proceed to transcode) rather than being left stuck indefinitely.
  *
  * @param {import('bullmq').Job | undefined} job Failed job, when available.
  * @param {Error | undefined} err Failure reason.
@@ -313,6 +361,17 @@ export async function notifyTranscodeJobFailed(job, err) {
 
   if (job?.data?.kind === "thumbnail") {
     console.error(`thumbnail job ${jobId} failed:`, message);
+    return;
+  }
+
+  if (job?.data?.kind === "hash") {
+    const notify = await notifyContentHashFailed(jobId, message);
+    if (!notify.ok) {
+      console.error(
+        `failed to notify API of failed hash job ${jobId}:`,
+        notify.error,
+      );
+    }
     return;
   }
 

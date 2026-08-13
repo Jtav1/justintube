@@ -154,6 +154,12 @@ const DEFAULT_NOTIFICATION_TYPES = [
     defaultEnabled: true,
     defaultEmailEnabled: true,
   },
+  {
+    name: "duplicate_upload",
+    description: "Possible duplicate upload flagged for review",
+    defaultEnabled: true,
+    defaultEmailEnabled: true,
+  },
 ];
 
 /**

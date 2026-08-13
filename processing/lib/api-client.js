@@ -130,3 +130,33 @@ export async function notifyThumbnailComplete(uploadUuid, metadata) {
     thumbnailFilename: metadata.thumbnailFilename,
   });
 }
+
+/**
+ * Notifies the API that a duplicate-upload content-hash job completed
+ * successfully.
+ *
+ * @param {string} jobId BullMQ job id (`hash-<videoId>`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.contentHash Computed `sha256:<hex>` content hash.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyContentHashComplete(jobId, metadata) {
+  return postInternal(`/internal/original-uploads/${encodeURIComponent(jobId)}/hash-complete`, {
+    contentHash: metadata.contentHash,
+  });
+}
+
+/**
+ * Notifies the API that a duplicate-upload content-hash job failed.
+ *
+ * @param {string} jobId BullMQ job id (`hash-<videoId>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyContentHashFailed(jobId, error) {
+  return postInternal(`/internal/original-uploads/${encodeURIComponent(jobId)}/hash-failed`, {
+    error,
+  });
+}

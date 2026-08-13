@@ -196,6 +196,47 @@ export async function probeVideoDuration(filePath) {
 }
 
 /**
+ * Computes a content-based hash of a media file's primary video stream via
+ * ffmpeg's `hash` muxer. Unlike a raw file checksum, this hashes decoded
+ * frame data, so it stays stable across container remuxes or re-encodes of
+ * the same visual source (e.g. two yt-dlp downloads of the same URL at
+ * different times/qualities) — the "consistent and re-creatable" property
+ * duplicate-upload detection needs. This decodes the entire video stream, so
+ * it can be slow for long files; callers should run it as its own
+ * fire-and-forget job rather than inline in a request handler.
+ *
+ * @param {string} filePath Absolute path to the media file.
+ * @returns {Promise<string>} Hash string of the form `sha256:<hex>`.
+ * @throws {Error} When ffmpeg exits non-zero, cannot be spawned, or its
+ *   output doesn't contain a parseable hash.
+ */
+export async function computeContentHash(filePath) {
+  const { stdout } = await execFileAsync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-i",
+      filePath,
+      "-map",
+      "0:v:0",
+      "-f",
+      "hash",
+      "-hash",
+      "sha256",
+      "-",
+    ],
+    { maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  const match = stdout.match(/SHA256=([0-9a-fA-F]+)/);
+  if (!match) {
+    throw new Error("ffmpeg did not return a content hash");
+  }
+  return `sha256:${match[1].toLowerCase()}`;
+}
+
+/**
  * Collects on-disk size and probed dimensions for a completed transcode output.
  *
  * @param {object} options Probe inputs.

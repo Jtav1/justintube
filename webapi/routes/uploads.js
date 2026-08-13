@@ -19,6 +19,7 @@ import {
   toTranscodeProfilePayload,
 } from "../lib/file-versions.js";
 import {
+  duplicateUploadDetectionEnabled,
   transcodingEnabled,
   videoImportsEnabled,
 } from "../lib/processing-features-config.js";
@@ -38,7 +39,7 @@ const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
  *
  * @type {string}
  */
-const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
+export const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
   ? MEDIA_STORAGE_DIRECTORY
   : resolve(process.cwd(), MEDIA_STORAGE_DIRECTORY);
 
@@ -263,7 +264,7 @@ function fileVersionResponseBody(version) {
  *   (and overwriting) it.
  * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
  */
-async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail = false } = {}) {
+export async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail = false } = {}) {
   if (!transcodingEnabled()) {
     // Transcoding is disabled deployment-wide: never contact the processing
     // service (it may not even be running). The original file stays
@@ -482,6 +483,51 @@ async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail 
 }
 
 /**
+ * When duplicate-upload detection is enabled, parks `upload` in a "hashing"
+ * state and enqueues a content-hash job with the processing service instead
+ * of proceeding straight to {@link finalizeUploadTranscodes}. The eventual
+ * outcome (no match -> finalize now; match -> park for moderator review) is
+ * decided later by the `/internal/original-uploads/:jobId/hash-complete`
+ * callback, once the hash job finishes.
+ *
+ * Fails open: when the feature is disabled, or the enqueue call itself
+ * fails (processing unreachable, etc.), this returns `false` so the caller
+ * proceeds to `finalizeUploadTranscodes` immediately, exactly as if
+ * duplicate detection didn't exist. Detection must never block an upload.
+ *
+ * @private
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} storedFilename Basename of the source file under `original/`.
+ * @param {{ skipThumbnail?: boolean }} [options] Forwarded to the deferred
+ *   `finalizeUploadTranscodes` call once the hash job resolves.
+ * @returns {Promise<boolean>} `true` when a hash job was enqueued (caller
+ *   must NOT call `finalizeUploadTranscodes` itself); `false` when the
+ *   caller should proceed immediately.
+ */
+async function requestDuplicateCheck(upload, storedFilename, { skipThumbnail = false } = {}) {
+  if (!duplicateUploadDetectionEnabled()) {
+    return false;
+  }
+
+  await upload.update({ status: "hashing", skipThumbnail });
+
+  const enqueue = await requestTranscodeBatch({
+    filename: storedFilename,
+    jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
+  });
+
+  if (!enqueue.ok) {
+    console.warn(
+      `[upload] duplicate-check enqueue failed for ${upload.videoId}, proceeding without dedup:`,
+      enqueue.error,
+    );
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Parses an optional thumbnail-timestamp field (seconds, possibly fractional)
  * into tenths-of-a-second for storage on `ORIGINAL_UPLOADS`. Multipart form
  * fields arrive as strings; JSON bodies may send a number directly. Omitted
@@ -591,6 +637,13 @@ async function uploadVideo(req, res) {
       error: "upload_persist_failed",
       message: "The file was received but could not be recorded.",
     });
+    return;
+  }
+
+  const duplicateCheckStarted = await requestDuplicateCheck(upload, file.filename, { skipThumbnail });
+  if (duplicateCheckStarted) {
+    await upload.reload();
+    res.status(201).json({ ...uploadResponseBody(upload), fileVersions: [] });
     return;
   }
 
@@ -805,6 +858,11 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
       fileSizeBytes,
       storagePath,
     });
+
+    const duplicateCheckStarted = await requestDuplicateCheck(upload, storedFilename, { skipThumbnail });
+    if (duplicateCheckStarted) {
+      return;
+    }
 
     await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
   } catch (err) {

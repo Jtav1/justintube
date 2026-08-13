@@ -173,6 +173,35 @@ describe("thumbnail job validation and ffmpeg args", () => {
     }
   });
 
+  test("validateTranscodeJob accepts a hash job with only a jobId, no outputFilename/profile", () => {
+    const jobId = "hash-abc123";
+    expect(validateTranscodeJob({ jobId, kind: "hash" }, 0)).toEqual({
+      jobId,
+      kind: "hash",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for hash jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() => validateTranscodeJob({ jobId: "hash-xyz", kind: "hash" }, 0)).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("validateTranscodeBatchRequest accepts a batch with a hash job", () => {
+    const result = validateTranscodeBatchRequest({
+      filename: "clip.mp4",
+      jobs: [{ jobId: "hash-abc123", kind: "hash" }],
+    });
+    expect(result).toEqual({
+      filename: "clip.mp4",
+      jobs: [{ jobId: "hash-abc123", kind: "hash" }],
+    });
+  });
+
   test("buildThumbnailFfmpegArgs builds a bounded-scale, webp-encoded single-frame command", () => {
     const args = buildThumbnailFfmpegArgs({
       inputPath: "/media/original/in.mp4",
