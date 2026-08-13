@@ -27,7 +27,7 @@ import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
 
 // Must match .video-player-title's font-size/font-weight in VideoPlayer.css.
-const TITLE_FONT_SIZE = 20
+const TITLE_FONT_SIZE = 24
 const TITLE_FONT_WEIGHT = 600
 const TITLE_SHRINK_PX = 4
 
