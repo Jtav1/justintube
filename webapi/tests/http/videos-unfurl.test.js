@@ -70,6 +70,10 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
       );
       expect(res.text).toContain('property="og:video:width" content="426"');
       expect(res.text).toContain('property="og:video:height" content="240"');
+      // Discord (and most unfurlers) can't show an inline video player and a
+      // description at once, so a video-embedding page omits og:description.
+      expect(res.text).not.toContain('property="og:description"');
+      expect(res.text).not.toContain('name="twitter:description"');
     });
 
     test("picks the original upload when it is smaller than every complete FileVersion", async () => {
@@ -103,6 +107,14 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
 
       expect(res.status).toBe(200);
       expect(res.text).not.toContain('property="og:video"');
+      // Not embeddable as a video player, so it's a non-video-player page:
+      // gets a plain "Justintube - <title>" description instead.
+      expect(res.text).toContain(
+        'property="og:description" content="Justintube - Podcast ep"',
+      );
+      expect(res.text).toContain(
+        'name="twitter:description" content="Justintube - Podcast ep"',
+      );
     });
 
     test("returns the generic masked fallback for a private video without a grant", async () => {

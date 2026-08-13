@@ -25,6 +25,24 @@ import { createInternalThumbnailsRouter } from "./routes/internal-thumbnails.js"
 const PORT = Number(process.env.PORT) || 3000;
 
 /**
+ * Default per-IP request ceiling for the global rate limiter (requests per
+ * `RATE_LIMIT_WINDOW_MS`).
+ *
+ * @type {number}
+ */
+const RATE_LIMIT_MAX = 300;
+
+/**
+ * Raised per-IP ceiling granted to requests from a logged-in, email-verified
+ * uploader - trusted enough to need more headroom than anonymous/unverified
+ * session traffic, but still identified by IP (unlike API-key callers, who
+ * are exempt from this limiter entirely via `skip` below).
+ *
+ * @type {number}
+ */
+const RATE_LIMIT_MAX_TRUSTED_UPLOADER = 6000;
+
+/**
  * Creates and configures the Express application (middleware, API stubs, Scalar docs).
  *
  * @returns {import('express').Express} Ready-to-listen Express app.
@@ -60,7 +78,16 @@ export function createApp() {
   app.use(
     rateLimit({
       windowMs: 60_000,
-      max: 3000,
+      // Logged-in, verified uploaders get a raised ceiling - they're trusted
+      // enough to browse/upload more heavily, but (unlike API-key callers)
+      // still identified by IP, so still worth capping.
+      max: async (req) => {
+        const auth = await getAuthContext(req);
+        const user = auth?.user;
+        return user?.emailVerified && user?.uploader
+          ? RATE_LIMIT_MAX_TRUSTED_UPLOADER
+          : RATE_LIMIT_MAX;
+      },
       standardHeaders: true,
       legacyHeaders: false,
       // Requests authenticated with a valid user API key are exempt from this
