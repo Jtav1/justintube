@@ -158,6 +158,8 @@ services:
       # cross-origin requests entirely when this is unset (see
       # webapi/lib/auth/cors.js).
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEBVIEW_PORT:-5173}}
+      ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
+
     ports:
       - "${PORT:-3000}:3000"
     volumes:
@@ -188,6 +190,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       API_BASE_URL: http://webapi:3000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
     # Deliberately no `ports:` mapping — processing is internal-only and must
     # be reached solely by `api` over the compose network (`http://processing:3001`).
     # Also gated by INTERNAL_SERVICE_TOKEN (see processing/lib/require-internal-token.js)

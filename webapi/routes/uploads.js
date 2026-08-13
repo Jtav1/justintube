@@ -19,6 +19,7 @@ import {
   toTranscodeProfilePayload,
 } from "../lib/file-versions.js";
 import {
+  duplicateUploadDetectionEnabled,
   transcodingEnabled,
   videoImportsEnabled,
 } from "../lib/processing-features-config.js";
@@ -38,7 +39,7 @@ const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
  *
  * @type {string}
  */
-const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
+export const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
   ? MEDIA_STORAGE_DIRECTORY
   : resolve(process.cwd(), MEDIA_STORAGE_DIRECTORY);
 
@@ -263,7 +264,7 @@ function fileVersionResponseBody(version) {
  *   (and overwriting) it.
  * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
  */
-async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail = false } = {}) {
+export async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail = false } = {}) {
   if (!transcodingEnabled()) {
     // Transcoding is disabled deployment-wide: never contact the processing
     // service (it may not even be running). The original file stays
@@ -482,6 +483,48 @@ async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail 
 }
 
 /**
+ * When duplicate-upload detection is enabled, fires off a content-hash job
+ * with the processing service for `upload` without affecting the upload
+ * itself in any way — the caller does not await this, the upload's status
+ * and response are never touched by it, and it never blocks or delays
+ * finalizing the upload for the user. Any match is discovered later, out of
+ * band, by the `/internal/original-uploads/:jobId/hash-complete` callback,
+ * which only records a `DuplicateUploadFlag` and notifies admins/moderators
+ * for manual review — it does not alter the (already-live) video.
+ *
+ * Best-effort: when the feature is disabled, or the enqueue call fails
+ * (processing unreachable, etc.), this just logs and gives up. A missed
+ * duplicate check is an acceptable outcome; an upload must never be blocked
+ * or delayed by it.
+ *
+ * @private
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} storedFilename Basename of the source file under `original/`.
+ * @returns {void} Nothing — the hash job is enqueued in the background.
+ */
+function enqueueDuplicateHashCheck(upload, storedFilename) {
+  if (!duplicateUploadDetectionEnabled()) {
+    return;
+  }
+
+  requestTranscodeBatch({
+    filename: storedFilename,
+    jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
+  })
+    .then((enqueue) => {
+      if (!enqueue.ok) {
+        console.warn(
+          `[upload] duplicate-check enqueue failed for ${upload.videoId}:`,
+          enqueue.error,
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn(`[upload] duplicate-check enqueue threw for ${upload.videoId}:`, err);
+    });
+}
+
+/**
  * Parses an optional thumbnail-timestamp field (seconds, possibly fractional)
  * into tenths-of-a-second for storage on `ORIGINAL_UPLOADS`. Multipart form
  * fields arrive as strings; JSON bodies may send a number directly. Omitted
@@ -593,6 +636,8 @@ async function uploadVideo(req, res) {
     });
     return;
   }
+
+  enqueueDuplicateHashCheck(upload, file.filename);
 
   const result = await finalizeUploadTranscodes(upload, file.filename, { skipThumbnail });
   res.status(result.status).json(result.body);
@@ -805,6 +850,8 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
       fileSizeBytes,
       storagePath,
     });
+
+    enqueueDuplicateHashCheck(upload, storedFilename);
 
     await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
   } catch (err) {

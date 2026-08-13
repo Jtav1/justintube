@@ -538,4 +538,56 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
       expect(enqueued.data.timestampSeconds).toBeLessThanOrEqual(10);
     });
   });
+
+  describe("hash jobs", () => {
+    test("enqueues a duplicate-upload content-hash job with no outputFilename/profile", async () => {
+      const queue = {
+        addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+        getJob: jest.fn(),
+      };
+      const app = createTestApp(queue);
+      const hashJob = { jobId: "hash-abc123", kind: "hash" };
+
+      const res = await request(app)
+        .post("/transcode")
+        .send({ filename: fixtureName, jobs: [hashJob] });
+
+      expect(res.status).toBe(202);
+      expect(res.body.jobs).toEqual([
+        { jobId: hashJob.jobId, outputFilename: undefined, profileId: null },
+      ]);
+      expect(queue.addBulk).toHaveBeenCalledWith([
+        {
+          name: "ffmpeg-hash",
+          data: {
+            inputFilename: fixtureName,
+            outputFilename: undefined,
+            kind: "hash",
+            profile: undefined,
+            timestampSeconds: undefined,
+          },
+          opts: { jobId: hashJob.jobId },
+        },
+      ]);
+    });
+
+    test("a hash job is never skipped by the resolution/orientation/hardware checks", async () => {
+      const queue = {
+        addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+        getJob: jest.fn(),
+      };
+      const app = createTestApp(queue, {
+        probeInput: async () => ({ videoWidth: 10, videoHeight: 10 }),
+      });
+      const hashJob = { jobId: "hash-tiny-source", kind: "hash" };
+
+      const res = await request(app)
+        .post("/transcode")
+        .send({ filename: fixtureName, jobs: [hashJob] });
+
+      expect(res.status).toBe(202);
+      expect(res.body.skipped).toEqual([]);
+      expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    });
+  });
 });

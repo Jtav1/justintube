@@ -272,6 +272,11 @@ async function ensureSqliteMissingColumns() {
       column: "target",
       ddl: "`target` VARCHAR(255) NULL",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "content_hash",
+      ddl: "`content_hash` VARCHAR(128) NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

@@ -84,6 +84,15 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       defaultValue: "pending",
     }),
+    /**
+     * ffmpeg decoded-video-stream sha256 hash (`sha256:<hex>`), used for
+     * duplicate-upload detection. Null until a content-hash job completes;
+     * stays null forever when ENABLE_DUPLICATE_UPLOAD_DETECTION is off.
+     */
+    contentHash: {
+      type: DataTypes.STRING(128),
+      allowNull: true,
+    },
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

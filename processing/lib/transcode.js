@@ -74,8 +74,9 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 /**
  * @typedef {object} ValidatedTranscodeJob
  * @property {string} jobId Stable BullMQ job id.
- * @property {string} outputFilename Basename under the job kind's output directory.
- * @property {"rendition"|"thumbnail"} kind Job kind.
+ * @property {string} [outputFilename] Basename under the job kind's output
+ *   directory. Absent when `kind === "hash"` (no output file is written).
+ * @property {"rendition"|"thumbnail"|"hash"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  */
@@ -333,6 +334,8 @@ function validateOptionalTimestampSeconds(value, fieldName) {
  * gating in {@link validateTranscodeProfile}; `"thumbnail"` requires only a
  * `timestampSeconds` and skips that gating entirely — a single-frame grab
  * isn't a real transcode and shouldn't be blocked by `ENABLE_TRANSCODING`.
+ * `"hash"` (duplicate-upload content hashing) needs only `jobId` - it never
+ * writes an output file, so `outputFilename` is omitted entirely.
  *
  * @param {unknown} job Raw job object.
  * @param {number} index Zero-based index for error messages.
@@ -348,6 +351,11 @@ export function validateTranscodeJob(job, index) {
 
   const body = /** @type {Record<string, unknown>} */ (job);
   const jobId = requireSafeToken(body.jobId, `jobs[${index}].jobId`);
+
+  if (body.kind === "hash") {
+    return { jobId, kind: "hash" };
+  }
+
   const outputFilename = requireSafeToken(
     body.outputFilename,
     `jobs[${index}].outputFilename`,

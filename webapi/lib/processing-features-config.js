@@ -31,3 +31,19 @@ export function transcodingEnabled() {
 export function videoImportsEnabled() {
   return String(process.env.ENABLE_VIDEO_IMPORTS ?? "true").toLowerCase() !== "false";
 }
+
+/**
+ * Returns whether duplicate-upload content-hash detection is enabled. Unlike
+ * `transcodingEnabled()`/`videoImportsEnabled()`, this defaults *off* (an
+ * opt-in feature, not existing default behavior). When true, every
+ * upload/import gets a "hash" job enqueued with the processing service in
+ * the background, purely for later comparison — it never delays, gates, or
+ * otherwise affects the upload/import itself. A match surfaces only as a
+ * `DuplicateUploadFlag` plus an admin/moderator notification, never a
+ * change to the upload's own status.
+ *
+ * @returns {boolean} True only when ENABLE_DUPLICATE_UPLOAD_DETECTION is "true".
+ */
+export function duplicateUploadDetectionEnabled() {
+  return String(process.env.ENABLE_DUPLICATE_UPLOAD_DETECTION ?? "false").toLowerCase() === "true";
+}

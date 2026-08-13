@@ -3,6 +3,7 @@ import { AccessPermission } from "./access-permission.js";
 import { ApiKeyScope } from "./api-key-scope.js";
 import { Comment } from "./comment.js";
 import { ContentTag } from "./content-tag.js";
+import { DuplicateUploadFlag } from "./duplicate-upload-flag.js";
 import { EmailVerificationToken } from "./email-verification-token.js";
 import { FeaturedVideo } from "./featured-video.js";
 import { FileVersion } from "./file-version.js";
@@ -510,6 +511,39 @@ function registerAssociations() {
     foreignKey: "playlistId",
     onDelete: "SET NULL",
   });
+
+  OriginalUpload.hasMany(DuplicateUploadFlag, {
+    as: "DuplicateFlagsAsNew",
+    foreignKey: "newOriginalUploadId",
+    onDelete: "SET NULL",
+  });
+  DuplicateUploadFlag.belongsTo(OriginalUpload, {
+    as: "NewUpload",
+    foreignKey: "newOriginalUploadId",
+    onDelete: "SET NULL",
+  });
+
+  OriginalUpload.hasMany(DuplicateUploadFlag, {
+    as: "DuplicateFlagsAsExisting",
+    foreignKey: "existingOriginalUploadId",
+    onDelete: "SET NULL",
+  });
+  DuplicateUploadFlag.belongsTo(OriginalUpload, {
+    as: "ExistingUpload",
+    foreignKey: "existingOriginalUploadId",
+    onDelete: "SET NULL",
+  });
+
+  User.hasMany(DuplicateUploadFlag, {
+    as: "DuplicateFlagsModerated",
+    foreignKey: "moderatorUserId",
+    onDelete: "SET NULL",
+  });
+  DuplicateUploadFlag.belongsTo(User, {
+    as: "Moderator",
+    foreignKey: "moderatorUserId",
+    onDelete: "SET NULL",
+  });
 }
 
 registerAssociations();
@@ -538,6 +572,7 @@ export const models = {
   PlaylistItem,
   PlaylistAccess,
   Report,
+  DuplicateUploadFlag,
   VideoLike,
   VideoAccess,
   ContentTag,
@@ -563,6 +598,7 @@ export {
   ApiKeyScope,
   Comment,
   ContentTag,
+  DuplicateUploadFlag,
   EmailVerificationToken,
   FeaturedVideo,
   FileVersion,
