@@ -11,7 +11,10 @@ import { livestreamEnabled } from "./lib/livestream-config.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
 import { ensureSchema } from "./lib/schema.js";
-import { runSearchReindex, startSearchReindexCron } from "./lib/search-reindex.js";
+import {
+  runSearchReindex,
+  startSearchReindexCron,
+} from "./lib/search-reindex.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
@@ -57,7 +60,7 @@ export function createApp() {
   app.use(
     rateLimit({
       windowMs: 60_000,
-      max: 300,
+      max: 3000,
       standardHeaders: true,
       legacyHeaders: false,
       // Requests authenticated with a valid user API key are exempt from this
@@ -116,7 +119,7 @@ export function createApp() {
   // production, off in production unless explicitly enabled.
   const docsEnabled =
     String(
-      process.env.ENABLE_API_DOCS ?? (process.env.NODE_ENV !== "production"),
+      process.env.ENABLE_API_DOCS ?? process.env.NODE_ENV !== "production",
     ).toLowerCase() === "true";
 
   if (docsEnabled) {
@@ -221,7 +224,9 @@ export function createApp() {
     if (res.headersSent) {
       return;
     }
-    res.status(500).json({ error: "internal_error", message: "Internal server error." });
+    res
+      .status(500)
+      .json({ error: "internal_error", message: "Internal server error." });
   });
 
   return app;
