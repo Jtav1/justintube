@@ -13,23 +13,6 @@
   color: var(--text);
 }
 
-.playlists-listing-load-more {
-  display: block;
-  margin: 24px auto 0;
-  font: inherit;
-  padding: 10px 20px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-h);
-  cursor: pointer;
-}
-
-.playlists-listing-load-more:hover:not(:disabled) {
-  border-color: var(--accent-border);
-}
-
-.playlists-listing-load-more:disabled {
-  opacity: 0.6;
-  cursor: default;
+.playlists-listing-scroll-sentinel {
+  height: 1px;
 }

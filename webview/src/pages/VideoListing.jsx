@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import { getFeaturedVideos, getNewestVideos } from '../api/videos.js'
 import { listLivestreams } from '../api/livestreams.js'
 import { useToast } from '../context/useToast.js'
 import { useSiteConfig } from '../context/useSiteConfig.js'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
 import VideoCard from '../components/VideoCard.jsx'
 import LiveStreamCard from '../components/LiveStreamCard.jsx'
 import './VideoListing.css'
@@ -98,6 +99,18 @@ function VideoListing() {
   }, [toastError, livestreamEnabled])
 
   const visibleRecent = recent.slice(0, visibleCount)
+  const hasMoreRecent = visibleCount < recent.length
+
+  const handleLoadMoreRecent = useCallback(() => {
+    setVisibleCount((prev) => prev + PAGE_LIMIT)
+  }, [])
+
+  const loadMoreRef = useInfiniteScroll({
+    hasMore: hasMoreRecent,
+    loading,
+    onLoadMore: handleLoadMoreRecent,
+  })
+
   const featuredOverflowing = featured.length > featuredColumns
   const visibleFeatured = featuredOverflowing
     ? featured.slice(0, Math.max(featuredColumns - 1, 0))
@@ -148,16 +161,7 @@ function VideoListing() {
             <VideoCard key={video.id} video={video} />
           ))}
         </div>
-        {visibleCount < recent.length && (
-          <button
-            type="button"
-            className="video-listing-load-more"
-            disabled={loading}
-            onClick={() => setVisibleCount((prev) => prev + PAGE_LIMIT)}
-          >
-            Load more
-          </button>
-        )}
+        {hasMoreRecent && <div className="video-listing-scroll-sentinel" ref={loadMoreRef} />}
       </div>
     </section>
   )

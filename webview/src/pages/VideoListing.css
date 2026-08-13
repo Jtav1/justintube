@@ -91,23 +91,6 @@
   color: var(--text-h);
 }
 
-.video-listing-load-more {
-  display: block;
-  margin: 24px auto 0;
-  font: inherit;
-  padding: 10px 20px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-h);
-  cursor: pointer;
-}
-
-.video-listing-load-more:hover:not(:disabled) {
-  border-color: var(--accent-border);
-}
-
-.video-listing-load-more:disabled {
-  opacity: 0.6;
-  cursor: default;
+.video-listing-scroll-sentinel {
+  height: 1px;
 }

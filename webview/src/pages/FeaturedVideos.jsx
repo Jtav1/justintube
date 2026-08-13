@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getFeaturedVideos } from '../api/videos.js'
 import { useToast } from '../context/useToast.js'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
 import VideoCard from '../components/VideoCard.jsx'
 import './VideoListing.css'
 
@@ -41,6 +42,17 @@ function FeaturedVideos() {
   }, [toastError])
 
   const visibleFeatured = featured.slice(0, visibleCount)
+  const hasMoreFeatured = visibleCount < featured.length
+
+  const handleLoadMoreFeatured = useCallback(() => {
+    setVisibleCount((prev) => prev + PAGE_LIMIT)
+  }, [])
+
+  const loadMoreRef = useInfiniteScroll({
+    hasMore: hasMoreFeatured,
+    loading,
+    onLoadMore: handleLoadMoreFeatured,
+  })
 
   return (
     <section className="video-listing">
@@ -55,16 +67,7 @@ function FeaturedVideos() {
             <VideoCard key={video.id} video={video} />
           ))}
         </div>
-        {visibleCount < featured.length && (
-          <button
-            type="button"
-            className="video-listing-load-more"
-            disabled={loading}
-            onClick={() => setVisibleCount((prev) => prev + PAGE_LIMIT)}
-          >
-            Load more
-          </button>
-        )}
+        {hasMoreFeatured && <div className="video-listing-scroll-sentinel" ref={loadMoreRef} />}
       </div>
     </section>
   )
