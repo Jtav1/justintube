@@ -27,6 +27,7 @@ import {
   serializeVideo,
 } from "./videos.js";
 import { loadHiddenUploadIds } from "../lib/video-hidden.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Parses a route param as a positive integer.
@@ -416,7 +417,7 @@ export function createPlaylistsRouter() {
 
       res.status(201).json(serializePlaylist(playlist, 0, { viewerPermission: "owner" }));
     } catch (err) {
-      console.error("createPlaylist failed:", err);
+      logger.error({ err }, "createPlaylist failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to create playlist.",
@@ -500,7 +501,7 @@ export function createPlaylistsRouter() {
       });
       res.status(200).json(payload);
     } catch (err) {
-      console.error("listPlaylists failed:", err);
+      logger.error({ err }, "listPlaylists failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list playlists.",
@@ -609,7 +610,7 @@ export function createPlaylistsRouter() {
 
       res.status(200).json(payload);
     } catch (err) {
-      console.error("getPlaylist failed:", err);
+      logger.error({ err }, "getPlaylist failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to get playlist.",
@@ -727,7 +728,7 @@ export function createPlaylistsRouter() {
         }),
       );
     } catch (err) {
-      console.error("updatePlaylist failed:", err);
+      logger.error({ err }, "updatePlaylist failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update playlist.",
@@ -793,7 +794,7 @@ export function createPlaylistsRouter() {
       removePlaylistDocument(id);
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deletePlaylist failed:", err);
+      logger.error({ err }, "deletePlaylist failed");
       res.status(500).json({
         success: false,
         error: "internal_error",
@@ -917,7 +918,7 @@ export function createPlaylistsRouter() {
       const itemCount = await PlaylistItem.count({ where: { playlistId: playlist.id } });
       res.status(200).json({ itemCount });
     } catch (err) {
-      console.error("addPlaylistItem failed:", err);
+      logger.error({ err }, "addPlaylistItem failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to add item to playlist.",
@@ -1001,7 +1002,7 @@ export function createPlaylistsRouter() {
       const itemCount = await PlaylistItem.count({ where: { playlistId: playlist.id } });
       res.status(200).json({ itemCount });
     } catch (err) {
-      console.error("removePlaylistItem failed:", err);
+      logger.error({ err }, "removePlaylistItem failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to remove item from playlist.",
@@ -1076,7 +1077,7 @@ export function createPlaylistsRouter() {
         })),
       });
     } catch (err) {
-      console.error("listPlaylistAccess failed:", err);
+      logger.error({ err }, "listPlaylistAccess failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list playlist access.",
@@ -1209,7 +1210,7 @@ export function createPlaylistsRouter() {
         permission: permissionRow.name,
       });
     } catch (err) {
-      console.error("addPlaylistAccess failed:", err);
+      logger.error({ err }, "addPlaylistAccess failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to grant playlist access.",
@@ -1286,7 +1287,7 @@ export function createPlaylistsRouter() {
         granted: false,
       });
     } catch (err) {
-      console.error("removePlaylistAccess failed:", err);
+      logger.error({ err }, "removePlaylistAccess failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to revoke playlist access.",

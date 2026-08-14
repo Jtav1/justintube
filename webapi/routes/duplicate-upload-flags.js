@@ -16,6 +16,7 @@ import { removeVideoDocument } from "../lib/search.js";
 import { parsePagination } from "../lib/pagination.js";
 import { mediaDir } from "./uploads.js";
 import { serializeVideo } from "./videos.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Resolution values a moderator may set when resolving a flag.
@@ -224,7 +225,7 @@ export function createDuplicateUploadFlagsRouter() {
           total: count,
         });
       } catch (err) {
-        console.error("listDuplicateUploadFlags failed:", err);
+        logger.error({ err }, "listDuplicateUploadFlags failed");
         res.status(500).json({ error: "internal_error", message: "Failed to list flags." });
       }
     },
@@ -285,7 +286,7 @@ export function createDuplicateUploadFlagsRouter() {
         }
         res.status(200).json(serializeFlag(row));
       } catch (err) {
-        console.error("getDuplicateUploadFlag failed:", err);
+        logger.error({ err }, "getDuplicateUploadFlag failed");
         res.status(500).json({ error: "internal_error", message: "Failed to fetch flag." });
       }
     },
@@ -397,7 +398,7 @@ export function createDuplicateUploadFlagsRouter() {
         const reloaded = await DuplicateUploadFlag.findByPk(id, { include: FLAG_UPLOAD_INCLUDES });
         res.status(200).json(serializeFlag(reloaded));
       } catch (err) {
-        console.error("moderateDuplicateUploadFlag failed:", err);
+        logger.error({ err }, "moderateDuplicateUploadFlag failed");
         res.status(500).json({ error: "internal_error", message: "Failed to moderate flag." });
       }
     },

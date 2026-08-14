@@ -5,6 +5,7 @@ import {
   findFileVersionByUuid,
 } from "../lib/file-versions.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
@@ -198,9 +199,9 @@ export function createInternalFileVersionsRouter() {
         ? req.body.error
         : "transcode failed";
 
-    console.error(
-      `[file-versions] transcode failed for upload ${version.originalUploadId} uuid ${uuid}:`,
-      message,
+    logger.error(
+      { message },
+      `[file-versions] transcode failed for upload ${version.originalUploadId} uuid ${uuid}`,
     );
 
     await applyFileVersionFailed(version);

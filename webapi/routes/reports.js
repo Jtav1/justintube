@@ -9,6 +9,7 @@ import { REPORT_TYPE_VALUES } from "../lib/models/constants.js";
 import { createNotification } from "../lib/notifications.js";
 import { parsePagination } from "../lib/pagination.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maximum length for report description and moderator comment fields.
@@ -401,7 +402,7 @@ export function createReportsRouter() {
       await notifyReportCreated(row, req.user.id);
       res.status(201).json(serializeReport(row));
     } catch (err) {
-      console.error("createReport failed:", err);
+      logger.error({ err }, "createReport failed");
       res.status(500).json({ error: "internal_error", message: "Failed to create report." });
     }
   });
@@ -461,7 +462,7 @@ export function createReportsRouter() {
         total: count,
       });
     } catch (err) {
-      console.error("listMyReports failed:", err);
+      logger.error({ err }, "listMyReports failed");
       res.status(500).json({ error: "internal_error", message: "Failed to list reports." });
     }
   });
@@ -535,7 +536,7 @@ export function createReportsRouter() {
         total: count,
       });
     } catch (err) {
-      console.error("listReports failed:", err);
+      logger.error({ err }, "listReports failed");
       res.status(500).json({ error: "internal_error", message: "Failed to list reports." });
     }
   });
@@ -590,7 +591,7 @@ export function createReportsRouter() {
       }
       res.status(200).json(serializeReport(row));
     } catch (err) {
-      console.error("getReport failed:", err);
+      logger.error({ err }, "getReport failed");
       res.status(500).json({ error: "internal_error", message: "Failed to fetch report." });
     }
   });
@@ -669,7 +670,7 @@ export function createReportsRouter() {
       const reloaded = await Report.findByPk(id, { include: REPORT_USER_INCLUDES });
       res.status(200).json(serializeReport(reloaded));
     } catch (err) {
-      console.error("updateReport failed:", err);
+      logger.error({ err }, "updateReport failed");
       res.status(500).json({ error: "internal_error", message: "Failed to update report." });
     }
   });
@@ -747,7 +748,7 @@ export function createReportsRouter() {
       const reloaded = await Report.findByPk(id, { include: REPORT_USER_INCLUDES });
       res.status(200).json(serializeReport(reloaded));
     } catch (err) {
-      console.error("moderateReport failed:", err);
+      logger.error({ err }, "moderateReport failed");
       res.status(500).json({ error: "internal_error", message: "Failed to moderate report." });
     }
   });
@@ -805,7 +806,7 @@ export function createReportsRouter() {
       await row.destroy();
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deleteReport failed:", err);
+      logger.error({ err }, "deleteReport failed");
       res.status(500).json({ success: false, error: "internal_error", message: "Failed to delete report." });
     }
   });

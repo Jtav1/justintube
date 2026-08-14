@@ -46,6 +46,7 @@ import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Relative media subfolder where thumbnail images are expected to live
@@ -1506,7 +1507,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listVideos failed:", err);
+      logger.error({ err }, "listVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list videos.",
@@ -1539,7 +1540,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listFeaturedVideos failed:", err);
+      logger.error({ err }, "listFeaturedVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list featured videos.",
@@ -1573,7 +1574,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listNewestVideos failed:", err);
+      logger.error({ err }, "listNewestVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list newest videos.",
@@ -1671,7 +1672,7 @@ export function createVideosRouter() {
 
       res.status(200).json(serializeVideo(upload, metadata, serializeOptions));
     } catch (err) {
-      console.error("getVideo failed:", err);
+      logger.error({ err }, "getVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load video. Does this video exist?",
@@ -1736,7 +1737,7 @@ export function createVideosRouter() {
         .type("html")
         .send(renderUnfurlHtml(upload, metadata, renditions));
     } catch (err) {
-      console.error("getVideoUnfurl failed:", err);
+      logger.error({ err }, "getVideoUnfurl failed");
       sendUnfurlFallback(res);
     }
   });
@@ -1808,7 +1809,7 @@ export function createVideosRouter() {
       );
       res.status(200).type("html").send(renderPlayerHtml(upload, smallest));
     } catch (err) {
-      console.error("getVideoPlayer failed:", err);
+      logger.error({ err }, "getVideoPlayer failed");
       sendPlayerFallback(res);
     }
   });
@@ -1917,7 +1918,7 @@ export function createVideosRouter() {
         version.mimeType,
       );
     } catch (err) {
-      console.error("getVideoStream failed:", err);
+      logger.error({ err }, "getVideoStream failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -1985,7 +1986,7 @@ export function createVideosRouter() {
       const contentType = mimeTypeForImage(thumbnail.thumbnailFilename);
       await streamFileWithRangeSupport(req, res, absolutePath, contentType);
     } catch (err) {
-      console.error("getVideoThumbnail failed:", err);
+      logger.error({ err }, "getVideoThumbnail failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -2125,7 +2126,7 @@ export function createVideosRouter() {
         if (req.file) {
           await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
         }
-        console.error("updateVideoThumbnail failed:", err);
+        logger.error({ err }, "updateVideoThumbnail failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update thumbnail.",
@@ -2286,7 +2287,7 @@ export function createVideosRouter() {
         }),
       );
     } catch (err) {
-      console.error("updateVideo failed:", err);
+      logger.error({ err }, "updateVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update video.",
@@ -2349,7 +2350,7 @@ export function createVideosRouter() {
       removeVideoDocument(id);
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deleteVideo failed:", err);
+      logger.error({ err }, "deleteVideo failed");
       res.status(500).json({
         success: false,
         error: "internal_error",
@@ -2433,7 +2434,7 @@ export function createVideosRouter() {
           }),
         );
       } catch (err) {
-        console.error("delistVideo failed:", err);
+        logger.error({ err }, "delistVideo failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to delist video.",
@@ -2519,7 +2520,7 @@ export function createVideosRouter() {
 
         res.status(200).json({ featured: req.body.featured });
       } catch (err) {
-        console.error("setVideoFeatured failed:", err);
+        logger.error({ err }, "setVideoFeatured failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update featured status.",
@@ -2595,7 +2596,7 @@ export function createVideosRouter() {
         })),
       });
     } catch (err) {
-      console.error("listVideoAccess failed:", err);
+      logger.error({ err }, "listVideoAccess failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list video access.",
@@ -2672,7 +2673,7 @@ export function createVideosRouter() {
         })),
       });
     } catch (err) {
-      console.error("getVideoProcessingStatus failed:", err);
+      logger.error({ err }, "getVideoProcessingStatus failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load processing status.",
@@ -2772,7 +2773,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items });
     } catch (err) {
-      console.error("setVideoEditors failed:", err);
+      logger.error({ err }, "setVideoEditors failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to set video editors.",
@@ -2880,7 +2881,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items });
     } catch (err) {
-      console.error("setVideoViewers failed:", err);
+      logger.error({ err }, "setVideoViewers failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to set video viewers.",
@@ -2948,7 +2949,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ viewCount: Number(metadata.viewCount) });
     } catch (err) {
-      console.error("recordVideoView failed:", err);
+      logger.error({ err }, "recordVideoView failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to record view.",
@@ -3031,7 +3032,7 @@ export function createVideosRouter() {
 
       res.status(200).json(result);
     } catch (err) {
-      console.error("likeVideo failed:", err);
+      logger.error({ err }, "likeVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to like video.",
@@ -3102,7 +3103,7 @@ export function createVideosRouter() {
 
       res.status(200).json(result);
     } catch (err) {
-      console.error("dislikeVideo failed:", err);
+      logger.error({ err }, "dislikeVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to dislike video.",
@@ -3181,7 +3182,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ hidden: true });
     } catch (err) {
-      console.error("hideVideo failed:", err);
+      logger.error({ err }, "hideVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to hide video.",
@@ -3239,7 +3240,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ hidden: false });
     } catch (err) {
-      console.error("unhideVideo failed:", err);
+      logger.error({ err }, "unhideVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to unhide video.",
@@ -3377,7 +3378,7 @@ export function createVideosRouter() {
 
       res.status(201).json(serializeComment(comment));
     } catch (err) {
-      console.error("createComment failed:", err);
+      logger.error({ err }, "createComment failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to create comment.",
@@ -3440,7 +3441,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items: comments.map(serializeComment) });
     } catch (err) {
-      console.error("listComments failed:", err);
+      logger.error({ err }, "listComments failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list comments.",
@@ -3561,7 +3562,7 @@ export function createVideosRouter() {
 
         res.status(200).json(serializeComment(comment));
       } catch (err) {
-        console.error("updateComment failed:", err);
+        logger.error({ err }, "updateComment failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update comment.",
@@ -3656,7 +3657,7 @@ export function createVideosRouter() {
         await comment.destroy();
         res.status(204).send();
       } catch (err) {
-        console.error("deleteComment failed:", err);
+        logger.error({ err }, "deleteComment failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to delete comment.",
@@ -3717,7 +3718,7 @@ export function createVideosRouter() {
         })),
       });
     } catch (err) {
-      console.error("listTags failed:", err);
+      logger.error({ err }, "listTags failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list tags.",
@@ -3773,7 +3774,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listTagVideos failed:", err);
+      logger.error({ err }, "listTagVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list tag videos.",
@@ -3834,7 +3835,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items: items.filter((item) => !watchedIds.has(item.id)) });
     } catch (err) {
-      console.error("feedSubscriptions failed:", err);
+      logger.error({ err }, "feedSubscriptions failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load subscription feed.",

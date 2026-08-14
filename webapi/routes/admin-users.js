@@ -12,6 +12,7 @@ import { isValidEmailFormat } from "../lib/email/validate-email.js";
 import { OriginalUpload, Role, User, UserPlaylist } from "../lib/models/index.js";
 import { createNotification } from "../lib/notifications.js";
 import { syncPlaylistIndex, syncUserIndex, syncVideoIndex } from "../lib/search.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Minimum accepted password length for admin password resets.
@@ -409,7 +410,7 @@ export function createAdminUsersRouter() {
         offset: pagination.offset,
       });
     } catch (err) {
-      console.error("adminListUsers failed:", err);
+      logger.error({ err }, "adminListUsers failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list users.",
@@ -599,7 +600,7 @@ export function createAdminUsersRouter() {
 
         res.status(200).json(serializeAdminUser(user));
       } catch (err) {
-        console.error("adminUpdateUser failed:", err);
+        logger.error({ err }, "adminUpdateUser failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update user.",
@@ -708,7 +709,7 @@ export function createAdminUsersRouter() {
         });
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("adminResetUserPassword failed:", err);
+        logger.error({ err }, "adminResetUserPassword failed");
         res.status(500).json({
           success: false,
           error: "internal_error",
@@ -807,7 +808,7 @@ export function createAdminUsersRouter() {
         await sendVerificationEmail({ to: user.email, token });
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("adminResendUserVerification failed:", err);
+        logger.error({ err }, "adminResendUserVerification failed");
         res.status(500).json({
           success: false,
           error: "internal_error",

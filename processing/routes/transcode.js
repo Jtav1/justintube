@@ -21,6 +21,7 @@ import {
   shouldSkipHardwareProfile,
   validateTranscodeBatchRequest,
 } from "../lib/transcode.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Creates the transcode router (`POST /`, `GET /:jobId`, `DELETE /:jobId` when
@@ -67,17 +68,14 @@ export function createTranscodeRouter({
       const filename = validateInputFilename(rawFilename);
       const inputPath = resolveOriginalInputPath(filename);
 
-      console.log(`[transcode] batch request received: ${filename} (${jobs.length} job(s) requested)`);
+      logger.info(`[transcode] batch request received: ${filename} (${jobs.length} job(s) requested)`);
 
       /** @type {{ videoWidth: number|null, videoHeight: number|null }} */
       let source = { videoWidth: null, videoHeight: null };
       try {
         source = await probeInput(inputPath);
       } catch (err) {
-        console.error(
-          "ffprobe failed for transcode input; enqueueing all profiles:",
-          err instanceof Error ? err.message : err,
-        );
+        logger.error({ err }, "ffprobe failed for transcode input; enqueueing all profiles");
       }
 
       // Duration is a source-level fact (not per-rendition), probed separately
@@ -87,10 +85,7 @@ export function createTranscodeRouter({
       try {
         durationSeconds = await probeDuration(inputPath);
       } catch (err) {
-        console.error(
-          "ffprobe failed to read duration for transcode input:",
-          err instanceof Error ? err.message : err,
-        );
+        logger.error({ err }, "ffprobe failed to read duration for transcode input");
       }
 
       // Resolve the final thumbnail timestamp before enqueueing: null (no
@@ -156,9 +151,9 @@ export function createTranscodeRouter({
       }
 
       if (skipped.length > 0) {
-        console.log(
-          `[transcode] batch skipped ${skipped.length} job(s) for ${filename}:`,
-          skipped.map((s) => `${s.jobId}(${s.reason})`).join(", "),
+        logger.info(
+          `[transcode] batch skipped ${skipped.length} job(s) for ${filename}: ` +
+            skipped.map((s) => `${s.jobId}(${s.reason})`).join(", "),
         );
       }
 
@@ -193,21 +188,21 @@ export function createTranscodeRouter({
         return;
       }
 
-      console.log(
+      logger.info(
         `[transcode] batch request accepted: ${jobSummaries.length} job(s) enqueued, ${skipped.length} skipped for ${filename}`,
       );
 
       res.status(202).json(payload);
     } catch (err) {
       if (err instanceof TranscodeValidationError) {
-        console.warn(`[transcode] batch request rejected: ${err.message}`);
+        logger.warn(`[transcode] batch request rejected: ${err.message}`);
         res.status(400).json({ success: false, error: err.message });
         return;
       }
 
       const message =
         err instanceof Error ? err.message : "failed to queue transcode";
-      console.error(`[transcode] batch request failed:`, message);
+      logger.error({ message }, "[transcode] batch request failed");
       res.status(500).json({ success: false, error: message });
     }
   });
@@ -246,7 +241,7 @@ export function createTranscodeRouter({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "failed to load job status";
-      console.error(`[transcode] status lookup failed:`, message);
+      logger.error({ message }, "[transcode] status lookup failed");
       res.status(500).json({ success: false, error: message });
     }
   });
@@ -286,7 +281,7 @@ export function createTranscodeRouter({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "failed to remove job";
-      console.error(`[transcode] job removal failed:`, message);
+      logger.error({ message }, "[transcode] job removal failed");
       res.status(500).json({ success: false, error: message });
     }
   });

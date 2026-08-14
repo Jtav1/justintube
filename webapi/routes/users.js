@@ -36,6 +36,7 @@ import {
   loadViewerPermissionsByUploadId,
   serializeVideo,
 } from "./videos.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Absolute path to the directory where banner images are stored
@@ -660,7 +661,7 @@ export function createUsersRouter() {
         totalPages: count === 0 ? 0 : Math.ceil(count / limit),
       });
     } catch (err) {
-      console.error("listUsers failed:", err);
+      logger.error({ err }, "listUsers failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list users.",
@@ -757,7 +758,7 @@ export function createUsersRouter() {
       ]);
       res.status(200).json({ user: serializeChannelUser(user, { isPrivileged, subscriberCount }), videos });
     } catch (err) {
-      console.error("getUserChannel failed:", err);
+      logger.error({ err }, "getUserChannel failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load channel.",
@@ -850,7 +851,7 @@ export function createUsersRouter() {
       });
       res.status(200).json(videos);
     } catch (err) {
-      console.error("listUserVideos failed:", err);
+      logger.error({ err }, "listUserVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list user's videos.",
@@ -957,7 +958,7 @@ export function createUsersRouter() {
       });
       res.status(200).json(payload);
     } catch (err) {
-      console.error("listUserPlaylists failed:", err);
+      logger.error({ err }, "listUserPlaylists failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list user's playlists.",
@@ -1038,7 +1039,7 @@ export function createUsersRouter() {
 
       res.status(200).json({ subscribed: true });
     } catch (err) {
-      console.error("subscribeToUser failed:", err);
+      logger.error({ err }, "subscribeToUser failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to subscribe.",
@@ -1093,7 +1094,7 @@ export function createUsersRouter() {
 
       res.status(200).json({ subscribed: false });
     } catch (err) {
-      console.error("unsubscribeFromUser failed:", err);
+      logger.error({ err }, "unsubscribeFromUser failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to unsubscribe.",
@@ -1147,7 +1148,7 @@ export function createUsersRouter() {
 
       res.status(200).json({ subscribed: Boolean(subscription) });
     } catch (err) {
-      console.error("getSubscriptionState failed:", err);
+      logger.error({ err }, "getSubscriptionState failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load subscription state.",
@@ -1219,7 +1220,7 @@ export function createUsersRouter() {
 
       res.status(200).json({ id: targetUser.id, username: targetUser.username, role: "locked" });
     } catch (err) {
-      console.error("banUser failed:", err);
+      logger.error({ err }, "banUser failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to ban user.",
@@ -1283,7 +1284,7 @@ export function createUsersRouter() {
 
       res.status(200).json({ id: targetUser.id, username: targetUser.username, role: "viewer" });
     } catch (err) {
-      console.error("unbanUser failed:", err);
+      logger.error({ err }, "unbanUser failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to unban user.",
@@ -1329,7 +1330,7 @@ export function createUsersRouter() {
       const contentType = mimeTypeForImage(user.avatarFilename);
       await streamFileWithRangeSupport(req, res, absolutePath, contentType);
     } catch (err) {
-      console.error("getUserAvatar failed:", err);
+      logger.error({ err }, "getUserAvatar failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -1466,7 +1467,7 @@ export function createUsersRouter() {
 
       res.status(200).json({ bannerFilename: targetUser.bannerFilename });
     } catch (err) {
-      console.error("updateUserBanner failed:", err);
+      logger.error({ err }, "updateUserBanner failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update banner.",
@@ -1513,7 +1514,7 @@ export function createUsersRouter() {
       }
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deleteUserBanner failed:", err);
+      logger.error({ err }, "deleteUserBanner failed");
       res.status(500).json({
         success: false,
         error: "internal_error",
@@ -1560,7 +1561,7 @@ export function createUsersRouter() {
       const contentType = mimeTypeForImage(user.bannerFilename);
       await streamFileWithRangeSupport(req, res, absolutePath, contentType);
     } catch (err) {
-      console.error("getUserBanner failed:", err);
+      logger.error({ err }, "getUserBanner failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -1696,7 +1697,7 @@ export function createUsersRouter() {
 
       res.status(200).json({ avatarFilename: targetUser.avatarFilename });
     } catch (err) {
-      console.error("updateUserAvatar failed:", err);
+      logger.error({ err }, "updateUserAvatar failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update avatar.",
@@ -1743,7 +1744,7 @@ export function createUsersRouter() {
       }
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deleteUserAvatar failed:", err);
+      logger.error({ err }, "deleteUserAvatar failed");
       res.status(500).json({
         success: false,
         error: "internal_error",
@@ -1850,7 +1851,7 @@ export function createUsersRouter() {
         bio: targetUser.bio,
       });
     } catch (err) {
-      console.error("updateUserProfile failed:", err);
+      logger.error({ err }, "updateUserProfile failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update profile.",

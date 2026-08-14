@@ -7,6 +7,7 @@ import { MEDIA_TYPE_VALUES, RESOLUTION_VALUES } from "../lib/models/constants.js
 import { TranscodeProfile, User } from "../lib/models/index.js";
 import { getProcessingHealth } from "../lib/processing-client.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maximum length for transcode profile description.
@@ -446,7 +447,7 @@ export function createTranscodeProfilesRouter() {
           items: rows.map(serializeTranscodeProfile),
         });
       } catch (err) {
-        console.error("adminListTranscodeProfiles failed:", err);
+        logger.error({ err }, "adminListTranscodeProfiles failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to list transcode profiles.",
@@ -598,7 +599,7 @@ export function createTranscodeProfilesRouter() {
         });
         res.status(201).json(serializeTranscodeProfile(row));
       } catch (err) {
-        console.error("adminCreateTranscodeProfile failed:", err);
+        logger.error({ err }, "adminCreateTranscodeProfile failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to create transcode profile.",
@@ -709,7 +710,7 @@ export function createTranscodeProfilesRouter() {
         await row.reload();
         res.status(200).json(serializeTranscodeProfile(row));
       } catch (err) {
-        console.error("adminUpdateTranscodeProfile failed:", err);
+        logger.error({ err }, "adminUpdateTranscodeProfile failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update transcode profile.",
@@ -786,7 +787,7 @@ export function createTranscodeProfilesRouter() {
         await row.destroy();
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("adminDeleteTranscodeProfile failed:", err);
+        logger.error({ err }, "adminDeleteTranscodeProfile failed");
         res.status(500).json({
           success: false,
           error: "internal_error",

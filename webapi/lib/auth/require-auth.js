@@ -1,5 +1,6 @@
 import { findUserByApiKey } from "./api-key.js";
 import { Role, User } from "../models/index.js";
+import { logger } from "../logger.js";
 
 /**
  * Extracts a Bearer token from the Authorization header, if present.
@@ -133,7 +134,7 @@ export async function optionalAuth(req, _res, next) {
     }
     next();
   } catch (err) {
-    console.error("optionalAuth failed:", err);
+    logger.error({ err }, "optionalAuth failed");
     next();
   }
 }
@@ -165,7 +166,7 @@ export async function requireAuth(req, res, next) {
     req.apiKeyScopes = result.apiKeyScopes;
     next();
   } catch (err) {
-    console.error("requireAuth failed:", err);
+    logger.error({ err }, "requireAuth failed");
     res.status(500).json({
       error: "internal_error",
       message: "Authentication failed.",

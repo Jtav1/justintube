@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
+import { logger } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -266,10 +267,7 @@ export async function collectOutputMetadata({
     videoWidth = probed.videoWidth;
     videoHeight = probed.videoHeight;
   } catch (err) {
-    console.error(
-      "ffprobe failed for transcode output:",
-      err instanceof Error ? err.message : err,
-    );
+    logger.error({ err }, "ffprobe failed for transcode output");
   }
 
   return {

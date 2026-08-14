@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { originalDir } from "./media-paths.js";
 import { probeVideoDimensions } from "./probe.js";
+import { logger } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -130,7 +131,7 @@ export async function downloadUrl(url) {
   const stem = nextEpochStem(epoch);
   const outputTemplate = join(originalDir, `${stem}.%(ext)s`);
 
-  console.log(`[import ${stem}] started: ${validatedUrl}`);
+  logger.info(`[import ${stem}] started: ${validatedUrl}`);
 
   const args = [
     "--js-runtimes",
@@ -157,14 +158,14 @@ export async function downloadUrl(url) {
         : err instanceof Error
           ? err.message
           : "yt-dlp failed";
-    console.error(`[import ${stem}] failed:`, stderr);
+    logger.error({ stderr }, `[import ${stem}] failed`);
     throw new Error(stderr);
   }
 
   const filename = findStemFile(stem);
   if (!filename) {
     const message = "yt-dlp finished but no output file was found";
-    console.error(`[import ${stem}] failed:`, message);
+    logger.error({ message }, `[import ${stem}] failed`);
     throw new Error(message);
   }
 
@@ -173,7 +174,7 @@ export async function downloadUrl(url) {
   );
   const hasVideo = videoWidth != null && videoHeight != null;
 
-  console.log(`[import ${stem}] completed: ${filename} (hasVideo=${hasVideo})`);
+  logger.info(`[import ${stem}] completed: ${filename} (hasVideo=${hasVideo})`);
 
   return { filename, hasVideo };
 }

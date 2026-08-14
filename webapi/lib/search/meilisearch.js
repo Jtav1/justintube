@@ -4,6 +4,7 @@ import {
   loadEligiblePlaylistDocument,
   loadEligibleUserDocument,
 } from "./document.js";
+import { logger } from "../logger.js";
 
 /**
  * Meilisearch index name for video documents.
@@ -144,7 +145,7 @@ export async function removeVideoDocument(originalUploadId) {
   try {
     await getClient().index(INDEX_NAME).deleteDocument(originalUploadId);
   } catch (err) {
-    console.error(`[search:meilisearch] removeVideoDocument(${originalUploadId}) failed:`, err);
+    logger.error({ err }, `[search:meilisearch] removeVideoDocument(${originalUploadId}) failed`);
   }
 }
 
@@ -264,7 +265,7 @@ export async function removePlaylistDocument(playlistId) {
   try {
     await getClient().index(PLAYLIST_INDEX_NAME).deleteDocument(playlistId);
   } catch (err) {
-    console.error(`[search:meilisearch] removePlaylistDocument(${playlistId}) failed:`, err);
+    logger.error({ err }, `[search:meilisearch] removePlaylistDocument(${playlistId}) failed`);
   }
 }
 
@@ -343,7 +344,7 @@ export async function removeUserDocument(userId) {
   try {
     await getClient().index(USER_INDEX_NAME).deleteDocument(userId);
   } catch (err) {
-    console.error(`[search:meilisearch] removeUserDocument(${userId}) failed:`, err);
+    logger.error({ err }, `[search:meilisearch] removeUserDocument(${userId}) failed`);
   }
 }
 

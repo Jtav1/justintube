@@ -4,6 +4,7 @@ import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { SystemConfig } from "../lib/models/index.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maximum allowed length for a system config variable name.
@@ -108,7 +109,7 @@ export function createSystemConfigRouter() {
       });
       res.status(200).json(rows.map(serializeSystemConfig));
     } catch (err) {
-      console.error("adminListSystemConfig failed:", err);
+      logger.error({ err }, "adminListSystemConfig failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list system configuration.",
@@ -177,7 +178,7 @@ export function createSystemConfigRouter() {
         }
         res.status(200).json(serializeSystemConfig(row));
       } catch (err) {
-        console.error("adminGetSystemConfig failed:", err);
+        logger.error({ err }, "adminGetSystemConfig failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to get system configuration.",
@@ -268,7 +269,7 @@ export function createSystemConfigRouter() {
         }
         res.status(200).json(serializeSystemConfig(row));
       } catch (err) {
-        console.error("adminUpsertSystemConfig failed:", err);
+        logger.error({ err }, "adminUpsertSystemConfig failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to upsert system configuration.",
@@ -341,7 +342,7 @@ export function createSystemConfigRouter() {
         }
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("adminDeleteSystemConfig failed:", err);
+        logger.error({ err }, "adminDeleteSystemConfig failed");
         res.status(500).json({
           success: false,
           error: "internal_error",

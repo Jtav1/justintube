@@ -13,6 +13,7 @@ import {
   syncVideoIndex as meiliSyncVideoIndex,
 } from "./search/meilisearch.js";
 import { OriginalUpload, User, UserPlaylist } from "./models/index.js";
+import { logger } from "./logger.js";
 
 /**
  * Default cron expression: once nightly, at 3am.
@@ -44,7 +45,7 @@ export async function deferOrRemoveVideo(originalUploadId) {
       await meiliRemoveVideoDocument(originalUploadId);
     }
   } catch (err) {
-    console.error(`[search-reindex] deferOrRemoveVideo(${originalUploadId}) failed:`, err);
+    logger.error({ err }, `[search-reindex] deferOrRemoveVideo(${originalUploadId}) failed`);
   }
 }
 
@@ -66,7 +67,7 @@ export async function deferOrRemovePlaylist(playlistId) {
       await meiliRemovePlaylistDocument(playlistId);
     }
   } catch (err) {
-    console.error(`[search-reindex] deferOrRemovePlaylist(${playlistId}) failed:`, err);
+    logger.error({ err }, `[search-reindex] deferOrRemovePlaylist(${playlistId}) failed`);
   }
 }
 
@@ -85,7 +86,7 @@ export async function deferOrRemoveUser(userId) {
       await meiliRemoveUserDocument(userId);
     }
   } catch (err) {
-    console.error(`[search-reindex] deferOrRemoveUser(${userId}) failed:`, err);
+    logger.error({ err }, `[search-reindex] deferOrRemoveUser(${userId}) failed`);
   }
 }
 
@@ -109,7 +110,7 @@ async function reindexPending({ label, model, sync }) {
     where: { searchIndexStatus: "pending" },
     attributes: ["id"],
   });
-  console.log(`[search-reindex] reindexing ${rows.length} pending ${label}(s)...`);
+  logger.info(`[search-reindex] reindexing ${rows.length} pending ${label}(s)...`);
 
   for (const row of rows) {
     try {
@@ -119,7 +120,7 @@ async function reindexPending({ label, model, sync }) {
         { where: { id: row.id, searchIndexStatus: "pending" } },
       );
     } catch (err) {
-      console.error(`[search-reindex] failed to reindex ${label} ${row.id}:`, err);
+      logger.error({ err }, `[search-reindex] failed to reindex ${label} ${row.id}`);
     }
   }
 }
@@ -135,9 +136,7 @@ async function reindexPending({ label, model, sync }) {
  */
 export async function runSearchReindex() {
   if (!advancedSearchEnabled()) {
-    console.log(
-      "[search-reindex] ENABLE_ADVANCED_SEARCH is not set to true; nothing to do.",
-    );
+    logger.info("[search-reindex] ENABLE_ADVANCED_SEARCH is not set to true; nothing to do.");
     return;
   }
 
@@ -171,33 +170,28 @@ export function getSearchReindexConfig() {
  */
 export async function startSearchReindexCron() {
   if (!advancedSearchEnabled()) {
-    console.log(
-      "[search-reindex] advanced search is disabled; nightly reindex cron not needed",
-    );
+    logger.info("[search-reindex] advanced search is disabled; nightly reindex cron not needed");
     return null;
   }
 
   const config = getSearchReindexConfig();
   if (!config.enabled) {
-    console.log("[search-reindex] disabled via SEARCH_REINDEX_ENABLED");
+    logger.info("[search-reindex] disabled via SEARCH_REINDEX_ENABLED");
     return null;
   }
 
   const cron = await import("node-cron");
   if (!cron.validate(config.cron)) {
-    console.error(`[search-reindex] invalid SEARCH_REINDEX_CRON: ${config.cron}`);
+    logger.error(`[search-reindex] invalid SEARCH_REINDEX_CRON: ${config.cron}`);
     return null;
   }
 
   const task = cron.schedule(config.cron, () => {
     void runSearchReindex().catch((err) => {
-      console.error(
-        "[search-reindex] run failed:",
-        err instanceof Error ? err.message : err,
-      );
+      logger.error({ err }, "[search-reindex] run failed");
     });
   });
 
-  console.log(`[search-reindex] scheduled (${config.cron})`);
+  logger.info(`[search-reindex] scheduled (${config.cron})`);
   return task;
 }

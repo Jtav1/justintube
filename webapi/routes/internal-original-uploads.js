@@ -9,6 +9,7 @@ import {
   User,
 } from "../lib/models/index.js";
 import { createNotification } from "../lib/notifications.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
@@ -260,7 +261,7 @@ export function createInternalOriginalUploadsRouter() {
 
     const message =
       req.body && typeof req.body.error === "string" ? req.body.error : "content hash job failed";
-    console.warn(`[original-uploads] hash job failed for upload ${upload.videoId}:`, message);
+    logger.warn({ message }, `[original-uploads] hash job failed for upload ${upload.videoId}`);
 
     res.status(200).json({ success: true });
   });

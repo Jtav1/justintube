@@ -1,24 +1,28 @@
-const LEVELS = { DEBUG: 0, ERROR: 1, NONE: 2 };
+import pino from "pino";
+
+const LEVELS = new Set(["trace", "debug", "info", "warn", "error", "fatal", "silent"]);
 
 /**
- * Reads LOG_LEVEL and suppresses console output accordingly. DEBUG (default)
- * leaves all console methods untouched; ERROR silences log/warn/debug and
- * keeps error; NONE silences everything. Call once, before any other module
- * has a chance to log.
+ * Resolves LOG_LEVEL to a valid pino level name, defaulting to "debug"
+ * (log everything) when unset or unrecognized.
  *
- * @returns {void}
+ * @returns {string} A valid pino level name.
  */
-export function configureLogging() {
-  const raw = String(process.env.LOG_LEVEL || "DEBUG").toUpperCase();
-  const level = Object.hasOwn(LEVELS, raw) ? raw : "DEBUG";
-  const threshold = LEVELS[level];
-
-  if (threshold > LEVELS.DEBUG) {
-    console.log = () => {};
-    console.debug = () => {};
-    console.warn = () => {};
-  }
-  if (threshold > LEVELS.ERROR) {
-    console.error = () => {};
-  }
+export function resolveLogLevel() {
+  const raw = String(process.env.LOG_LEVEL || "debug").toLowerCase();
+  return LEVELS.has(raw) ? raw : "debug";
 }
+
+/**
+ * Shared pino logger instance. Pretty-printed outside production; structured
+ * JSON in production (NODE_ENV=production, matching both Dockerfiles).
+ *
+ * @type {import('pino').Logger}
+ */
+export const logger = pino({
+  level: resolveLogLevel(),
+  transport:
+    process.env.NODE_ENV === "production"
+      ? undefined
+      : { target: "pino-pretty", options: { colorize: true, translateTime: "SYS:HH:MM:ss" } },
+});

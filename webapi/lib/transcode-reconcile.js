@@ -10,6 +10,7 @@ import {
   removeTranscodeJob,
   requestTranscodeBatch,
 } from "./processing-client.js";
+import { logger } from "./logger.js";
 
 /**
  * Default cron expression: every 5 minutes.
@@ -79,17 +80,14 @@ export async function reconcileFileVersion(version) {
     }
 
     if (state === "failed") {
-      console.error(
-        `[reconcile] transcode job failed for file version ${uuidName} (upload ${version.originalUploadId}):`,
-        statusResult.body.failedReason || "unknown failure",
+      logger.error(
+        { reason: statusResult.body.failedReason || "unknown failure" },
+        `[reconcile] transcode job failed for file version ${uuidName} (upload ${version.originalUploadId})`,
       );
       await applyFileVersionFailed(version);
       const removed = await removeTranscodeJob(uuidName);
       if (!removed.ok && removed.status !== 404) {
-        console.error(
-          `[reconcile] failed to remove job ${uuidName} from queue:`,
-          removed.error,
-        );
+        logger.error({ error: removed.error }, `[reconcile] failed to remove job ${uuidName} from queue`);
       }
       return { action: "marked_failed_removed", uuidName };
     }
@@ -99,27 +97,21 @@ export async function reconcileFileVersion(version) {
 
   if (statusResult.status === 404 || statusResult.status === 0) {
     if (!version.transcodeProfileId) {
-      console.error(
-        `[reconcile] cannot re-enqueue ${uuidName}: missing transcodeProfileId`,
-      );
+      logger.error(`[reconcile] cannot re-enqueue ${uuidName}: missing transcodeProfileId`);
       await applyFileVersionFailed(version);
       return { action: "marked_failed_no_profile", uuidName };
     }
 
     const profile = await loadTranscodeProfilePayload(version.transcodeProfileId);
     if (!profile) {
-      console.error(
-        `[reconcile] cannot re-enqueue ${uuidName}: profile ${version.transcodeProfileId} not found`,
-      );
+      logger.error(`[reconcile] cannot re-enqueue ${uuidName}: profile ${version.transcodeProfileId} not found`);
       await applyFileVersionFailed(version);
       return { action: "marked_failed_no_profile", uuidName };
     }
 
     const parent = await OriginalUpload.findByPk(version.originalUploadId);
     if (!parent?.storagePath) {
-      console.error(
-        `[reconcile] cannot re-enqueue ${uuidName}: original upload missing`,
-      );
+      logger.error(`[reconcile] cannot re-enqueue ${uuidName}: original upload missing`);
       await applyFileVersionFailed(version);
       return { action: "marked_failed_no_upload", uuidName };
     }
@@ -141,16 +133,13 @@ export async function reconcileFileVersion(version) {
     });
 
     if (!enqueue.ok) {
-      console.error(
-        `[reconcile] re-enqueue failed for ${uuidName}:`,
-        enqueue.error,
-      );
+      logger.error({ error: enqueue.error }, `[reconcile] re-enqueue failed for ${uuidName}`);
       await applyFileVersionFailed(version);
       const removed = await removeTranscodeJob(uuidName);
       if (!removed.ok && removed.status !== 404) {
-        console.error(
-          `[reconcile] failed to remove job ${uuidName} after re-enqueue failure:`,
-          removed.error,
+        logger.error(
+          { error: removed.error },
+          `[reconcile] failed to remove job ${uuidName} after re-enqueue failure`,
         );
       }
       return { action: "marked_failed_reenqueue", uuidName };
@@ -162,10 +151,7 @@ export async function reconcileFileVersion(version) {
     return { action: "reenqueued", uuidName };
   }
 
-  console.error(
-    `[reconcile] unexpected status lookup for ${uuidName}:`,
-    statusResult.error,
-  );
+  logger.error({ error: statusResult.error }, `[reconcile] unexpected status lookup for ${uuidName}`);
   return { action: "noop_error", uuidName };
 }
 
@@ -193,10 +179,7 @@ export async function runTranscodeReconcile(options = {}) {
     try {
       results.push(await reconcileFileVersion(version));
     } catch (err) {
-      console.error(
-        `[reconcile] unexpected error for ${version.uuidName}:`,
-        err instanceof Error ? err.message : err,
-      );
+      logger.error({ err }, `[reconcile] unexpected error for ${version.uuidName}`);
       results.push({ action: "error", uuidName: version.uuidName });
     }
   }
@@ -212,27 +195,22 @@ export async function runTranscodeReconcile(options = {}) {
 export async function startTranscodeReconcileCron() {
   const config = getReconcileConfig();
   if (!config.enabled) {
-    console.log("[reconcile] disabled via TRANSCODE_RECONCILE_ENABLED");
+    logger.info("[reconcile] disabled via TRANSCODE_RECONCILE_ENABLED");
     return null;
   }
 
   const cron = await import("node-cron");
   if (!cron.validate(config.cron)) {
-    console.error(`[reconcile] invalid TRANSCODE_RECONCILE_CRON: ${config.cron}`);
+    logger.error(`[reconcile] invalid TRANSCODE_RECONCILE_CRON: ${config.cron}`);
     return null;
   }
 
   const task = cron.schedule(config.cron, () => {
     void runTranscodeReconcile().catch((err) => {
-      console.error(
-        "[reconcile] run failed:",
-        err instanceof Error ? err.message : err,
-      );
+      logger.error({ err }, "[reconcile] run failed");
     });
   });
 
-  console.log(
-    `[reconcile] scheduled (${config.cron}, stale>${config.staleMinutes}m)`,
-  );
+  logger.info(`[reconcile] scheduled (${config.cron}, stale>${config.staleMinutes}m)`);
   return task;
 }

@@ -16,6 +16,7 @@ import { loadHiddenUploadIds } from "../lib/video-hidden.js";
 import { buildPlaylistsPage } from "./playlists.js";
 import { loadUploadCountsByUserId, serializeUserListItem } from "./users.js";
 import { loadViewerPermissionsByUploadId } from "./videos.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maximum page size for GET /search.
@@ -124,7 +125,7 @@ function sendSearchFailed(res) {
  * @returns {void} No return value; sends the response.
  */
 function handleSearchError(res, err, label) {
-  console.error(`${label} failed:`, err);
+  logger.error({ err }, `${label} failed`);
   if (advancedSearchEnabled()) {
     sendSearchUnavailable(res);
   } else {
@@ -414,7 +415,7 @@ export function createSearchRouter() {
         .map((row) => serializeUserRef(row.id, row.username, row.displayName));
       res.status(200).json({ items });
     } catch (err) {
-      console.error("searchUsers failed:", err);
+      logger.error({ err }, "searchUsers failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to search users.",

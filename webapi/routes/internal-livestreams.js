@@ -2,6 +2,7 @@ import { Router } from "express";
 import { hashStreamKey } from "../lib/auth/stream-key.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
 import { Livestream, StreamKey } from "../lib/models/index.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
@@ -120,7 +121,7 @@ export function createInternalLivestreamsRouter() {
 
       res.status(200).json({ livestreamId: resolved.livestream.id, userId: resolved.keyRow.userId });
     } catch (err) {
-      console.error("livestreamAuthorize failed:", err);
+      logger.error({ err }, "livestreamAuthorize failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to authorize stream.",
@@ -169,7 +170,7 @@ export function createInternalLivestreamsRouter() {
 
       res.status(200).end();
     } catch (err) {
-      console.error("livestreamMediamtxAuth failed:", err);
+      logger.error({ err }, "livestreamMediamtxAuth failed");
       res.status(500).end();
     }
   });
@@ -196,7 +197,7 @@ export function createInternalLivestreamsRouter() {
       await row.update({ status: "live", startedAt: new Date() });
       res.status(200).json({ id: row.id, status: row.status, startedAt: row.startedAt });
     } catch (err) {
-      console.error("livestreamStart failed:", err);
+      logger.error({ err }, "livestreamStart failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to start livestream.",
@@ -230,7 +231,7 @@ export function createInternalLivestreamsRouter() {
       await row.update({ status: "offline", viewerCount: 0 });
       res.status(200).json({ id: row.id, status: row.status });
     } catch (err) {
-      console.error("livestreamStop failed:", err);
+      logger.error({ err }, "livestreamStop failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to stop livestream.",

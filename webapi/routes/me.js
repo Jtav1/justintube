@@ -36,6 +36,7 @@ import {
   parsePositiveInt,
   serializeVideo,
 } from "./videos.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Absolute path to the directory where avatar images are stored
@@ -334,7 +335,7 @@ export function createMeRouter() {
     try {
       res.json(serializeMeSettings(req.user, req.authRole));
     } catch (err) {
-      console.error("getMeSettings failed:", err);
+      logger.error({ err }, "getMeSettings failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load account settings.",
@@ -432,7 +433,7 @@ export function createMeRouter() {
       await req.user.update(updates);
       res.json(serializeMeSettings(req.user, req.authRole));
     } catch (err) {
-      console.error("updateMe failed:", err);
+      logger.error({ err }, "updateMe failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update account.",
@@ -523,7 +524,7 @@ export function createMeRouter() {
         totalPages: count === 0 ? 0 : Math.ceil(count / limit),
       });
     } catch (err) {
-      console.error("listMyVideos failed:", err);
+      logger.error({ err }, "listMyVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your videos.",
@@ -649,7 +650,7 @@ export function createMeRouter() {
         totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
       });
     } catch (err) {
-      console.error("listMyLikes failed:", err);
+      logger.error({ err }, "listMyLikes failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your liked videos.",
@@ -794,7 +795,7 @@ export function createMeRouter() {
         totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
       });
     } catch (err) {
-      console.error("listMyHistory failed:", err);
+      logger.error({ err }, "listMyHistory failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your watch history.",
@@ -816,7 +817,7 @@ export function createMeRouter() {
       await UserViewHistory.destroy({ where: { userId: req.user.id } });
       res.status(204).send();
     } catch (err) {
-      console.error("clearMyHistory failed:", err);
+      logger.error({ err }, "clearMyHistory failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to clear your watch history.",
@@ -879,7 +880,7 @@ export function createMeRouter() {
       await row.destroy();
       res.status(204).send();
     } catch (err) {
-      console.error("deleteHistoryEntry failed:", err);
+      logger.error({ err }, "deleteHistoryEntry failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to remove history entry.",
@@ -937,7 +938,7 @@ export function createMeRouter() {
       });
       res.status(200).json(payload.items[0]);
     } catch (err) {
-      console.error("getMyLikesPlaylist failed:", err);
+      logger.error({ err }, "getMyLikesPlaylist failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load your My Likes playlist.",
@@ -1026,7 +1027,7 @@ export function createMeRouter() {
         totalPages: count === 0 ? 0 : Math.ceil(count / limit),
       });
     } catch (err) {
-      console.error("listMySubscriptions failed:", err);
+      logger.error({ err }, "listMySubscriptions failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your subscriptions.",
@@ -1115,7 +1116,7 @@ export function createMeRouter() {
         totalPages: count === 0 ? 0 : Math.ceil(count / limit),
       });
     } catch (err) {
-      console.error("listMySubscribers failed:", err);
+      logger.error({ err }, "listMySubscribers failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your subscribers.",
@@ -1217,7 +1218,7 @@ export function createMeRouter() {
         totalPages: count === 0 ? 0 : Math.ceil(count / limit),
       });
     } catch (err) {
-      console.error("listMyPlaylists failed:", err);
+      logger.error({ err }, "listMyPlaylists failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list your playlists.",
@@ -1308,7 +1309,7 @@ export function createMeRouter() {
 
         res.status(200).json({ avatarFilename: req.user.avatarFilename });
       } catch (err) {
-        console.error("updateMyAvatar failed:", err);
+        logger.error({ err }, "updateMyAvatar failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update your avatar.",
@@ -1336,7 +1337,7 @@ export function createMeRouter() {
       }
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deleteMyAvatar failed:", err);
+      logger.error({ err }, "deleteMyAvatar failed");
       res.status(500).json({
         success: false,
         error: "internal_error",

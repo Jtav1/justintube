@@ -5,6 +5,7 @@ import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { Notification, NotificationType } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Serializes a Notification row (with its joined NotificationType) for API
@@ -133,7 +134,7 @@ export function createNotificationsRouter() {
         totalPages: count === 0 ? 0 : Math.ceil(count / limit),
       });
     } catch (err) {
-      console.error("listNotifications failed:", err);
+      logger.error({ err }, "listNotifications failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list notifications.",
@@ -202,7 +203,7 @@ export function createNotificationsRouter() {
 
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("markNotificationsRead failed:", err);
+      logger.error({ err }, "markNotificationsRead failed");
       res.status(500).json({
         success: false,
         error: "internal_error",

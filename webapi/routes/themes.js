@@ -14,6 +14,7 @@ import { HEX_COLOR_PATTERN, PUBLIC_THEME_OWNER } from "../lib/models/theme.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { resolveSitedataPath } from "../lib/sitedata-meta.js";
 import { isAdmin } from "../lib/video-access.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Absolute path to the directory where theme background images are stored
@@ -492,7 +493,7 @@ export function createThemesRouter() {
 
       res.status(200).json(response);
     } catch (err) {
-      console.error("listThemes failed:", err);
+      logger.error({ err }, "listThemes failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list themes.",
@@ -605,7 +606,7 @@ export function createThemesRouter() {
       res.status(201).json(serializeTheme(created));
     } catch (err) {
       await cleanupUploadedFiles(req);
-      console.error("createTheme failed:", err);
+      logger.error({ err }, "createTheme failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to create theme.",
@@ -792,7 +793,7 @@ export function createThemesRouter() {
       res.status(200).json(serializeTheme(row));
     } catch (err) {
       await cleanupUploadedFiles(req);
-      console.error("updateTheme failed:", err);
+      logger.error({ err }, "updateTheme failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update theme.",
@@ -873,7 +874,7 @@ export function createThemesRouter() {
 
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deleteTheme failed:", err);
+      logger.error({ err }, "deleteTheme failed");
       res.status(500).json({
         success: false,
         error: "internal_error",
@@ -930,7 +931,7 @@ export function createThemesRouter() {
       const contentType = mimeTypeForImage(filename);
       await streamFileWithRangeSupport(req, res, absolutePath, contentType);
     } catch (err) {
-      console.error("getThemeImage failed:", err);
+      logger.error({ err }, "getThemeImage failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -1018,7 +1019,7 @@ export function createThemesRouter() {
         theme: theme ? serializeTheme(theme) : null,
       });
     } catch (err) {
-      console.error("selectMyTheme failed:", err);
+      logger.error({ err }, "selectMyTheme failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to select theme.",
@@ -1081,7 +1082,7 @@ export function createThemesRouter() {
         theme: theme ? serializeTheme(theme) : null,
       });
     } catch (err) {
-      console.error("getUserTheme failed:", err);
+      logger.error({ err }, "getUserTheme failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load theme selection.",

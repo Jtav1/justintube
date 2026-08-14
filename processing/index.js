@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import express from "express";
-import { configureLogging } from "./lib/logger.js";
+import { logger } from "./lib/logger.js";
 import { requireInternalToken } from "./lib/require-internal-token.js";
 import { getTranscodeConfig } from "./lib/transcode.js";
 import { createDownloadRouter } from "./routes/download.js";
@@ -78,17 +78,17 @@ async function main() {
   const worker = createTranscodeWorker(connection);
 
   worker.on("active", (job) => {
-    console.log(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) started`);
+    logger.info(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) started`);
   });
 
   worker.on("completed", (job) => {
-    console.log(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) completed`);
+    logger.info(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) completed`);
   });
 
   worker.on("failed", (job, err) => {
-    console.error(
-      `[worker] job ${job?.id ?? "unknown"} (${job?.data?.kind || "rendition"}) failed:`,
-      err?.message || err,
+    logger.error(
+      { err },
+      `[worker] job ${job?.id ?? "unknown"} (${job?.data?.kind || "rendition"}) failed`,
     );
     void notifyTranscodeJobFailed(job, err);
   });
@@ -104,7 +104,7 @@ async function main() {
    * @returns {Promise<void>} Resolves after shutdown completes.
    */
   async function shutdown() {
-    console.log("shutting down processing service…");
+    logger.info("shutting down processing service…");
     await new Promise((resolve) => server.close(resolve));
     await closeTranscodeResources({ queue, worker });
     process.exit(0);
@@ -122,9 +122,8 @@ async function main() {
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
-  configureLogging();
   main().catch((err) => {
-    console.error("Failed to start processing service:", err);
+    logger.error({ err }, "Failed to start processing service");
     process.exit(1);
   });
 }

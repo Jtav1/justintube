@@ -5,6 +5,7 @@ import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { User } from "../lib/models/index.js";
 import { createNotification } from "../lib/notifications.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maximum accepted length for a broadcast notification's title, matching
@@ -166,7 +167,7 @@ export function createAdminBroadcastRouter() {
 
         res.status(200).json({ success: true, notifiedCount: users.length });
       } catch (err) {
-        console.error("adminBroadcastNotification failed:", err);
+        logger.error({ err }, "adminBroadcastNotification failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to send broadcast notification.",
@@ -252,7 +253,7 @@ export function createAdminBroadcastRouter() {
 
         res.status(200).json({ success: true, notifiedCount: recipients.length });
       } catch (err) {
-        console.error("adminModerationNotification failed:", err);
+        logger.error({ err }, "adminModerationNotification failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to send moderation notification.",
