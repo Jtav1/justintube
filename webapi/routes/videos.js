@@ -1152,6 +1152,33 @@ function parseCommentsEnabled(raw) {
 }
 
 /**
+ * Parses an optional createdAt override (ISO 8601 date-time string). Exists
+ * to backdate a video's listed upload date to its true original date when
+ * importing from another platform (e.g. `migration-tools/migrate-user-videos.js`),
+ * where the upload API call itself necessarily happens long after that date —
+ * not intended for routine editing.
+ *
+ * @param {unknown} raw Body createdAt value.
+ * @returns {{ok: true, value?: Date}|{ok: false, message: string}} Parsed or error.
+ */
+function parseCreatedAt(raw) {
+  if (raw === undefined) {
+    return { ok: true };
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return {
+      ok: false,
+      message: "createdAt must be a valid ISO 8601 date-time string.",
+    };
+  }
+  if (date.getTime() > Date.now()) {
+    return { ok: false, message: "createdAt cannot be in the future." };
+  }
+  return { ok: true, value: date };
+}
+
+/**
  * Parses an optional tags array for replace-all semantics.
  *
  * @param {unknown} raw Body tags value.
@@ -1221,6 +1248,10 @@ function parseUpdateVideoBody(body) {
   if (!commentsEnabled.ok) {
     return commentsEnabled;
   }
+  const createdAt = parseCreatedAt(body.createdAt);
+  if (!createdAt.ok) {
+    return createdAt;
+  }
   const tags = parseTags(body.tags);
   if (!tags.ok) {
     return tags;
@@ -1239,12 +1270,15 @@ function parseUpdateVideoBody(body) {
   if (commentsEnabled.value !== undefined) {
     patch.commentsEnabled = commentsEnabled.value;
   }
+  if (createdAt.value !== undefined) {
+    patch.createdAt = createdAt.value;
+  }
 
   if (Object.keys(patch).length === 0 && tags.value === undefined) {
     return {
       ok: false,
       message:
-        "At least one of title, description, visibility, commentsEnabled, or tags is required.",
+        "At least one of title, description, visibility, commentsEnabled, createdAt, or tags is required.",
     };
   }
 
@@ -2139,10 +2173,12 @@ export function createVideosRouter() {
   /**
    * PATCH /videos/:id — updateVideo
    * Auth: required. Owner, admin, or a user with an "edit" VIDEO_ACCESS grant.
-   * Body: title, description, visibility, commentsEnabled, tags. A caller who
-   * is not the owner/admin (i.e. an edit-grantee) may update any field except
-   * `visibility` — including `visibility` in the body at all is rejected
-   * outright (the whole request, not just that field).
+   * Body: title, description, visibility, commentsEnabled, createdAt, tags. A
+   * caller who is not the owner/admin (i.e. an edit-grantee) may update any
+   * field except `visibility` or `createdAt` — including either of those in
+   * the body at all is rejected outright (the whole request, not just that
+   * field). `createdAt` backdates the video's listed upload date (e.g. for a
+   * bulk migration from another platform) and cannot be set in the future.
    *
    * @openapi
    * /api/v1/videos/{id}:
@@ -2160,13 +2196,40 @@ export function createVideosRouter() {
    *         required: true
    *         schema:
    *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               title:
+   *                 type: string
+   *               description:
+   *                 type: string
+   *                 nullable: true
+   *               visibility:
+   *                 type: string
+   *                 enum: [public, unlisted, private, hidden]
+   *               commentsEnabled:
+   *                 type: boolean
+   *               createdAt:
+   *                 type: string
+   *                 format: date-time
+   *                 description: >
+   *                   Backdates the video's upload date. Owner/admin only;
+   *                   cannot be in the future.
+   *               tags:
+   *                 type: array
+   *                 items:
+   *                   type: string
    *     responses:
    *       "200":
    *         description: Updated video
    *       "401":
    *         description: Unauthorized
    *       "403":
-   *         description: Not the owner/admin/edit-grantee, or an edit-grantee attempted to change visibility
+   *         description: Not the owner/admin/edit-grantee, or an edit-grantee attempted to change visibility or createdAt
    */
   router.patch("/videos/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
@@ -2214,11 +2277,31 @@ export function createVideosRouter() {
         return;
       }
 
+      if (!isOwnerAdmin && parsed.patch.createdAt !== undefined) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the owner or an admin can change this video's upload date.",
+        });
+        return;
+      }
+
       const previousVisibility = metadata.visibility;
 
       await sequelize.transaction(async (transaction) => {
         if (Object.keys(parsed.patch).length > 0) {
-          await metadata.update(parsed.patch, { transaction });
+          // `createdAt` is a Sequelize-managed timestamp attribute: the
+          // ordinary set()/update() path treats it as read-only and silently
+          // drops it (never marks it "changed", so save() never writes it),
+          // so it has to go through setDataValue + an explicit save `fields`
+          // list instead.
+          const { createdAt, ...restPatch } = parsed.patch;
+          if (Object.keys(restPatch).length > 0) {
+            await metadata.update(restPatch, { transaction });
+          }
+          if (createdAt !== undefined) {
+            metadata.setDataValue("createdAt", createdAt);
+            await metadata.save({ fields: ["createdAt"], transaction });
+          }
           if (parsed.patch.visibility === "hidden") {
             // Viewer grants are only meaningful for private videos, so wipe
             // them on entry to hidden rather than leaving stale access
