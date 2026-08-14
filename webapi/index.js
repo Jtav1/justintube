@@ -17,6 +17,7 @@ import {
   startSearchReindexCron,
 } from "./lib/search-reindex.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
+import { startHashReconcileCron } from "./lib/hash-reconcile.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
 import { createInternalLivestreamsRouter } from "./routes/internal-livestreams.js";
@@ -285,6 +286,12 @@ async function start() {
     await startTranscodeReconcileCron();
   } catch (err) {
     logger.error({ err }, "Failed to start transcode reconcile cron");
+  }
+
+  try {
+    await startHashReconcileCron();
+  } catch (err) {
+    logger.error({ err }, "Failed to start hash reconcile cron");
   }
 
   try {

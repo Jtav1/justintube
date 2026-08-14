@@ -261,7 +261,7 @@ export function createInternalOriginalUploadsRouter() {
 
     const message =
       req.body && typeof req.body.error === "string" ? req.body.error : "content hash job failed";
-    logger.warn({ message }, `[original-uploads] hash job failed for upload ${upload.videoId}`);
+    logger.error({ message }, `[original-uploads] hash job failed for upload ${upload.videoId}`);
 
     res.status(200).json({ success: true });
   });

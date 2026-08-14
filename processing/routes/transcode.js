@@ -9,6 +9,7 @@ import {
   enqueueTranscodeJobs,
   getTranscodeJobStatus,
   removeTranscodeJob,
+  retryFailedHashJobs,
 } from "../lib/queue.js";
 import {
   probeVideoDimensions,
@@ -282,6 +283,34 @@ export function createTranscodeRouter({
       const message =
         err instanceof Error ? err.message : "failed to remove job";
       logger.error({ message }, "[transcode] job removal failed");
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
+  /**
+   * Retries every currently-failed duplicate-upload content-hash job (i.e.
+   * one whose ffprobe hash computation failed and, per `removeOnFail: false`
+   * on the queue, is still sitting in Redis rather than having been dropped).
+   * Called by webapi's nightly hash-reconcile cron - not exposed to end
+   * users and not scoped to a single job, since the cron always wants "every
+   * failed hash job" in one call.
+   *
+   * @param {import('express').Request} _req Incoming request (unused).
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends JSON success with retried/failed job id lists, or an error payload.
+   */
+  router.post("/retry-failed-hashes", async (_req, res) => {
+    try {
+      const result = await retryFailedHashJobs(queue);
+      logger.info(
+        `[transcode] retry-failed-hashes: retried ${result.retried.length} job(s)` +
+          (result.failed.length > 0 ? `, ${result.failed.length} retry failure(s)` : ""),
+      );
+      res.status(200).json({ success: true, ...result });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "failed to retry hash jobs";
+      logger.error({ message }, "[transcode] retry-failed-hashes failed");
       res.status(500).json({ success: false, error: message });
     }
   });

@@ -24,6 +24,17 @@ import { logger } from "./logger.js";
 export const TRANSCODE_QUEUE_NAME = "transcode";
 
 /**
+ * Maximum number of times a duplicate-upload content-hash job may run
+ * (counting its original attempt, any of BullMQ's own automatic
+ * attempts/backoff retries, and every retry the nightly hash-reconcile cron
+ * triggers) before {@link retryFailedHashJobs} discards it instead of
+ * retrying it again.
+ *
+ * @type {number}
+ */
+export const MAX_HASH_JOB_RUNS = 7;
+
+/**
  * Builds an ioredis-compatible connection options object for BullMQ.
  *
  * @param {object} [overrides] Optional host/port/password overrides for tests.
@@ -113,6 +124,13 @@ async function processThumbnailJob(job) {
  * No output file is written, so unlike rendition/thumbnail jobs there's
  * nothing to resolve an output path for.
  *
+ * Persists a `runCount` on the job's own data (in Redis, alongside the job)
+ * incremented at the start of every execution - whether this run was kicked
+ * off by BullMQ's own attempts/backoff, or by the nightly hash-reconcile
+ * cron retrying a job that had already landed in the failed state. This is
+ * what {@link retryFailedHashJobs} checks against {@link MAX_HASH_JOB_RUNS}
+ * to decide whether a failed job is retried again or discarded outright.
+ *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes `inputFilename`.
  * @returns {Promise<{ contentHash: string }>} Result payload stored on the completed job.
@@ -122,7 +140,10 @@ async function processHashJob(job) {
   const { inputFilename } = job.data;
   const jobId = String(job.id);
 
-  logger.info(`[hash ${jobId}] processing started: ${inputFilename}`);
+  const runCount = (Number(job.data.runCount) || 0) + 1;
+  await job.updateData({ ...job.data, runCount });
+
+  logger.info(`[hash ${jobId}] processing started (run ${runCount}/${MAX_HASH_JOB_RUNS}): ${inputFilename}`);
 
   await job.updateProgress(20);
 
@@ -333,6 +354,9 @@ export async function getTranscodeJobStatus(queue, jobId) {
     profileId: job.data?.profile?.id ?? null,
     failedReason: job.failedReason || null,
     returnvalue: job.returnvalue ?? null,
+    // Only ever set for kind: "hash" jobs (see processHashJob) - null for
+    // rendition/thumbnail jobs, which don't track this.
+    runCount: job.data?.runCount ?? null,
   };
 }
 
@@ -352,6 +376,67 @@ export async function removeTranscodeJob(queue, jobId) {
   await job.remove();
   logger.info(`[job ${jobId}] removed`);
   return true;
+}
+
+/**
+ * Finds every failed BullMQ job of kind `"hash"` and either moves it back to
+ * the wait queue for reprocessing, or - once it's already run
+ * {@link MAX_HASH_JOB_RUNS} times (per the `runCount` {@link processHashJob}
+ * persists on the job's own data) - discards it outright rather than
+ * retrying forever. A failed hash job is deliberately left in Redis
+ * (`removeOnFail: false` on the queue, set in {@link createTranscodeQueue})
+ * rather than requeued automatically, so this is what actually resurfaces
+ * it — driven by webapi's nightly duplicate-hash reconcile cron rather than
+ * anything in-process here.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @returns {Promise<{
+ *   retried: string[],
+ *   discarded: string[],
+ *   failed: Array<{ jobId: string, error: string }>
+ * }>} Job ids retried, job ids discarded after reaching the run cap, and any
+ *   that errored while retrying/discarding.
+ */
+export async function retryFailedHashJobs(queue) {
+  const failedJobs = await queue.getJobs(["failed"]);
+  const hashJobs = failedJobs.filter((job) => job.data?.kind === "hash");
+
+  /** @type {string[]} */
+  const retried = [];
+  /** @type {string[]} */
+  const discarded = [];
+  /** @type {Array<{ jobId: string, error: string }>} */
+  const failed = [];
+
+  for (const job of hashJobs) {
+    const jobId = String(job.id);
+    const runCount = Number(job.data?.runCount) || 0;
+
+    if (runCount >= MAX_HASH_JOB_RUNS) {
+      try {
+        await job.remove();
+        discarded.push(jobId);
+        logger.warn(`[hash ${jobId}] discarded after ${runCount} run(s) (max ${MAX_HASH_JOB_RUNS})`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "discard failed";
+        failed.push({ jobId, error: message });
+        logger.error({ err }, `[hash ${jobId}] failed to discard after reaching max runs`);
+      }
+      continue;
+    }
+
+    try {
+      await job.retry();
+      retried.push(jobId);
+      logger.info(`[hash ${jobId}] retried by reconcile (run ${runCount}/${MAX_HASH_JOB_RUNS})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "retry failed";
+      failed.push({ jobId, error: message });
+      logger.error({ err }, `[hash ${jobId}] retry by reconcile failed`);
+    }
+  }
+
+  return { retried, discarded, failed };
 }
 
 /**
