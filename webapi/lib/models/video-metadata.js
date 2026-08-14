@@ -50,5 +50,11 @@ export const VideoMetadata = sequelize.define(
   {
     tableName: "VIDEO_METADATA",
     timestamps: true,
+    indexes: [
+      {
+        fields: ["visibility", "created_at"],
+        name: "idx_video_metadata_visibility_created_at",
+      },
+    ],
   },
 );

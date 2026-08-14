@@ -507,6 +507,30 @@ export function resolveHardwareAccelerator(videoCodec) {
 }
 
 /**
+ * Builds `-hwaccel`/`-hwaccel_device` input args for a decode-only ffmpeg
+ * invocation that has no target encoder of its own (e.g. content hashing).
+ * Since there's no profile to infer an accelerator API from, this uses the
+ * deployment's first configured hardware encoder as the source of that
+ * inference — deployments configure one hardware API at a time, so any
+ * configured encoder identifies it.
+ *
+ * @param {ReturnType<typeof getTranscodeConfig>} config Current transcode config.
+ * @returns {string[]} `-hwaccel`/`-hwaccel_device` args, or `[]` when
+ *   hardware isn't usable on this deployment.
+ */
+export function resolveDecodeHardwareAccelArgs(config) {
+  if (!config.useHardware || config.hardwareEncoders.length === 0) {
+    return [];
+  }
+  return [
+    "-hwaccel",
+    resolveHardwareAccelerator(config.hardwareEncoders[0]),
+    "-hwaccel_device",
+    config.hardwareDevice,
+  ];
+}
+
+/**
  * Builds a deterministic output basename from a UUID and container.
  *
  * @param {string} uuid Job / output UUID (without extension).
@@ -579,7 +603,10 @@ const THUMBNAIL_MAX_HEIGHT = 480;
  * Deliberately bypasses the transcoding-enabled/hardware-acceleration gating
  * in `validateTranscodeProfile`/`shouldSkipHardwareProfile` (see
  * `validateTranscodeJob`) — this is a lightweight frame grab, not a real
- * transcode, and `ENABLE_TRANSCODING=false` shouldn't block it.
+ * transcode, and `ENABLE_TRANSCODING=false` shouldn't block it. It still
+ * decodes via hardware acceleration when this deployment has it configured
+ * (see {@link resolveDecodeHardwareAccelArgs}), since that's a decode-side
+ * benefit independent of the transcoding-enabled gate.
  *
  * Scales down (never up) to fit within {@link THUMBNAIL_MAX_WIDTH}x
  * {@link THUMBNAIL_MAX_HEIGHT} as a bounding box, preserving the source
@@ -594,8 +621,11 @@ const THUMBNAIL_MAX_HEIGHT = 480;
  * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
  */
 export function buildThumbnailFfmpegArgs({ inputPath, outputPath, timestampSeconds }) {
+  const hwArgs = resolveDecodeHardwareAccelArgs(getTranscodeConfig());
+
   return [
     "-y",
+    ...hwArgs,
     "-ss",
     String(timestampSeconds),
     "-i",

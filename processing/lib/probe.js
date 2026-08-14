@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { logger } from "./logger.js";
+import { getTranscodeConfig, resolveDecodeHardwareAccelArgs } from "./transcode.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -197,14 +198,19 @@ export async function probeVideoDuration(filePath) {
 }
 
 /**
- * Computes a content-based hash of a media file's primary video stream via
+ * Computes a content-based hash of a media file's primary stream via
  * ffmpeg's `hash` muxer. Unlike a raw file checksum, this hashes decoded
- * frame data, so it stays stable across container remuxes or re-encodes of
- * the same visual source (e.g. two yt-dlp downloads of the same URL at
- * different times/qualities) — the "consistent and re-creatable" property
- * duplicate-upload detection needs. This decodes the entire video stream, so
- * it can be slow for long files; callers should run it as its own
- * fire-and-forget job rather than inline in a request handler.
+ * frame/sample data, so it stays stable across container remuxes or
+ * re-encodes of the same source (e.g. two yt-dlp downloads of the same URL
+ * at different times/qualities) — the "consistent and re-creatable" property
+ * duplicate-upload detection needs. Hashes the video stream (`0:v:0`) when
+ * one is present, falling back to the audio stream (`0:a:0`) for audio-only
+ * uploads, consistent with the `hasVideo` check in `download.js`. Decodes
+ * via hardware acceleration when this deployment has it configured (see
+ * {@link resolveDecodeHardwareAccelArgs}), same as transcode jobs. This
+ * decodes the entire stream, so it can be slow for long files; callers
+ * should run it as its own fire-and-forget job rather than inline in a
+ * request handler.
  *
  * @param {string} filePath Absolute path to the media file.
  * @returns {Promise<string>} Hash string of the form `sha256:<hex>`.
@@ -212,15 +218,21 @@ export async function probeVideoDuration(filePath) {
  *   output doesn't contain a parseable hash.
  */
 export async function computeContentHash(filePath) {
+  const { videoWidth, videoHeight } = await probeVideoDimensions(filePath);
+  const hasVideo = videoWidth != null && videoHeight != null;
+  const streamMap = hasVideo ? "0:v:0" : "0:a:0";
+  const hwArgs = resolveDecodeHardwareAccelArgs(getTranscodeConfig());
+
   const { stdout } = await execFileAsync(
     "ffmpeg",
     [
       "-v",
       "error",
+      ...hwArgs,
       "-i",
       filePath,
       "-map",
-      "0:v:0",
+      streamMap,
       "-f",
       "hash",
       "-hash",

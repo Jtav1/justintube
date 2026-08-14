@@ -129,7 +129,7 @@ async function fetchMediaCmsVideos(db, mediacmsUserId, restrictToIds) {
     `SELECT
        m.id, m.uid, m.title, m.description, m.media_file, m.thumbnail,
        m.uploaded_thumbnail, m.duration, m.enable_comments, m.state,
-       m.is_reviewed, m.listable, m.media_type, m.add_date,
+       m.media_type, m.add_date,
        COALESCE(array_agg(DISTINCT t.title) FILTER (WHERE t.title IS NOT NULL), '{}') AS tags
      FROM files_media m
      LEFT JOIN files_media_tags mt ON mt.media_id = m.id
@@ -147,42 +147,23 @@ async function fetchMediaCmsVideos(db, mediacmsUserId, restrictToIds) {
 /**
  * Maps a MediaCMS media row to a justintube visibility value.
  *
- * @param {{state: string, is_reviewed: boolean, listable: boolean}} row MediaCMS media row.
+ * @param {{state: string}} row MediaCMS media row.
  * @returns {"public"|"private"|"unlisted"} Justintube visibility.
  */
 function mapVisibility(row) {
-  let visibility;
   switch (row.state) {
     case "public":
-      visibility = "public";
-      break;
+      return "public";
     case "unlisted":
-      visibility = "unlisted";
-      break;
-    case "private":
-      visibility = "private";
-      break;
+      return "unlisted";
     case "friends":
       // No justintube equivalent for a friends-only audience; fall back to
       // the most restrictive option rather than over-exposing the video.
-      visibility = "private";
-      break;
+      return "private";
+    case "private":
     default:
-      visibility = "private";
+      return "private";
   }
-  // MediaCMS has no literal "hidden" state; pending-review (is_reviewed=false)
-  // is what "hidden" maps to for this migration, per instructions to treat
-  // unlisted/hidden the same way.
-  if (row.is_reviewed === false) {
-    visibility = "unlisted";
-  }
-  // MediaCMS's listable=false means "reachable by direct link, hidden from
-  // public listings" - justintube's "unlisted" is the equivalent. Only
-  // downgrades from "public"; a video already private stays private.
-  if (row.listable === false && visibility === "public") {
-    visibility = "unlisted";
-  }
-  return visibility;
 }
 
 /**

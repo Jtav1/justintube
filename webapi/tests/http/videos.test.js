@@ -555,6 +555,72 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(404);
     });
+
+    test("sets a private, day-long Cache-Control and an ETag on 200", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const thumbnail = await seedVideoThumbnail(upload.id);
+      writeMediaFixture(`thumbnails/${thumbnail.thumbnailFilename}`, Buffer.from("x"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers["cache-control"]).toBe("private, max-age=86400");
+      expect(res.headers.etag).toBeTruthy();
+    });
+
+    test("returns 304 with an empty body when If-None-Match matches", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const thumbnail = await seedVideoThumbnail(upload.id);
+      writeMediaFixture(`thumbnails/${thumbnail.thumbnailFilename}`, Buffer.from("x"));
+
+      const first = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
+      const etag = first.headers.etag;
+
+      const second = await client
+        .get(`/api/v1/videos/${upload.id}/thumbnail`)
+        .set("If-None-Match", etag);
+
+      expect(second.status).toBe(304);
+      expect(second.body).toEqual({});
+      expect(second.headers["content-length"]).toBeUndefined();
+    });
+
+    test("returns a full 200 when If-None-Match is stale", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const thumbnail = await seedVideoThumbnail(upload.id);
+      writeMediaFixture(`thumbnails/${thumbnail.thumbnailFilename}`, Buffer.from("x"));
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/thumbnail`)
+        .set("If-None-Match", '"stale-etag"');
+
+      expect(res.status).toBe(200);
+    });
+
+    test("still enforces the permission check when If-None-Match matches a now-inaccessible video", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "thumb-cache-owner-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+      const thumbnail = await seedVideoThumbnail(upload.id);
+      writeMediaFixture(`thumbnails/${thumbnail.thumbnailFilename}`, Buffer.from("x"));
+
+      const first = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
+      const etag = first.headers.etag;
+
+      await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer thumb-cache-owner-key")
+        .send({ visibility: "private" });
+
+      const second = await client
+        .get(`/api/v1/videos/${upload.id}/thumbnail`)
+        .set("If-None-Match", etag);
+
+      expect(second.status).toBe(404);
+    });
   });
 
   describe("PATCH /videos/{id} (updateVideo)", () => {
@@ -913,6 +979,51 @@ describe("Video discovery and metadata endpoints", () => {
       const anonRes = await client.get("/api/v1/videos");
       expect(findByTitle(anonRes, "Public perm video").viewerPermission).toBe("view");
     });
+
+    test("returns a paginated envelope with page/limit/totalHits/totalPages", async () => {
+      for (let i = 0; i < 5; i += 1) {
+        const upload = await seedUpload({ originalFilename: `page${i}.mp4` });
+        await seedMetadata(upload.id, { title: `Page video ${i}`, visibility: "public" });
+      }
+
+      const res = await client.get("/api/v1/videos").query({ limit: 2 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.page).toBe(1);
+      expect(res.body.limit).toBe(2);
+      expect(res.body.totalHits).toBe(5);
+      expect(res.body.totalPages).toBe(3);
+      expect(res.body.items).toHaveLength(2);
+    });
+
+    test("page 2 returns the next slice with no overlap", async () => {
+      for (let i = 0; i < 3; i += 1) {
+        const upload = await seedUpload({ originalFilename: `overlap${i}.mp4` });
+        await seedMetadata(upload.id, { title: `Overlap video ${i}`, visibility: "public" });
+      }
+
+      const page1 = await client.get("/api/v1/videos").query({ limit: 2, page: 1 });
+      const page2 = await client.get("/api/v1/videos").query({ limit: 2, page: 2 });
+
+      expect(page1.body.items).toHaveLength(2);
+      expect(page2.body.items).toHaveLength(1);
+      const page1Ids = page1.body.items.map((item) => item.id);
+      const page2Ids = page2.body.items.map((item) => item.id);
+      expect(page1Ids.filter((id) => page2Ids.includes(id))).toHaveLength(0);
+    });
+
+    test.each([
+      ["page", "0"],
+      ["page", "-1"],
+      ["page", "abc"],
+      ["limit", "0"],
+      ["limit", "100"],
+    ])("rejects invalid %s=%s with 400 invalid_query", async (key, value) => {
+      const res = await client.get("/api/v1/videos").query({ [key]: value });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_query");
+    });
   });
 
   describe("GET /videos/featured and /videos/newest", () => {
@@ -966,6 +1077,36 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.items.map((item) => item.title)).toEqual(
         expect.arrayContaining(["Newer", "Older"]),
       );
+    });
+
+    test("newest videos are paginated and totalHits counts every match", async () => {
+      for (let i = 0; i < 5; i += 1) {
+        const upload = await seedUpload({ originalFilename: `newest${i}.mp4` });
+        await seedMetadata(upload.id, { title: `Newest video ${i}`, visibility: "public" });
+      }
+
+      const res = await client.get("/api/v1/videos/newest").query({ limit: 2 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(2);
+      expect(res.body.totalHits).toBe(5);
+      expect(res.body.totalPages).toBe(3);
+    });
+
+    test("a featured video with multiple tags is counted and paginated exactly once", async () => {
+      const upload = await seedUpload({ originalFilename: "multi-tag-featured.mp4" });
+      await seedMetadata(upload.id, { title: "Multi-tag featured", visibility: "public" });
+      await seedFeaturedVideo(upload.id);
+      await seedContentTag(upload.id, { tag: "one" });
+      await seedContentTag(upload.id, { tag: "two" });
+      await seedContentTag(upload.id, { tag: "three" });
+
+      const res = await client.get("/api/v1/videos/featured");
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalHits).toBe(1);
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0].tags).toEqual(["one", "three", "two"]);
     });
   });
 
@@ -1832,6 +1973,34 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(200);
       expect(res.body.items.map((item) => item.title)).toContain("Tagged");
     });
+
+    test("videos for a tag are paginated and a multi-tagged video is counted once", async () => {
+      for (let i = 0; i < 3; i += 1) {
+        const upload = await seedUpload({ originalFilename: `tagpage${i}.mp4` });
+        await seedMetadata(upload.id, { title: `Tag page video ${i}`, visibility: "public" });
+        await seedContentTag(upload.id, { tag: "vlog" });
+      }
+      const multiTagged = await seedUpload({ originalFilename: "multi-tag.mp4" });
+      await seedMetadata(multiTagged.id, { title: "Multi-tag video", visibility: "public" });
+      await seedContentTag(multiTagged.id, { tag: "vlog" });
+      await seedContentTag(multiTagged.id, { tag: "other" });
+
+      const res = await client.get("/api/v1/tags/vlog/videos").query({ limit: 2 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalHits).toBe(4);
+      expect(res.body.totalPages).toBe(2);
+      expect(res.body.items).toHaveLength(2);
+      const allIds = new Set(res.body.items.map((item) => item.id));
+      expect(allIds.size).toBe(res.body.items.length);
+    });
+
+    test("rejects invalid page/limit with 400 invalid_query", async () => {
+      const res = await client.get("/api/v1/tags/music/videos").query({ limit: 0 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_query");
+    });
   });
 
   describe("GET /feed/subscriptions (feedSubscriptions)", () => {
@@ -1892,6 +2061,71 @@ describe("Video discovery and metadata endpoints", () => {
       const titles = res.body.items.map((item) => item.title);
       expect(titles).toContain("Not watched yet");
       expect(titles).not.toContain("Already watched");
+    });
+
+    test("returns a paginated envelope", async () => {
+      const viewer = await seedUserWithRoleAndKey("viewer", "feed-key-paginated");
+      const channel = await seedUser({ username: "channel_paginated" });
+      await seedSubscription(viewer.id, channel.id);
+      for (let i = 0; i < 3; i += 1) {
+        const upload = await seedUpload({ userId: channel.id, originalFilename: `feed${i}.mp4` });
+        await seedMetadata(upload.id, { title: `Feed video ${i}`, visibility: "public" });
+      }
+
+      const res = await client
+        .get("/api/v1/feed/subscriptions")
+        .query({ limit: 2 })
+        .set("Authorization", "Bearer feed-key-paginated");
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(2);
+      expect(res.body.totalHits).toBe(3);
+      expect(res.body.totalPages).toBe(2);
+    });
+
+    test("excludes watched videos before pagination, so a page still comes back full", async () => {
+      const viewer = await seedUserWithRoleAndKey("viewer", "feed-key-watched-page");
+      const channel = await seedUser({ username: "channel_watched_page" });
+      await seedSubscription(viewer.id, channel.id);
+
+      const unwatchedUploads = [];
+      for (let i = 0; i < 3; i += 1) {
+        const upload = await seedUpload({
+          userId: channel.id,
+          originalFilename: `unwatched${i}.mp4`,
+        });
+        await seedMetadata(upload.id, { title: `Unwatched ${i}`, visibility: "public" });
+        unwatchedUploads.push(upload);
+      }
+      for (let i = 0; i < 2; i += 1) {
+        const upload = await seedUpload({
+          userId: channel.id,
+          originalFilename: `watched${i}.mp4`,
+        });
+        await seedMetadata(upload.id, { title: `Watched ${i}`, visibility: "public" });
+        await seedUserViewHistory(upload.id, { userId: viewer.id });
+      }
+
+      const res = await client
+        .get("/api/v1/feed/subscriptions")
+        .query({ limit: 2, page: 1 })
+        .set("Authorization", "Bearer feed-key-watched-page");
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(2);
+      expect(res.body.totalHits).toBe(3);
+      expect(res.body.totalPages).toBe(2);
+      const titles = res.body.items.map((item) => item.title);
+      for (const title of titles) {
+        expect(title).toMatch(/^Unwatched/);
+      }
+
+      const page2 = await client
+        .get("/api/v1/feed/subscriptions")
+        .query({ limit: 2, page: 2 })
+        .set("Authorization", "Bearer feed-key-watched-page");
+      expect(page2.body.items).toHaveLength(1);
+      expect(page2.body.items[0].title).toMatch(/^Unwatched/);
     });
   });
 });
