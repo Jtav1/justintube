@@ -10,7 +10,8 @@ const PAGE_LIMIT = 24
 function FeaturedVideos() {
   const { error: toastError } = useToast()
   const [featured, setFeatured] = useState([])
-  const [visibleCount, setVisibleCount] = useState(PAGE_LIMIT)
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -19,9 +20,10 @@ function FeaturedVideos() {
     async function load() {
       setLoading(true)
       try {
-        const data = await getFeaturedVideos()
+        const data = await getFeaturedVideos({ page, limit: PAGE_LIMIT })
         if (!cancelled) {
-          setFeatured(data.items)
+          setFeatured((prev) => (page === 1 ? data.items : [...prev, ...data.items]))
+          setTotalPages(data.totalPages)
         }
       } catch {
         if (!cancelled) {
@@ -39,13 +41,12 @@ function FeaturedVideos() {
     return () => {
       cancelled = true
     }
-  }, [toastError])
+  }, [page, toastError])
 
-  const visibleFeatured = featured.slice(0, visibleCount)
-  const hasMoreFeatured = visibleCount < featured.length
+  const hasMoreFeatured = page < totalPages
 
   const handleLoadMoreFeatured = useCallback(() => {
-    setVisibleCount((prev) => prev + PAGE_LIMIT)
+    setPage((prev) => prev + 1)
   }, [])
 
   const loadMoreRef = useInfiniteScroll({
@@ -63,7 +64,7 @@ function FeaturedVideos() {
       <div className="video-listing-section">
         <h2 className="video-listing-section-title">Featured Videos</h2>
         <div className="video-listing-grid">
-          {visibleFeatured.map((video) => (
+          {featured.map((video) => (
             <VideoCard key={video.id} video={video} />
           ))}
         </div>

@@ -32,20 +32,22 @@ export async function getVideo(id) {
 /**
  * Lists featured videos the current viewer may see (public, plus their own
  * and any they hold a VIDEO_ACCESS grant for), newest-featured first.
- * @returns {Promise<{items: object[]}>}
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
  */
-export async function getFeaturedVideos() {
-  const res = await apiClient.get('/api/v1/videos/featured')
+export async function getFeaturedVideos({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/videos/featured', { params: { page, limit } })
   return res.data
 }
 
 /**
  * Lists videos the current viewer may see (public, plus their own and any
  * they hold a VIDEO_ACCESS grant for), newest first.
- * @returns {Promise<{items: object[]}>}
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
  */
-export async function getNewestVideos() {
-  const res = await apiClient.get('/api/v1/videos/newest')
+export async function getNewestVideos({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/videos/newest', { params: { page, limit } })
   return res.data
 }
 
@@ -296,11 +298,12 @@ export async function recordView(id) {
 
 /**
  * Lists public videos from channels the current user is subscribed to,
- * newest first. Requires authentication.
- * @returns {Promise<{items: object[]}>}
+ * excluding already-watched videos, newest first. Requires authentication.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
  */
-export async function getSubscriptionFeed() {
-  const res = await apiClient.get('/api/v1/feed/subscriptions')
+export async function getSubscriptionFeed({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/feed/subscriptions', { params: { page, limit } })
   return res.data
 }
 

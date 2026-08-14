@@ -37,6 +37,7 @@ import {
   resolveViewerPermission,
 } from "../lib/video-access.js";
 import { isVideoHidden, loadHiddenUploadIds } from "../lib/video-hidden.js";
+import { DEFAULT_LIMIT, parsePagination } from "../lib/pagination.js";
 import {
   addVideoToLikesPlaylist,
   removeVideoFromLikesPlaylist,
@@ -1008,7 +1009,20 @@ function sendNotFound(res) {
  * @param {import('sequelize').Model|null} [options.viewerUser] Authenticated caller, used to
  *   attach each item's `viewerPermission` (see {@link loadViewerPermissionsByUploadId}).
  * @param {import('sequelize').Model|null} [options.viewerRole] Authenticated caller's role.
- * @returns {Promise<object[]>} Serialized video items.
+ * @param {number} [options.page] 1-based page number. Defaults to 1.
+ * @param {number} [options.limit] Page size. Defaults to `DEFAULT_LIMIT`.
+ * @returns {Promise<{items: object[], totalHits: number}>} Serialized video items for the
+ *   requested page, plus the total number of matching videos across all pages.
+ *
+ * @remarks
+ * `totalHits` is computed via a standalone `OriginalUpload.count()` using the same
+ * `where`/`include` as the data query (rather than `findAndCountAll`), with
+ * `distinct: true, col: "id"` so a `required: true` include that joins multiple rows per
+ * upload doesn't inflate the count. This only stays correct if every `options.includes`
+ * entry with `required: true` is guaranteed to match at most one row per upload (e.g. a
+ * `hasOne` association, or a `hasMany` filtered down to a unique key) — a `required: true`
+ * include that can match multiple rows per upload will silently return fewer than `limit`
+ * distinct videos per page.
  */
 async function listPublicVideos(options = {}) {
   const visibilityOr = [{ "$VideoMetadata.visibility$": "public" }];
@@ -1037,11 +1051,14 @@ async function listPublicVideos(options = {}) {
   if (options.viewerUserId) {
     const hiddenUploadIds = await loadHiddenUploadIds(options.viewerUserId);
     if (hiddenUploadIds.size > 0) {
-      uploadWhere.id = { [Op.notIn]: [...hiddenUploadIds] };
+      const existingNotIn = uploadWhere.id?.[Op.notIn] || [];
+      uploadWhere.id = {
+        [Op.notIn]: [...new Set([...existingNotIn, ...hiddenUploadIds])],
+      };
     }
   }
 
-  const rows = await OriginalUpload.findAll({
+  const findOptions = {
     where: {
       ...uploadWhere,
       [Op.or]: visibilityOr,
@@ -1052,7 +1069,30 @@ async function listPublicVideos(options = {}) {
       { model: User, required: false },
       ...(options.includes || []),
     ],
+  };
+
+  const page = options.page ?? 1;
+  const limit = options.limit ?? DEFAULT_LIMIT;
+
+  const totalHits = await OriginalUpload.count({
+    ...findOptions,
+    distinct: true,
+    col: "id",
+  });
+
+  const rows = await OriginalUpload.findAll({
+    ...findOptions,
     order: options.order || [["id", "ASC"]],
+    limit,
+    offset: (page - 1) * limit,
+    // Sequelize's default `limit` + `include` behavior wraps the query in a
+    // subquery that only selects the base model's own columns, which breaks
+    // ordering by an association's column (e.g. VideoMetadata.createdAt).
+    // Disabling it is safe here because every include above is guaranteed
+    // at most one matching row per upload (see the `totalHits` remark on
+    // this function), so a plain LIMIT on the joined rows can't under- or
+    // over-count distinct videos.
+    subQuery: false,
   });
 
   const uploadIds = rows.map((upload) => upload.id);
@@ -1063,13 +1103,16 @@ async function listPublicVideos(options = {}) {
     options.viewerUser,
     options.viewerRole,
   );
-  return rows.map((upload) =>
-    serializeVideo(upload, upload.VideoMetadata, {
-      tags: tagsByUploadId.get(upload.id) || [],
-      viewerPermission: viewerPermissionByUploadId.get(upload.id),
-      ...reactionCountsByUploadId.get(upload.id),
-    }),
-  );
+  return {
+    items: rows.map((upload) =>
+      serializeVideo(upload, upload.VideoMetadata, {
+        tags: tagsByUploadId.get(upload.id) || [],
+        viewerPermission: viewerPermissionByUploadId.get(upload.id),
+        ...reactionCountsByUploadId.get(upload.id),
+      }),
+    ),
+    totalHits,
+  };
 }
 
 /**
@@ -1525,21 +1568,54 @@ export function createVideosRouter() {
    *     tags: [Videos]
    *     summary: List public videos
    *     operationId: listVideos
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
    *     responses:
    *       "200":
-   *         description: Public video list
+   *         description: Paginated public video list
+   *       "400":
+   *         description: Invalid page/limit
    */
   router.get("/videos", optionalAuth, async (req, res) => {
     try {
-      const items = await listPublicVideos({
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { items, totalHits } = await listPublicVideos({
         order: [
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
         viewerUser: req.user ?? null,
         viewerRole: req.authRole ?? null,
+        page,
+        limit,
       });
-      res.status(200).json({ items });
+      res.status(200).json({
+        items,
+        page,
+        limit,
+        totalHits,
+        totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
+      });
     } catch (err) {
       logger.error({ err }, "listVideos failed");
       res.status(500).json({
@@ -1559,20 +1635,53 @@ export function createVideosRouter() {
    *     tags: [Videos]
    *     summary: List featured public videos
    *     operationId: listFeaturedVideos
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
    *     responses:
    *       "200":
-   *         description: Featured video list
+   *         description: Paginated featured video list
+   *       "400":
+   *         description: Invalid page/limit
    */
   router.get("/videos/featured", optionalAuth, async (req, res) => {
     try {
-      const items = await listPublicVideos({
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { items, totalHits } = await listPublicVideos({
         includes: [{ model: FeaturedVideo, required: true }],
         order: [[FeaturedVideo, "createdAt", "DESC"]],
         viewerUserId: req.user?.id ?? null,
         viewerUser: req.user ?? null,
         viewerRole: req.authRole ?? null,
+        page,
+        limit,
       });
-      res.status(200).json({ items });
+      res.status(200).json({
+        items,
+        page,
+        limit,
+        totalHits,
+        totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
+      });
     } catch (err) {
       logger.error({ err }, "listFeaturedVideos failed");
       res.status(500).json({
@@ -1592,21 +1701,54 @@ export function createVideosRouter() {
    *     tags: [Videos]
    *     summary: List newest public videos
    *     operationId: listNewestVideos
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
    *     responses:
    *       "200":
-   *         description: Newest public video list
+   *         description: Paginated newest public video list
+   *       "400":
+   *         description: Invalid page/limit
    */
   router.get("/videos/newest", optionalAuth, async (req, res) => {
     try {
-      const items = await listPublicVideos({
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { items, totalHits } = await listPublicVideos({
         order: [
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user?.id ?? null,
         viewerUser: req.user ?? null,
         viewerRole: req.authRole ?? null,
+        page,
+        limit,
       });
-      res.status(200).json({ items });
+      res.status(200).json({
+        items,
+        page,
+        limit,
+        totalHits,
+        totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
+      });
     } catch (err) {
       logger.error({ err }, "listNewestVideos failed");
       res.status(500).json({
@@ -2011,6 +2153,18 @@ export function createVideosRouter() {
       const thumbnail = upload.VideoThumbnail;
       if (!thumbnail) {
         sendNotFound(res);
+        return;
+      }
+
+      // Content varies by viewer permission (checked above on every request,
+      // including ones that will 304), so caching must stay `private` rather
+      // than `public`/shared — a CDN or proxy must never serve a cached copy
+      // to a different, unauthorized viewer.
+      const etag = `"${thumbnail.id}-${thumbnail.updatedAt.getTime()}"`;
+      res.setHeader("ETag", etag);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      if (req.headers["if-none-match"] === etag) {
+        res.status(304).end();
         return;
       }
 
@@ -3825,9 +3979,26 @@ export function createVideosRouter() {
    *         required: true
    *         schema:
    *           type: string
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
    *     responses:
    *       "200":
-   *         description: Tagged public videos
+   *         description: Paginated tagged public videos
+   *       "400":
+   *         description: Invalid tag, page, or limit
    */
   router.get("/tags/:tag/videos", optionalAuth, async (req, res) => {
     try {
@@ -3840,7 +4011,14 @@ export function createVideosRouter() {
         return;
       }
 
-      const items = await listPublicVideos({
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
+      const { items, totalHits } = await listPublicVideos({
         includes: [
           {
             model: ContentTag,
@@ -3854,8 +4032,16 @@ export function createVideosRouter() {
         viewerUserId: req.user?.id ?? null,
         viewerUser: req.user ?? null,
         viewerRole: req.authRole ?? null,
+        page,
+        limit,
       });
-      res.status(200).json({ items });
+      res.status(200).json({
+        items,
+        page,
+        limit,
+        totalHits,
+        totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
+      });
     } catch (err) {
       logger.error({ err }, "listTagVideos failed");
       res.status(500).json({
@@ -3879,44 +4065,82 @@ export function createVideosRouter() {
    *     security:
    *       - cookieAuth: []
    *       - bearerApiKey: []
+   *     parameters:
+   *       - name: page
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 20
    *     responses:
    *       "200":
-   *         description: Subscription feed, excluding videos already in the caller's watch history
+   *         description: Paginated subscription feed, excluding videos already in the caller's watch history
+   *       "400":
+   *         description: Invalid page/limit
    *       "401":
    *         description: Unauthorized
    */
   router.get("/feed/subscriptions", requireAuth, async (req, res) => {
     try {
+      const pagination = parsePagination(req.query);
+      if (!pagination.ok) {
+        res.status(400).json({ error: "invalid_query", message: pagination.message });
+        return;
+      }
+      const { page, limit } = pagination;
+
       const subscriptions = await Subscription.findAll({
         where: { subscriberId: req.user.id },
         attributes: ["subscribedToId"],
       });
       const channelIds = subscriptions.map((row) => row.subscribedToId);
       if (channelIds.length === 0) {
-        res.status(200).json({ items: [] });
+        res.status(200).json({ items: [], page, limit, totalHits: 0, totalPages: 0 });
         return;
       }
 
-      const items = await listPublicVideos({
-        uploadWhere: { userId: { [Op.in]: channelIds } },
+      // Exclude already-watched videos before pagination (not after), so a
+      // page always comes back with `limit` items and `totalHits` reflects
+      // only what the caller would actually see.
+      const watchedRows = await UserViewHistory.findAll({
+        where: { userId: req.user.id },
+        attributes: ["originalUploadId"],
+      });
+      const watchedIds = watchedRows.map((row) => row.originalUploadId);
+
+      const uploadWhere = { userId: { [Op.in]: channelIds } };
+      if (watchedIds.length > 0) {
+        uploadWhere.id = { [Op.notIn]: watchedIds };
+      }
+
+      const { items, totalHits } = await listPublicVideos({
+        uploadWhere,
         order: [
           [{ model: VideoMetadata, as: "VideoMetadata" }, "createdAt", "DESC"],
         ],
         viewerUserId: req.user.id,
         viewerUser: req.user,
         viewerRole: req.authRole,
+        page,
+        limit,
       });
 
-      const uploadIds = items.map((item) => item.id);
-      const watchedRows = uploadIds.length
-        ? await UserViewHistory.findAll({
-            where: { userId: req.user.id, originalUploadId: { [Op.in]: uploadIds } },
-            attributes: ["originalUploadId"],
-          })
-        : [];
-      const watchedIds = new Set(watchedRows.map((row) => row.originalUploadId));
-
-      res.status(200).json({ items: items.filter((item) => !watchedIds.has(item.id)) });
+      res.status(200).json({
+        items,
+        page,
+        limit,
+        totalHits,
+        totalPages: totalHits === 0 ? 0 : Math.ceil(totalHits / limit),
+      });
     } catch (err) {
       logger.error({ err }, "feedSubscriptions failed");
       res.status(500).json({

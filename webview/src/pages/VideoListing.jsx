@@ -11,6 +11,7 @@ import LiveStreamCard from '../components/LiveStreamCard.jsx'
 import './VideoListing.css'
 
 const PAGE_LIMIT = 24
+const FEATURED_LIMIT = 12
 
 // Must match .video-listing-grid's grid-template-columns/gap in VideoListing.css
 // (repeat(auto-fill, minmax(FEATURED_MIN_CARD_WIDTH, 1fr)), gap: FEATURED_GRID_GAP),
@@ -24,8 +25,10 @@ function VideoListing() {
   const [live, setLive] = useState([])
   const [featured, setFeatured] = useState([])
   const [recent, setRecent] = useState([])
-  const [visibleCount, setVisibleCount] = useState(PAGE_LIMIT)
+  const [recentPage, setRecentPage] = useState(1)
+  const [recentTotalPages, setRecentTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [recentLoading, setRecentLoading] = useState(true)
   const [featuredColumns, setFeaturedColumns] = useState(1)
   const featuredGridRef = useRef(null)
 
@@ -52,19 +55,18 @@ function VideoListing() {
     return () => observer.disconnect()
   }, [featured])
 
+  // Featured strip only ever shows what fits on one row (see visibleFeatured
+  // below), with a link to the full /featured page for more - fetch it once,
+  // bounded, rather than paginating it here.
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       setLoading(true)
       try {
-        const [featuredData, recentData] = await Promise.all([
-          getFeaturedVideos(),
-          getNewestVideos(),
-        ])
+        const featuredData = await getFeaturedVideos({ limit: FEATURED_LIMIT })
         if (!cancelled) {
           setFeatured(featuredData.items)
-          setRecent(recentData.items)
         }
       } catch {
         if (!cancelled) {
@@ -98,16 +100,48 @@ function VideoListing() {
     }
   }, [toastError, livestreamEnabled])
 
-  const visibleRecent = recent.slice(0, visibleCount)
-  const hasMoreRecent = visibleCount < recent.length
+  // Recent Uploads is server-paginated: each scroll-triggered page bump below
+  // fetches the next slice instead of slicing an already-downloaded array.
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setRecentLoading(true)
+      try {
+        const recentData = await getNewestVideos({ page: recentPage, limit: PAGE_LIMIT })
+        if (!cancelled) {
+          setRecent((prev) =>
+            recentPage === 1 ? recentData.items : [...prev, ...recentData.items],
+          )
+          setRecentTotalPages(recentData.totalPages)
+        }
+      } catch {
+        if (!cancelled) {
+          toastError('Failed to load videos.')
+        }
+      } finally {
+        if (!cancelled) {
+          setRecentLoading(false)
+        }
+      }
+    }
+
+    load()
+
+    return () => {
+      cancelled = true
+    }
+  }, [recentPage, toastError])
+
+  const hasMoreRecent = recentPage < recentTotalPages
 
   const handleLoadMoreRecent = useCallback(() => {
-    setVisibleCount((prev) => prev + PAGE_LIMIT)
+    setRecentPage((prev) => prev + 1)
   }, [])
 
   const loadMoreRef = useInfiniteScroll({
     hasMore: hasMoreRecent,
-    loading,
+    loading: recentLoading,
     onLoadMore: handleLoadMoreRecent,
   })
 
@@ -118,7 +152,7 @@ function VideoListing() {
 
   return (
     <section className="video-listing">
-      {!loading && live.length === 0 && featured.length === 0 && recent.length === 0 && (
+      {!loading && !recentLoading && live.length === 0 && featured.length === 0 && recent.length === 0 && (
         <p className="video-listing-empty">No videos yet.</p>
       )}
 
@@ -157,7 +191,7 @@ function VideoListing() {
       <div className="video-listing-section">
         <h2 className="video-listing-section-title">Recent Uploads</h2>
         <div className="video-listing-grid">
-          {visibleRecent.map((video) => (
+          {recent.map((video) => (
             <VideoCard key={video.id} video={video} />
           ))}
         </div>
