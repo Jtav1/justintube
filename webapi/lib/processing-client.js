@@ -217,6 +217,27 @@ export async function removeTranscodeJob(jobId) {
 }
 
 /**
+ * Asks the processing service to retry every currently-failed
+ * duplicate-upload content-hash job it still has queued in Redis (a failed
+ * hash job is deliberately never auto-removed - see `removeOnFail: false` on
+ * the processing-side queue) - except one that has already run 7 times
+ * (`MAX_HASH_JOB_RUNS` in `processing/lib/queue.js`, tracked via a `runCount`
+ * stored on the job's own data), which is discarded outright instead of
+ * retried again. Used by webapi's nightly hash-reconcile cron; not scoped to
+ * a single upload, since the cron always wants "every failed hash job"
+ * retried/discarded in one call.
+ *
+ * @returns {Promise<TranscodeBatchRequestResult & { body: { retried: string[], discarded: string[], failed: Array<{jobId: string, error: string}> } | null }>}
+ *   Outcome of the processing call.
+ */
+export async function retryFailedHashJobs() {
+  return processingFetch("/transcode/retry-failed-hashes", {
+    method: "POST",
+    body: null,
+  });
+}
+
+/**
  * Checks whether the processing service is reachable and reports itself
  * healthy. Used to gate features that depend on it (e.g. URL import).
  *

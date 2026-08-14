@@ -13,6 +13,7 @@ import {
 } from "./seed.js";
 import { syncSessionStore } from "./auth/session.js";
 import { generateVideoId } from "./video-id.js";
+import { logger } from "./logger.js";
 
 /**
  * SQLite views that are no longer part of the application schema and should be
@@ -127,7 +128,7 @@ async function repairSqliteBrokenForeignKeys() {
           `ALTER TABLE \`${repairName}\` RENAME TO \`${name}\``,
         );
         await sequelize.query("COMMIT");
-        console.log(`[api]: repaired SQLite foreign keys on ${name}`);
+        logger.info(`[api]: repaired SQLite foreign keys on ${name}`);
       } catch (error) {
         await sequelize.query("ROLLBACK").catch(() => {});
         throw error;
@@ -290,7 +291,7 @@ async function ensureSqliteMissingColumns() {
       continue;
     }
     await sequelize.query(`ALTER TABLE \`${table}\` ADD COLUMN ${ddl}`);
-    console.log(`[api]: added SQLite column ${table}.${column}`);
+    logger.info(`[api]: added SQLite column ${table}.${column}`);
   }
 }
 
@@ -312,9 +313,7 @@ async function ensureSqliteSchema() {
     return;
   }
 
-  console.log(
-    `[api]: creating missing SQLite tables: ${missing.join(", ")}`,
-  );
+  logger.info(`[api]: creating missing SQLite tables: ${missing.join(", ")}`);
   await sequelize.sync();
   await ensureSqliteMissingColumns();
 }
@@ -446,7 +445,7 @@ async function migrateUserNotificationSettingsFk() {
         ? "`notification_type_id` INTEGER"
         : "`notification_type_id` INT UNSIGNED NULL";
     await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
-    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.notification_type_id`);
+    logger.info(`[api]: added ${DB_CLIENT} column ${TABLE}.notification_type_id`);
   }
 
   const hasOldColumn = await columnExists(TABLE, "notification_type");
@@ -472,7 +471,7 @@ async function migrateUserNotificationSettingsFk() {
         `ALTER TABLE \`${TABLE}\` DROP INDEX \`uq_user_notification_settings_user_type\``,
       );
     }
-    console.log(`[api]: dropped index uq_user_notification_settings_user_type on ${TABLE}`);
+    logger.info(`[api]: dropped index uq_user_notification_settings_user_type on ${TABLE}`);
   }
 
   if (!(await indexExists(TABLE, "uq_user_notification_settings_user_type_id"))) {
@@ -485,12 +484,12 @@ async function migrateUserNotificationSettingsFk() {
         `ALTER TABLE \`${TABLE}\` ADD UNIQUE INDEX \`uq_user_notification_settings_user_type_id\` (\`user_id\`, \`notification_type_id\`)`,
       );
     }
-    console.log(`[api]: created index uq_user_notification_settings_user_type_id on ${TABLE}`);
+    logger.info(`[api]: created index uq_user_notification_settings_user_type_id on ${TABLE}`);
   }
 
   if (hasOldColumn) {
     await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP COLUMN \`notification_type\``);
-    console.log(`[api]: dropped column ${TABLE}.notification_type`);
+    logger.info(`[api]: dropped column ${TABLE}.notification_type`);
   }
 }
 
@@ -518,7 +517,7 @@ async function migrateNotificationsFk() {
         ? "`notification_type_id` INTEGER"
         : "`notification_type_id` INT UNSIGNED NULL";
     await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
-    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.notification_type_id`);
+    logger.info(`[api]: added ${DB_CLIENT} column ${TABLE}.notification_type_id`);
   }
 
   if (await columnExists(TABLE, "notification_type")) {
@@ -539,7 +538,7 @@ async function migrateNotificationsFk() {
     }
 
     await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP COLUMN \`notification_type\``);
-    console.log(`[api]: migrated ${TABLE}.notification_type to notification_type_id`);
+    logger.info(`[api]: migrated ${TABLE}.notification_type to notification_type_id`);
   }
 }
 
@@ -577,7 +576,7 @@ async function migrateAccessPermissionForeignKeys() {
           ? "`permission_id` INTEGER"
           : "`permission_id` INT UNSIGNED NULL";
       await sequelize.query(`ALTER TABLE \`${table}\` ADD COLUMN ${ddl}`);
-      console.log(`[api]: added ${DB_CLIENT} column ${table}.permission_id`);
+      logger.info(`[api]: added ${DB_CLIENT} column ${table}.permission_id`);
     }
 
     const [{ count }] = await sequelize.query(
@@ -589,7 +588,7 @@ async function migrateAccessPermissionForeignKeys() {
         `UPDATE \`${table}\` SET \`permission_id\` = :viewId WHERE \`permission_id\` IS NULL`,
         { replacements: { viewId: viewPermission.id } },
       );
-      console.log(`[api]: backfilled ${count} ${table}.permission_id value(s) to "view"`);
+      logger.info(`[api]: backfilled ${count} ${table}.permission_id value(s) to "view"`);
     }
 
     if (DB_CLIENT === "mysql") {
@@ -623,7 +622,7 @@ async function migrateOriginalUploadVideoId() {
         ? "`video_id` VARCHAR BINARY(6)"
         : "`video_id` VARCHAR(6) BINARY NULL";
     await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
-    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.video_id`);
+    logger.info(`[api]: added ${DB_CLIENT} column ${TABLE}.video_id`);
   }
 
   const hasOldColumn = await columnExists(TABLE, "uuid_name");
@@ -650,7 +649,7 @@ async function migrateOriginalUploadVideoId() {
       );
     }
     if (pending.length > 0) {
-      console.log(`[api]: backfilled ${pending.length} ${TABLE}.video_id value(s)`);
+      logger.info(`[api]: backfilled ${pending.length} ${TABLE}.video_id value(s)`);
     }
   }
 
@@ -660,7 +659,7 @@ async function migrateOriginalUploadVideoId() {
     } else {
       await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP INDEX \`uq_uuid_name\``);
     }
-    console.log(`[api]: dropped index uq_uuid_name on ${TABLE}`);
+    logger.info(`[api]: dropped index uq_uuid_name on ${TABLE}`);
   }
 
   if (!(await indexExists(TABLE, "uq_video_id"))) {
@@ -673,7 +672,7 @@ async function migrateOriginalUploadVideoId() {
         `ALTER TABLE \`${TABLE}\` ADD UNIQUE INDEX \`uq_video_id\` (\`video_id\`)`,
       );
     }
-    console.log(`[api]: created index uq_video_id on ${TABLE}`);
+    logger.info(`[api]: created index uq_video_id on ${TABLE}`);
   }
 
   if (hasOldColumn) {
@@ -683,7 +682,7 @@ async function migrateOriginalUploadVideoId() {
       );
     }
     await sequelize.query(`ALTER TABLE \`${TABLE}\` DROP COLUMN \`uuid_name\``);
-    console.log(`[api]: migrated ${TABLE}.uuid_name to video_id`);
+    logger.info(`[api]: migrated ${TABLE}.uuid_name to video_id`);
   }
 }
 
@@ -711,7 +710,7 @@ async function migrateUserViewHistoryDedup() {
     await sequelize.query(
       `UPDATE \`${TABLE}\` SET \`updated_at\` = \`created_at\` WHERE \`updated_at\` IS NULL`,
     );
-    console.log(`[api]: added ${DB_CLIENT} column ${TABLE}.updated_at`);
+    logger.info(`[api]: added ${DB_CLIENT} column ${TABLE}.updated_at`);
   }
 
   if (!(await indexExists(TABLE, "uq_user_view_history_user_upload"))) {
@@ -731,7 +730,7 @@ async function migrateUserViewHistoryDedup() {
                AND t1.\`id\` < t2.\`id\`
       `);
     }
-    console.log(`[api]: deduplicated ${TABLE} rows ahead of unique index creation`);
+    logger.info(`[api]: deduplicated ${TABLE} rows ahead of unique index creation`);
 
     if (DB_CLIENT === "sqlite") {
       await sequelize.query(
@@ -742,7 +741,7 @@ async function migrateUserViewHistoryDedup() {
         `ALTER TABLE \`${TABLE}\` ADD UNIQUE INDEX \`uq_user_view_history_user_upload\` (\`user_id\`, \`original_upload_id\`)`,
       );
     }
-    console.log(`[api]: created index uq_user_view_history_user_upload on ${TABLE}`);
+    logger.info(`[api]: created index uq_user_view_history_user_upload on ${TABLE}`);
   }
 
   if (await indexExists(TABLE, "idx_user_view_history_user_created")) {
@@ -753,7 +752,7 @@ async function migrateUserViewHistoryDedup() {
         `ALTER TABLE \`${TABLE}\` DROP INDEX \`idx_user_view_history_user_created\``,
       );
     }
-    console.log(`[api]: dropped index idx_user_view_history_user_created on ${TABLE}`);
+    logger.info(`[api]: dropped index idx_user_view_history_user_created on ${TABLE}`);
   }
 }
 
@@ -789,7 +788,7 @@ async function migrateNotificationTypeForeignKeys() {
  * @returns {Promise<void>} Resolves once schema sync and seeding have completed.
  */
 export async function ensureSchema() {
-  console.log(`[api]: initializing ${DB_CLIENT} database`);
+  logger.info(`[api]: initializing ${DB_CLIENT} database`);
 
   await migrateOriginalUploadVideoId();
   await migrateUserViewHistoryDedup();

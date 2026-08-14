@@ -46,6 +46,7 @@ import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Relative media subfolder where thumbnail images are expected to live
@@ -1151,6 +1152,33 @@ function parseCommentsEnabled(raw) {
 }
 
 /**
+ * Parses an optional createdAt override (ISO 8601 date-time string). Exists
+ * to backdate a video's listed upload date to its true original date when
+ * importing from another platform (e.g. `migration-tools/migrate-user-videos.js`),
+ * where the upload API call itself necessarily happens long after that date —
+ * not intended for routine editing.
+ *
+ * @param {unknown} raw Body createdAt value.
+ * @returns {{ok: true, value?: Date}|{ok: false, message: string}} Parsed or error.
+ */
+function parseCreatedAt(raw) {
+  if (raw === undefined) {
+    return { ok: true };
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return {
+      ok: false,
+      message: "createdAt must be a valid ISO 8601 date-time string.",
+    };
+  }
+  if (date.getTime() > Date.now()) {
+    return { ok: false, message: "createdAt cannot be in the future." };
+  }
+  return { ok: true, value: date };
+}
+
+/**
  * Parses an optional tags array for replace-all semantics.
  *
  * @param {unknown} raw Body tags value.
@@ -1220,6 +1248,10 @@ function parseUpdateVideoBody(body) {
   if (!commentsEnabled.ok) {
     return commentsEnabled;
   }
+  const createdAt = parseCreatedAt(body.createdAt);
+  if (!createdAt.ok) {
+    return createdAt;
+  }
   const tags = parseTags(body.tags);
   if (!tags.ok) {
     return tags;
@@ -1238,12 +1270,15 @@ function parseUpdateVideoBody(body) {
   if (commentsEnabled.value !== undefined) {
     patch.commentsEnabled = commentsEnabled.value;
   }
+  if (createdAt.value !== undefined) {
+    patch.createdAt = createdAt.value;
+  }
 
   if (Object.keys(patch).length === 0 && tags.value === undefined) {
     return {
       ok: false,
       message:
-        "At least one of title, description, visibility, commentsEnabled, or tags is required.",
+        "At least one of title, description, visibility, commentsEnabled, createdAt, or tags is required.",
     };
   }
 
@@ -1506,7 +1541,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listVideos failed:", err);
+      logger.error({ err }, "listVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list videos.",
@@ -1539,7 +1574,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listFeaturedVideos failed:", err);
+      logger.error({ err }, "listFeaturedVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list featured videos.",
@@ -1573,7 +1608,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listNewestVideos failed:", err);
+      logger.error({ err }, "listNewestVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list newest videos.",
@@ -1671,7 +1706,7 @@ export function createVideosRouter() {
 
       res.status(200).json(serializeVideo(upload, metadata, serializeOptions));
     } catch (err) {
-      console.error("getVideo failed:", err);
+      logger.error({ err }, "getVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load video. Does this video exist?",
@@ -1736,7 +1771,7 @@ export function createVideosRouter() {
         .type("html")
         .send(renderUnfurlHtml(upload, metadata, renditions));
     } catch (err) {
-      console.error("getVideoUnfurl failed:", err);
+      logger.error({ err }, "getVideoUnfurl failed");
       sendUnfurlFallback(res);
     }
   });
@@ -1808,7 +1843,7 @@ export function createVideosRouter() {
       );
       res.status(200).type("html").send(renderPlayerHtml(upload, smallest));
     } catch (err) {
-      console.error("getVideoPlayer failed:", err);
+      logger.error({ err }, "getVideoPlayer failed");
       sendPlayerFallback(res);
     }
   });
@@ -1917,7 +1952,7 @@ export function createVideosRouter() {
         version.mimeType,
       );
     } catch (err) {
-      console.error("getVideoStream failed:", err);
+      logger.error({ err }, "getVideoStream failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -1985,7 +2020,7 @@ export function createVideosRouter() {
       const contentType = mimeTypeForImage(thumbnail.thumbnailFilename);
       await streamFileWithRangeSupport(req, res, absolutePath, contentType);
     } catch (err) {
-      console.error("getVideoThumbnail failed:", err);
+      logger.error({ err }, "getVideoThumbnail failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -2125,7 +2160,7 @@ export function createVideosRouter() {
         if (req.file) {
           await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
         }
-        console.error("updateVideoThumbnail failed:", err);
+        logger.error({ err }, "updateVideoThumbnail failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update thumbnail.",
@@ -2138,10 +2173,12 @@ export function createVideosRouter() {
   /**
    * PATCH /videos/:id — updateVideo
    * Auth: required. Owner, admin, or a user with an "edit" VIDEO_ACCESS grant.
-   * Body: title, description, visibility, commentsEnabled, tags. A caller who
-   * is not the owner/admin (i.e. an edit-grantee) may update any field except
-   * `visibility` — including `visibility` in the body at all is rejected
-   * outright (the whole request, not just that field).
+   * Body: title, description, visibility, commentsEnabled, createdAt, tags. A
+   * caller who is not the owner/admin (i.e. an edit-grantee) may update any
+   * field except `visibility` or `createdAt` — including either of those in
+   * the body at all is rejected outright (the whole request, not just that
+   * field). `createdAt` backdates the video's listed upload date (e.g. for a
+   * bulk migration from another platform) and cannot be set in the future.
    *
    * @openapi
    * /api/v1/videos/{id}:
@@ -2159,13 +2196,40 @@ export function createVideosRouter() {
    *         required: true
    *         schema:
    *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               title:
+   *                 type: string
+   *               description:
+   *                 type: string
+   *                 nullable: true
+   *               visibility:
+   *                 type: string
+   *                 enum: [public, unlisted, private, hidden]
+   *               commentsEnabled:
+   *                 type: boolean
+   *               createdAt:
+   *                 type: string
+   *                 format: date-time
+   *                 description: >
+   *                   Backdates the video's upload date. Owner/admin only;
+   *                   cannot be in the future.
+   *               tags:
+   *                 type: array
+   *                 items:
+   *                   type: string
    *     responses:
    *       "200":
    *         description: Updated video
    *       "401":
    *         description: Unauthorized
    *       "403":
-   *         description: Not the owner/admin/edit-grantee, or an edit-grantee attempted to change visibility
+   *         description: Not the owner/admin/edit-grantee, or an edit-grantee attempted to change visibility or createdAt
    */
   router.patch("/videos/:id", requireAuth, requireApiKeyScope("content_edit"), async (req, res) => {
     try {
@@ -2213,11 +2277,31 @@ export function createVideosRouter() {
         return;
       }
 
+      if (!isOwnerAdmin && parsed.patch.createdAt !== undefined) {
+        res.status(403).json({
+          error: "forbidden",
+          message: "Only the owner or an admin can change this video's upload date.",
+        });
+        return;
+      }
+
       const previousVisibility = metadata.visibility;
 
       await sequelize.transaction(async (transaction) => {
         if (Object.keys(parsed.patch).length > 0) {
-          await metadata.update(parsed.patch, { transaction });
+          // `createdAt` is a Sequelize-managed timestamp attribute: the
+          // ordinary set()/update() path treats it as read-only and silently
+          // drops it (never marks it "changed", so save() never writes it),
+          // so it has to go through setDataValue + an explicit save `fields`
+          // list instead.
+          const { createdAt, ...restPatch } = parsed.patch;
+          if (Object.keys(restPatch).length > 0) {
+            await metadata.update(restPatch, { transaction });
+          }
+          if (createdAt !== undefined) {
+            metadata.setDataValue("createdAt", createdAt);
+            await metadata.save({ fields: ["createdAt"], transaction });
+          }
           if (parsed.patch.visibility === "hidden") {
             // Viewer grants are only meaningful for private videos, so wipe
             // them on entry to hidden rather than leaving stale access
@@ -2286,7 +2370,7 @@ export function createVideosRouter() {
         }),
       );
     } catch (err) {
-      console.error("updateVideo failed:", err);
+      logger.error({ err }, "updateVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update video.",
@@ -2349,7 +2433,7 @@ export function createVideosRouter() {
       removeVideoDocument(id);
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("deleteVideo failed:", err);
+      logger.error({ err }, "deleteVideo failed");
       res.status(500).json({
         success: false,
         error: "internal_error",
@@ -2433,7 +2517,7 @@ export function createVideosRouter() {
           }),
         );
       } catch (err) {
-        console.error("delistVideo failed:", err);
+        logger.error({ err }, "delistVideo failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to delist video.",
@@ -2519,7 +2603,7 @@ export function createVideosRouter() {
 
         res.status(200).json({ featured: req.body.featured });
       } catch (err) {
-        console.error("setVideoFeatured failed:", err);
+        logger.error({ err }, "setVideoFeatured failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update featured status.",
@@ -2595,7 +2679,7 @@ export function createVideosRouter() {
         })),
       });
     } catch (err) {
-      console.error("listVideoAccess failed:", err);
+      logger.error({ err }, "listVideoAccess failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list video access.",
@@ -2672,7 +2756,7 @@ export function createVideosRouter() {
         })),
       });
     } catch (err) {
-      console.error("getVideoProcessingStatus failed:", err);
+      logger.error({ err }, "getVideoProcessingStatus failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load processing status.",
@@ -2772,7 +2856,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items });
     } catch (err) {
-      console.error("setVideoEditors failed:", err);
+      logger.error({ err }, "setVideoEditors failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to set video editors.",
@@ -2880,7 +2964,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items });
     } catch (err) {
-      console.error("setVideoViewers failed:", err);
+      logger.error({ err }, "setVideoViewers failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to set video viewers.",
@@ -2948,7 +3032,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ viewCount: Number(metadata.viewCount) });
     } catch (err) {
-      console.error("recordVideoView failed:", err);
+      logger.error({ err }, "recordVideoView failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to record view.",
@@ -3031,7 +3115,7 @@ export function createVideosRouter() {
 
       res.status(200).json(result);
     } catch (err) {
-      console.error("likeVideo failed:", err);
+      logger.error({ err }, "likeVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to like video.",
@@ -3102,7 +3186,7 @@ export function createVideosRouter() {
 
       res.status(200).json(result);
     } catch (err) {
-      console.error("dislikeVideo failed:", err);
+      logger.error({ err }, "dislikeVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to dislike video.",
@@ -3181,7 +3265,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ hidden: true });
     } catch (err) {
-      console.error("hideVideo failed:", err);
+      logger.error({ err }, "hideVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to hide video.",
@@ -3239,7 +3323,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ hidden: false });
     } catch (err) {
-      console.error("unhideVideo failed:", err);
+      logger.error({ err }, "unhideVideo failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to unhide video.",
@@ -3377,7 +3461,7 @@ export function createVideosRouter() {
 
       res.status(201).json(serializeComment(comment));
     } catch (err) {
-      console.error("createComment failed:", err);
+      logger.error({ err }, "createComment failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to create comment.",
@@ -3440,7 +3524,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items: comments.map(serializeComment) });
     } catch (err) {
-      console.error("listComments failed:", err);
+      logger.error({ err }, "listComments failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list comments.",
@@ -3561,7 +3645,7 @@ export function createVideosRouter() {
 
         res.status(200).json(serializeComment(comment));
       } catch (err) {
-        console.error("updateComment failed:", err);
+        logger.error({ err }, "updateComment failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update comment.",
@@ -3656,7 +3740,7 @@ export function createVideosRouter() {
         await comment.destroy();
         res.status(204).send();
       } catch (err) {
-        console.error("deleteComment failed:", err);
+        logger.error({ err }, "deleteComment failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to delete comment.",
@@ -3717,7 +3801,7 @@ export function createVideosRouter() {
         })),
       });
     } catch (err) {
-      console.error("listTags failed:", err);
+      logger.error({ err }, "listTags failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list tags.",
@@ -3773,7 +3857,7 @@ export function createVideosRouter() {
       });
       res.status(200).json({ items });
     } catch (err) {
-      console.error("listTagVideos failed:", err);
+      logger.error({ err }, "listTagVideos failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list tag videos.",
@@ -3834,7 +3918,7 @@ export function createVideosRouter() {
 
       res.status(200).json({ items: items.filter((item) => !watchedIds.has(item.id)) });
     } catch (err) {
-      console.error("feedSubscriptions failed:", err);
+      logger.error({ err }, "feedSubscriptions failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load subscription feed.",

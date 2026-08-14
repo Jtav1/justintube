@@ -9,6 +9,7 @@ import {
   seedUserApiKey,
   setupSchema,
 } from "../helpers/db.js";
+import { logger } from "../../lib/logger.js";
 
 /**
  * HTTP contract tests for the implemented raw upload endpoint
@@ -473,7 +474,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
   test("returns 201 with failures when processing rejects enqueue", async () => {
     await seedTranscodeProfile();
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = jest.spyOn(logger, "error").mockImplementation(() => {});
 
     globalThis.fetch = jest.fn(async () => ({
       ok: false,
@@ -506,7 +507,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
   test("returns 201 with failures when processing is unreachable", async () => {
     await seedTranscodeProfile();
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = jest.spyOn(logger, "error").mockImplementation(() => {});
 
     globalThis.fetch = jest.fn(async () => {
       throw new Error("fetch failed");

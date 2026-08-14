@@ -662,6 +662,63 @@ describe("Video discovery and metadata endpoints", () => {
         },
       ]);
     });
+
+    test("owner can backdate createdAt (e.g. for a platform migration)", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-backdate-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Migrated video" });
+
+      const backdated = "2019-03-14T00:00:00.000Z";
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-backdate-key")
+        .send({ createdAt: backdated });
+
+      expect(res.status).toBe(200);
+      expect(res.body.createdAt).toBe(backdated);
+
+      const rows = await queryRows(
+        "SELECT * FROM VIDEO_METADATA WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(new Date(rows[0].created_at).toISOString()).toBe(backdated);
+    });
+
+    test("rejects a createdAt value in the future", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-future-createdat-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Video" });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-future-createdat-key")
+        .send({ createdAt: "2999-01-01T00:00:00.000Z" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+
+    test("an edit-grantee's PATCH including createdAt is rejected, whole request unchanged", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-editgrantee-createdat");
+      const editor = await seedUserWithRoleAndKey("viewer", "editor-editgrantee-createdat");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { title: "Untouched title" });
+      await seedVideoAccess(upload.id, editor.id, { permission: "edit" });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer editor-editgrantee-createdat")
+        .send({ title: "Should not apply", createdAt: "2019-01-01T00:00:00.000Z" });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+
+      const getRes = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer editor-editgrantee-createdat");
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.title).toBe("Untouched title");
+    });
   });
 
   describe("DELETE /videos/{id} (deleteVideo)", () => {

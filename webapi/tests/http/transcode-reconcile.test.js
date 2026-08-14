@@ -9,6 +9,7 @@ import {
 } from "../helpers/db.js";
 import { reconcileFileVersion } from "../../lib/transcode-reconcile.js";
 import { FileVersion } from "../../lib/models/index.js";
+import { logger } from "../../lib/logger.js";
 
 /**
  * Unit tests for stale FILE_VERSIONS reconciliation against processing job state.
@@ -68,7 +69,7 @@ describe("reconcileFileVersion", () => {
   });
 
   test("marks failed jobs, removes them, and logs an error", async () => {
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = jest.spyOn(logger, "error").mockImplementation(() => {});
     const upload = await seedUpload({ status: "processing" });
     const version = await seedFileVersion(upload.id, {
       status: "processing",

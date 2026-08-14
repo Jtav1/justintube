@@ -160,6 +160,10 @@ services:
       # webapi/lib/auth/cors.js).
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEBVIEW_PORT:-5173}}
       ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
+      # Nightly retry of failed duplicate-upload content-hash jobs (API-side
+      # cron). Only relevant when ENABLE_DUPLICATE_UPLOAD_DETECTION=true above.
+      DUPLICATE_HASH_RECONCILE_ENABLED: ${DUPLICATE_HASH_RECONCILE_ENABLED:-true}
+      DUPLICATE_HASH_RECONCILE_CRON: ${DUPLICATE_HASH_RECONCILE_CRON:-0 3 * * *}
 
     ports:
       - "${PORT:-3000}:3000"

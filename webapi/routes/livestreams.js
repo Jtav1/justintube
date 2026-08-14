@@ -6,6 +6,7 @@ import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { Livestream, User } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
 import { isAdmin } from "../lib/video-access.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maximum length for a livestream title, mirroring VIDEO_METADATA.title (see
@@ -153,7 +154,7 @@ export function createLivestreamsRouter() {
       }
       res.json(serializeLivestream(row));
     } catch (err) {
-      console.error("getMyLivestream failed:", err);
+      logger.error({ err }, "getMyLivestream failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to fetch livestream.",
@@ -216,7 +217,7 @@ export function createLivestreamsRouter() {
 
       res.json({ items: rows.map(serializeLivestream), page, limit });
     } catch (err) {
-      console.error("listLivestreams failed:", err);
+      logger.error({ err }, "listLivestreams failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list livestreams.",
@@ -270,7 +271,7 @@ export function createLivestreamsRouter() {
 
       res.json(serializeLivestream(row));
     } catch (err) {
-      console.error("getLivestream failed:", err);
+      logger.error({ err }, "getLivestream failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to fetch livestream.",
@@ -398,7 +399,7 @@ export function createLivestreamsRouter() {
       await row.reload({ include: [{ model: User, required: true, attributes: ["id", "username", "displayName"] }] });
       res.json(serializeLivestream(row));
     } catch (err) {
-      console.error("updateLivestream failed:", err);
+      logger.error({ err }, "updateLivestream failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to update livestream.",
@@ -460,7 +461,7 @@ export function createLivestreamsRouter() {
           row.status === "live" && hlsBaseUrl ? `${hlsBaseUrl}/live/${row.userId}/index.m3u8` : null,
       });
     } catch (err) {
-      console.error("getLivestreamPlayback failed:", err);
+      logger.error({ err }, "getLivestreamPlayback failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to fetch playback info.",
@@ -515,7 +516,7 @@ export function createLivestreamsRouter() {
         viewerCount: row.viewerCount,
       });
     } catch (err) {
-      console.error("getUserLiveStatus failed:", err);
+      logger.error({ err }, "getUserLiveStatus failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to fetch live status.",

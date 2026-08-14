@@ -9,6 +9,7 @@ import {
 } from "./models/index.js";
 import { hashPassword } from "./auth/password.js";
 import { PUBLIC_THEME_OWNER } from "./models/theme.js";
+import { logger } from "./logger.js";
 
 /**
  * The standard authorization roles seeded into the ROLES table. Names are kept
@@ -304,7 +305,7 @@ export async function disableDeprecatedNotificationTypes() {
       { where: { name, enabled: true } },
     );
     if (count > 0) {
-      console.log(`[api]: disabled deprecated notification type "${name}" (superseded by "${supersededBy}")`);
+      logger.info(`[api]: disabled deprecated notification type "${name}" (superseded by "${supersededBy}")`);
     }
   }
 }
@@ -413,7 +414,7 @@ export async function seedThemes() {
     });
 
     if (created) {
-      console.log(`[api]: seeded "${name}" theme`);
+      logger.info(`[api]: seeded "${name}" theme`);
     }
   }
 }
@@ -430,15 +431,13 @@ export async function seedAdminUser() {
   const password = String(process.env.ADMIN_PASSWORD || "");
 
   if (!username || !password) {
-    console.warn(
-      "[api]: ADMIN_USERNAME or ADMIN_PASSWORD unset; skipping admin user seed.",
-    );
+    logger.warn("[api]: ADMIN_USERNAME or ADMIN_PASSWORD unset; skipping admin user seed.");
     return;
   }
 
   const adminRole = await Role.findOne({ where: { name: "admin" } });
   if (!adminRole) {
-    console.warn("[api]: admin role missing; skipping admin user seed.");
+    logger.warn("[api]: admin role missing; skipping admin user seed.");
     return;
   }
 
@@ -458,7 +457,7 @@ export async function seedAdminUser() {
   });
 
   if (created) {
-    console.log(`[api]: seeded admin user "${username}"`);
+    logger.info(`[api]: seeded admin user "${username}"`);
   }
 }
 
@@ -504,9 +503,7 @@ export async function seedDemoUsers() {
   for (const { username, role } of DEFAULT_DEMO_USERS) {
     const userRole = await Role.findOne({ where: { name: role } });
     if (!userRole) {
-      console.warn(
-        `[api]: ${role} role missing; skipping demo user "${username}" seed.`,
-      );
+      logger.warn(`[api]: ${role} role missing; skipping demo user "${username}" seed.`);
       continue;
     }
 
@@ -526,7 +523,7 @@ export async function seedDemoUsers() {
     });
 
     if (created) {
-      console.log(`[api]: seeded demo user "${username}"`);
+      logger.info(`[api]: seeded demo user "${username}"`);
     }
   }
 }

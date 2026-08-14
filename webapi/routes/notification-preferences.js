@@ -8,6 +8,7 @@ import {
   sequelize,
 } from "../lib/models/index.js";
 import { getNotificationTypeDefaults, isNotificationTypeInAppLocked } from "../lib/seed.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Loads all active notification types, ordered by id.
@@ -177,7 +178,7 @@ export function createNotificationPreferencesRouter() {
     try {
       res.json(await buildPreferencesPayload(req.user.id));
     } catch (err) {
-      console.error("getNotificationPreferences failed:", err);
+      logger.error({ err }, "getNotificationPreferences failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load notification preferences.",
@@ -273,7 +274,7 @@ export function createNotificationPreferencesRouter() {
 
         res.json(await buildPreferencesPayload(req.user.id));
       } catch (err) {
-        console.error("updateNotificationPreferences failed:", err);
+        logger.error({ err }, "updateNotificationPreferences failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update notification preferences.",

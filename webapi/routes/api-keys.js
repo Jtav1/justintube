@@ -17,6 +17,7 @@ import {
   UserApiKey,
   UserApiKeyScope,
 } from "../lib/models/index.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maximum length for an API key display name.
@@ -287,7 +288,7 @@ export function createApiKeysRouter() {
       });
       res.json({ items: rows.map((row) => serializeApiKey(row)) });
     } catch (err) {
-      console.error("listMyApiKeys failed:", err);
+      logger.error({ err }, "listMyApiKeys failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list API keys.",
@@ -388,7 +389,7 @@ export function createApiKeysRouter() {
           key: rawKey,
         });
       } catch (err) {
-        console.error("createMyApiKey failed:", err);
+        logger.error({ err }, "createMyApiKey failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to create API key.",
@@ -540,7 +541,7 @@ export function createApiKeysRouter() {
         const full = await loadKeyWithScopes(row.id);
         res.json(serializeApiKey(full));
       } catch (err) {
-        console.error("updateMyApiKey failed:", err);
+        logger.error({ err }, "updateMyApiKey failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to update API key.",
@@ -616,7 +617,7 @@ export function createApiKeysRouter() {
         await softRevoke(row);
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("revokeMyApiKey failed:", err);
+        logger.error({ err }, "revokeMyApiKey failed");
         res.status(500).json({
           success: false,
           error: "internal_error",
@@ -693,7 +694,7 @@ export function createApiKeysRouter() {
           ),
         });
       } catch (err) {
-        console.error("adminListApiKeys failed:", err);
+        logger.error({ err }, "adminListApiKeys failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to list API keys.",
@@ -768,7 +769,7 @@ export function createApiKeysRouter() {
         await softRevoke(row);
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("adminRevokeApiKey failed:", err);
+        logger.error({ err }, "adminRevokeApiKey failed");
         res.status(500).json({
           success: false,
           error: "internal_error",

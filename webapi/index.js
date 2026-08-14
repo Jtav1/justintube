@@ -7,7 +7,7 @@ import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { createCorsOptions } from "./lib/auth/cors.js";
 import { getAuthContext } from "./lib/auth/require-auth.js";
-import { configureLogging } from "./lib/logger.js";
+import { logger } from "./lib/logger.js";
 import { livestreamEnabled } from "./lib/livestream-config.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
@@ -17,6 +17,7 @@ import {
   startSearchReindexCron,
 } from "./lib/search-reindex.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
+import { startHashReconcileCron } from "./lib/hash-reconcile.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
 import { createInternalLivestreamsRouter } from "./routes/internal-livestreams.js";
@@ -248,7 +249,7 @@ export function createApp() {
    */
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
+    logger.error({ err }, `Unhandled error on ${req.method} ${req.originalUrl}`);
     if (res.headersSent) {
       return;
     }
@@ -271,7 +272,7 @@ async function start() {
   try {
     await ensureSchema();
   } catch (err) {
-    console.error("Failed to ensure database schema:", err);
+    logger.error({ err }, "Failed to ensure database schema");
     process.exit(1);
   }
 
@@ -284,28 +285,25 @@ async function start() {
   try {
     await startTranscodeReconcileCron();
   } catch (err) {
-    console.error(
-      "Failed to start transcode reconcile cron:",
-      err instanceof Error ? err.message : err,
-    );
+    logger.error({ err }, "Failed to start transcode reconcile cron");
+  }
+
+  try {
+    await startHashReconcileCron();
+  } catch (err) {
+    logger.error({ err }, "Failed to start hash reconcile cron");
   }
 
   try {
     await startSearchReindexCron();
   } catch (err) {
-    console.error(
-      "Failed to start search reindex cron:",
-      err instanceof Error ? err.message : err,
-    );
+    logger.error({ err }, "Failed to start search reindex cron");
   }
 
   try {
     await runSearchReindex();
   } catch (err) {
-    console.error(
-      "Failed to run startup search reindex:",
-      err instanceof Error ? err.message : err,
-    );
+    logger.error({ err }, "Failed to run startup search reindex");
   }
 }
 
@@ -314,6 +312,5 @@ async function start() {
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
-  configureLogging();
   start();
 }

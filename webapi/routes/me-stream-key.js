@@ -4,6 +4,7 @@ import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { requireUploader } from "../lib/auth/require-uploader.js";
 import { Livestream, StreamKey } from "../lib/models/index.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Maps a StreamKey row to the public JSON shape. Never includes `keyHash` or
@@ -83,7 +84,7 @@ export function createMeStreamKeyRouter() {
       }
       res.json(serializeStreamKey(row));
     } catch (err) {
-      console.error("getMyStreamKey failed:", err);
+      logger.error({ err }, "getMyStreamKey failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to fetch stream key.",
@@ -155,7 +156,7 @@ export function createMeStreamKeyRouter() {
           key: rawKey,
         });
       } catch (err) {
-        console.error("rotateMyStreamKey failed:", err);
+        logger.error({ err }, "rotateMyStreamKey failed");
         res.status(500).json({
           error: "internal_error",
           message: "Failed to rotate stream key.",
@@ -205,7 +206,7 @@ export function createMeStreamKeyRouter() {
         }
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("revokeMyStreamKey failed:", err);
+        logger.error({ err }, "revokeMyStreamKey failed");
         res.status(500).json({
           success: false,
           error: "internal_error",

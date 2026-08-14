@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { logger } from "../logger.js";
 
 /** @type {import("nodemailer").Transporter|null} */
 let cachedTransport = null;
@@ -113,7 +114,7 @@ function smtpSecure() {
   const raw = String(process.env.SMTP_SECURE || "").trim();
   const normalized = raw.toLowerCase();
   if (raw && normalized !== "true" && normalized !== "false") {
-    console.error(
+    logger.error(
       `smtpSecure: SMTP_SECURE="${raw}" is not "true" or "false" and will be treated as false` +
         " (STARTTLS on connect, correct for most port 587 setups). See .env.example for guidance.",
     );
@@ -191,7 +192,7 @@ export async function sendVerificationEmail({ to, token }) {
   const { link, tokenLine } = verificationLinkContent(token);
 
   if (!link) {
-    console.error(
+    logger.error(
       "sendVerificationEmail: PUBLIC_APP_URL is not configured, so the verification email will be" +
         " sent without a usable link. Set PUBLIC_APP_URL so recipients can complete verification.",
     );

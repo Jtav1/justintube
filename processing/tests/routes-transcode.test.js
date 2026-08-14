@@ -590,4 +590,129 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
       expect(queue.addBulk).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("POST /transcode/retry-failed-hashes", () => {
+    test("retries only failed jobs of kind hash, leaving other failed jobs alone", async () => {
+      const hashJob = {
+        id: "hash-a",
+        data: { kind: "hash", runCount: 1 },
+        retry: jest.fn().mockResolvedValue(),
+      };
+      const renditionJob = {
+        id: "rendition-b",
+        data: { kind: "rendition" },
+        retry: jest.fn().mockResolvedValue(),
+      };
+      const queue = {
+        getJobs: jest.fn().mockResolvedValue([hashJob, renditionJob]),
+      };
+      const app = createTestApp(queue);
+
+      const res = await request(app).post("/transcode/retry-failed-hashes");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        retried: ["hash-a"],
+        discarded: [],
+        failed: [],
+      });
+      expect(queue.getJobs).toHaveBeenCalledWith(["failed"]);
+      expect(hashJob.retry).toHaveBeenCalledTimes(1);
+      expect(renditionJob.retry).not.toHaveBeenCalled();
+    });
+
+    test("reports a per-job error without failing the whole request", async () => {
+      const okJob = {
+        id: "hash-ok",
+        data: { kind: "hash", runCount: 2 },
+        retry: jest.fn().mockResolvedValue(),
+      };
+      const badJob = {
+        id: "hash-bad",
+        data: { kind: "hash", runCount: 2 },
+        retry: jest.fn().mockRejectedValue(new Error("job is not in a failed state")),
+      };
+      const queue = {
+        getJobs: jest.fn().mockResolvedValue([okJob, badJob]),
+      };
+      const app = createTestApp(queue);
+
+      const res = await request(app).post("/transcode/retry-failed-hashes");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        retried: ["hash-ok"],
+        discarded: [],
+        failed: [{ jobId: "hash-bad", error: "job is not in a failed state" }],
+      });
+    });
+
+    test("returns an empty result when there are no failed hash jobs", async () => {
+      const queue = { getJobs: jest.fn().mockResolvedValue([]) };
+      const app = createTestApp(queue);
+
+      const res = await request(app).post("/transcode/retry-failed-hashes");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, retried: [], discarded: [], failed: [] });
+    });
+
+    test("discards (instead of retrying) a hash job that has already reached the run cap", async () => {
+      const maxedOutJob = {
+        id: "hash-maxed",
+        data: { kind: "hash", runCount: 7 },
+        retry: jest.fn().mockResolvedValue(),
+        remove: jest.fn().mockResolvedValue(),
+      };
+      const underCapJob = {
+        id: "hash-under-cap",
+        data: { kind: "hash", runCount: 6 },
+        retry: jest.fn().mockResolvedValue(),
+        remove: jest.fn().mockResolvedValue(),
+      };
+      const queue = {
+        getJobs: jest.fn().mockResolvedValue([maxedOutJob, underCapJob]),
+      };
+      const app = createTestApp(queue);
+
+      const res = await request(app).post("/transcode/retry-failed-hashes");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        retried: ["hash-under-cap"],
+        discarded: ["hash-maxed"],
+        failed: [],
+      });
+      expect(maxedOutJob.remove).toHaveBeenCalledTimes(1);
+      expect(maxedOutJob.retry).not.toHaveBeenCalled();
+      expect(underCapJob.retry).toHaveBeenCalledTimes(1);
+      expect(underCapJob.remove).not.toHaveBeenCalled();
+    });
+
+    test("reports an error when discarding a maxed-out job fails, without throwing", async () => {
+      const maxedOutJob = {
+        id: "hash-maxed-broken",
+        data: { kind: "hash", runCount: 7 },
+        retry: jest.fn().mockResolvedValue(),
+        remove: jest.fn().mockRejectedValue(new Error("job locked")),
+      };
+      const queue = {
+        getJobs: jest.fn().mockResolvedValue([maxedOutJob]),
+      };
+      const app = createTestApp(queue);
+
+      const res = await request(app).post("/transcode/retry-failed-hashes");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        retried: [],
+        discarded: [],
+        failed: [{ jobId: "hash-maxed-broken", error: "job locked" }],
+      });
+    });
+  });
 });

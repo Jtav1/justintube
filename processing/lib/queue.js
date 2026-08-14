@@ -14,6 +14,7 @@ import {
 } from "./media-paths.js";
 import { collectOutputMetadata, computeContentHash } from "./probe.js";
 import { buildFfmpegArgs, buildThumbnailFfmpegArgs, runFfmpeg } from "./transcode.js";
+import { logger } from "./logger.js";
 
 /**
  * BullMQ queue name for ffmpeg transcode jobs.
@@ -21,6 +22,17 @@ import { buildFfmpegArgs, buildThumbnailFfmpegArgs, runFfmpeg } from "./transcod
  * @type {string}
  */
 export const TRANSCODE_QUEUE_NAME = "transcode";
+
+/**
+ * Maximum number of times a duplicate-upload content-hash job may run
+ * (counting its original attempt, any of BullMQ's own automatic
+ * attempts/backoff retries, and every retry the nightly hash-reconcile cron
+ * triggers) before {@link retryFailedHashJobs} discards it instead of
+ * retrying it again.
+ *
+ * @type {number}
+ */
+export const MAX_HASH_JOB_RUNS = 7;
 
 /**
  * Builds an ioredis-compatible connection options object for BullMQ.
@@ -81,7 +93,7 @@ async function processThumbnailJob(job) {
   const { inputFilename, outputFilename, timestampSeconds } = job.data;
   const jobId = String(job.id);
 
-  console.log(`[thumbnail ${jobId}] processing started: ${inputFilename} -> ${outputFilename} @ ${timestampSeconds}s`);
+  logger.info(`[thumbnail ${jobId}] processing started: ${inputFilename} -> ${outputFilename} @ ${timestampSeconds}s`);
 
   await job.updateProgress(10);
 
@@ -96,15 +108,12 @@ async function processThumbnailJob(job) {
 
   const notify = await notifyThumbnailComplete(jobId, { thumbnailFilename: outputFilename });
   if (!notify.ok) {
-    console.error(
-      `failed to notify API of completed thumbnail ${jobId}:`,
-      notify.error,
-    );
+    logger.error({ error: notify.error }, `failed to notify API of completed thumbnail ${jobId}`);
   }
 
   await job.updateProgress(100);
 
-  console.log(`[thumbnail ${jobId}] processing completed: ${outputFilename}`);
+  logger.info(`[thumbnail ${jobId}] processing completed: ${outputFilename}`);
 
   return { outputFilename };
 }
@@ -115,6 +124,13 @@ async function processThumbnailJob(job) {
  * No output file is written, so unlike rendition/thumbnail jobs there's
  * nothing to resolve an output path for.
  *
+ * Persists a `runCount` on the job's own data (in Redis, alongside the job)
+ * incremented at the start of every execution - whether this run was kicked
+ * off by BullMQ's own attempts/backoff, or by the nightly hash-reconcile
+ * cron retrying a job that had already landed in the failed state. This is
+ * what {@link retryFailedHashJobs} checks against {@link MAX_HASH_JOB_RUNS}
+ * to decide whether a failed job is retried again or discarded outright.
+ *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes `inputFilename`.
  * @returns {Promise<{ contentHash: string }>} Result payload stored on the completed job.
@@ -124,7 +140,10 @@ async function processHashJob(job) {
   const { inputFilename } = job.data;
   const jobId = String(job.id);
 
-  console.log(`[hash ${jobId}] processing started: ${inputFilename}`);
+  const runCount = (Number(job.data.runCount) || 0) + 1;
+  await job.updateData({ ...job.data, runCount });
+
+  logger.info(`[hash ${jobId}] processing started (run ${runCount}/${MAX_HASH_JOB_RUNS}): ${inputFilename}`);
 
   await job.updateProgress(20);
 
@@ -135,15 +154,12 @@ async function processHashJob(job) {
 
   const notify = await notifyContentHashComplete(jobId, { contentHash });
   if (!notify.ok) {
-    console.error(
-      `failed to notify API of computed hash ${jobId}:`,
-      notify.error,
-    );
+    logger.error({ error: notify.error }, `failed to notify API of computed hash ${jobId}`);
   }
 
   await job.updateProgress(100);
 
-  console.log(`[hash ${jobId}] processing completed: ${contentHash}`);
+  logger.info(`[hash ${jobId}] processing completed: ${contentHash}`);
 
   return { contentHash };
 }
@@ -171,7 +187,7 @@ async function processRenditionJob(job) {
   const { inputFilename, outputFilename, profile } = job.data;
   const jobId = String(job.id);
 
-  console.log(`[rendition ${jobId}] processing started: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
+  logger.info(`[rendition ${jobId}] processing started: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
 
   await job.updateProgress(10);
 
@@ -191,15 +207,12 @@ async function processRenditionJob(job) {
 
   const notify = await notifyFileVersionComplete(jobId, metadata);
   if (!notify.ok) {
-    console.error(
-      `failed to notify API of completed transcode ${jobId}:`,
-      notify.error,
-    );
+    logger.error({ error: notify.error }, `failed to notify API of completed transcode ${jobId}`);
   }
 
   await job.updateProgress(100);
 
-  console.log(`[rendition ${jobId}] processing completed: ${outputFilename} (${metadata.resolution ?? "unknown resolution"}, ${metadata.fileSizeBytes} bytes)`);
+  logger.info(`[rendition ${jobId}] processing completed: ${outputFilename} (${metadata.resolution ?? "unknown resolution"}, ${metadata.fileSizeBytes} bytes)`);
 
   return {
     outputFilename,
@@ -223,7 +236,7 @@ async function processRenditionJob(job) {
  */
 export async function processTranscodeJob(job) {
   const kind = job.data?.kind || "rendition";
-  console.log(`[worker] dequeued job ${job.id} (${kind})`);
+  logger.info(`[worker] dequeued job ${job.id} (${kind})`);
 
   if (kind === "thumbnail") {
     return processThumbnailJob(job);
@@ -269,7 +282,7 @@ export function createTranscodeWorker(
 export async function enqueueTranscodeJob(queue, options) {
   const { jobId, inputFilename, outputFilename, profile } = options;
 
-  console.log(`[rendition ${jobId}] enqueued: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
+  logger.info(`[rendition ${jobId}] enqueued: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
 
   return queue.add(
     "ffmpeg-transcode",
@@ -288,7 +301,7 @@ export async function enqueueTranscodeJob(queue, options) {
  */
 export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
   for (const job of jobs) {
-    console.log(
+    logger.info(
       `[${job.kind} ${job.jobId}] enqueued: ${inputFilename} -> ${job.outputFilename}` +
         (job.kind === "rendition" ? ` (profile ${job.profile?.id})` : ""),
     );
@@ -331,7 +344,7 @@ export async function getTranscodeJobStatus(queue, jobId) {
   const progress =
     typeof job.progress === "number" ? job.progress : Number(job.progress) || 0;
 
-  console.log(`[job ${jobId}] status queried: state=${state}, progress=${progress}`);
+  logger.info(`[job ${jobId}] status queried: state=${state}, progress=${progress}`);
 
   return {
     jobId: String(job.id),
@@ -341,6 +354,9 @@ export async function getTranscodeJobStatus(queue, jobId) {
     profileId: job.data?.profile?.id ?? null,
     failedReason: job.failedReason || null,
     returnvalue: job.returnvalue ?? null,
+    // Only ever set for kind: "hash" jobs (see processHashJob) - null for
+    // rendition/thumbnail jobs, which don't track this.
+    runCount: job.data?.runCount ?? null,
   };
 }
 
@@ -354,12 +370,73 @@ export async function getTranscodeJobStatus(queue, jobId) {
 export async function removeTranscodeJob(queue, jobId) {
   const job = await queue.getJob(jobId);
   if (!job) {
-    console.log(`[job ${jobId}] remove requested: not found`);
+    logger.info(`[job ${jobId}] remove requested: not found`);
     return false;
   }
   await job.remove();
-  console.log(`[job ${jobId}] removed`);
+  logger.info(`[job ${jobId}] removed`);
   return true;
+}
+
+/**
+ * Finds every failed BullMQ job of kind `"hash"` and either moves it back to
+ * the wait queue for reprocessing, or - once it's already run
+ * {@link MAX_HASH_JOB_RUNS} times (per the `runCount` {@link processHashJob}
+ * persists on the job's own data) - discards it outright rather than
+ * retrying forever. A failed hash job is deliberately left in Redis
+ * (`removeOnFail: false` on the queue, set in {@link createTranscodeQueue})
+ * rather than requeued automatically, so this is what actually resurfaces
+ * it — driven by webapi's nightly duplicate-hash reconcile cron rather than
+ * anything in-process here.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @returns {Promise<{
+ *   retried: string[],
+ *   discarded: string[],
+ *   failed: Array<{ jobId: string, error: string }>
+ * }>} Job ids retried, job ids discarded after reaching the run cap, and any
+ *   that errored while retrying/discarding.
+ */
+export async function retryFailedHashJobs(queue) {
+  const failedJobs = await queue.getJobs(["failed"]);
+  const hashJobs = failedJobs.filter((job) => job.data?.kind === "hash");
+
+  /** @type {string[]} */
+  const retried = [];
+  /** @type {string[]} */
+  const discarded = [];
+  /** @type {Array<{ jobId: string, error: string }>} */
+  const failed = [];
+
+  for (const job of hashJobs) {
+    const jobId = String(job.id);
+    const runCount = Number(job.data?.runCount) || 0;
+
+    if (runCount >= MAX_HASH_JOB_RUNS) {
+      try {
+        await job.remove();
+        discarded.push(jobId);
+        logger.warn(`[hash ${jobId}] discarded after ${runCount} run(s) (max ${MAX_HASH_JOB_RUNS})`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "discard failed";
+        failed.push({ jobId, error: message });
+        logger.error({ err }, `[hash ${jobId}] failed to discard after reaching max runs`);
+      }
+      continue;
+    }
+
+    try {
+      await job.retry();
+      retried.push(jobId);
+      logger.info(`[hash ${jobId}] retried by reconcile (run ${runCount}/${MAX_HASH_JOB_RUNS})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "retry failed";
+      failed.push({ jobId, error: message });
+      logger.error({ err }, `[hash ${jobId}] retry by reconcile failed`);
+    }
+  }
+
+  return { retried, discarded, failed };
 }
 
 /**
@@ -388,29 +465,23 @@ export async function notifyTranscodeJobFailed(job, err) {
         : "transcode failed";
 
   if (job?.data?.kind === "thumbnail") {
-    console.error(`[thumbnail ${jobId}] processing failed:`, message);
+    logger.error({ message }, `[thumbnail ${jobId}] processing failed`);
     return;
   }
 
   if (job?.data?.kind === "hash") {
-    console.error(`[hash ${jobId}] processing failed:`, message);
+    logger.error({ message }, `[hash ${jobId}] processing failed`);
     const notify = await notifyContentHashFailed(jobId, message);
     if (!notify.ok) {
-      console.error(
-        `failed to notify API of failed hash job ${jobId}:`,
-        notify.error,
-      );
+      logger.error({ error: notify.error }, `failed to notify API of failed hash job ${jobId}`);
     }
     return;
   }
 
-  console.error(`[rendition ${jobId}] processing failed:`, message);
+  logger.error({ message }, `[rendition ${jobId}] processing failed`);
   const notify = await notifyFileVersionFailed(jobId, message);
   if (!notify.ok) {
-    console.error(
-      `failed to notify API of failed transcode ${jobId}:`,
-      notify.error,
-    );
+    logger.error({ error: notify.error }, `failed to notify API of failed transcode ${jobId}`);
   }
 }
 

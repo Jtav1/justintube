@@ -1,6 +1,7 @@
 import { emailEnabled, sendNotificationEmail } from "./email/mailer.js";
 import { getNotificationTypeDefaults, isNotificationTypeInAppLocked } from "./seed.js";
 import { Notification, NotificationType, User, UserNotificationSetting } from "./models/index.js";
+import { logger } from "./logger.js";
 
 /**
  * Creates an in-app notification for a user, and best-effort emails them
@@ -84,7 +85,7 @@ export async function createNotification({
       link,
     });
   } catch (err) {
-    console.error(`createNotification (${typeName}) failed:`, err);
+    logger.error({ err }, `createNotification (${typeName}) failed`);
   }
 }
 
@@ -157,6 +158,6 @@ async function maybeSendNotificationEmail({
   try {
     await sendNotificationEmail({ to: recipient.email, title, message, link });
   } catch (err) {
-    console.error("sendNotificationEmail failed:", err);
+    logger.error({ err }, "sendNotificationEmail failed");
   }
 }

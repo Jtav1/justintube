@@ -7,6 +7,7 @@ import {
   loadEligiblePlaylistDocument,
   loadEligibleUserDocument,
 } from "./document.js";
+import { logger } from "../logger.js";
 
 /**
  * MiniSearch full-text fields. `tagsText` (not `tags`) is indexed — MiniSearch
@@ -135,7 +136,7 @@ export async function syncVideoIndex(originalUploadId) {
       index.discard(originalUploadId);
     }
   } catch (err) {
-    console.error(`[search:basic] syncVideoIndex(${originalUploadId}) failed:`, err);
+    logger.error({ err }, `[search:basic] syncVideoIndex(${originalUploadId}) failed`);
   }
 }
 
@@ -152,7 +153,7 @@ export async function removeVideoDocument(originalUploadId) {
       index.discard(originalUploadId);
     }
   } catch (err) {
-    console.error(`[search:basic] removeVideoDocument(${originalUploadId}) failed:`, err);
+    logger.error({ err }, `[search:basic] removeVideoDocument(${originalUploadId}) failed`);
   }
 }
 
@@ -407,7 +408,7 @@ export async function syncPlaylistIndex(playlistId) {
       playlistIndex.discard(playlistId);
     }
   } catch (err) {
-    console.error(`[search:basic] syncPlaylistIndex(${playlistId}) failed:`, err);
+    logger.error({ err }, `[search:basic] syncPlaylistIndex(${playlistId}) failed`);
   }
 }
 
@@ -424,7 +425,7 @@ export async function removePlaylistDocument(playlistId) {
       playlistIndex.discard(playlistId);
     }
   } catch (err) {
-    console.error(`[search:basic] removePlaylistDocument(${playlistId}) failed:`, err);
+    logger.error({ err }, `[search:basic] removePlaylistDocument(${playlistId}) failed`);
   }
 }
 
@@ -573,7 +574,7 @@ export async function syncUserIndex(userId) {
       userIndex.discard(userId);
     }
   } catch (err) {
-    console.error(`[search:basic] syncUserIndex(${userId}) failed:`, err);
+    logger.error({ err }, `[search:basic] syncUserIndex(${userId}) failed`);
   }
 }
 
@@ -590,7 +591,7 @@ export async function removeUserDocument(userId) {
       userIndex.discard(userId);
     }
   } catch (err) {
-    console.error(`[search:basic] removeUserDocument(${userId}) failed:`, err);
+    logger.error({ err }, `[search:basic] removeUserDocument(${userId}) failed`);
   }
 }
 

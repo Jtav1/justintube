@@ -30,6 +30,7 @@ import {
 import { Role, User } from "../lib/models/index.js";
 import { syncUserIndex } from "../lib/search.js";
 import { ensureUserNotificationSettings } from "../lib/seed.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Minimum accepted password length for register/login validation.
@@ -135,7 +136,7 @@ async function sendUserVerificationEmail(user) {
     const token = await createVerificationToken(user.id);
     await sendVerificationEmail({ to: user.email, token });
   } catch (err) {
-    console.error("Failed to send verification email:", err);
+    logger.error({ err }, "Failed to send verification email");
   }
 }
 
@@ -161,7 +162,7 @@ async function notifyAdminsOfNewUser(newUser) {
     }
     await sendNewUserAdminNotification({ adminEmails, newUser });
   } catch (err) {
-    console.error("Failed to send new-user admin notification:", err);
+    logger.error({ err }, "Failed to send new-user admin notification");
   }
 }
 
@@ -209,7 +210,7 @@ export function createAuthRouter() {
       await saveSession(req);
       res.json({ csrfToken });
     } catch (err) {
-      console.error("authCsrf failed:", err);
+      logger.error({ err }, "authCsrf failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to issue CSRF token.",
@@ -341,7 +342,7 @@ export function createAuthRouter() {
         csrfToken,
       });
     } catch (err) {
-      console.error("authRegister failed:", err);
+      logger.error({ err }, "authRegister failed");
       res.status(500).json({
         error: "internal_error",
         message: "Registration failed.",
@@ -425,7 +426,7 @@ export function createAuthRouter() {
         csrfToken,
       });
     } catch (err) {
-      console.error("authLogin failed:", err);
+      logger.error({ err }, "authLogin failed");
       res.status(500).json({
         error: "internal_error",
         message: "Login failed.",
@@ -466,7 +467,7 @@ export function createAuthRouter() {
       res.clearCookie("justintube.sid");
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("authLogout failed:", err);
+      logger.error({ err }, "authLogout failed");
       res.status(500).json({
         success: false,
         error: "internal_error",
@@ -569,7 +570,7 @@ export function createAuthRouter() {
         });
         return;
       }
-      console.error("authVerifyEmail failed:", err);
+      logger.error({ err }, "authVerifyEmail failed");
       res.status(500).json({
         error: "internal_error",
         message: "Email verification failed.",
@@ -632,7 +633,7 @@ export function createAuthRouter() {
         await sendUserVerificationEmail(req.user);
         res.status(200).json({ success: true });
       } catch (err) {
-        console.error("authResendVerification failed:", err);
+        logger.error({ err }, "authResendVerification failed");
         res.status(500).json({
           success: false,
           error: "internal_error",
@@ -740,7 +741,7 @@ export function createAuthRouter() {
       });
       res.status(200).json({ success: true });
     } catch (err) {
-      console.error("authChangePassword failed:", err);
+      logger.error({ err }, "authChangePassword failed");
       res.status(500).json({
         success: false,
         error: "internal_error",

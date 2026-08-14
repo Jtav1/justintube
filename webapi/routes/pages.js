@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { sequelize, StaticPage } from "../lib/models/index.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Looks up a STATIC_PAGES row by `description`, matched case-insensitively,
@@ -64,7 +65,7 @@ export function createPagesRouter() {
     try {
       await sendStaticPageByDescription(res, "about", "About page is not configured.");
     } catch (err) {
-      console.error("getAboutPage failed:", err);
+      logger.error({ err }, "getAboutPage failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load the about page.",
@@ -97,7 +98,7 @@ export function createPagesRouter() {
     try {
       await sendStaticPageByDescription(res, "rules", "Rules page is not configured.");
     } catch (err) {
-      console.error("getRulesPage failed:", err);
+      logger.error({ err }, "getRulesPage failed");
       res.status(500).json({
         error: "internal_error",
         message: "Failed to load the rules page.",

@@ -129,7 +129,7 @@ async function fetchMediaCmsVideos(db, mediacmsUserId, restrictToIds) {
     `SELECT
        m.id, m.uid, m.title, m.description, m.media_file, m.thumbnail,
        m.uploaded_thumbnail, m.duration, m.enable_comments, m.state,
-       m.is_reviewed, m.listable, m.media_type,
+       m.is_reviewed, m.listable, m.media_type, m.add_date,
        COALESCE(array_agg(DISTINCT t.title) FILTER (WHERE t.title IS NOT NULL), '{}') AS tags
      FROM files_media m
      LEFT JOIN files_media_tags mt ON mt.media_id = m.id
@@ -147,7 +147,7 @@ async function fetchMediaCmsVideos(db, mediacmsUserId, restrictToIds) {
 /**
  * Maps a MediaCMS media row to a justintube visibility value.
  *
- * @param {{state: string, is_reviewed: boolean}} row MediaCMS media row.
+ * @param {{state: string, is_reviewed: boolean, listable: boolean}} row MediaCMS media row.
  * @returns {"public"|"private"|"unlisted"} Justintube visibility.
  */
 function mapVisibility(row) {
@@ -174,6 +174,12 @@ function mapVisibility(row) {
   // is what "hidden" maps to for this migration, per instructions to treat
   // unlisted/hidden the same way.
   if (row.is_reviewed === false) {
+    visibility = "unlisted";
+  }
+  // MediaCMS's listable=false means "reachable by direct link, hidden from
+  // public listings" - justintube's "unlisted" is the equivalent. Only
+  // downgrades from "public"; a video already private stays private.
+  if (row.listable === false && visibility === "public") {
     visibility = "unlisted";
   }
   return visibility;
@@ -335,6 +341,17 @@ async function migrateVideo(row, ctx, entry) {
         `  [video ${row.id}] has ${row.tags.length} tags, truncating to ${MAX_TAGS}.`,
       );
     }
+    // Backdate to MediaCMS's original upload date - otherwise every migrated
+    // video would carry the migration run's timestamp, breaking chronological
+    // sort order and the "Uploaded" date shown on justintube. Omitted (rather
+    // than sent as invalid) when add_date is missing or unparseable, so the
+    // video still migrates with a "now" createdAt instead of failing outright.
+    const addDate = row.add_date ? new Date(row.add_date) : null;
+    const createdAt =
+      addDate && !Number.isNaN(addDate.getTime()) ? addDate.toISOString() : undefined;
+    if (row.add_date && createdAt === undefined) {
+      console.warn(`  [video ${row.id}] has an unparseable add_date "${row.add_date}"; leaving createdAt unset.`);
+    }
     await apiRequest(
       `${ctx.apiBaseUrl}/videos/${videoId}`,
       {
@@ -346,6 +363,7 @@ async function migrateVideo(row, ctx, entry) {
           visibility: mapVisibility(row),
           commentsEnabled: Boolean(row.enable_comments),
           tags,
+          ...(createdAt !== undefined ? { createdAt } : {}),
         }),
       },
       "metadata",

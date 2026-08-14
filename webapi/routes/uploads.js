@@ -30,6 +30,7 @@ import {
   requestDownload,
   requestTranscodeBatch,
 } from "../lib/processing-client.js";
+import { logger } from "../lib/logger.js";
 
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
@@ -310,7 +311,7 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
       versions.push(version);
     }
   } catch (err) {
-    console.error("[upload] failed to create FILE_VERSIONS:", err);
+    logger.error({ err }, "[upload] failed to create FILE_VERSIONS");
     await markUploadFileVersionsFailed(upload.id);
     return {
       status: 201,
@@ -379,7 +380,7 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
   });
 
   if (!enqueue.ok) {
-    console.error("[upload] transcode batch enqueue failed:", enqueue.error);
+    logger.error({ error: enqueue.error }, "[upload] transcode batch enqueue failed");
     await markUploadFileVersionsFailed(upload.id);
     await upload.reload();
     for (const version of versions) {
@@ -513,14 +514,14 @@ function enqueueDuplicateHashCheck(upload, storedFilename) {
   })
     .then((enqueue) => {
       if (!enqueue.ok) {
-        console.warn(
-          `[upload] duplicate-check enqueue failed for ${upload.videoId}:`,
-          enqueue.error,
+        logger.warn(
+          { error: enqueue.error },
+          `[upload] duplicate-check enqueue failed for ${upload.videoId}`,
         );
       }
     })
     .catch((err) => {
-      console.warn(`[upload] duplicate-check enqueue threw for ${upload.videoId}:`, err);
+      logger.warn({ err }, `[upload] duplicate-check enqueue threw for ${upload.videoId}`);
     });
 }
 
@@ -609,7 +610,7 @@ async function uploadVideo(req, res) {
           originalFilename: file.originalname,
           videoId,
           fileExtension,
-          mimeType: file.mimetype || null,
+          mimeType: mimeTypeForContainer(fileExtension) || file.mimetype || null,
           mediaType: mediaTypeForExtension(fileExtension),
           fileSizeBytes: file.size ?? null,
           storagePath,
@@ -855,7 +856,7 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
 
     await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
   } catch (err) {
-    console.error("[import] continueImport failed unexpectedly:", err);
+    logger.error({ err }, "[import] continueImport failed unexpectedly");
     await upload
       .update({
         status: "failed",
