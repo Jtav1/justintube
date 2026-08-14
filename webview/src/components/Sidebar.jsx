@@ -63,7 +63,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
     { key: 'liked', label: 'Liked', icon: ThumbsUp, to: user ? `/liked/${user.username}` : null },
     { key: 'history', label: 'History', icon: History, to: user ? '/history' : null },
     { key: 'featured', label: 'Featured', icon: Star, to: '/featured' },
-    { key: 'users', label: 'Users', icon: UsersRound, to: '/users', isActiveOverride: (isActive) => isActive && !isOwnProfilePath },
+    { key: 'users', label: 'Users', icon: UsersRound, to: '/users', end: true },
     {
       key: 'subscriptions',
       label: 'Subscriptions',

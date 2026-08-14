@@ -533,35 +533,6 @@ function pickSmallestRendition(renditions) {
   return renditions[0] ?? null;
 }
 
-/**
- * Builds the `og:description` text: the video's description (if any) plus a
- * trailing "By <uploader> - Uploaded <date>" line. OG/Twitter have no
- * dedicated author/upload-date meta tags for video content, and unfurl
- * renderers display `og:description` verbatim, so this is the practical way
- * to surface that info. Truncated to 300 characters.
- *
- * @param {import('sequelize').Model} metadata VIDEO_METADATA row.
- * @param {string|null} uploaderLabel Display name or username, if any.
- * @param {string|null} uploadedAt ISO date string (YYYY-MM-DD), if any.
- * @returns {string} Description text.
- */
-function buildUnfurlDescription(metadata, uploaderLabel, uploadedAt) {
-  const parts = [];
-  if (metadata.description) {
-    parts.push(metadata.description.trim());
-  }
-  const meta = [
-    uploaderLabel ? `By ${uploaderLabel}` : null,
-    uploadedAt ? `Uploaded ${uploadedAt}` : null,
-  ]
-    .filter(Boolean)
-    .join(" - ");
-  if (meta) {
-    parts.push(meta);
-  }
-  const joined = parts.join(" -- ");
-  return joined.length > 300 ? `${joined.slice(0, 297)}...` : joined;
-}
 
 /**
  * Sends the generic, existence-masking fallback page for the unfurl route —
@@ -632,13 +603,20 @@ function renderPlayerHtml(upload, smallest) {
 
 /**
  * Renders the link-unfurl HTML page: Open Graph + Twitter Card meta tags
- * describing the video (title, author, upload date, thumbnail, and an
- * embedded copy of its smallest-resolution rendition) for chat-app/social
- * link-preview bots, which do not execute JS and never see the SPA's
- * client-rendered content. `twitter:card` is `"player"` (full inline
- * playback) only when `publicApiOrigin()` is HTTPS — Twitter/X will not
- * validate an `http://` player page — otherwise falls back to
- * `"summary_large_image"` (rich card, no inline play).
+ * describing the video for chat-app/social link-preview bots, which do not
+ * execute JS and never see the SPA's client-rendered content.
+ *
+ * Discord (and most other unfurlers) can't render an inline video player
+ * alongside a description line — only one or the other shows up — so this
+ * picks exactly one per page: a page with an embeddable video rendition gets
+ * the video player (`og:video`/`twitter:player`, smallest complete rendition,
+ * as originally designed) and no description; anything else (audio-only
+ * uploads, or a video with no usable rendition yet) is a non-video-player
+ * page and gets a plain "Justintube - <title>" description instead.
+ * `twitter:card` is `"player"` (full inline playback) only when
+ * `publicApiOrigin()` is HTTPS — Twitter/X will not validate an `http://`
+ * player page — otherwise falls back to `"summary_large_image"` (rich card,
+ * no inline play).
  *
  * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS row (with User, VideoThumbnail included).
  * @param {import('sequelize').Model} metadata VIDEO_METADATA row.
@@ -654,20 +632,27 @@ function renderUnfurlHtml(upload, metadata, renditions) {
     ? new Date(metadata.createdAt).toISOString().slice(0, 10)
     : null;
   const title = metadata.title || "Justintube";
-  const description = buildUnfurlDescription(metadata, uploaderLabel, uploadedAt);
   const pageUrl = `${appOrigin}/video?v=${encodeURIComponent(upload.videoId)}`;
   const isVideo = upload.mediaType === "video";
   const smallest = pickSmallestRendition(renditions);
+  const embedsVideo = isVideo && Boolean(smallest?.streamUrl);
+  const description = embedsVideo ? null : `Justintube - ${title}`;
 
   const tags = [
     '<meta property="og:site_name" content="Justintube">',
     `<meta property="og:type" content="${isVideo ? "video.other" : "website"}">`,
     `<meta property="og:title" content="${escapeHtml(title)}">`,
-    `<meta property="og:description" content="${escapeHtml(description)}">`,
     `<meta property="og:url" content="${escapeHtml(pageUrl)}">`,
-    `<meta name="description" content="${escapeHtml(description)}">`,
     `<link rel="canonical" href="${escapeHtml(pageUrl)}">`,
   ];
+  if (description) {
+    tags.push(
+      `<meta property="og:description" content="${escapeHtml(description)}">`,
+    );
+    tags.push(
+      `<meta name="description" content="${escapeHtml(description)}">`,
+    );
+  }
 
   if (uploaderLabel) {
     tags.push(`<meta name="author" content="${escapeHtml(uploaderLabel)}">`);
@@ -683,7 +668,7 @@ function renderUnfurlHtml(upload, metadata, renditions) {
   }
 
   let twitterCard = "summary";
-  if (isVideo && smallest?.streamUrl) {
+  if (embedsVideo) {
     const videoUrl = `${apiOrigin}${smallest.streamUrl}`;
     const videoType = smallest.mimeType || "video/mp4";
     tags.push(`<meta property="og:video" content="${escapeHtml(videoUrl)}">`);
@@ -730,9 +715,11 @@ function renderUnfurlHtml(upload, metadata, renditions) {
 
   tags.push(`<meta name="twitter:card" content="${twitterCard}">`);
   tags.push(`<meta name="twitter:title" content="${escapeHtml(title)}">`);
-  tags.push(
-    `<meta name="twitter:description" content="${escapeHtml(description)}">`,
-  );
+  if (description) {
+    tags.push(
+      `<meta name="twitter:description" content="${escapeHtml(description)}">`,
+    );
+  }
   if (uploaderLabel) {
     tags.push('<meta name="twitter:label1" content="Uploader">');
     tags.push(

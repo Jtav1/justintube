@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import express from "express";
+import { configureLogging } from "./lib/logger.js";
 import { requireInternalToken } from "./lib/require-internal-token.js";
 import { getTranscodeConfig } from "./lib/transcode.js";
 import { createDownloadRouter } from "./routes/download.js";
@@ -121,6 +122,7 @@ async function main() {
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  configureLogging();
   main().catch((err) => {
     console.error("Failed to start processing service:", err);
     process.exit(1);

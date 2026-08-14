@@ -7,11 +7,15 @@ import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { createCorsOptions } from "./lib/auth/cors.js";
 import { getAuthContext } from "./lib/auth/require-auth.js";
+import { configureLogging } from "./lib/logger.js";
 import { livestreamEnabled } from "./lib/livestream-config.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
 import { ensureSchema } from "./lib/schema.js";
-import { runSearchReindex, startSearchReindexCron } from "./lib/search-reindex.js";
+import {
+  runSearchReindex,
+  startSearchReindexCron,
+} from "./lib/search-reindex.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
@@ -20,6 +24,24 @@ import { createInternalOriginalUploadsRouter } from "./routes/internal-original-
 import { createInternalThumbnailsRouter } from "./routes/internal-thumbnails.js";
 
 const PORT = Number(process.env.PORT) || 3000;
+
+/**
+ * Default per-IP request ceiling for the global rate limiter (requests per
+ * `RATE_LIMIT_WINDOW_MS`).
+ *
+ * @type {number}
+ */
+const RATE_LIMIT_MAX = 300;
+
+/**
+ * Raised per-IP ceiling granted to requests from a logged-in, email-verified
+ * uploader - trusted enough to need more headroom than anonymous/unverified
+ * session traffic, but still identified by IP (unlike API-key callers, who
+ * are exempt from this limiter entirely via `skip` below).
+ *
+ * @type {number}
+ */
+const RATE_LIMIT_MAX_TRUSTED_UPLOADER = 6000;
 
 /**
  * Creates and configures the Express application (middleware, API stubs, Scalar docs).
@@ -57,7 +79,16 @@ export function createApp() {
   app.use(
     rateLimit({
       windowMs: 60_000,
-      max: 300,
+      // Logged-in, verified uploaders get a raised ceiling - they're trusted
+      // enough to browse/upload more heavily, but (unlike API-key callers)
+      // still identified by IP, so still worth capping.
+      max: async (req) => {
+        const auth = await getAuthContext(req);
+        const user = auth?.user;
+        return user?.emailVerified && user?.uploader
+          ? RATE_LIMIT_MAX_TRUSTED_UPLOADER
+          : RATE_LIMIT_MAX;
+      },
       standardHeaders: true,
       legacyHeaders: false,
       // Requests authenticated with a valid user API key are exempt from this
@@ -116,7 +147,7 @@ export function createApp() {
   // production, off in production unless explicitly enabled.
   const docsEnabled =
     String(
-      process.env.ENABLE_API_DOCS ?? (process.env.NODE_ENV !== "production"),
+      process.env.ENABLE_API_DOCS ?? process.env.NODE_ENV !== "production",
     ).toLowerCase() === "true";
 
   if (docsEnabled) {
@@ -221,7 +252,9 @@ export function createApp() {
     if (res.headersSent) {
       return;
     }
-    res.status(500).json({ error: "internal_error", message: "Internal server error." });
+    res
+      .status(500)
+      .json({ error: "internal_error", message: "Internal server error." });
   });
 
   return app;
@@ -281,5 +314,6 @@ async function start() {
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  configureLogging();
   start();
 }
