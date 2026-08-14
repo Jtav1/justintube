@@ -49,12 +49,16 @@ export function createTranscodeRouter({
    * Accepts a legacy `{ filename, profile }` body or a batch
    * `{ filename, jobs: [...] }` body.
    *
-   * Profiles that would upscale the source (output width/height greater than
-   * the probed source) are skipped, as are hardware-accelerated profiles
-   * when hardware transcoding isn't currently usable on this deployment or
-   * this profile's codec isn't in the configured encoder allowlist. Finally,
-   * profiles whose orientation (horizontal/vertical) doesn't match the
-   * source's orientation are skipped; remaining jobs are enqueued normally.
+   * Rendition jobs are skipped entirely when the source has no video stream
+   * at all (audio-only content) - there's no audio-only rendition profile
+   * concept, so a video profile is never applicable regardless of source
+   * dimensions. Otherwise, profiles that would upscale the source (output
+   * width/height greater than the probed source) are skipped, as are
+   * hardware-accelerated profiles when hardware transcoding isn't currently
+   * usable on this deployment or this profile's codec isn't in the
+   * configured encoder allowlist. Finally, profiles whose orientation
+   * (horizontal/vertical) doesn't match the source's orientation are
+   * skipped; remaining jobs are enqueued normally.
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -73,11 +77,19 @@ export function createTranscodeRouter({
 
       /** @type {{ videoWidth: number|null, videoHeight: number|null }} */
       let source = { videoWidth: null, videoHeight: null };
+      // Tracks whether probing itself succeeded, distinct from a successful
+      // probe finding no video stream - only the latter should skip rendition
+      // jobs below; a failed probe fails open (enqueue everything) the same
+      // as it always has.
+      let sourceProbed = false;
       try {
         source = await probeInput(inputPath);
+        sourceProbed = true;
       } catch (err) {
         logger.error({ err }, "ffprobe failed for transcode input; enqueueing all profiles");
       }
+      const sourceHasNoVideoStream =
+        sourceProbed && (source.videoWidth == null || source.videoHeight == null);
 
       // Duration is a source-level fact (not per-rendition), probed separately
       // from `probeInput` since that hook's contract (and its test override)
@@ -115,6 +127,14 @@ export function createTranscodeRouter({
       const hardwareConfig = getTranscodeConfig();
 
       for (const job of jobs) {
+        if (job.kind === "rendition" && sourceHasNoVideoStream) {
+          skipped.push({
+            jobId: job.jobId,
+            profileId: job.profile.id,
+            reason: "source_has_no_video_stream",
+          });
+          continue;
+        }
         if (job.kind === "rendition" && shouldSkipProfileForSource(job.profile, source)) {
           skipped.push({
             jobId: job.jobId,

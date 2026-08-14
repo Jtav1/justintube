@@ -329,6 +329,78 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
     expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
   });
 
+  test("skips all rendition profiles when the source has no video stream, but not thumbnail jobs", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: null,
+      videoHeight: null,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const renditionJob = {
+      jobId: "55555555-5555-5555-5555-555555555555",
+      outputFilename: "55555555-5555-5555-5555-555555555555.mp4",
+      profile,
+    };
+    const thumbnailJob = {
+      jobId: "66666666-6666-6666-6666-666666666666",
+      outputFilename: "66666666-6666-6666-6666-666666666666.webp",
+      kind: "thumbnail",
+      timestampSeconds: null,
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [renditionJob, thumbnailJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.jobs).toEqual([
+      {
+        jobId: thumbnailJob.jobId,
+        outputFilename: thumbnailJob.outputFilename,
+        profileId: null,
+      },
+    ]);
+    expect(res.body.skipped).toEqual([
+      {
+        jobId: renditionJob.jobId,
+        profileId: 1,
+        reason: "source_has_no_video_stream",
+      },
+    ]);
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
+  test("does not skip rendition profiles when the source probe itself fails (fails open)", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => {
+      throw new Error("ffprobe exited with code 1");
+    });
+    const app = createTestApp(queue, { probeInput });
+
+    const renditionJob = {
+      jobId: "77777777-7777-7777-7777-777777777777",
+      outputFilename: "77777777-7777-7777-7777-777777777777.mp4",
+      profile,
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [renditionJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.skipped).toEqual([]);
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
   test("skips profiles whose orientation does not match the source", async () => {
     const queue = {
       addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
