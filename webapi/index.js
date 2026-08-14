@@ -7,6 +7,7 @@ import helmet from "helmet";
 import { apiReference } from "@scalar/express-api-reference";
 import { createCorsOptions } from "./lib/auth/cors.js";
 import { getAuthContext } from "./lib/auth/require-auth.js";
+import { configureLogging } from "./lib/logger.js";
 import { livestreamEnabled } from "./lib/livestream-config.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
@@ -313,5 +314,6 @@ async function start() {
 const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  configureLogging();
   start();
 }
