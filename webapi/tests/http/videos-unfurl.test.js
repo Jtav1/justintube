@@ -98,22 +98,57 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
       );
     });
 
-    test("omits og:video for an audio-only upload", async () => {
+    test("embeds an audio upload via og:video (Discord's only inline-audio mechanism), plus og:audio", async () => {
       const upload = await seedUpload({ mediaType: "audio" });
       await seedMetadata(upload.id, { title: "Podcast ep", visibility: "public" });
-      await seedFileVersion(upload.id, { status: "complete", resolution: "240p" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "240p",
+        mimeType: "audio/mpeg",
+      });
 
       const res = await client.get(`/api/v1/videos/${upload.id}/unfurl`);
 
       expect(res.status).toBe(200);
-      expect(res.text).not.toContain('property="og:video"');
-      // Not embeddable as a video player, so it's a non-video-player page:
-      // gets a plain "Justintube - <title>" description instead.
       expect(res.text).toContain(
-        'property="og:description" content="Justintube - Podcast ep"',
+        `property="og:video" content="http://localhost:3000/api/v1/videos/${upload.id}/stream?quality=240p"`,
       );
+      expect(res.text).toContain('property="og:video:type" content="audio/mpeg"');
+      // Audio renditions have no natural dimensions, but Discord requires
+      // og:video:width/height to be present to activate the embed at all.
+      expect(res.text).toContain('property="og:video:width" content="480"');
+      expect(res.text).toContain('property="og:video:height" content="80"');
+      // Also included for the few other unfurlers that do honor og:audio.
       expect(res.text).toContain(
-        'name="twitter:description" content="Justintube - Podcast ep"',
+        `property="og:audio" content="http://localhost:3000/api/v1/videos/${upload.id}/stream?quality=240p"`,
+      );
+      expect(res.text).toContain('property="og:audio:type" content="audio/mpeg"');
+      expect(res.text).toContain('property="og:type" content="music.song"');
+      // Embeds a player, so no description, matching the video case.
+      expect(res.text).not.toContain('property="og:description"');
+      expect(res.text).not.toContain('name="twitter:description"');
+    });
+
+    test("emits twitter:card=player for an audio upload only when PUBLIC_API_URL is HTTPS", async () => {
+      const upload = await seedUpload({ mediaType: "audio" });
+      await seedMetadata(upload.id, { title: "Secure podcast", visibility: "public" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "240p",
+        mimeType: "audio/mpeg",
+      });
+
+      process.env.PUBLIC_API_URL = "https://example.test";
+      const res = await client.get(`/api/v1/videos/${upload.id}/unfurl`);
+
+      expect(res.text).toContain('name="twitter:card" content="player"');
+      expect(res.text).toContain(
+        `name="twitter:player" content="https://example.test/api/v1/videos/${upload.id}/player"`,
+      );
+      expect(res.text).toContain('name="twitter:player:width" content="480"');
+      expect(res.text).toContain('name="twitter:player:height" content="80"');
+      expect(res.text).toContain(
+        'name="twitter:player:stream:content_type" content="audio/mpeg"',
       );
     });
 
@@ -202,13 +237,22 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
       );
     });
 
-    test("404s for an audio-only upload", async () => {
+    test("returns an embeddable <audio> page for an audio upload", async () => {
       const upload = await seedUpload({ mediaType: "audio" });
       await seedMetadata(upload.id, { title: "Podcast ep", visibility: "public" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "240p",
+        mimeType: "audio/mpeg",
+      });
 
       const res = await client.get(`/api/v1/videos/${upload.id}/player`);
 
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
+      expect(res.text).toContain(
+        `<audio src="http://localhost:3000/api/v1/videos/${upload.id}/stream?quality=240p"`,
+      );
+      expect(res.text).not.toContain("<video");
     });
 
     test("returns the same generic fallback body for a nonexistent video as for a forbidden one", async () => {

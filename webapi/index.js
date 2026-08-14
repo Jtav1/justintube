@@ -42,7 +42,7 @@ const RATE_LIMIT_MAX = 300;
  *
  * @type {number}
  */
-const RATE_LIMIT_MAX_TRUSTED_UPLOADER = 6000;
+const RATE_LIMIT_MAX_TRUSTED_UPLOADER = 60000;
 
 /**
  * Creates and configures the Express application (middleware, API stubs, Scalar docs).
@@ -249,7 +249,10 @@ export function createApp() {
    */
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    logger.error({ err }, `Unhandled error on ${req.method} ${req.originalUrl}`);
+    logger.error(
+      { err },
+      `Unhandled error on ${req.method} ${req.originalUrl}`,
+    );
     if (res.headersSent) {
       return;
     }
