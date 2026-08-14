@@ -610,7 +610,7 @@ async function uploadVideo(req, res) {
           originalFilename: file.originalname,
           videoId,
           fileExtension,
-          mimeType: file.mimetype || null,
+          mimeType: mimeTypeForContainer(fileExtension) || file.mimetype || null,
           mediaType: mediaTypeForExtension(fileExtension),
           fileSizeBytes: file.size ?? null,
           storagePath,
