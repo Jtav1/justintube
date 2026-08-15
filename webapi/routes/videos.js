@@ -10,6 +10,7 @@ import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
+import { requireUploader } from "../lib/auth/require-uploader.js";
 import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
@@ -562,8 +563,8 @@ function sendUnfurlFallback(res) {
 /**
  * Sends the generic fallback page for the player route — same
  * existence-masking property as `sendUnfurlFallback`, covering "does not
- * exist", "cannot view", "audio-only" (no video to embed), and "no usable
- * rendition" with one indistinguishable response.
+ * exist", "cannot view", and "no usable rendition" with one
+ * indistinguishable response.
  *
  * @param {import('express').Response} res Express response.
  * @returns {void}
@@ -580,10 +581,10 @@ function sendPlayerFallback(res) {
 
 /**
  * Renders the minimal, iframe-embeddable HTML page a Twitter/X Player Card
- * loads via `twitter:player` — a bare `<video>` element sized to fill
- * whatever iframe the embedder renders it in, not a redirect to the raw
- * stream URL (Player Card expects an HTML document with a player UI, not a
- * bare video byte stream).
+ * loads via `twitter:player` — a bare `<video>` (or, for audio uploads,
+ * `<audio>`) element sized to fill whatever iframe the embedder renders it
+ * in, not a redirect to the raw stream URL (Player Card expects an HTML
+ * document with a player UI, not a bare media byte stream).
  *
  * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS row.
  * @param {object} smallest Rendition reference from `pickSmallestRendition`.
@@ -591,30 +592,61 @@ function sendPlayerFallback(res) {
  */
 function renderPlayerHtml(upload, smallest) {
   const src = `${publicApiOrigin()}${smallest.streamUrl}`;
+  const isVideo = upload.mediaType === "video";
+  const mediaTag = isVideo
+    ? `<video src="${escapeHtml(src)}" controls playsinline preload="metadata"></video>`
+    : `<audio src="${escapeHtml(src)}" controls preload="metadata"></audio>`;
   return (
     '<!doctype html><html><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
     `<title>${escapeHtml(upload.videoId)}</title>` +
     "<style>html,body{margin:0;height:100%;background:#000}" +
-    "video{width:100%;height:100%;object-fit:contain}</style>" +
+    "video{width:100%;height:100%;object-fit:contain}" +
+    "audio{width:100%;margin-top:calc(50% - 20px)}</style>" +
     "</head><body>" +
-    `<video src="${escapeHtml(src)}" controls playsinline preload="metadata"></video>` +
+    mediaTag +
     "</body></html>"
   );
 }
+
+/**
+ * Fallback embed dimensions for audio uploads, used for `og:video:width`/
+ * `og:video:height` and `twitter:player:width`/`:height` — audio renditions
+ * have no natural width/height (unlike video), but Discord (and Twitter's
+ * Player Card) requires numeric dimensions to be present before it will
+ * activate the inline player at all, video or audio.
+ *
+ * @type {number}
+ */
+const AUDIO_EMBED_WIDTH = 480;
+
+/**
+ * @type {number}
+ * @see AUDIO_EMBED_WIDTH
+ */
+const AUDIO_EMBED_HEIGHT = 80;
 
 /**
  * Renders the link-unfurl HTML page: Open Graph + Twitter Card meta tags
  * describing the video for chat-app/social link-preview bots, which do not
  * execute JS and never see the SPA's client-rendered content.
  *
- * Discord (and most other unfurlers) can't render an inline video player
+ * Discord (and most other unfurlers) can't render an inline media player
  * alongside a description line — only one or the other shows up — so this
- * picks exactly one per page: a page with an embeddable video rendition gets
- * the video player (`og:video`/`twitter:player`, smallest complete rendition,
- * as originally designed) and no description; anything else (audio-only
- * uploads, or a video with no usable rendition yet) is a non-video-player
- * page and gets a plain "Justintube - <title>" description instead.
+ * picks exactly one per page: a page with an embeddable rendition gets the
+ * player (`og:video`/`twitter:player`, smallest complete rendition, as
+ * originally designed) and no description; anything else (no usable
+ * rendition yet) is a non-player page and gets a plain "Justintube - <title>"
+ * description instead.
+ *
+ * Audio uploads deliberately reuse `og:video` (not just `og:audio`) pointing
+ * at the audio stream, with `og:video:type` set to the real audio MIME type
+ * — Discord has no separate audio-embed mechanism and ignores `og:audio`
+ * entirely, but it *will* render a compact inline audio player from
+ * `og:video` metadata once the stream's actual `Content-Type` comes back as
+ * audio, which is exactly what this points it at. `og:audio` tags are also
+ * included alongside for the few other unfurlers that do honor them.
+ *
  * `twitter:card` is `"player"` (full inline playback) only when
  * `publicApiOrigin()` is HTTPS — Twitter/X will not validate an `http://`
  * player page — otherwise falls back to `"summary_large_image"` (rich card,
@@ -637,12 +669,19 @@ function renderUnfurlHtml(upload, metadata, renditions) {
   const pageUrl = `${appOrigin}/video?v=${encodeURIComponent(upload.videoId)}`;
   const isVideo = upload.mediaType === "video";
   const smallest = pickSmallestRendition(renditions);
-  const embedsVideo = isVideo && Boolean(smallest?.streamUrl);
-  const description = embedsVideo ? null : `Justintube - ${title}`;
+  const embedsMedia = Boolean(smallest?.streamUrl);
+  const description = embedsMedia ? null : `Justintube - ${title}`;
+
+  let ogType = "website";
+  if (isVideo) {
+    ogType = "video.other";
+  } else if (embedsMedia) {
+    ogType = "music.song";
+  }
 
   const tags = [
     '<meta property="og:site_name" content="Justintube">',
-    `<meta property="og:type" content="${isVideo ? "video.other" : "website"}">`,
+    `<meta property="og:type" content="${ogType}">`,
     `<meta property="og:title" content="${escapeHtml(title)}">`,
     `<meta property="og:url" content="${escapeHtml(pageUrl)}">`,
     `<link rel="canonical" href="${escapeHtml(pageUrl)}">`,
@@ -670,15 +709,16 @@ function renderUnfurlHtml(upload, metadata, renditions) {
   }
 
   let twitterCard = "summary";
-  if (embedsVideo) {
-    const videoUrl = `${apiOrigin}${smallest.streamUrl}`;
-    const videoType = smallest.mimeType || "video/mp4";
-    tags.push(`<meta property="og:video" content="${escapeHtml(videoUrl)}">`);
+  if (embedsMedia) {
+    const mediaUrl = `${apiOrigin}${smallest.streamUrl}`;
+    const mediaType =
+      smallest.mimeType || (isVideo ? "video/mp4" : "audio/mpeg");
+    tags.push(`<meta property="og:video" content="${escapeHtml(mediaUrl)}">`);
     tags.push(
-      `<meta property="og:video:secure_url" content="${escapeHtml(videoUrl)}">`,
+      `<meta property="og:video:secure_url" content="${escapeHtml(mediaUrl)}">`,
     );
     tags.push(
-      `<meta property="og:video:type" content="${escapeHtml(videoType)}">`,
+      `<meta property="og:video:type" content="${escapeHtml(mediaType)}">`,
     );
     if (smallest.width != null && smallest.height != null) {
       tags.push(
@@ -687,32 +727,45 @@ function renderUnfurlHtml(upload, metadata, renditions) {
       tags.push(
         `<meta property="og:video:height" content="${smallest.height}">`,
       );
+    } else if (!isVideo) {
+      // Audio renditions have no natural width/height, but Discord requires
+      // og:video:width/height to be present to activate the embed at all.
+      tags.push(
+        `<meta property="og:video:width" content="${AUDIO_EMBED_WIDTH}">`,
+      );
+      tags.push(
+        `<meta property="og:video:height" content="${AUDIO_EMBED_HEIGHT}">`,
+      );
+    }
+    if (!isVideo) {
+      // Semantically-correct tags for the few unfurlers that do honor them,
+      // alongside the og:video Discord-compatibility tags above.
+      tags.push(`<meta property="og:audio" content="${escapeHtml(mediaUrl)}">`);
+      tags.push(
+        `<meta property="og:audio:type" content="${escapeHtml(mediaType)}">`,
+      );
     }
 
     twitterCard = "summary_large_image";
     if (apiOrigin.startsWith("https://")) {
       twitterCard = "player";
       const playerUrl = `${apiOrigin}/api/v1/videos/${upload.id}/player`;
-      const width = smallest.width || upload.videoWidth || 480;
-      const height = smallest.height || upload.videoHeight || 270;
+      const width =
+        smallest.width || upload.videoWidth || (isVideo ? 480 : AUDIO_EMBED_WIDTH);
+      const height =
+        smallest.height || upload.videoHeight || (isVideo ? 270 : AUDIO_EMBED_HEIGHT);
       tags.push(
         `<meta name="twitter:player" content="${escapeHtml(playerUrl)}">`,
       );
       tags.push(`<meta name="twitter:player:width" content="${width}">`);
       tags.push(`<meta name="twitter:player:height" content="${height}">`);
       tags.push(
-        `<meta name="twitter:player:stream" content="${escapeHtml(videoUrl)}">`,
+        `<meta name="twitter:player:stream" content="${escapeHtml(mediaUrl)}">`,
       );
       tags.push(
-        `<meta name="twitter:player:stream:content_type" content="${escapeHtml(videoType)}">`,
+        `<meta name="twitter:player:stream:content_type" content="${escapeHtml(mediaType)}">`,
       );
     }
-  } else if (!isVideo && smallest?.streamUrl) {
-    const audioUrl = `${apiOrigin}${smallest.streamUrl}`;
-    tags.push(`<meta property="og:audio" content="${escapeHtml(audioUrl)}">`);
-    tags.push(
-      `<meta property="og:audio:type" content="${escapeHtml(smallest.mimeType || "audio/mpeg")}">`,
-    );
   }
 
   tags.push(`<meta name="twitter:card" content="${twitterCard}">`);
@@ -1921,17 +1974,17 @@ export function createVideosRouter() {
   /**
    * GET /videos/:id/player — getVideoPlayer
    * Auth: optional. Returns a minimal, iframe-embeddable HTML page for a
-   * single video's smallest-resolution rendition — the target of
-   * `twitter:player` in the unfurl page, so Twitter/X's Player Card can play
-   * the video inline. Not reachable through `webview`; this is an absolute
-   * `webapi` URL fetched directly by Twitter's card-rendering service.
-   * Audio-only uploads 404 (no video to embed).
+   * single video or audio upload's smallest-resolution rendition — the
+   * target of `twitter:player` in the unfurl page, so Twitter/X's Player
+   * Card can play it inline. Not reachable through `webview`; this is an
+   * absolute `webapi` URL fetched directly by Twitter's card-rendering
+   * service.
    *
    * @openapi
    * /api/v1/videos/{id}/player:
    *   get:
    *     tags: [Videos]
-   *     summary: Get an iframe-embeddable video player page (for Twitter/X Player Cards)
+   *     summary: Get an iframe-embeddable video/audio player page (for Twitter/X Player Cards)
    *     operationId: getVideoPlayer
    *     parameters:
    *       - in: path
@@ -1942,13 +1995,13 @@ export function createVideosRouter() {
    *         description: Numeric video id or its public videoId.
    *     responses:
    *       "200":
-   *         description: HTML document with an embedded video player
+   *         description: HTML document with an embedded video or audio player
    *         content:
    *           text/html:
    *             schema:
    *               type: string
    *       "404":
-   *         description: Generic HTML fallback (not found, inaccessible, or audio-only)
+   *         description: Generic HTML fallback (not found, inaccessible, or no usable rendition)
    *         content:
    *           text/html:
    *             schema:
@@ -1957,7 +2010,7 @@ export function createVideosRouter() {
   router.get("/videos/:id/player", optionalAuth, async (req, res) => {
     try {
       const loaded = await loadUploadWithMetadataByIdentifier(req.params.id);
-      if (!loaded || loaded.upload.mediaType !== "video") {
+      if (!loaded) {
         sendPlayerFallback(res);
         return;
       }
@@ -2531,6 +2584,263 @@ export function createVideosRouter() {
       });
     }
   });
+
+  /**
+   * POST /videos/:id/tags — addVideoTags
+   * Auth: required. Any Trusted User (uploader flag + verified email, admins
+   * bypass — see requireUploader) who can view this video. Additive only:
+   * merges the given tags into the existing set (deduping case-insensitively)
+   * rather than replacing it, so a non-owner can't wipe another user's tags.
+   * Owners/admins/edit-grantees needing full add+remove control still use
+   * PATCH /videos/:id.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/tags:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Add tags to a video (additive; does not remove existing tags)
+   *     operationId: addVideoTags
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [tags]
+   *             properties:
+   *               tags:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       "200":
+   *         description: Updated video
+   *       "400":
+   *         description: Invalid tags
+   *       "401":
+   *         description: Unauthorized
+   *       "403":
+   *         description: Not a Trusted User, or the video isn't visible to the caller
+   */
+  router.post(
+    "/videos/:id/tags",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    requireUploader,
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const parsed = parseTags(req.body?.tags);
+        if (!parsed.ok || parsed.value === undefined) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: parsed.ok ? "tags is required." : parsed.message,
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload, metadata } = loaded;
+        const grant = await loadAccessGrant(upload.id, req.user.id);
+        if (!canViewVideo(req.user, req.authRole, upload, metadata, Boolean(grant))) {
+          sendNotFound(res);
+          return;
+        }
+
+        const existingTags = await ContentTag.findAll({
+          where: { originalUploadId: upload.id },
+        });
+        const existingKeys = new Set(existingTags.map((row) => row.tag.toLowerCase()));
+        const newTags = parsed.value.filter((tag) => !existingKeys.has(tag.toLowerCase()));
+
+        if (existingTags.length + newTags.length > MAX_TAGS) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: `tags must have at most ${MAX_TAGS} items.`,
+          });
+          return;
+        }
+
+        if (newTags.length > 0) {
+          await ContentTag.bulkCreate(
+            newTags.map((tag) => ({ originalUploadId: upload.id, tag })),
+          );
+        }
+
+        syncVideoIndex(upload.id);
+
+        const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, upload);
+        const hasEditGrant = !isOwnerAdmin && grant?.AccessPermission?.name === "edit";
+
+        const renditions = await loadRenditions(upload);
+        const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+        const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
+
+        res.status(200).json(
+          serializeVideo(upload, metadata, {
+            tags: tagsByUploadId.get(upload.id) || [],
+            renditions,
+            viewerPermission: resolveViewerPermission(req.user, req.authRole, upload.userId, hasEditGrant),
+            ...reactionCountsByUploadId.get(upload.id),
+          }),
+        );
+      } catch (err) {
+        logger.error({ err }, "addVideoTags failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to add tags.",
+        });
+      }
+    },
+  );
+
+  /**
+   * DELETE /videos/:id/tags — removeVideoTags
+   * Auth: required. Owner, admin, or moderator (a stricter tier than the
+   * additive POST /videos/:id/tags, since removing tags — including ones a
+   * Trusted User other than the owner added — is a moderation-level action).
+   * Idempotent: tags not currently present are silently ignored.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/tags:
+   *   delete:
+   *     tags: [Videos]
+   *     summary: Remove tags from a video
+   *     operationId: removeVideoTags
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [tags]
+   *             properties:
+   *               tags:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       "200":
+   *         description: Updated video
+   *       "400":
+   *         description: Invalid tags
+   *       "401":
+   *         description: Unauthorized
+   *       "403":
+   *         description: Not the owner, an admin, or a moderator
+   */
+  router.delete(
+    "/videos/:id/tags",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const parsed = parseTags(req.body?.tags);
+        if (!parsed.ok || parsed.value === undefined) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: parsed.ok ? "tags is required." : parsed.message,
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload, metadata } = loaded;
+        if (!isOwnerOrAdmin(req.user, req.authRole, upload) && !isModeratorOrAdmin(req.authRole)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only the owner, an admin, or a moderator can remove tags from this video.",
+          });
+          return;
+        }
+
+        if (parsed.value.length > 0) {
+          const removeKeys = new Set(parsed.value.map((tag) => tag.toLowerCase()));
+          const existingTags = await ContentTag.findAll({
+            where: { originalUploadId: upload.id },
+          });
+          const idsToRemove = existingTags
+            .filter((row) => removeKeys.has(row.tag.toLowerCase()))
+            .map((row) => row.id);
+          if (idsToRemove.length > 0) {
+            await ContentTag.destroy({ where: { id: { [Op.in]: idsToRemove } } });
+          }
+        }
+
+        syncVideoIndex(upload.id);
+
+        const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, upload);
+        const grant = await loadAccessGrant(upload.id, req.user.id);
+        const hasEditGrant = !isOwnerAdmin && grant?.AccessPermission?.name === "edit";
+
+        const renditions = await loadRenditions(upload);
+        const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+        const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
+
+        res.status(200).json(
+          serializeVideo(upload, metadata, {
+            tags: tagsByUploadId.get(upload.id) || [],
+            renditions,
+            viewerPermission: resolveViewerPermission(req.user, req.authRole, upload.userId, hasEditGrant),
+            ...reactionCountsByUploadId.get(upload.id),
+          }),
+        );
+      } catch (err) {
+        logger.error({ err }, "removeVideoTags failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to remove tags.",
+        });
+      }
+    },
+  );
 
   /**
    * DELETE /videos/:id — deleteVideo

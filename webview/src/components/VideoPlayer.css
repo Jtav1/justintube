@@ -361,6 +361,81 @@
   background: var(--border);
 }
 
+.video-player-tag-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.video-player-tag-edit-btn:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.video-player-tag-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 2px;
+}
+
+.video-player-tag-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.video-player-tag-save-btn,
+.video-player-tag-cancel-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.video-player-tag-save-btn {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.video-player-tag-save-btn:hover:not(:disabled) {
+  background: var(--accent-border);
+  color: var(--text-h);
+}
+
+.video-player-tag-cancel-btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.video-player-tag-cancel-btn:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.video-player-tag-save-btn:disabled,
+.video-player-tag-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.video-player-tag-error {
+  font-size: 12px;
+  color: #d33;
+}
+
 .video-player-reactions {
   display: flex;
   align-items: flex-start;
