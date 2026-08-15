@@ -556,7 +556,7 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.status).toBe(404);
     });
 
-    test("sets a private, day-long Cache-Control and an ETag on 200", async () => {
+    test("sets a private, week-long Cache-Control and an ETag on 200", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, { visibility: "public" });
       const thumbnail = await seedVideoThumbnail(upload.id);
@@ -565,7 +565,7 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
 
       expect(res.status).toBe(200);
-      expect(res.headers["cache-control"]).toBe("private, max-age=86400");
+      expect(res.headers["cache-control"]).toBe("private, max-age=604800");
       expect(res.headers.etag).toBeTruthy();
     });
 

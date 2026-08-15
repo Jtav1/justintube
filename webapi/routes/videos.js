@@ -2215,7 +2215,7 @@ export function createVideosRouter() {
       // to a different, unauthorized viewer.
       const etag = `"${thumbnail.id}-${thumbnail.updatedAt.getTime()}"`;
       res.setHeader("ETag", etag);
-      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.setHeader("Cache-Control", "private, max-age=604800");
       if (req.headers["if-none-match"] === etag) {
         res.status(304).end();
         return;
