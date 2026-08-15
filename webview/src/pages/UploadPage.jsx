@@ -62,6 +62,21 @@ function isAudioFile(file) {
   return AUDIO_EXTENSION_PATTERN.test(file.name || '')
 }
 
+// Mirrors webapi's `thumbnailTimestamp` parsing (seconds, non-negative,
+// at most one decimal place — e.g. "5.5" but not "5.55").
+const THUMBNAIL_TIMESTAMP_PATTERN = /^\d+(\.\d)?$/
+
+function thumbnailTimestampError(raw) {
+  const trimmed = raw.trim()
+  if (trimmed === '') {
+    return null
+  }
+  if (!THUMBNAIL_TIMESTAMP_PATTERN.test(trimmed) || !Number.isFinite(Number(trimmed))) {
+    return 'Enter a number of seconds with at most 1 decimal place (e.g. 5.5).'
+  }
+  return null
+}
+
 function UploadPage() {
   const { user, loading: authLoading } = useAuth()
   const { success, error: toastError } = useToast()
@@ -83,6 +98,7 @@ function UploadPage() {
   const [dragActive, setDragActive] = useState(false)
   const [url, setUrl] = useState('')
   const [thumbnailFile, setThumbnailFile] = useState(null)
+  const [thumbnailTimestamp, setThumbnailTimestamp] = useState('')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState('public')
@@ -445,9 +461,15 @@ function UploadPage() {
     setEditors((prev) => prev.filter((r) => r.userId !== Number(userId)))
   }
 
+  const thumbnailTimestampInvalid =
+    !isEditMode && !thumbnailFile && thumbnailTimestampError(thumbnailTimestamp) != null
+
   const submitDisabled = isEditMode
     ? title.trim().length === 0 || submitting
-    : (!file && url.trim().length === 0) || title.trim().length === 0 || submitting
+    : (!file && url.trim().length === 0) ||
+      title.trim().length === 0 ||
+      thumbnailTimestampInvalid ||
+      submitting
 
   function handleFormKeyDown(event) {
     if (event.key !== 'Enter') {
@@ -473,6 +495,14 @@ function UploadPage() {
 
     setSubmitting(true)
 
+    // A supplied thumbnail file always wins; otherwise a requested timestamp
+    // (already validated via thumbnailTimestampInvalid) picks the
+    // auto-generated frame, and an empty value falls back to processing's
+    // default (random) frame.
+    const trimmedThumbnailTimestamp = thumbnailTimestamp.trim()
+    const thumbnailTimestampToSend =
+      !thumbnailFile && trimmedThumbnailTimestamp !== '' ? Number(trimmedThumbnailTimestamp) : undefined
+
     let createdId
     if (isEditMode) {
       createdId = editUpload.id
@@ -481,13 +511,17 @@ function UploadPage() {
         const uploaded = file
           ? await uploadVideoFile(file, {
               skipThumbnail: Boolean(thumbnailFile),
+              thumbnailTimestamp: thumbnailTimestampToSend,
               onUploadProgress: (event) => {
                 if (event.total) {
                   setUploadPercent(Math.round((event.loaded / event.total) * 100))
                 }
               },
             })
-          : await importVideoUrl(url.trim(), { skipThumbnail: Boolean(thumbnailFile) })
+          : await importVideoUrl(url.trim(), {
+              skipThumbnail: Boolean(thumbnailFile),
+              thumbnailTimestamp: thumbnailTimestampToSend,
+            })
         createdId = uploaded.id
       } catch {
         toastError(
@@ -718,30 +752,53 @@ function UploadPage() {
               manually instead.
             </p>
           )}
-          <label htmlFor="upload-thumbnail-input" className="upload-thumbnail-picker">
-            <UploadCloud size={20} />
-            <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
-            <input
-              id="upload-thumbnail-input"
-              ref={thumbnailInputRef}
-              type="file"
-              accept="image/*"
-              className="upload-dropzone-input"
-              onChange={handleThumbnailInputChange}
-            />
-            {thumbnailFile && (
-              <button
-                type="button"
-                className="upload-dropzone-clear"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setThumbnailFile(null)
-                }}
-              >
-                Clear
-              </button>
+          <div className="upload-thumbnail-row">
+            <label htmlFor="upload-thumbnail-input" className="upload-thumbnail-picker">
+              <UploadCloud size={20} />
+              <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
+              <input
+                id="upload-thumbnail-input"
+                ref={thumbnailInputRef}
+                type="file"
+                accept="image/*"
+                className="upload-dropzone-input"
+                onChange={handleThumbnailInputChange}
+              />
+              {thumbnailFile && (
+                <button
+                  type="button"
+                  className="upload-dropzone-clear"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setThumbnailFile(null)
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </label>
+
+            {!isEditMode && (
+              <div className="upload-thumbnail-timestamp">
+                <label htmlFor="upload-thumbnail-timestamp">Frame at (sec)</label>
+                <input
+                  id="upload-thumbnail-timestamp"
+                  type="text"
+                  inputMode="decimal"
+                  value={thumbnailTimestamp}
+                  onChange={(event) => setThumbnailTimestamp(event.target.value)}
+                  disabled={Boolean(thumbnailFile)}
+                  placeholder="Random"
+                  aria-invalid={thumbnailTimestampInvalid}
+                />
+                {thumbnailTimestampInvalid && (
+                  <p className="upload-error upload-thumbnail-timestamp-error">
+                    {thumbnailTimestampError(thumbnailTimestamp)}
+                  </p>
+                )}
+              </div>
             )}
-          </label>
+          </div>
         </div>
 
         <label htmlFor="upload-title">
