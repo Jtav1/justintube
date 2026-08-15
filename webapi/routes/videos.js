@@ -10,6 +10,7 @@ import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
+import { requireUploader } from "../lib/auth/require-uploader.js";
 import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
@@ -2583,6 +2584,263 @@ export function createVideosRouter() {
       });
     }
   });
+
+  /**
+   * POST /videos/:id/tags — addVideoTags
+   * Auth: required. Any Trusted User (uploader flag + verified email, admins
+   * bypass — see requireUploader) who can view this video. Additive only:
+   * merges the given tags into the existing set (deduping case-insensitively)
+   * rather than replacing it, so a non-owner can't wipe another user's tags.
+   * Owners/admins/edit-grantees needing full add+remove control still use
+   * PATCH /videos/:id.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/tags:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Add tags to a video (additive; does not remove existing tags)
+   *     operationId: addVideoTags
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [tags]
+   *             properties:
+   *               tags:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       "200":
+   *         description: Updated video
+   *       "400":
+   *         description: Invalid tags
+   *       "401":
+   *         description: Unauthorized
+   *       "403":
+   *         description: Not a Trusted User, or the video isn't visible to the caller
+   */
+  router.post(
+    "/videos/:id/tags",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    requireUploader,
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const parsed = parseTags(req.body?.tags);
+        if (!parsed.ok || parsed.value === undefined) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: parsed.ok ? "tags is required." : parsed.message,
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload, metadata } = loaded;
+        const grant = await loadAccessGrant(upload.id, req.user.id);
+        if (!canViewVideo(req.user, req.authRole, upload, metadata, Boolean(grant))) {
+          sendNotFound(res);
+          return;
+        }
+
+        const existingTags = await ContentTag.findAll({
+          where: { originalUploadId: upload.id },
+        });
+        const existingKeys = new Set(existingTags.map((row) => row.tag.toLowerCase()));
+        const newTags = parsed.value.filter((tag) => !existingKeys.has(tag.toLowerCase()));
+
+        if (existingTags.length + newTags.length > MAX_TAGS) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: `tags must have at most ${MAX_TAGS} items.`,
+          });
+          return;
+        }
+
+        if (newTags.length > 0) {
+          await ContentTag.bulkCreate(
+            newTags.map((tag) => ({ originalUploadId: upload.id, tag })),
+          );
+        }
+
+        syncVideoIndex(upload.id);
+
+        const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, upload);
+        const hasEditGrant = !isOwnerAdmin && grant?.AccessPermission?.name === "edit";
+
+        const renditions = await loadRenditions(upload);
+        const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+        const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
+
+        res.status(200).json(
+          serializeVideo(upload, metadata, {
+            tags: tagsByUploadId.get(upload.id) || [],
+            renditions,
+            viewerPermission: resolveViewerPermission(req.user, req.authRole, upload.userId, hasEditGrant),
+            ...reactionCountsByUploadId.get(upload.id),
+          }),
+        );
+      } catch (err) {
+        logger.error({ err }, "addVideoTags failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to add tags.",
+        });
+      }
+    },
+  );
+
+  /**
+   * DELETE /videos/:id/tags — removeVideoTags
+   * Auth: required. Owner, admin, or moderator (a stricter tier than the
+   * additive POST /videos/:id/tags, since removing tags — including ones a
+   * Trusted User other than the owner added — is a moderation-level action).
+   * Idempotent: tags not currently present are silently ignored.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/tags:
+   *   delete:
+   *     tags: [Videos]
+   *     summary: Remove tags from a video
+   *     operationId: removeVideoTags
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [tags]
+   *             properties:
+   *               tags:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *     responses:
+   *       "200":
+   *         description: Updated video
+   *       "400":
+   *         description: Invalid tags
+   *       "401":
+   *         description: Unauthorized
+   *       "403":
+   *         description: Not the owner, an admin, or a moderator
+   */
+  router.delete(
+    "/videos/:id/tags",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const parsed = parseTags(req.body?.tags);
+        if (!parsed.ok || parsed.value === undefined) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: parsed.ok ? "tags is required." : parsed.message,
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload, metadata } = loaded;
+        if (!isOwnerOrAdmin(req.user, req.authRole, upload) && !isModeratorOrAdmin(req.authRole)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only the owner, an admin, or a moderator can remove tags from this video.",
+          });
+          return;
+        }
+
+        if (parsed.value.length > 0) {
+          const removeKeys = new Set(parsed.value.map((tag) => tag.toLowerCase()));
+          const existingTags = await ContentTag.findAll({
+            where: { originalUploadId: upload.id },
+          });
+          const idsToRemove = existingTags
+            .filter((row) => removeKeys.has(row.tag.toLowerCase()))
+            .map((row) => row.id);
+          if (idsToRemove.length > 0) {
+            await ContentTag.destroy({ where: { id: { [Op.in]: idsToRemove } } });
+          }
+        }
+
+        syncVideoIndex(upload.id);
+
+        const isOwnerAdmin = isOwnerOrAdmin(req.user, req.authRole, upload);
+        const grant = await loadAccessGrant(upload.id, req.user.id);
+        const hasEditGrant = !isOwnerAdmin && grant?.AccessPermission?.name === "edit";
+
+        const renditions = await loadRenditions(upload);
+        const tagsByUploadId = await loadTagsByUploadId([upload.id]);
+        const reactionCountsByUploadId = await loadReactionCountsByUploadId([upload.id]);
+
+        res.status(200).json(
+          serializeVideo(upload, metadata, {
+            tags: tagsByUploadId.get(upload.id) || [],
+            renditions,
+            viewerPermission: resolveViewerPermission(req.user, req.authRole, upload.userId, hasEditGrant),
+            ...reactionCountsByUploadId.get(upload.id),
+          }),
+        );
+      } catch (err) {
+        logger.error({ err }, "removeVideoTags failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to remove tags.",
+        });
+      }
+    },
+  );
 
   /**
    * DELETE /videos/:id — deleteVideo

@@ -787,6 +787,231 @@ describe("Video discovery and metadata endpoints", () => {
     });
   });
 
+  describe("POST /videos/{id}/tags (addVideoTags)", () => {
+    test("rejects unauthenticated requests", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id);
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer jt_not_a_real_key")
+        .send({ tags: ["new"] });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe("unauthorized");
+    });
+
+    test("forbids a viewer who is not a Trusted User (not verified/uploader)", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedUserWithRoleAndKey("viewer", "untrusted-tags-key", { uploader: false });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer untrusted-tags-key")
+        .send({ tags: ["new"] });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+    });
+
+    test("a Trusted User who is not the owner can add tags to a public video", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-tags-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedContentTag(upload.id, { tag: "existing" });
+      await seedUserWithRoleAndKey("viewer", "trusted-tags-key", { uploader: true });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer trusted-tags-key")
+        .send({ tags: ["new-tag", "Existing"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags.sort()).toEqual(["existing", "new-tag"]);
+
+      const rows = await queryRows(
+        "SELECT tag FROM CONTENT_TAGS WHERE original_upload_id = :id ORDER BY tag",
+        { id: upload.id },
+      );
+      expect(rows.map((row) => row.tag)).toEqual(["existing", "new-tag"]);
+    });
+
+    test("forbids a Trusted User from adding tags to a private video they cannot view", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-private-tags-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedUserWithRoleAndKey("viewer", "trusted-private-tags-key", { uploader: true });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer trusted-private-tags-key")
+        .send({ tags: ["new-tag"] });
+
+      expect(res.status).toBe(404);
+    });
+
+    test("a Trusted User with a view grant can add tags to a private video", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-grant-tags-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      const trusted = await seedUserWithRoleAndKey("viewer", "trusted-grant-tags-key", {
+        uploader: true,
+      });
+      await seedVideoAccess(upload.id, trusted.id, { permission: "view" });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer trusted-grant-tags-key")
+        .send({ tags: ["new-tag"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["new-tag"]);
+    });
+
+    test("rejects exceeding the tag cap across existing and new tags", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      for (let i = 0; i < 49; i += 1) {
+        await seedContentTag(upload.id, { tag: `tag-${i}` });
+      }
+      await seedUserWithRoleAndKey("viewer", "cap-tags-key", { uploader: true });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer cap-tags-key")
+        .send({ tags: ["one-more", "two-more"] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+
+      const rows = await queryRows(
+        "SELECT tag FROM CONTENT_TAGS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows.length).toBe(49);
+    });
+
+    test("rejects a missing tags field", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedUserWithRoleAndKey("viewer", "missing-tags-key", { uploader: true });
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer missing-tags-key")
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+  });
+
+  describe("DELETE /videos/{id}/tags (removeVideoTags)", () => {
+    test("rejects unauthenticated requests", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id);
+      await seedContentTag(upload.id, { tag: "existing" });
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer jt_not_a_real_key")
+        .send({ tags: ["existing"] });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe("unauthorized");
+    });
+
+    test("forbids a Trusted User who is not the owner/admin/moderator", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-remove-forbid-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedContentTag(upload.id, { tag: "existing" });
+      await seedUserWithRoleAndKey("viewer", "trusted-remove-forbid-key", { uploader: true });
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer trusted-remove-forbid-key")
+        .send({ tags: ["existing"] });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+
+      const rows = await queryRows(
+        "SELECT tag FROM CONTENT_TAGS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows.map((row) => row.tag)).toEqual(["existing"]);
+    });
+
+    test("the owner can remove a tag they didn't add themselves", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-remove-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedContentTag(upload.id, { tag: "keep" });
+      await seedContentTag(upload.id, { tag: "Remove-Me" });
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer owner-remove-key")
+        .send({ tags: ["remove-me"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["keep"]);
+
+      const rows = await queryRows(
+        "SELECT tag FROM CONTENT_TAGS WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(rows.map((row) => row.tag)).toEqual(["keep"]);
+    });
+
+    test("a moderator can remove tags on a video they don't own", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-mod-remove-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedContentTag(upload.id, { tag: "spam-tag" });
+      await seedUserWithRoleAndKey("moderator", "moderator-remove-key");
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer moderator-remove-key")
+        .send({ tags: ["spam-tag"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual([]);
+    });
+
+    test("is idempotent for tags that aren't present", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-remove-idempotent-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+      await seedContentTag(upload.id, { tag: "keep" });
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer owner-remove-idempotent-key")
+        .send({ tags: ["not-there"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["keep"]);
+    });
+
+    test("rejects a missing tags field", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-remove-missing-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/tags`)
+        .set("Authorization", "Bearer owner-remove-missing-key")
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+  });
+
   describe("DELETE /videos/{id} (deleteVideo)", () => {
     test("rejects unauthenticated deletes", async () => {
       const upload = await seedUpload();

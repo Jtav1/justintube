@@ -128,6 +128,33 @@ export async function updateVideo(id, updates) {
 }
 
 /**
+ * Adds tags to a video (additive - merges into the existing set, does not
+ * remove any). Usable by any Trusted User (verified email + uploader access,
+ * admins bypass) who can view the video, not just its owner/editors.
+ * @param {number} id
+ * @param {string[]} tags
+ * @returns {Promise<object>}
+ */
+export async function addVideoTags(id, tags) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/tags`, { tags })
+  return res.data
+}
+
+/**
+ * Removes tags from a video. Usable by the video owner, an admin, or a
+ * moderator - a stricter tier than addVideoTags, since removing a tag
+ * (including one another Trusted User added) is a moderation-level action.
+ * Idempotent: tags that aren't present are silently ignored.
+ * @param {number} id
+ * @param {string[]} tags
+ * @returns {Promise<object>}
+ */
+export async function removeVideoTags(id, tags) {
+  const res = await apiClient.delete(`/api/v1/videos/${id}/tags`, { data: { tags } })
+  return res.data
+}
+
+/**
  * Replaces the editor list for a video. Unlike viewers, editors are
  * meaningful (and settable) regardless of the video's visibility.
  * Usable by the video owner or a moderator/admin.

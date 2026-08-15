@@ -17,12 +17,21 @@ import {
 } from 'lucide-react'
 import { formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
-import { delistVideo, dislikeVideo, likeVideo, recordView, hideVideo } from '../api/videos.js'
+import {
+  addVideoTags,
+  removeVideoTags,
+  delistVideo,
+  dislikeVideo,
+  likeVideo,
+  recordView,
+  hideVideo,
+} from '../api/videos.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../api/users.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import ChipInput from './ChipInput.jsx'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
 
@@ -30,6 +39,10 @@ import './VideoPlayer.css'
 const TITLE_FONT_SIZE = 24
 const TITLE_FONT_WEIGHT = 600
 const TITLE_SHRINK_PX = 4
+
+// Mirrors webapi's MAX_TAGS/MAX_TAG_LENGTH (webapi/routes/videos.js).
+const MAX_TAG_LENGTH = 255
+const MAX_TAGS = 50
 
 /**
  * Picks the default rendition to play: always "original" when available,
@@ -59,6 +72,18 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
     setReactionDeltaVideoId(video.id)
     setReactionDelta({ likeCount: 0, dislikeCount: 0 })
   }
+  const [displayedTags, setDisplayedTags] = useState(video.tags ?? [])
+  const [displayedTagsVideoId, setDisplayedTagsVideoId] = useState(video.id)
+  if (video.id !== displayedTagsVideoId) {
+    setDisplayedTagsVideoId(video.id)
+    setDisplayedTags(video.tags ?? [])
+  }
+  const [tagEditMode, setTagEditMode] = useState(false)
+  const [tagInput, setTagInput] = useState('')
+  const [pendingAddTags, setPendingAddTags] = useState([])
+  const [pendingRemoveTags, setPendingRemoveTags] = useState([])
+  const [tagSaving, setTagSaving] = useState(false)
+  const [tagError, setTagError] = useState(false)
   const [avatarFailed, setAvatarFailed] = useState(false)
   const [delisted, setDelisted] = useState(false)
   const [delistPending, setDelistPending] = useState(false)
@@ -114,6 +139,14 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
   const canEdit =
     video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
   const isModerator = Boolean(user) && (user.role === 'moderator' || user.role === 'admin')
+  // "Trusted User": verified email + uploader access, admins bypass. Anyone who
+  // can view this video (they're on this page) and is a Trusted User may add
+  // tags to it - see POST /videos/:id/tags (addVideoTags).
+  const canAddTags = Boolean(user) && (user.role === 'admin' || (user.uploader && user.emailVerified))
+  // Removing a tag (including one another Trusted User added) is a
+  // moderation-level action - see DELETE /videos/:id/tags (removeVideoTags).
+  const canRemoveTags = video.viewerPermission === 'owner' || isModerator
+  const canEditTags = canAddTags || canRemoveTags
 
   const uploaderName = video.uploader?.displayName || video.uploader?.username
   const avatarUrl = video.uploader?.username
@@ -225,6 +258,76 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
     } catch {
       setHideError(true)
       toastError('Hiding video failed.')
+    }
+  }
+
+  function addPendingTagFromInput(rawText) {
+    const parts = rawText
+      .split(',')
+      .map((part) => part.trim().slice(0, MAX_TAG_LENGTH))
+      .filter(Boolean)
+    if (parts.length === 0) {
+      return
+    }
+    const keptLower = new Set(
+      displayedTags.filter((tag) => !pendingRemoveTags.includes(tag)).map((tag) => tag.toLowerCase()),
+    )
+    setPendingAddTags((prev) => {
+      const prevLower = new Set(prev.map((tag) => tag.toLowerCase()))
+      const additions = parts.filter(
+        (part) => !keptLower.has(part.toLowerCase()) && !prevLower.has(part.toLowerCase()),
+      )
+      return [...prev, ...additions].slice(0, MAX_TAGS)
+    })
+    setTagInput('')
+  }
+
+  // A chip in the editor is either an existing tag (mark for removal) or one
+  // typed this session that hasn't been saved yet (just drop it).
+  function removeEditorTag(tag) {
+    if (pendingAddTags.includes(tag)) {
+      setPendingAddTags((prev) => prev.filter((t) => t !== tag))
+    } else {
+      setPendingRemoveTags((prev) => [...prev, tag])
+    }
+  }
+
+  function handleCancelTagEdit() {
+    setTagEditMode(false)
+    setPendingAddTags([])
+    setPendingRemoveTags([])
+    setTagInput('')
+    setTagError(false)
+  }
+
+  async function handleSaveTags() {
+    if (pendingAddTags.length === 0 && pendingRemoveTags.length === 0) {
+      setTagEditMode(false)
+      return
+    }
+    setTagSaving(true)
+    setTagError(false)
+    try {
+      let nextTags = displayedTags
+      if (pendingAddTags.length > 0) {
+        const addResult = await addVideoTags(video.id, pendingAddTags)
+        nextTags = addResult.tags ?? [...nextTags, ...pendingAddTags]
+      }
+      if (pendingRemoveTags.length > 0) {
+        const removeResult = await removeVideoTags(video.id, pendingRemoveTags)
+        nextTags = removeResult.tags ?? nextTags.filter((tag) => !pendingRemoveTags.includes(tag))
+      }
+      setDisplayedTags(nextTags)
+      setPendingAddTags([])
+      setPendingRemoveTags([])
+      setTagInput('')
+      setTagEditMode(false)
+    } catch (err) {
+      console.error('Failed to save tag changes:', err)
+      setTagError(true)
+      toastError('Failed to save tag changes.')
+    } finally {
+      setTagSaving(false)
     }
   }
 
@@ -481,18 +584,72 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
             {video.description && (
               <p className="video-player-description">{video.description}</p>
             )}
-            {video.tags?.length > 0 && (
+            {(displayedTags.length > 0 || canEditTags) && (
               <div className="video-player-tags">
-                <span className="video-player-tags-label">Tags: </span>
-                {video.tags.map((tag) => (
-                  <Link
-                    key={tag}
-                    to={`/search?q=${encodeURIComponent(tag)}`}
-                    className="video-player-tag"
+                {displayedTags.length > 0 && (!tagEditMode || !canRemoveTags) && (
+                  <span className="video-player-tags-label">Tags: </span>
+                )}
+                {(!tagEditMode || !canRemoveTags) &&
+                  displayedTags.map((tag) => (
+                    <Link
+                      key={tag}
+                      to={`/search?q=${encodeURIComponent(tag)}`}
+                      className="video-player-tag"
+                    >
+                      {tag}
+                    </Link>
+                  ))}
+                {canEditTags && !tagEditMode && (
+                  <button
+                    type="button"
+                    className="video-player-tag-edit-btn"
+                    aria-label={canRemoveTags ? 'Edit tags' : 'Add tags'}
+                    title={canRemoveTags ? 'Edit tags' : 'Add tags'}
+                    onClick={() => setTagEditMode(true)}
                   >
-                    {tag}
-                  </Link>
-                ))}
+                    <Pencil size={13} />
+                  </button>
+                )}
+                {canEditTags && tagEditMode && (
+                  <div className="video-player-tag-editor">
+                    <ChipInput
+                      chips={(canRemoveTags
+                        ? [
+                            ...displayedTags.filter((tag) => !pendingRemoveTags.includes(tag)),
+                            ...pendingAddTags,
+                          ]
+                        : pendingAddTags
+                      ).map((tag) => ({ key: tag, label: tag }))}
+                      onRemove={removeEditorTag}
+                      inputValue={tagInput}
+                      onInputChange={setTagInput}
+                      onAddFreeform={canAddTags ? addPendingTagFromInput : undefined}
+                      placeholder={canAddTags ? 'Add tags (comma or Enter)' : ''}
+                      inputMaxLength={MAX_TAG_LENGTH}
+                    />
+                    <div className="video-player-tag-editor-actions">
+                      <button
+                        type="button"
+                        className="video-player-tag-save-btn"
+                        disabled={tagSaving}
+                        onClick={handleSaveTags}
+                      >
+                        {tagSaving ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        className="video-player-tag-cancel-btn"
+                        disabled={tagSaving}
+                        onClick={handleCancelTagEdit}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    {tagError && (
+                      <span className="video-player-tag-error">Failed to save tag changes.</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
