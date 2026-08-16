@@ -96,11 +96,7 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @throws {TranscodeValidationError} When the value is not a positive integer.
  */
 function requirePositiveInteger(value, fieldName) {
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value <= 0
-  ) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     throw new TranscodeValidationError(
       `${fieldName} must be a positive integer`,
     );
@@ -157,7 +153,11 @@ function requireBoolean(value, fieldName) {
  * @returns {boolean} Whether the value represents an enabled setting.
  */
 export function parseBooleanEnv(value) {
-  return TRUE_ENV_VALUES.has(String(value ?? "").trim().toLowerCase());
+  return TRUE_ENV_VALUES.has(
+    String(value ?? "")
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 /**
@@ -183,7 +183,10 @@ export function parseHardwareEncoders(value) {
     );
   }
 
-  if (!Array.isArray(parsed) || parsed.some((encoder) => typeof encoder !== "string")) {
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((encoder) => typeof encoder !== "string")
+  ) {
     throw new TranscodeValidationError(
       "HW_ACCELERATED_TRANSCODING_ENCODERS must be a JSON array of encoder names",
     );
@@ -229,9 +232,7 @@ export function getTranscodeConfig() {
     hardwareEnabled,
     hardwareDevice,
     hardwareEncoders: useHardware
-      ? parseHardwareEncoders(
-          process.env.HW_ACCELERATED_TRANSCODING_ENCODERS,
-        )
+      ? parseHardwareEncoders(process.env.HW_ACCELERATED_TRANSCODING_ENCODERS)
       : [],
     useHardware,
   };
@@ -251,7 +252,11 @@ export function getTranscodeConfig() {
  *   transcoding is disabled entirely.
  */
 export function validateTranscodeProfile(profile) {
-  if (profile === null || typeof profile !== "object" || Array.isArray(profile)) {
+  if (
+    profile === null ||
+    typeof profile !== "object" ||
+    Array.isArray(profile)
+  ) {
     throw new TranscodeValidationError(
       "profile is required and must be an object",
     );
@@ -261,8 +266,14 @@ export function validateTranscodeProfile(profile) {
 
   const validated = {
     id: requirePositiveInteger(body.id, "profile.id"),
-    outputHeight: requirePositiveInteger(body.outputHeight, "profile.outputHeight"),
-    outputWidth: requirePositiveInteger(body.outputWidth, "profile.outputWidth"),
+    outputHeight: requirePositiveInteger(
+      body.outputHeight,
+      "profile.outputHeight",
+    ),
+    outputWidth: requirePositiveInteger(
+      body.outputWidth,
+      "profile.outputWidth",
+    ),
     outputContainer: requireSafeToken(
       body.outputContainer,
       "profile.outputContainer",
@@ -591,12 +602,12 @@ export function buildFfmpegArgs({ inputPath, outputPath, profile }) {
  *
  * @type {number}
  */
-const THUMBNAIL_MAX_WIDTH = 854;
+const THUMBNAIL_MAX_WIDTH = 426;
 
 /**
  * @type {number}
  */
-const THUMBNAIL_MAX_HEIGHT = 480;
+const THUMBNAIL_MAX_HEIGHT = 240;
 
 /**
  * Builds the ffmpeg argument list for a single-frame thumbnail extraction.
@@ -620,7 +631,11 @@ const THUMBNAIL_MAX_HEIGHT = 480;
  * @param {number} options.timestampSeconds Frame timestamp to seek to, in seconds.
  * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
  */
-export function buildThumbnailFfmpegArgs({ inputPath, outputPath, timestampSeconds }) {
+export function buildThumbnailFfmpegArgs({
+  inputPath,
+  outputPath,
+  timestampSeconds,
+}) {
   const hwArgs = resolveDecodeHardwareAccelArgs(getTranscodeConfig());
 
   return [
@@ -637,7 +652,7 @@ export function buildThumbnailFfmpegArgs({ inputPath, outputPath, timestampSecon
     "-c:v",
     "libwebp",
     "-quality",
-    "80",
+    "70",
     outputPath,
   ];
 }
