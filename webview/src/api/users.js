@@ -120,6 +120,18 @@ export async function adminUpdateUserRole(userId, role) {
 }
 
 /**
+ * Resets an arbitrary user's password, on an admin's behalf. The target user
+ * is forced to change it again on next use.
+ * @param {number} userId
+ * @param {string} newPassword
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function adminResetUserPassword(userId, newPassword) {
+  const res = await apiClient.post(`/api/v1/admin/users/${userId}/password`, { newPassword })
+  return res.data
+}
+
+/**
  * Fetches whether the current user is subscribed to another user.
  * @param {number} userId
  * @returns {Promise<{subscribed: boolean}>}

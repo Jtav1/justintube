@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey, apiKeyPrefix } from "../../lib/auth/api-key.js";
 import { hashVerificationToken } from "../../lib/auth/email-verification.js";
+import { hashResetToken } from "../../lib/auth/password-reset.js";
 import { hashStreamKey } from "../../lib/auth/stream-key.js";
 import { query } from "../../lib/db.js";
 import { generateVideoId } from "../../lib/video-id.js";
@@ -17,6 +18,7 @@ import {
   Notification,
   NotificationType,
   OriginalUpload,
+  PasswordResetToken,
   PlaylistAccess,
   PlaylistItem,
   Report,
@@ -593,6 +595,31 @@ export async function seedEmailVerificationToken(userId, overrides = {}) {
   };
 
   const row = await EmailVerificationToken.create(record);
+  return { ...asSeedResult(row, record), rawToken };
+}
+
+/**
+ * Inserts a PASSWORD_RESET_TOKENS row for an existing user. Hashes `rawToken`
+ * with SHA-256; defaults to a 1-hour expiry.
+ *
+ * @param {number} userId Owning USERS id.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.rawToken] Plaintext token (defaults to a random value).
+ * @param {Date|string} [overrides.expiresAt] Expiry timestamp.
+ * @returns {Promise<{id: number, rawToken: string} & Record<string, unknown>>} Seeded token metadata plus rawToken.
+ */
+export async function seedPasswordResetToken(userId, overrides = {}) {
+  const rawToken =
+    overrides.rawToken || randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+  const { rawToken: _ignored, ...rest } = overrides;
+  const record = {
+    userId,
+    tokenHash: hashResetToken(rawToken),
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    ...rest,
+  };
+
+  const row = await PasswordResetToken.create(record);
   return { ...asSeedResult(row, record), rawToken };
 }
 

@@ -9,9 +9,15 @@ import {
   verifyEmailToken,
 } from "../lib/auth/email-verification.js";
 import {
+  consumePasswordResetToken,
+  createPasswordResetToken,
+  PasswordResetError,
+} from "../lib/auth/password-reset.js";
+import {
   adminNewUserNotificationsEnabled,
   emailEnabled,
   sendNewUserAdminNotification,
+  sendPasswordResetEmail,
   sendVerificationEmail,
 } from "../lib/email/mailer.js";
 import { isValidEmailFormat } from "../lib/email/validate-email.js";
@@ -59,6 +65,32 @@ const authCredentialLimiter = rateLimit({
 const resendVerificationLimiter = rateLimit({
   windowMs: 60_000,
   max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Rate limiter for the forgot-password request endpoint, to reduce email
+ * abuse and slow account-existence probing.
+ *
+ * @type {import('express').RequestHandler}
+ */
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Rate limiter for the reset-password consume endpoint. Unauthenticated and
+ * mutates the account, so it gets its own throttle (unlike /verify-email).
+ *
+ * @type {import('express').RequestHandler}
+ */
+const resetPasswordLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -638,6 +670,172 @@ export function createAuthRouter() {
           success: false,
           error: "internal_error",
           message: "Failed to resend verification email.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Requests a password reset email. Always responds 200 regardless of
+   * whether the username/email pair matches an account, so this endpoint
+   * cannot be used to enumerate valid accounts.
+   * POST /api/v1/auth/forgot-password with { username, email }.
+   * Auth: none; X-CSRF-Token required for cookie clients.
+   *
+   * @openapi
+   * /api/v1/auth/forgot-password:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Request a password reset email
+   *     operationId: authForgotPassword
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [username, email]
+   *             properties:
+   *               username: { type: string }
+   *               email: { type: string }
+   *     responses:
+   *       200:
+   *         description: Always returned; a reset email is sent only when the pair matches an account
+   *       400:
+   *         description: Missing username or email
+   *       429:
+   *         description: Rate limited
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Always sends 200 `{ success: true }` once validated.
+   */
+  auth.post("/forgot-password", forgotPasswordLimiter, async (req, res) => {
+    try {
+      const username = String(req.body?.username || "").trim();
+      const email = String(req.body?.email || "").trim();
+
+      if (!username || !email) {
+        res.status(400).json({
+          success: false,
+          error: "invalid_body",
+          message: "username and email are required.",
+        });
+        return;
+      }
+
+      if (emailEnabled()) {
+        const user = await User.findOne({ where: { username, email } });
+        if (user) {
+          try {
+            const token = await createPasswordResetToken(user.id);
+            await sendPasswordResetEmail({ to: user.email, token });
+          } catch (err) {
+            logger.error({ err }, "Failed to send password reset email");
+          }
+        }
+      }
+
+      res.status(200).json({ success: true });
+    } catch (err) {
+      logger.error({ err }, "authForgotPassword failed");
+      res.status(500).json({
+        success: false,
+        error: "internal_error",
+        message: "Failed to process password reset request.",
+      });
+    }
+  });
+
+  /**
+   * Consumes a password reset token and sets a new password. The token is
+   * the sole proof of identity here — no session is required or established.
+   * POST /api/v1/auth/reset-password with { token, newPassword }.
+   * Auth: none (token is proof); X-CSRF-Token required for cookie clients.
+   *
+   * @openapi
+   * /api/v1/auth/reset-password:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Reset password with a one-time token
+   *     operationId: authResetPassword
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [token, newPassword]
+   *             properties:
+   *               token: { type: string }
+   *               newPassword: { type: string, minLength: 8 }
+   *     responses:
+   *       200:
+   *         description: Password reset
+   *       400:
+   *         description: Missing/invalid body, invalid token, or password too short
+   *       410:
+   *         description: Token expired
+   *       429:
+   *         description: Rate limited
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
+   */
+  auth.post(
+    "/reset-password",
+    resetPasswordLimiter,
+    async (req, res) => {
+      try {
+        const token = String(req.body?.token || "").trim();
+        const newPassword = String(req.body?.newPassword || "");
+
+        if (!token || !newPassword) {
+          res.status(400).json({
+            success: false,
+            error: "invalid_body",
+            message: "token and newPassword are required.",
+          });
+          return;
+        }
+
+        if (newPassword.length < MIN_PASSWORD_LENGTH) {
+          res.status(400).json({
+            success: false,
+            error: "invalid_password",
+            message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+          });
+          return;
+        }
+
+        const passwordHash = await hashPassword(newPassword);
+        await consumePasswordResetToken(token, passwordHash);
+        res.status(200).json({ success: true });
+      } catch (err) {
+        if (err instanceof PasswordResetError) {
+          const statusByCode = {
+            invalid_body: 400,
+            invalid_token: 400,
+            token_expired: 410,
+          };
+          const status = statusByCode[err.code] || 400;
+          res.status(status).json({
+            success: false,
+            error: err.code,
+            message: err.message,
+          });
+          return;
+        }
+        logger.error({ err }, "authResetPassword failed");
+        res.status(500).json({
+          success: false,
+          error: "internal_error",
+          message: "Password reset failed.",
         });
       }
     },

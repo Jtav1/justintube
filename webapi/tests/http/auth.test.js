@@ -7,13 +7,15 @@ import {
   test,
 } from "@jest/globals";
 import { hashPassword } from "../../lib/auth/password.js";
+import { createPasswordResetToken } from "../../lib/auth/password-reset.js";
 import { createCorsOptions } from "../../lib/auth/cors.js";
 import { resetMailerForTests } from "../../lib/email/mailer.js";
-import { Role, User } from "../../lib/models/index.js";
+import { PasswordResetToken, Role, User } from "../../lib/models/index.js";
 import { createTestAgent, createTestClient } from "../helpers/app.js";
 import {
   resetTables,
   seedEmailVerificationToken,
+  seedPasswordResetToken,
   seedUser,
   seedUserApiKey,
   setupSchema,
@@ -486,6 +488,288 @@ describe("auth resend-verification", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true });
+  });
+});
+
+describe("auth forgot-password", () => {
+  beforeAll(async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.MAIL_FROM_ADDRESS;
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.MAIL_FROM_ADDRESS;
+    resetMailerForTests();
+    await resetTables();
+  });
+
+  test("returns 400 when username is missing", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/forgot-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ email: "someone@example.com" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("returns 400 when email is missing", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/forgot-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: "someone" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("creates a reset token when username and email match one account", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    resetMailerForTests();
+
+    const user = await seedUser({
+      username: "ivan",
+      email: "ivan@example.com",
+    });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/forgot-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: "ivan", email: "ivan@example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+
+    const token = await PasswordResetToken.findOne({ where: { userId: user.id } });
+    expect(token).not.toBeNull();
+  });
+
+  test("returns 200 without creating a token when no account matches", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    resetMailerForTests();
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/forgot-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: "nobody-here", email: "nobody@example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+
+    const count = await PasswordResetToken.count();
+    expect(count).toBe(0);
+  });
+
+  test("returns 200 without creating a token when username and email belong to different accounts", async () => {
+    process.env.SMTP_HOST = "smtp.test";
+    process.env.MAIL_FROM_ADDRESS = "noreply@test.example";
+    resetMailerForTests();
+
+    await seedUser({ username: "judy", email: "judy@example.com" });
+    await seedUser({ username: "kevin", email: "kevin@example.com" });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/forgot-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: "judy", email: "kevin@example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+
+    const count = await PasswordResetToken.count();
+    expect(count).toBe(0);
+  });
+
+  test("returns 200 without creating a token when email is not configured", async () => {
+    const user = await seedUser({
+      username: "laura",
+      email: "laura@example.com",
+    });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/forgot-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: "laura", email: "laura@example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+
+    const token = await PasswordResetToken.findOne({ where: { userId: user.id } });
+    expect(token).toBeNull();
+  });
+});
+
+describe("auth reset-password", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  test("returns 400 when token is missing", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ newPassword: "newpassword456" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("returns 400 when newPassword is missing", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: "irrelevant" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("returns 400 when newPassword is too short", async () => {
+    const user = await seedUser({ passwordHash: await hashPassword("password123") });
+    const { rawToken } = await seedPasswordResetToken(user.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken, newPassword: "short" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_password");
+  });
+
+  test("rejects an invalid reset token", async () => {
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: "not-a-real-token", newPassword: "newpassword456" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_token");
+  });
+
+  test("rejects an expired reset token", async () => {
+    const user = await seedUser({ passwordHash: await hashPassword("password123") });
+    const { rawToken } = await seedPasswordResetToken(user.id, {
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken, newPassword: "newpassword456" });
+
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe("token_expired");
+  });
+
+  test("resets the password, clears passwordExpired, and burns the token", async () => {
+    const user = await seedUser({
+      passwordHash: await hashPassword("password123"),
+      passwordExpired: true,
+      emailVerified: true,
+    });
+    const { rawToken } = await seedPasswordResetToken(user.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const res = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken, newPassword: "newpassword456" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+
+    const token = await PasswordResetToken.findOne({ where: { userId: user.id } });
+    expect(token).toBeNull();
+
+    const loginCsrf = (await agent.get("/api/v1/auth/csrf")).body.csrfToken;
+
+    const oldLogin = await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", loginCsrf)
+      .send({ username: user.username, password: "password123" });
+    expect(oldLogin.status).toBe(401);
+
+    const newLogin = await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", loginCsrf)
+      .send({ username: user.username, password: "newpassword456" });
+    expect(newLogin.status).toBe(200);
+    expect(newLogin.body.user.passwordExpired).toBe(false);
+  });
+
+  test("rejects reuse of an already-consumed token", async () => {
+    const user = await seedUser({ passwordHash: await hashPassword("password123") });
+    const { rawToken } = await seedPasswordResetToken(user.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const first = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: rawToken, newPassword: "newpassword456" });
+    expect(first.status).toBe(200);
+
+    const csrf2 = (await agent.get("/api/v1/auth/csrf")).body.csrfToken;
+    const second = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf2)
+      .send({ token: rawToken, newPassword: "anotherpassword789" });
+    expect(second.status).toBe(400);
+    expect(second.body.error).toBe("invalid_token");
+  });
+
+  test("requesting a new token invalidates the previous one", async () => {
+    const user = await seedUser({ passwordHash: await hashPassword("password123") });
+    const firstToken = await createPasswordResetToken(user.id);
+    const secondToken = await createPasswordResetToken(user.id);
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const usingFirst = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf)
+      .send({ token: firstToken, newPassword: "newpassword456" });
+    expect(usingFirst.status).toBe(400);
+    expect(usingFirst.body.error).toBe("invalid_token");
+
+    const csrf2 = (await agent.get("/api/v1/auth/csrf")).body.csrfToken;
+    const usingSecond = await agent
+      .post("/api/v1/auth/reset-password")
+      .set("X-CSRF-Token", csrf2)
+      .send({ token: secondToken, newPassword: "newpassword456" });
+    expect(usingSecond.status).toBe(200);
   });
 });
 

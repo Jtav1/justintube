@@ -15,6 +15,7 @@ import {
   adminResendUserVerification,
   adminGrantUploader,
   adminUpdateUserRole,
+  adminResetUserPassword,
   getSubscriptionState,
   subscribeToUser,
   unsubscribeFromUser,
@@ -77,6 +78,10 @@ function ProfilePage() {
   const [grantingUploader, setGrantingUploader] = useState(false)
 
   const [updatingRole, setUpdatingRole] = useState(false)
+
+  const [resettingPassword, setResettingPassword] = useState(false)
+  const [newAdminPassword, setNewAdminPassword] = useState('')
+  const [savingAdminPassword, setSavingAdminPassword] = useState(false)
 
   const resetKeyRef = useRef(null)
 
@@ -283,6 +288,26 @@ function ProfilePage() {
       toastError('Failed to update role.')
     } finally {
       setUpdatingRole(false)
+    }
+  }
+
+  async function handleAdminResetPassword(event) {
+    event.preventDefault()
+    if (newAdminPassword.length < 8) {
+      toastError('Password must be at least 8 characters.')
+      return
+    }
+
+    setSavingAdminPassword(true)
+    try {
+      await adminResetUserPassword(profile.user.id, newAdminPassword)
+      setResettingPassword(false)
+      setNewAdminPassword('')
+      success('Password reset. The user must set a new password on next login.')
+    } catch {
+      toastError('Failed to reset password.')
+    } finally {
+      setSavingAdminPassword(false)
     }
   }
 
@@ -638,6 +663,48 @@ function ProfilePage() {
           >
             {grantingUploader ? 'Granting...' : 'Grant uploader access'}
           </button>
+        </div>
+      )}
+
+      {isAdminViewer && (
+        <div className="profile-verification-row">
+          {resettingPassword ? (
+            <form className="profile-inline-edit" onSubmit={handleAdminResetPassword}>
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder="New password"
+                minLength={8}
+                value={newAdminPassword}
+                onChange={(event) => setNewAdminPassword(event.target.value)}
+                autoFocus
+                required
+              />
+              <div className="profile-inline-edit-actions">
+                <button type="submit" disabled={savingAdminPassword}>
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResettingPassword(false)
+                    setNewAdminPassword('')
+                  }}
+                  disabled={savingAdminPassword}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="profile-resend-verification"
+              onClick={() => setResettingPassword(true)}
+            >
+              Reset password
+            </button>
+          )}
         </div>
       )}
 
