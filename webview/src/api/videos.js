@@ -98,19 +98,27 @@ export async function clearMyHistory() {
  * default, with a default title derived from the filename). Callers should
  * follow up with updateVideo to set the real title/description/visibility/tags.
  * @param {File} file
- * @param {{ skipThumbnail?: boolean, onUploadProgress?: (event: ProgressEvent) => void }} [options]
+ * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number, onUploadProgress?: (event: ProgressEvent) => void }} [options]
  *   `skipThumbnail` skips the processing service's auto-generated thumbnail
  *   — pass this when the caller is about to upload a custom one via
  *   updateVideoThumbnail, so it can't be overwritten by a later-arriving
- *   auto-generated thumbnail. `onUploadProgress` is forwarded to axios for
- *   real byte-level upload progress (`event.loaded`/`event.total`).
+ *   auto-generated thumbnail. `thumbnailTimestamp` requests a specific frame
+ *   (seconds, fractional) for the auto-generated thumbnail instead of a
+ *   random one — ignored if `skipThumbnail` is set. `onUploadProgress` is
+ *   forwarded to axios for real byte-level upload progress
+ *   (`event.loaded`/`event.total`).
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
  */
-export async function uploadVideoFile(file, { skipThumbnail = false, onUploadProgress } = {}) {
+export async function uploadVideoFile(
+  file,
+  { skipThumbnail = false, thumbnailTimestamp, onUploadProgress } = {},
+) {
   const formData = new FormData()
   formData.append('file', file)
   if (skipThumbnail) {
     formData.append('skipThumbnail', 'true')
+  } else if (thumbnailTimestamp != null) {
+    formData.append('thumbnailTimestamp', String(thumbnailTimestamp))
   }
   const res = await apiClient.post('/api/v1/videos/upload', formData, { onUploadProgress })
   return res.data
@@ -223,14 +231,21 @@ export async function deleteVideo(id) {
  * Imports a video from a remote URL via the processing service, creating an
  * ORIGINAL_UPLOADS row the same way uploadVideoFile does.
  * @param {string} url
- * @param {{ skipThumbnail?: boolean }} [options] `skipThumbnail` skips the
- *   processing service's auto-generated thumbnail — pass this when the
- *   caller is about to upload a custom one via updateVideoThumbnail, so it
- *   can't be overwritten by a later-arriving auto-generated thumbnail.
+ * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number }} [options]
+ *   `skipThumbnail` skips the processing service's auto-generated thumbnail
+ *   — pass this when the caller is about to upload a custom one via
+ *   updateVideoThumbnail, so it can't be overwritten by a later-arriving
+ *   auto-generated thumbnail. `thumbnailTimestamp` requests a specific frame
+ *   (seconds, fractional) for the auto-generated thumbnail instead of a
+ *   random one — ignored if `skipThumbnail` is set.
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
  */
-export async function importVideoUrl(url, { skipThumbnail = false } = {}) {
-  const res = await apiClient.post('/api/v1/videos/import', { url, skipThumbnail })
+export async function importVideoUrl(url, { skipThumbnail = false, thumbnailTimestamp } = {}) {
+  const body = { url, skipThumbnail }
+  if (!skipThumbnail && thumbnailTimestamp != null) {
+    body.thumbnailTimestamp = thumbnailTimestamp
+  }
+  const res = await apiClient.post('/api/v1/videos/import', body)
   return res.data
 }
 

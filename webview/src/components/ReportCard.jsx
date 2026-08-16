@@ -1,4 +1,4 @@
-import { MessageSquareWarning } from 'lucide-react'
+import { TriangleAlert } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import './ReportCard.css'
 
@@ -24,7 +24,7 @@ function ReportCard({ report }) {
       onClick={handleClick}
     >
       <span className="report-card-icon">
-        <MessageSquareWarning size={20} />
+        <TriangleAlert size={20} />
       </span>
       <div className="report-card-body">
         <div className="report-card-header">

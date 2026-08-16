@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, User, ListVideo, ThumbsUp, History, Star, Users, UsersRound, UserCheck, ShieldCheck, MessageSquareWarning, Braces } from 'lucide-react'
+import { Home, User, ListVideo, ThumbsUp, History, Star, Users, UsersRound, UserCheck, ShieldCheck, TriangleAlert, Braces } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import packageJson from '../../package.json'
@@ -77,7 +77,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
         : null,
     },
     { key: 'subscribers', label: 'Subscribers', icon: UserCheck, to: user ? '/subscribers' : null },
-    { key: 'reports', label: 'Reports', icon: MessageSquareWarning, to: user ? '/reports' : null },
+    { key: 'reports', label: 'Reports', icon: TriangleAlert, to: user ? '/reports' : null },
     ...(user?.role === 'admin'
       ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
       : []),

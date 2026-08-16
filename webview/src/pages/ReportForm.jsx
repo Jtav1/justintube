@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { MessageSquareWarning } from 'lucide-react'
+import { TriangleAlert } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import {
@@ -252,7 +252,7 @@ function ReportForm() {
       <section className="report-form-page">
         <form className="report-form-card" onSubmit={handleCreateSubmit}>
           <h1>
-            <MessageSquareWarning size={20} />
+            <TriangleAlert size={20} />
             New Report
           </h1>
 
@@ -296,7 +296,7 @@ function ReportForm() {
     <section className="report-form-page">
       <div className="report-form-card">
         <h1>
-          <MessageSquareWarning size={20} />
+          <TriangleAlert size={20} />
           Report #{report.id}
         </h1>
 

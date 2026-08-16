@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import * as authApi from '../api/auth.js'
 import { AuthContext } from './auth-context.js'
+import { useTheme } from './useTheme.js'
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const { refreshThemes } = useTheme()
 
   useEffect(() => {
     let cancelled = false
@@ -28,12 +30,14 @@ export function AuthProvider({ children }) {
   async function login(username, password) {
     const loggedInUser = await authApi.login(username, password)
     setUser(loggedInUser)
+    await refreshThemes()
     return loggedInUser
   }
 
   async function register(username, email, password) {
     const registeredUser = await authApi.register(username, email, password)
     setUser(registeredUser)
+    await refreshThemes()
     return registeredUser
   }
 

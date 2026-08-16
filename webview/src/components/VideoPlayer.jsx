@@ -6,7 +6,7 @@ import {
   Link as LinkIcon,
   ListMinus,
   ListPlus,
-  MessageSquareWarning,
+  TriangleAlert,
   Pencil,
   Repeat,
   Settings2,
@@ -771,7 +771,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
               title="Report"
               onClick={onReport}
             >
-              <MessageSquareWarning size={18} />
+              <TriangleAlert size={18} />
             </button>
           )}
           <div className="video-player-reaction-group">

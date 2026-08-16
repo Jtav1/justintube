@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Menu, MessageSquareWarning, MoreVertical, Palette, Radio, Search, UserRound, Video } from 'lucide-react'
+import { Menu, TriangleAlert, MoreVertical, Palette, Radio, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useSiteConfig } from '../context/useSiteConfig.js'
 import apiClient from '../api/client.js'
@@ -224,7 +224,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
               })
             }
           >
-            <MessageSquareWarning size={20} />
+            <TriangleAlert size={20} />
           </button>
         )}
         {user && <NotificationBell />}

@@ -2,6 +2,21 @@ import { useEffect, useState } from 'react'
 import { getThemes, selectMyTheme } from '../api/themes.js'
 import { ThemeContext } from './theme-context.js'
 
+const CACHED_THEME_ID_KEY = 'jt.themeId'
+
+function readCachedThemeId() {
+  const raw = localStorage.getItem(CACHED_THEME_ID_KEY)
+  return raw === null ? null : Number(raw)
+}
+
+function writeCachedThemeId(themeId) {
+  if (themeId == null) {
+    localStorage.removeItem(CACHED_THEME_ID_KEY)
+    return
+  }
+  localStorage.setItem(CACHED_THEME_ID_KEY, String(themeId))
+}
+
 function hexToRgba(hex, alpha) {
   const value = parseInt(hex, 16)
   const r = (value >> 16) & 0xff
@@ -43,21 +58,16 @@ export function ThemeProvider({ children }) {
   const [themes, setThemes] = useState([])
   const [loading, setLoading] = useState(true)
 
-  async function loadThemes() {
-    const { items, selectedThemeId } = await getThemes()
-    const active = pickActiveTheme(items, selectedThemeId)
-    setThemes(items)
-    setTheme(active)
-    applyThemeColors(active)
-  }
-
+  // `selectedThemeId` reflects the signed-in user's server-side preference
+  // (null once logged out). The browser-cached id is only used as a fallback
+  // so the last-picked theme keeps showing after logout, on this browser.
   useEffect(() => {
     let cancelled = false
 
     async function bootstrap() {
       try {
         const { items, selectedThemeId } = await getThemes()
-        const active = pickActiveTheme(items, selectedThemeId)
+        const active = pickActiveTheme(items, selectedThemeId ?? readCachedThemeId())
         if (!cancelled) {
           setThemes(items)
           setTheme(active)
@@ -79,9 +89,16 @@ export function ThemeProvider({ children }) {
     }
   }, [])
 
+  // Re-syncs the cached theme id with the signed-in user's server-side
+  // selection; called after login so the cache reflects that account's theme.
   async function refreshThemes() {
     try {
-      await loadThemes()
+      const { items, selectedThemeId } = await getThemes()
+      const active = pickActiveTheme(items, selectedThemeId ?? readCachedThemeId())
+      setThemes(items)
+      setTheme(active)
+      applyThemeColors(active)
+      writeCachedThemeId(active ? active.id : null)
     } catch (err) {
       console.error('Failed to refresh themes:', err)
     }
@@ -95,6 +112,7 @@ export function ThemeProvider({ children }) {
 
     setTheme(target)
     applyThemeColors(target)
+    writeCachedThemeId(target.id)
 
     try {
       await selectMyTheme(themeId)

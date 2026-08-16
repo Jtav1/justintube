@@ -6,9 +6,9 @@ This software is a collaborative effort between myself (Justin) and a few friend
 
 ## Why
 
-I (Justin) have been hosting a MediaCMS instance for a long time for myself and friends to use for fun, but I find it lacking in a few ways and I've always wanted to tackle developing one specifically tailored to our needs instead of maintained by someone else. Plus I'm tired of keeping it updated.
+I, Justin, have been hosting a MediaCMS instance for a long time for myself and friends to use for fun, but I find it lacking in a few ways and I've always wanted to tackle developing one specifically tailored to our needs instead of maintained by someone else. Plus I'm tired of keeping it updated.
 
-Quick shout out to them though, https://mediacms.io/ https://github.com/mediacms-io/mediacms if you are looking at this project you will probably be better served by MediaCMS until I remove this warning. However Justintube is not a fork and shares zero code or ideas with them - I'm not patient enough to bother doing that lol
+Quick shout out to them though, https://mediacms.io/ https://github.com/mediacms-io/mediacms if you are looking at this project you will probably be better served by MediaCMS. However Justintube is not a fork and shares zero code or ideas with them - I'm not patient enough to bother doing that lol
 
 ## Versioning
 
@@ -23,10 +23,10 @@ v2.0.0 - Initial production release
 
 ## What it does
 
-- **Video platform basics** — upload (including yt-dlp URL import), FFmpeg transcoding to multiple resolutions with configurable hardware acceleration (WIP/FUTURE), video tagging, search with typeahead suggestions, subscriptions, likes, playlists, watch history, and notifications.
-- **Access control** — email-verified accounts with (FUTURE) optional SSO linking, RBAC roles (Admin / Moderator / Uploader / Viewer / Locked), and per-video visibility (public, private with grants, hidden, unlisted).
+- **Video platform basics** — upload (including yt-dlp URL import), FFmpeg transcoding to multiple resolutions with configurable hardware acceleration, video tagging, search with typeahead suggestions, subscriptions, likes, playlists, watch history, and notifications.
+- **Access control** — email-verified accounts with optional SSO linking (FUTURE), RBAC roles (Admin / Moderator / Uploader / Viewer / Locked), and per-video visibility (public, private with grants, hidden, unlisted).
 - **CAST shared watch sessions** — (FUTURE/PLANNED) start a session from a playlist or a single video, share a session code, and watch together: a live session queue (a copy seeded from the playlist — the source is never mutated), synced play/pause/skip/seek for everyone, presence, an activity feed, emoji reactions, and an in-app display view for casting to a TV. Realtime sync runs over Socket.IO (namespace `/cast`, one room per session). Based on the dixtube-live prototype by [SpinnerMaster][https://github.com/SpinnerMaster]
-- **Admin tools** — user/role management, API keys (FUTURE), system config (WIP), transcode profiles (FUTURE), featured videos, moderation (de-listing, bans).
+- **Admin tools** — user/role management, API keys, system config, transcode profiles, featured videos, moderation (de-listing, bans).
 
 See [webapi/openapi.yaml](webapi/openapi.yaml) for the OpenAPI base document and [docs/api-checklist.md](docs/api-checklist.md) for implementation progress.
 

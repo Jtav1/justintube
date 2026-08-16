@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowRight, MessageSquareWarning, Pencil, UserRound } from 'lucide-react'
+import { ArrowRight, TriangleAlert, Pencil, UserRound } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
@@ -454,7 +454,7 @@ function ProfilePage() {
                 aria-label="Report this user"
                 title="Report this user"
               >
-                <MessageSquareWarning size={16} />
+                <TriangleAlert size={16} />
               </button>
             )}
           </div>

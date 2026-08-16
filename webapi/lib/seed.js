@@ -4,6 +4,7 @@ import {
   NotificationType,
   Role,
   Theme,
+  TranscodeProfile,
   User,
   UserNotificationSetting,
 } from "./models/index.js";
@@ -415,6 +416,69 @@ export async function seedThemes() {
 
     if (created) {
       logger.info(`[api]: seeded "${name}" theme`);
+    }
+  }
+}
+
+/**
+ * The standard H.264/AAC/MP4 video transcode profiles seeded on boot, one
+ * per common resolution rung. `hardwareAccelerated` is left `false` since
+ * hardware encoding availability is host-specific (see
+ * ENABLE_HW_ACCELERATED_TRANSCODING) - an admin can add accelerated variants
+ * afterward via the transcode-profiles API once they know their host supports
+ * it.
+ *
+ * @type {Array<{resolutionName: string, outputWidth: number, outputHeight: number, outputContainer: string, videoCodec: string, audioCodec: string}>}
+ */
+const DEFAULT_TRANSCODE_PROFILES = [
+  { resolutionName: "240p", outputWidth: 426, outputHeight: 240, outputContainer: "mp4", videoCodec: "h264", audioCodec: "aac" },
+  { resolutionName: "360p", outputWidth: 640, outputHeight: 360, outputContainer: "mp4", videoCodec: "h264", audioCodec: "aac" },
+  { resolutionName: "480p", outputWidth: 854, outputHeight: 480, outputContainer: "mp4", videoCodec: "h264", audioCodec: "aac" },
+  { resolutionName: "720p", outputWidth: 1280, outputHeight: 720, outputContainer: "mp4", videoCodec: "h264", audioCodec: "aac" },
+  { resolutionName: "1080p", outputWidth: 1920, outputHeight: 1080, outputContainer: "mp4", videoCodec: "h264", audioCodec: "aac" },
+];
+
+/**
+ * Whether `seedTranscodeProfiles()` should run. Defaults on (unlike demo
+ * users, these are ordinary baseline configuration meant to exist in every
+ * real deployment, not dev-only data) - `SEED_DEFAULT_TRANSCODE_PROFILES`
+ * overrides.
+ *
+ * @returns {boolean} True when the default transcode profiles should be seeded.
+ */
+export function shouldSeedDefaultTranscodeProfiles() {
+  return String(process.env.SEED_DEFAULT_TRANSCODE_PROFILES ?? "true").toLowerCase() === "true";
+}
+
+/**
+ * Ensures the standard video transcode profiles (240p-1080p, H.264/AAC/MP4)
+ * exist. Idempotent via findOrCreate, keyed on `{resolutionName, mediaType}`
+ * (the "resolution rung" a profile represents) rather than its full field
+ * set - an admin who tweaks a seeded profile's codec/container/etc.
+ * afterward won't have a duplicate default recreated alongside it next boot,
+ * since the key still matches the edited row. Deleting a seeded profile
+ * outright does get it recreated with defaults on the next boot, same as
+ * roles/themes. `creatorUserId` is left null since these are system-seeded,
+ * not admin-authored. Callers should gate this behind
+ * `shouldSeedDefaultTranscodeProfiles()`.
+ *
+ * @returns {Promise<void>} Resolves once default transcode profile seeding has been attempted.
+ */
+export async function seedTranscodeProfiles() {
+  for (const { resolutionName, ...rest } of DEFAULT_TRANSCODE_PROFILES) {
+    const [, created] = await TranscodeProfile.findOrCreate({
+      where: { resolutionName, mediaType: "video" },
+      defaults: {
+        resolutionName,
+        mediaType: "video",
+        ...rest,
+        hardwareAccelerated: false,
+        creatorUserId: null,
+      },
+    });
+
+    if (created) {
+      logger.info(`[api]: seeded "${resolutionName}" transcode profile`);
     }
   }
 }
