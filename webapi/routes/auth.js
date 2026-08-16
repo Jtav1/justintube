@@ -453,6 +453,7 @@ export function createAuthRouter() {
       }
 
       const csrfToken = await establishSession(req, user.id);
+      await user.update({ lastLogIn: new Date() });
       res.json({
         user: serializeUser(user, role),
         csrfToken,

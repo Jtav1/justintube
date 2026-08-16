@@ -14,7 +14,8 @@
  *   emailVerified: boolean,
  *   passwordExpired: boolean,
  *   uploader: boolean,
- *   role: string|null
+ *   role: string|null,
+ *   lastLogIn: string|null
  * }} Public user profile object.
  */
 export function serializeUser(user, role = null) {
@@ -30,5 +31,6 @@ export function serializeUser(user, role = null) {
     passwordExpired: Boolean(user.passwordExpired),
     uploader: Boolean(user.uploader),
     role: resolvedRole ? resolvedRole.name : null,
+    lastLogIn: user.lastLogIn ?? null,
   };
 }
