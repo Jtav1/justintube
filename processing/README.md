@@ -51,6 +51,8 @@ boolean (set on the `TranscodeProfile` in the Web API). Software profiles
 A hardware profile whose job isn't currently runnable is skipped, not treated as
 a request error — see `skipped[].reason` below.
 
+**IMPORTANT NOTE:** There are some hardcoded hw transcoding stuff that may be specific to my '''''production''''' homelab server with a gen 9.5 comet lake uhd630. If someone else ever wants to run this pls open an issue on the repo if it breaks for you. I may or may not look into it 
+
 ## Run
 
 | Script | What it does |
