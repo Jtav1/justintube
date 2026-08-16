@@ -11,8 +11,8 @@ set -eu
 # as root lets it open those fine; nginx's own `user nginx;` directive (see
 # /etc/nginx/nginx.conf) then drops worker processes to the PUID/PGID-mapped
 # nginx account for actual request handling.
-PUID="${PUID:-101}"
-PGID="${PGID:-101}"
+PUID="${PUID:-99}"
+PGID="${PGID:-100}"
 
 if [ "$(id -g nginx)" != "$PGID" ]; then
   groupmod -o -g "$PGID" nginx
