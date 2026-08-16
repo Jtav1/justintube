@@ -7,8 +7,10 @@ import {
   seedAdminUser,
   seedDemoUsers,
   seedThemes,
+  seedTranscodeProfiles,
   seedNotificationTypes,
   shouldSeedDemoUsers,
+  shouldSeedDefaultTranscodeProfiles,
   ensureUserNotificationSettings,
 } from "./seed.js";
 import { syncSessionStore } from "./auth/session.js";
@@ -808,6 +810,9 @@ export async function ensureSchema() {
     await seedDemoUsers();
   }
   await seedThemes();
+  if (shouldSeedDefaultTranscodeProfiles()) {
+    await seedTranscodeProfiles();
+  }
   await ensureUserNotificationSettings();
   await syncSessionStore();
 }
