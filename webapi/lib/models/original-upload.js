@@ -76,6 +76,19 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
     },
+    /**
+     * Mirrors the request-time `skipThumbnail` option. Persisted (rather than
+     * threaded through as a plain function parameter, like the import flow
+     * does) because a convertible-format upload's `finalizeUploadTranscodes`
+     * call happens later, from the async `/internal/original-uploads/:jobId/
+     * normalize-complete` callback - a separate HTTP request with no access
+     * to the original request's in-memory state.
+     */
+    skipThumbnail: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     userId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,

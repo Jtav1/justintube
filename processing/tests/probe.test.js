@@ -23,6 +23,7 @@ describe("mimeTypeForContainer", () => {
   test("maps known containers", () => {
     expect(mimeTypeForContainer("mp4")).toBe("video/mp4");
     expect(mimeTypeForContainer(".webm")).toBe("video/webm");
+    expect(mimeTypeForContainer("m4a")).toBe("audio/mp4");
   });
 
   test("returns null for unknown containers", () => {

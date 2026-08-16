@@ -102,6 +102,14 @@ export function mimeTypeForContainer(container) {
     webm: "video/webm",
     mkv: "video/x-matroska",
     mov: "video/quicktime",
+    avi: "video/x-msvideo",
+    wmv: "video/x-ms-wmv",
+    flv: "video/x-flv",
+    mpg: "video/mpeg",
+    mpeg: "video/mpeg",
+    m4v: "video/x-m4v",
+    "3gp": "video/3gpp",
+    ts: "video/mp2t",
     mp3: "audio/mpeg",
     wav: "audio/wav",
     m4a: "audio/mp4",
@@ -110,6 +118,10 @@ export function mimeTypeForContainer(container) {
     ogg: "audio/ogg",
     oga: "audio/ogg",
     opus: "audio/opus",
+    wma: "audio/x-ms-wma",
+    aiff: "audio/aiff",
+    aif: "audio/aiff",
+    amr: "audio/amr",
   };
   return map[key] || null;
 }
@@ -122,7 +134,20 @@ export function mimeTypeForContainer(container) {
  *
  * @type {Set<string>}
  */
-const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "opus"]);
+const AUDIO_EXTENSIONS = new Set([
+  "mp3",
+  "wav",
+  "m4a",
+  "aac",
+  "flac",
+  "ogg",
+  "oga",
+  "opus",
+  "wma",
+  "aiff",
+  "aif",
+  "amr",
+]);
 
 /**
  * Classifies a file extension as an audio-only or video media type.

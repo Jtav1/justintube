@@ -70,6 +70,22 @@ const allowedExtensions = new Set(
 );
 
 /**
+ * Set of lowercase file extensions (without a leading dot) that aren't in
+ * `allowedExtensions` but are common enough containers that an upload is
+ * accepted anyway and automatically normalized (remuxed/transcoded) into an
+ * H.264/AAC MP4 (or M4A for audio-only) before going live, rather than
+ * rejected. Parsed from FILETYPES_CONVERTIBLE.
+ *
+ * @type {Set<string>}
+ */
+const convertibleExtensions = new Set(
+  (process.env.FILETYPES_CONVERTIBLE || "")
+    .split(",")
+    .map((ext) => ext.trim().toLowerCase().replace(/^\./, ""))
+    .filter(Boolean),
+);
+
+/**
  * Maximum accepted upload size in bytes. Defaults to 2 GiB; override with the
  * MAX_UPLOAD_SIZE_BYTES env var.
  *
@@ -130,13 +146,20 @@ const storage = multer.diskStorage({
  */
 function fileFilter(_req, file, cb) {
   const ext = normalizedExtension(file.originalname);
-  if (!allowedExtensions.has(ext)) {
-    const error = new Error(`File type ".${ext}" is not allowed.`);
-    error.code = "UNSUPPORTED_FILE_TYPE";
-    cb(error);
+  if (allowedExtensions.has(ext)) {
+    cb(null, true);
     return;
   }
-  cb(null, true);
+  if (convertibleExtensions.has(ext) && transcodingEnabled()) {
+    // Accepted, but flagged so the handler normalizes it (remux/transcode to
+    // H.264/AAC MP4) instead of treating it as an already-playable original.
+    file.needsConversion = true;
+    cb(null, true);
+    return;
+  }
+  const error = new Error(`File type ".${ext}" is not allowed.`);
+  error.code = "UNSUPPORTED_FILE_TYPE";
+  cb(error);
 }
 
 const upload = multer({
@@ -503,7 +526,7 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
  * @param {string} storedFilename Basename of the source file under `original/`.
  * @returns {void} Nothing — the hash job is enqueued in the background.
  */
-function enqueueDuplicateHashCheck(upload, storedFilename) {
+export function enqueueDuplicateHashCheck(upload, storedFilename) {
   if (!duplicateUploadDetectionEnabled()) {
     return;
   }
@@ -523,6 +546,72 @@ function enqueueDuplicateHashCheck(upload, storedFilename) {
     .catch((err) => {
       logger.warn({ err }, `[upload] duplicate-check enqueue threw for ${upload.videoId}`);
     });
+}
+
+/**
+ * Kicks off server-side normalization for an upload accepted through the
+ * FILETYPES_CONVERTIBLE tier (a common container ffmpeg can read but that
+ * FILETYPES_ALLOWED doesn't serve as-is): enqueues a single `"normalize"`
+ * job with the processing service, which remuxes/transcodes the source into
+ * an H.264/AAC MP4 (or M4A for audio-only uploads) at its original
+ * resolution. Marks the upload `"converting"` and returns immediately —
+ * `finalizeUploadTranscodes` and the duplicate-hash check both run later,
+ * once `/internal/original-uploads/:jobId/normalize-complete` fires (see
+ * routes/internal-original-uploads.js), against the normalized file rather
+ * than the raw source.
+ *
+ * @private
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} storedFilename Basename of the raw source file under `original/`.
+ * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
+ */
+async function startUploadConversion(upload, storedFilename) {
+  const outputExtension = upload.mediaType === "audio" ? "m4a" : "mp4";
+  const enqueue = await requestTranscodeBatch({
+    filename: storedFilename,
+    jobs: [
+      {
+        jobId: `normalize-${upload.videoId}`,
+        outputFilename: `${upload.videoId}.${outputExtension}`,
+        kind: "normalize",
+      },
+    ],
+  });
+
+  if (!enqueue.ok) {
+    logger.error(
+      { error: enqueue.error },
+      `[upload] normalize enqueue failed for ${upload.videoId}`,
+    );
+    await upload.update({
+      status: "failed",
+      statusMessage: enqueue.error || "Failed to queue format conversion.",
+    });
+    await upload.reload();
+    return {
+      status: 201,
+      body: {
+        ...uploadResponseBody(upload),
+        fileVersions: [],
+        failures: [
+          {
+            profileId: null,
+            message: enqueue.error || "normalize enqueue failed",
+          },
+        ],
+      },
+    };
+  }
+
+  await upload.update({ status: "converting" });
+  await upload.reload();
+  return {
+    status: 201,
+    body: {
+      ...uploadResponseBody(upload),
+      fileVersions: [],
+    },
+  };
 }
 
 /**
@@ -616,6 +705,7 @@ async function uploadVideo(req, res) {
           storagePath,
           userId: req.user.id,
           thumbnailTimestampTenths: thumbnailTimestamp.tenths,
+          skipThumbnail,
         },
         { transaction },
       );
@@ -638,9 +728,17 @@ async function uploadVideo(req, res) {
     return;
   }
 
-  enqueueDuplicateHashCheck(upload, file.filename);
-
-  const result = await finalizeUploadTranscodes(upload, file.filename, { skipThumbnail });
+  let result;
+  if (file.needsConversion) {
+    // Renditions/thumbnail must scale from the normalized file, not the raw
+    // source, and the duplicate-hash check should hash the final playable
+    // file — both are deferred until normalize-complete (see
+    // routes/internal-original-uploads.js) instead of running now.
+    result = await startUploadConversion(upload, file.filename);
+  } else {
+    enqueueDuplicateHashCheck(upload, file.filename);
+    result = await finalizeUploadTranscodes(upload, file.filename, { skipThumbnail });
+  }
   res.status(result.status).json(result.body);
 }
 

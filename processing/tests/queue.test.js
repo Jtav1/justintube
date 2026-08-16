@@ -11,6 +11,7 @@ const notifyContentHashFailed = jest.fn();
 jest.unstable_mockModule("../lib/probe.js", () => ({
   computeContentHash,
   collectOutputMetadata: jest.fn(),
+  probeStreamCodecs: jest.fn(),
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -18,15 +19,19 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyFileVersionComplete: jest.fn(),
   notifyFileVersionFailed: jest.fn(),
   notifyThumbnailComplete: jest.fn(),
+  notifyOriginalUploadNormalizeComplete: jest.fn(),
+  notifyOriginalUploadNormalizeFailed: jest.fn(),
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveOriginalInputPath: jest.fn((filename) => `/media/original/${filename}`),
   resolveThumbnailOutputPath: jest.fn(),
   resolveTranscodedOutputPath: jest.fn(),
+  resolveNormalizedOutputPath: jest.fn(),
 }));
 jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildFfmpegArgs: jest.fn(),
   buildThumbnailFfmpegArgs: jest.fn(),
+  buildNormalizeFfmpegArgs: jest.fn(),
   runFfmpeg: jest.fn(),
 }));
 

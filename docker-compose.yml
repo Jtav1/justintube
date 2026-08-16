@@ -152,6 +152,7 @@ services:
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
       # Comma-separated allowed extensions per upload type.
       FILETYPES_ALLOWED: ${FILETYPES_ALLOWED:-mp4,mkv,webm,wav,mp3,m4a,aac,flac,ogg}
+      FILETYPES_CONVERTIBLE: ${FILETYPES_CONVERTIBLE:-mov,avi,wmv,flv,mpg,mpeg,m4v,3gp,ts,wma,aiff,aif,amr}
       THUMBNAIL_FILETYPES_ALLOWED: ${THUMBNAIL_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
       AVATAR_FILETYPES_ALLOWED: ${AVATAR_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
       BANNER_FILETYPES_ALLOWED: ${BANNER_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}

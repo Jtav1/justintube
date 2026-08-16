@@ -4,6 +4,7 @@ import {
 } from "../lib/media-paths.js";
 import {
   buildFfmpegArgs,
+  buildNormalizeFfmpegArgs,
   buildOutputFilename,
   buildThumbnailFfmpegArgs,
   getTranscodeConfig,
@@ -199,6 +200,43 @@ describe("thumbnail job validation and ffmpeg args", () => {
     expect(result).toEqual({
       filename: "clip.mp4",
       jobs: [{ jobId: "hash-abc123", kind: "hash" }],
+    });
+  });
+
+  test("validateTranscodeJob accepts a normalize job with only jobId + outputFilename, no profile", () => {
+    const jobId = "normalize-abc123";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "abc123.mp4", kind: "normalize" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "abc123.mp4",
+      kind: "normalize",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for normalize jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          { jobId: "normalize-abc123", outputFilename: "abc123.mp4", kind: "normalize" },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("validateTranscodeBatchRequest accepts a batch with a normalize job", () => {
+    const result = validateTranscodeBatchRequest({
+      filename: "clip.mov",
+      jobs: [{ jobId: "normalize-abc123", outputFilename: "abc123.mp4", kind: "normalize" }],
+    });
+    expect(result).toEqual({
+      filename: "clip.mov",
+      jobs: [{ jobId: "normalize-abc123", outputFilename: "abc123.mp4", kind: "normalize" }],
     });
   });
 
@@ -516,5 +554,120 @@ describe("ffmpeg helpers", () => {
         audioCodec: "aac",
       }),
     ).toThrow("transcoding is disabled");
+  });
+});
+
+describe("buildNormalizeFfmpegArgs", () => {
+  test("copies both streams when source is already H.264/AAC (pure remux)", () => {
+    const args = buildNormalizeFfmpegArgs({
+      inputPath: "/media/original/in.mkv",
+      outputPath: "/media/original/out.mp4",
+      codecs: { hasVideo: true, videoCodec: "h264", hasAudio: true, audioCodec: "aac" },
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/in.mkv",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "copy",
+      "-f",
+      "mp4",
+      "/media/original/out.mp4",
+    ]);
+  });
+
+  test("re-encodes only the mismatched video stream, copies audio already in AAC", () => {
+    const args = buildNormalizeFfmpegArgs({
+      inputPath: "/media/original/in.avi",
+      outputPath: "/media/original/out.mp4",
+      codecs: { hasVideo: true, videoCodec: "mpeg4", hasAudio: true, audioCodec: "aac" },
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/in.avi",
+      "-c:v",
+      "libx264",
+      "-c:a",
+      "copy",
+      "-f",
+      "mp4",
+      "/media/original/out.mp4",
+    ]);
+  });
+
+  test("re-encodes only the mismatched audio stream, copies video already in H.264", () => {
+    const args = buildNormalizeFfmpegArgs({
+      inputPath: "/media/original/in.mov",
+      outputPath: "/media/original/out.mp4",
+      codecs: { hasVideo: true, videoCodec: "h264", hasAudio: true, audioCodec: "pcm_s16le" },
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/in.mov",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-f",
+      "mp4",
+      "/media/original/out.mp4",
+    ]);
+  });
+
+  test("re-encodes both streams when neither matches the target codec", () => {
+    const args = buildNormalizeFfmpegArgs({
+      inputPath: "/media/original/in.avi",
+      outputPath: "/media/original/out.mp4",
+      codecs: { hasVideo: true, videoCodec: "mpeg4", hasAudio: true, audioCodec: "mp3" },
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/in.avi",
+      "-c:v",
+      "libx264",
+      "-c:a",
+      "aac",
+      "-f",
+      "mp4",
+      "/media/original/out.mp4",
+    ]);
+  });
+
+  test("omits video codec args entirely for an audio-only source", () => {
+    const args = buildNormalizeFfmpegArgs({
+      inputPath: "/media/original/in.wma",
+      outputPath: "/media/original/out.m4a",
+      codecs: { hasVideo: false, videoCodec: null, hasAudio: true, audioCodec: "wmav2" },
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/in.wma",
+      "-c:a",
+      "aac",
+      "-f",
+      "mp4",
+      "/media/original/out.m4a",
+    ]);
+  });
+
+  test("never scales, unlike buildFfmpegArgs - no -vf flag regardless of source dimensions", () => {
+    const args = buildNormalizeFfmpegArgs({
+      inputPath: "/media/original/in.mov",
+      outputPath: "/media/original/out.mp4",
+      codecs: { hasVideo: true, videoCodec: "h264", hasAudio: true, audioCodec: "aac" },
+    });
+
+    expect(args).not.toContain("-vf");
   });
 });

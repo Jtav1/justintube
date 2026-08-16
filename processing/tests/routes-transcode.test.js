@@ -90,7 +90,7 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
           kind: "rendition",
           profile,
         },
-        opts: { jobId: res.body.jobId, priority: 2 },
+        opts: { jobId: res.body.jobId, priority: 3 },
       },
     ]);
   });
@@ -513,7 +513,7 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
             kind: "rendition",
             profile,
           },
-          opts: { jobId: renditionJob.jobId, priority: 2 },
+          opts: { jobId: renditionJob.jobId, priority: 3 },
         },
         {
           name: "ffmpeg-thumbnail",
@@ -638,7 +638,7 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
             profile: undefined,
             timestampSeconds: undefined,
           },
-          opts: { jobId: hashJob.jobId, priority: 3 },
+          opts: { jobId: hashJob.jobId, priority: 4 },
         },
       ]);
     });

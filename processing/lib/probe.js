@@ -57,6 +57,7 @@ export function mimeTypeForContainer(container) {
     webm: "video/webm",
     mkv: "video/x-matroska",
     mov: "video/quicktime",
+    m4a: "audio/mp4",
   };
   return map[key] || null;
 }
@@ -104,6 +105,58 @@ export async function probeVideoDimensions(filePath) {
       : null;
 
   return { videoWidth, videoHeight };
+}
+
+/**
+ * Probes a media file with ffprobe and returns its primary video/audio
+ * stream codec names, for the normalize job's per-stream copy-vs-encode
+ * decision (see `buildNormalizeFfmpegArgs`). Unlike `probeVideoDimensions`
+ * (video-only, `-select_streams v:0`), this reads all streams in one call so
+ * it can report on both video and audio presence/codec together.
+ *
+ * @param {string} filePath Absolute path to the media file.
+ * @returns {Promise<{
+ *   hasVideo: boolean,
+ *   videoCodec: string|null,
+ *   hasAudio: boolean,
+ *   audioCodec: string|null
+ * }>} Presence and codec name of the primary stream of each type.
+ * @throws {Error} When ffprobe exits non-zero or cannot be spawned.
+ */
+export async function probeStreamCodecs(filePath) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "stream=codec_type,codec_name",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return { hasVideo: false, videoCodec: null, hasAudio: false, audioCodec: null };
+  }
+
+  const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+  const videoStream = streams.find((s) => s?.codec_type === "video");
+  const audioStream = streams.find((s) => s?.codec_type === "audio");
+
+  return {
+    hasVideo: Boolean(videoStream),
+    videoCodec:
+      typeof videoStream?.codec_name === "string" ? videoStream.codec_name.toLowerCase() : null,
+    hasAudio: Boolean(audioStream),
+    audioCodec:
+      typeof audioStream?.codec_name === "string" ? audioStream.codec_name.toLowerCase() : null,
+  };
 }
 
 /**

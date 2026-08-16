@@ -116,6 +116,21 @@ export function resolveTranscodedOutputPath(outputFilename) {
 }
 
 /**
+ * Builds the absolute output path for a normalize job's basename under
+ * `originalDir` — the normalized (H.264/AAC MP4) file becomes the upload's
+ * new "original", so it belongs alongside other original uploads rather than
+ * in `transcodedDir` (which holds derived renditions, not sources). Its
+ * basename always differs from the source input's (new extension), so this
+ * never collides with the file ffmpeg is reading.
+ *
+ * @param {string} outputFilename Basename to write under `/media/original`.
+ * @returns {string} Absolute path for the output file.
+ */
+export function resolveNormalizedOutputPath(outputFilename) {
+  return join(originalDir, outputFilename);
+}
+
+/**
  * Builds the absolute output path for a thumbnail basename under
  * `thumbnailsDir`.
  *

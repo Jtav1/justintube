@@ -1,9 +1,10 @@
-import { afterEach, beforeAll, describe, expect, test } from "@jest/globals";
-import { DuplicateUploadFlag, Notification, OriginalUpload, Role } from "../../lib/models/index.js";
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import { DuplicateUploadFlag, FileVersion, Notification, OriginalUpload, Role } from "../../lib/models/index.js";
 import { createTestClient } from "../helpers/app.js";
 import {
   resetTables,
   seedMetadata,
+  seedTranscodeProfile,
   seedUpload,
   seedUser,
   setupSchema,
@@ -154,3 +155,202 @@ describe("POST /internal/original-uploads/:jobId/hash-complete and hash-failed",
     expect(reloaded.contentHash).toBeNull();
   });
 });
+
+/**
+ * HTTP tests for processing -> API FILETYPES_CONVERTIBLE normalize-job
+ * callbacks. Unlike the hash callbacks above, `normalize-complete` finishes
+ * work the upload response deferred at request time: it replaces the raw
+ * source's metadata with the normalized H.264/AAC MP4 (or M4A) output and
+ * only then runs `finalizeUploadTranscodes` (rendition/thumbnail enqueue),
+ * so a real (mocked) processing round-trip happens inside these tests too.
+ */
+describe("POST /internal/original-uploads/:jobId/normalize-complete and normalize-failed", () => {
+  /** @type {ReturnType<typeof createTestClient>} */
+  let client;
+  /** @type {typeof fetch | undefined} */
+  let originalFetch;
+
+  beforeAll(async () => {
+    await setupSchema();
+    client = createTestClient();
+  });
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    await resetTables();
+  });
+
+  /**
+   * Builds a `fetch` mock that answers `POST /transcode` by accepting every
+   * job in the request unconditionally, mirroring the shape
+   * `finalizeUploadTranscodes` sends.
+   *
+   * @returns {jest.Mock} Mock matching the `globalThis.fetch` contract.
+   */
+  function acceptAllJobsFetchMock() {
+    return jest.fn(async (_url, options) => {
+      const body = JSON.parse(String(options.body));
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          success: true,
+          jobs: body.jobs.map((job) => ({
+            jobId: job.jobId,
+            outputFilename: job.outputFilename,
+            profileId: job.profile?.id ?? null,
+          })),
+        }),
+      };
+    });
+  }
+
+  test("rejects missing bearer token", async () => {
+    const upload = await seedUpload({ status: "converting" });
+    const res = await client
+      .post(`/internal/original-uploads/normalize-${upload.videoId}/normalize-complete`)
+      .send({ storagePath: `original/${upload.videoId}.mp4`, fileExtension: "mp4" });
+    expect(res.status).toBe(401);
+  });
+
+  test("returns 400 for a malformed jobId", async () => {
+    const res = await client
+      .post("/internal/original-uploads/not-a-normalize-job/normalize-complete")
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ storagePath: "original/abc123.mp4", fileExtension: "mp4" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_job_id");
+  });
+
+  test("returns 400 when storagePath/fileExtension are missing", async () => {
+    const upload = await seedUpload({ status: "converting" });
+    const res = await client
+      .post(`/internal/original-uploads/normalize-${upload.videoId}/normalize-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("returns 404 for an unknown videoId", async () => {
+    const res = await client
+      .post("/internal/original-uploads/normalize-zzzzzz/normalize-complete")
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ storagePath: "original/zzzzzz.mp4", fileExtension: "mp4" });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("not_found");
+  });
+
+  test("replaces the raw source's metadata and runs finalizeUploadTranscodes against the normalized file", async () => {
+    globalThis.fetch = acceptAllJobsFetchMock();
+
+    const upload = await seedUpload({
+      status: "converting",
+      fileExtension: "mov",
+      mimeType: "video/quicktime",
+      storagePath: `original/${generateOldStoragePathSuffix()}`,
+      skipThumbnail: false,
+    });
+    await seedMetadata(upload.id);
+    const profile = await seedTranscodeProfile({ outputHeight: 480, outputWidth: 854 });
+
+    const res = await client
+      .post(`/internal/original-uploads/normalize-${upload.videoId}/normalize-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: `original/${upload.videoId}.mp4`,
+        fileExtension: "mp4",
+        mimeType: "video/mp4",
+        videoWidth: 1920,
+        videoHeight: 1080,
+        resolution: "1080p",
+        fileSizeBytes: 999,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, videoId: upload.videoId });
+
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.fileExtension).toBe("mp4");
+    expect(reloaded.mimeType).toBe("video/mp4");
+    expect(reloaded.storagePath).toBe(`original/${upload.videoId}.mp4`);
+    expect(reloaded.videoWidth).toBe(1920);
+    expect(reloaded.status).not.toBe("converting");
+    expect(reloaded.statusMessage).toBeNull();
+
+    // finalizeUploadTranscodes ran against the normalized file: a FILE_VERSIONS
+    // row was created for the seeded profile and the batch request targeted
+    // the new .mp4 filename, not the original .mov source.
+    const versions = await FileVersion.findAll({ where: { originalUploadId: upload.id } });
+    expect(versions).toHaveLength(1);
+    expect(versions[0].transcodeProfileId).toBe(profile.id);
+
+    const renditionCall = globalThis.fetch.mock.calls.find((call) => {
+      const body = JSON.parse(String(call[1].body));
+      return body.filename === `${upload.videoId}.mp4`;
+    });
+    expect(renditionCall).toBeDefined();
+  });
+
+  test("honors a persisted skipThumbnail=true when finalizing", async () => {
+    globalThis.fetch = acceptAllJobsFetchMock();
+
+    const upload = await seedUpload({
+      status: "converting",
+      fileExtension: "mov",
+      storagePath: `original/${generateOldStoragePathSuffix()}`,
+      skipThumbnail: true,
+    });
+    await seedMetadata(upload.id);
+    // Without a matching profile, skipThumbnail=true would leave zero jobs to
+    // enqueue at all (finalizeUploadTranscodes skips the processing
+    // round-trip entirely) - seed one so there's a rendition job to inspect.
+    await seedTranscodeProfile({ outputHeight: 360, outputWidth: 640 });
+
+    await client
+      .post(`/internal/original-uploads/normalize-${upload.videoId}/normalize-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ storagePath: `original/${upload.videoId}.mp4`, fileExtension: "mp4" });
+
+    const payload = JSON.parse(String(globalThis.fetch.mock.calls[0][1].body));
+    expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
+  });
+
+  test("normalize-failed marks the upload failed without touching its file metadata", async () => {
+    const upload = await seedUpload({
+      status: "converting",
+      fileExtension: "mov",
+      storagePath: `original/${generateOldStoragePathSuffix()}`,
+    });
+    await seedMetadata(upload.id);
+
+    const res = await client
+      .post(`/internal/original-uploads/normalize-${upload.videoId}/normalize-failed`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ error: "ffmpeg exited with code 1" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, videoId: upload.videoId, status: "failed" });
+
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.status).toBe("failed");
+    expect(reloaded.statusMessage).toBe("ffmpeg exited with code 1");
+    // The raw source file's metadata is left exactly as it was pre-normalize.
+    expect(reloaded.fileExtension).toBe("mov");
+  });
+});
+
+/**
+ * Builds a unique basename for a fake pre-normalize raw upload file, so
+ * seeded uploads in the normalize-complete/failed tests don't collide on
+ * `storagePath` with each other.
+ *
+ * @returns {string} A unique `<random>.mov` basename.
+ */
+function generateOldStoragePathSuffix() {
+  return `${Math.random().toString(36).slice(2)}.mov`;
+}

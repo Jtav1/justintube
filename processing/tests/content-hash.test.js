@@ -21,7 +21,7 @@ jest.unstable_mockModule("node:child_process", () => ({
   },
 }));
 
-const { computeContentHash } = await import("../lib/probe.js");
+const { computeContentHash, probeStreamCodecs } = await import("../lib/probe.js");
 
 /**
  * Default ffprobe response reporting a video stream present, so tests that
@@ -172,6 +172,78 @@ describe("computeContentHash", () => {
     };
     await expect(computeContentHash("/media/original/clip.mp4")).rejects.toThrow(
       "ffmpeg exited with code 1",
+    );
+  });
+});
+
+describe("probeStreamCodecs", () => {
+  afterEach(() => {
+    nextResults = {};
+    execFileCalls.length = 0;
+  });
+
+  test("reports both stream codecs for a video with audio", async () => {
+    nextResults = {
+      ffprobe: {
+        stdout: JSON.stringify({
+          streams: [
+            { codec_type: "video", codec_name: "h264" },
+            { codec_type: "audio", codec_name: "aac" },
+          ],
+        }),
+      },
+    };
+
+    await expect(probeStreamCodecs("/media/original/clip.mkv")).resolves.toEqual({
+      hasVideo: true,
+      videoCodec: "h264",
+      hasAudio: true,
+      audioCodec: "aac",
+    });
+  });
+
+  test("reports audio-only presence for a source with no video stream", async () => {
+    nextResults = {
+      ffprobe: {
+        stdout: JSON.stringify({ streams: [{ codec_type: "audio", codec_name: "wmav2" }] }),
+      },
+    };
+
+    await expect(probeStreamCodecs("/media/original/clip.wma")).resolves.toEqual({
+      hasVideo: false,
+      videoCodec: null,
+      hasAudio: true,
+      audioCodec: "wmav2",
+    });
+  });
+
+  test("lowercases codec names", async () => {
+    nextResults = {
+      ffprobe: {
+        stdout: JSON.stringify({ streams: [{ codec_type: "video", codec_name: "H264" }] }),
+      },
+    };
+
+    const result = await probeStreamCodecs("/media/original/clip.mov");
+    expect(result.videoCodec).toBe("h264");
+  });
+
+  test("resolves with all-empty result when ffprobe's output isn't parseable JSON", async () => {
+    nextResults = { ffprobe: { stdout: "not json" } };
+
+    await expect(probeStreamCodecs("/media/original/clip.mp4")).resolves.toEqual({
+      hasVideo: false,
+      videoCodec: null,
+      hasAudio: false,
+      audioCodec: null,
+    });
+  });
+
+  test("propagates an ffprobe spawn/exit failure", async () => {
+    nextResults = { ffprobe: { error: new Error("ffprobe exited with code 1") } };
+
+    await expect(probeStreamCodecs("/media/original/clip.mp4")).rejects.toThrow(
+      "ffprobe exited with code 1",
     );
   });
 });

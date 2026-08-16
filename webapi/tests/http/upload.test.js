@@ -546,6 +546,92 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(res.body.allowed).toEqual(expect.arrayContaining(["mp4"]));
   });
 
+  describe("FILETYPES_CONVERTIBLE uploads (auto remux/transcode to H.264/AAC MP4)", () => {
+    // tests/setup/env.js sets FILETYPES_CONVERTIBLE=mov,wma - neither is in
+    // FILETYPES_ALLOWED (mp4,webm,mkv,mp3,wav), so these exercise the
+    // accept-but-normalize tier rather than the reject or store-as-is tiers.
+
+    test("accepts a convertible video extension, marks the upload 'converting', and enqueues a normalize job", async () => {
+      const fetchMock = jest.fn(async (_url, options) => {
+        const body = JSON.parse(String(options.body));
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            success: true,
+            jobs: body.jobs.map((job) => ({ jobId: job.jobId, outputFilename: job.outputFilename })),
+          }),
+        };
+      });
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const res = await uploadRequest().attach("file", Buffer.from("tiny"), "clip.mov");
+
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe("converting");
+      expect(res.body.fileVersions).toEqual([]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/transcode");
+      const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+      expect(payload.filename).toBe(`${res.body.videoId}.mov`);
+      expect(payload.jobs).toEqual([
+        {
+          jobId: `normalize-${res.body.videoId}`,
+          outputFilename: `${res.body.videoId}.mp4`,
+          kind: "normalize",
+        },
+      ]);
+
+      const rows = await queryRows(
+        "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+        { videoId: res.body.videoId },
+      );
+      expect(rows[0].status).toBe("converting");
+      expect(rows[0].file_extension).toBe("mov");
+    });
+
+    test("targets an M4A output for a convertible audio-only extension", async () => {
+      const fetchMock = jest.fn(async () => ({
+        ok: true,
+        status: 202,
+        json: async () => ({ success: true, jobs: [] }),
+      }));
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const res = await uploadRequest().attach("file", Buffer.from("tiny"), "clip.wma");
+
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe("converting");
+
+      const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+      expect(payload.jobs[0].outputFilename).toBe(`${res.body.videoId}.m4a`);
+    });
+
+    test("marks the upload failed when the normalize enqueue call itself fails", async () => {
+      globalThis.fetch = jest.fn(async () => {
+        throw new Error("processing unreachable");
+      });
+
+      await seedUploaderCreds();
+      const res = await uploadRequest().attach("file", Buffer.from("tiny"), "clip.mov");
+
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe("failed");
+      expect(res.body.failures).toEqual([
+        { profileId: null, message: "processing unreachable" },
+      ]);
+
+      const rows = await queryRows(
+        "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+        { videoId: res.body.videoId },
+      );
+      expect(rows[0].status).toBe("failed");
+    });
+  });
+
   test("returns 413 file_too_large when the file exceeds the size limit", async () => {
     // MAX_UPLOAD_SIZE_BYTES is set to 1024 in tests/setup/env.js.
     await seedUploaderCreds();
