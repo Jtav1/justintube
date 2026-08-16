@@ -27,8 +27,9 @@ jest.unstable_mockModule("../../lib/email/mailer.js", () => ({
  *
  * `seedUser` (tests/helpers/db.js) auto-seeds a USER_NOTIFICATION_SETTINGS
  * row per active type, mirroring registration - so every test here starts
- * from real seeded defaults ("like"/"comment" opt-in, everything else
- * opt-out) rather than an absent row.
+ * from real seeded defaults (in-app on for every type; email opt-in for
+ * "subscription"/"like"/"comment", opt-out for everything else) rather than
+ * an absent row.
  */
 describe("createNotification (lib/notifications.js)", () => {
   /** @type {typeof import("../../lib/notifications.js")} */
@@ -96,9 +97,9 @@ describe("createNotification (lib/notifications.js)", () => {
   test("creates a notification with a null target when none is given", async () => {
     const user = await seedUser();
 
-    // "admin" is opt-out (in-app on by default), unlike "like" which is
-    // opt-in - using it here keeps this test about target handling, not
-    // in-app opt-in/opt-out gating (covered separately below).
+    // In-app delivery is on by default for every type; "admin" is used here
+    // to keep this test about target handling, not in-app gating (covered
+    // separately below).
     await notifications.createNotification({
       recipientUserId: user.id,
       typeName: "admin",
@@ -146,12 +147,8 @@ describe("createNotification (lib/notifications.js)", () => {
       expect(await notificationsFor(user.id)).toHaveLength(0);
     });
 
-    test("creates an in-app notification for an opt-in type once the user enables it", async () => {
+    test("creates an in-app notification for a non-locked type by default", async () => {
       const user = await seedUser();
-      await seedUserNotificationSetting(user.id, {
-        notificationTypeId: likeTypeId,
-        enabled: true,
-      });
 
       await notifications.createNotification({
         recipientUserId: user.id,
@@ -163,8 +160,12 @@ describe("createNotification (lib/notifications.js)", () => {
       expect(await notificationsFor(user.id)).toHaveLength(1);
     });
 
-    test("does not create an in-app notification for an opt-in type by default", async () => {
+    test("does not create an in-app notification once the user explicitly disables it", async () => {
       const user = await seedUser();
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: likeTypeId,
+        enabled: false,
+      });
 
       await notifications.createNotification({
         recipientUserId: user.id,
