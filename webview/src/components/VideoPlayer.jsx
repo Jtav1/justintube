@@ -44,6 +44,16 @@ const TITLE_SHRINK_PX = 4
 const MAX_TAG_LENGTH = 255
 const MAX_TAGS = 50
 
+// MEDIA_ERR_NETWORK/MEDIA_ERR_SRC_NOT_SUPPORTED can fire for transient causes
+// (a seek landing ahead of what the server has buffered/flushed, or a fetch
+// aborted by a quality-switch remount) rather than an actually corrupt file.
+// Retry with backoff before surfacing an error to the user.
+const TRANSIENT_MEDIA_ERROR_CODES = new Set([
+  MediaError.MEDIA_ERR_NETWORK,
+  MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED,
+])
+const RETRY_BACKOFF_MS = [500, 1500, 3000]
+
 /**
  * Picks the default rendition to play: always "original" when available,
  * otherwise falls back to whatever rendition is first.
@@ -91,6 +101,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
   const [subscribed, setSubscribed] = useState(null)
   const [subscribePending, setSubscribePending] = useState(false)
   const [hideError, setHideError] = useState(false)
+  const [playbackError, setPlaybackError] = useState(false)
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -105,6 +116,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
   const playlistToggleRef = useRef(null)
   const playlistDropdownRef = useRef(null)
   const resumeStateRef = useRef(null)
+  const retryCountRef = useRef(0)
+  const retryTimeoutRef = useRef(null)
   const viewRecordedRef = useRef(false)
   const titleRef = useRef(null)
   const measureCanvasRef = useRef(null)
@@ -347,6 +360,8 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
     if (el) {
       resumeStateRef.current = { currentTime: el.currentTime, wasPlaying: !el.paused }
     }
+    clearPendingRetry()
+    setPlaybackError(false)
     setSelectedRendition(rendition)
     setQualityMenuOpen(false)
   }
@@ -354,17 +369,67 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
   function handleLoadedMetadata() {
     const el = videoRef.current
     const resume = resumeStateRef.current
+    retryCountRef.current = 0
+    setPlaybackError(false)
     if (!el || !resume) {
       return
     }
     el.currentTime = resume.currentTime
     if (resume.wasPlaying) {
-      el.play()
+      el.play().catch(() => {})
     }
     resumeStateRef.current = null
   }
 
+  function clearPendingRetry() {
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current)
+      retryTimeoutRef.current = null
+    }
+  }
+
+  // The browser's native "corrupt file" error can fire for a stall, an
+  // aborted fetch, or a seek/quality-switch racing the server - not just an
+  // actually corrupt file. Retry those transient codes with backoff before
+  // treating playback as failed.
+  function handlePlaybackError() {
+    const el = videoRef.current
+    if (!el || !el.error) {
+      return
+    }
+
+    if (TRANSIENT_MEDIA_ERROR_CODES.has(el.error.code) && retryCountRef.current < RETRY_BACKOFF_MS.length) {
+      const attempt = retryCountRef.current
+      retryCountRef.current += 1
+      if (!resumeStateRef.current) {
+        resumeStateRef.current = { currentTime: el.currentTime, wasPlaying: !el.paused }
+      }
+      clearPendingRetry()
+      retryTimeoutRef.current = setTimeout(() => {
+        retryTimeoutRef.current = null
+        videoRef.current?.load()
+      }, RETRY_BACKOFF_MS[attempt])
+      return
+    }
+
+    setPlaybackError(true)
+  }
+
+  function handleRetryPlayback() {
+    retryCountRef.current = 0
+    setPlaybackError(false)
+    const el = videoRef.current
+    if (el) {
+      resumeStateRef.current = { currentTime: el.currentTime, wasPlaying: !el.paused }
+      el.load()
+    }
+  }
+
   const memoizedSrc = useMemo(() => streamUrl, [streamUrl])
+
+  // Element remounts on src change (key={memoizedSrc}) - drop any retry
+  // timeout scheduled against the outgoing element.
+  useEffect(() => clearPendingRetry, [memoizedSrc])
 
   function handleFirstPlay() {
     if (viewRecordedRef.current) {
@@ -481,6 +546,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
               className="video-player-audio-element"
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handleFirstPlay}
+              onError={handlePlaybackError}
             />
           </div>
         ) : (
@@ -492,7 +558,17 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
             loop={loop}
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
+            onError={handlePlaybackError}
           />
+        )}
+        {playbackError && (
+          <div className="video-player-error-overlay">
+            <TriangleAlert size={32} />
+            <p>Playback failed. This is usually temporary.</p>
+            <button type="button" className="video-player-error-retry-btn" onClick={handleRetryPlayback}>
+              Retry
+            </button>
+          </div>
         )}
         <div className="video-player-controls-overlay">
           {renditions.length > 0 && (
