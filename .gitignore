@@ -7,13 +7,9 @@
 docker-compose.override.yml
 docker-compose-prod.yml
 
-.cursor/
-
 docs/MediaCMS Ref Feature List.md
 
 docs/Planned Views.md
-
-.vscode/
 
 CLAUDE.md
 .env.dev
@@ -26,3 +22,6 @@ migration-tools/state/*
 migration-tools/logs/*
 !migration-tools/logs/.gitkeep
 migration-tools/node_modules
+
+.vscode/
+.claude/
