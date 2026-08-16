@@ -13,7 +13,11 @@ import {
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
 import { collectOutputMetadata, computeContentHash } from "./probe.js";
-import { buildFfmpegArgs, buildThumbnailFfmpegArgs, runFfmpeg } from "./transcode.js";
+import {
+  buildFfmpegArgs,
+  buildThumbnailFfmpegArgs,
+  runFfmpeg,
+} from "./transcode.js";
 import { logger } from "./logger.js";
 
 /**
@@ -93,22 +97,33 @@ async function processThumbnailJob(job) {
   const { inputFilename, outputFilename, timestampSeconds } = job.data;
   const jobId = String(job.id);
 
-  logger.info(`[thumbnail ${jobId}] processing started: ${inputFilename} -> ${outputFilename} @ ${timestampSeconds}s`);
+  logger.info(
+    `[thumbnail ${jobId}] processing started: ${inputFilename} -> ${outputFilename} @ ${timestampSeconds}s`,
+  );
 
   await job.updateProgress(10);
 
   const inputPath = resolveOriginalInputPath(inputFilename);
   const outputPath = resolveThumbnailOutputPath(outputFilename);
-  const args = buildThumbnailFfmpegArgs({ inputPath, outputPath, timestampSeconds });
+  const args = buildThumbnailFfmpegArgs({
+    inputPath,
+    outputPath,
+    timestampSeconds,
+  });
 
   await job.updateProgress(40);
   await runFfmpeg(args);
   await stat(outputPath);
   await job.updateProgress(80);
 
-  const notify = await notifyThumbnailComplete(jobId, { thumbnailFilename: outputFilename });
+  const notify = await notifyThumbnailComplete(jobId, {
+    thumbnailFilename: outputFilename,
+  });
   if (!notify.ok) {
-    logger.error({ error: notify.error }, `failed to notify API of completed thumbnail ${jobId}`);
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed thumbnail ${jobId}`,
+    );
   }
 
   await job.updateProgress(100);
@@ -143,7 +158,9 @@ async function processHashJob(job) {
   const runCount = (Number(job.data.runCount) || 0) + 1;
   await job.updateData({ ...job.data, runCount });
 
-  logger.info(`[hash ${jobId}] processing started (run ${runCount}/${MAX_HASH_JOB_RUNS}): ${inputFilename}`);
+  logger.info(
+    `[hash ${jobId}] processing started (run ${runCount}/${MAX_HASH_JOB_RUNS}): ${inputFilename}`,
+  );
 
   await job.updateProgress(20);
 
@@ -154,7 +171,10 @@ async function processHashJob(job) {
 
   const notify = await notifyContentHashComplete(jobId, { contentHash });
   if (!notify.ok) {
-    logger.error({ error: notify.error }, `failed to notify API of computed hash ${jobId}`);
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of computed hash ${jobId}`,
+    );
   }
 
   await job.updateProgress(100);
@@ -187,7 +207,9 @@ async function processRenditionJob(job) {
   const { inputFilename, outputFilename, profile } = job.data;
   const jobId = String(job.id);
 
-  logger.info(`[rendition ${jobId}] processing started: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
+  logger.info(
+    `[rendition ${jobId}] processing started: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`,
+  );
 
   await job.updateProgress(10);
 
@@ -207,12 +229,17 @@ async function processRenditionJob(job) {
 
   const notify = await notifyFileVersionComplete(jobId, metadata);
   if (!notify.ok) {
-    logger.error({ error: notify.error }, `failed to notify API of completed transcode ${jobId}`);
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed transcode ${jobId}`,
+    );
   }
 
   await job.updateProgress(100);
 
-  logger.info(`[rendition ${jobId}] processing completed: ${outputFilename} (${metadata.resolution ?? "unknown resolution"}, ${metadata.fileSizeBytes} bytes)`);
+  logger.info(
+    `[rendition ${jobId}] processing completed: ${outputFilename} (${metadata.resolution ?? "unknown resolution"}, ${metadata.fileSizeBytes} bytes)`,
+  );
 
   return {
     outputFilename,
@@ -263,7 +290,14 @@ export function createTranscodeWorker(
 ) {
   return new Worker(TRANSCODE_QUEUE_NAME, processor, {
     connection,
-    concurrency: 1,
+    // Thumbnail jobs (a single cheap frame grab) share this queue with full
+    // rendition transcodes (multi-minute ffmpeg runs). At concurrency 1, a
+    // thumbnail queued behind an in-flight rendition job waits for the whole
+    // rendition to finish before it can even start. Concurrency > 1 lets a
+    // thumbnail job take a free execution slot and complete immediately
+    // instead. Configurable since the right value depends on host CPU/decode
+    // capacity.
+    concurrency: Number(process.env.TRANSCODE_WORKER_CONCURRENCY) || 2,
   });
 }
 
@@ -282,7 +316,9 @@ export function createTranscodeWorker(
 export async function enqueueTranscodeJob(queue, options) {
   const { jobId, inputFilename, outputFilename, profile } = options;
 
-  logger.info(`[rendition ${jobId}] enqueued: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`);
+  logger.info(
+    `[rendition ${jobId}] enqueued: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`,
+  );
 
   return queue.add(
     "ffmpeg-transcode",
@@ -344,7 +380,9 @@ export async function getTranscodeJobStatus(queue, jobId) {
   const progress =
     typeof job.progress === "number" ? job.progress : Number(job.progress) || 0;
 
-  logger.info(`[job ${jobId}] status queried: state=${state}, progress=${progress}`);
+  logger.info(
+    `[job ${jobId}] status queried: state=${state}, progress=${progress}`,
+  );
 
   return {
     jobId: String(job.id),
@@ -416,11 +454,16 @@ export async function retryFailedHashJobs(queue) {
       try {
         await job.remove();
         discarded.push(jobId);
-        logger.warn(`[hash ${jobId}] discarded after ${runCount} run(s) (max ${MAX_HASH_JOB_RUNS})`);
+        logger.warn(
+          `[hash ${jobId}] discarded after ${runCount} run(s) (max ${MAX_HASH_JOB_RUNS})`,
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : "discard failed";
         failed.push({ jobId, error: message });
-        logger.error({ err }, `[hash ${jobId}] failed to discard after reaching max runs`);
+        logger.error(
+          { err },
+          `[hash ${jobId}] failed to discard after reaching max runs`,
+        );
       }
       continue;
     }
@@ -428,7 +471,9 @@ export async function retryFailedHashJobs(queue) {
     try {
       await job.retry();
       retried.push(jobId);
-      logger.info(`[hash ${jobId}] retried by reconcile (run ${runCount}/${MAX_HASH_JOB_RUNS})`);
+      logger.info(
+        `[hash ${jobId}] retried by reconcile (run ${runCount}/${MAX_HASH_JOB_RUNS})`,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "retry failed";
       failed.push({ jobId, error: message });
@@ -473,7 +518,10 @@ export async function notifyTranscodeJobFailed(job, err) {
     logger.error({ message }, `[hash ${jobId}] processing failed`);
     const notify = await notifyContentHashFailed(jobId, message);
     if (!notify.ok) {
-      logger.error({ error: notify.error }, `failed to notify API of failed hash job ${jobId}`);
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed hash job ${jobId}`,
+      );
     }
     return;
   }
@@ -481,7 +529,10 @@ export async function notifyTranscodeJobFailed(job, err) {
   logger.error({ message }, `[rendition ${jobId}] processing failed`);
   const notify = await notifyFileVersionFailed(jobId, message);
   if (!notify.ok) {
-    logger.error({ error: notify.error }, `failed to notify API of failed transcode ${jobId}`);
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of failed transcode ${jobId}`,
+    );
   }
 }
 
