@@ -205,6 +205,9 @@ services:
       API_BASE_URL: http://webapi:3000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
       ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
+      # Optional off-hours window for duplicate-upload content-hash jobs -
+      # see the root .env.example comment above ENABLE_DUPLICATE_UPLOAD_DETECTION.
+      HASH_GENERATION_WINDOW: ${HASH_GENERATION_WINDOW:-}
     # Deliberately no `ports:` mapping — processing is internal-only and must
     # be reached solely by `api` over the compose network (`http://processing:3001`).
     # Also gated by INTERNAL_SERVICE_TOKEN (see processing/lib/require-internal-token.js)

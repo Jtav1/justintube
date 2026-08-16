@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { Queue, Worker } from "bullmq";
+import { DelayedError, Queue, Worker } from "bullmq";
 import {
   notifyContentHashComplete,
   notifyContentHashFailed,
@@ -37,6 +37,22 @@ export const TRANSCODE_QUEUE_NAME = "transcode";
  * @type {number}
  */
 export const MAX_HASH_JOB_RUNS = 7;
+
+/**
+ * BullMQ job priority per job kind (lower number = dequeued first among
+ * currently-waiting jobs). Thumbnails are cheap and user-visible fastest, so
+ * they jump ahead of multi-minute rendition transcodes; duplicate-upload
+ * hash probes are pure background work and sort last. Priority only affects
+ * ordering among jobs already waiting - it does not preempt a job a worker
+ * has already started.
+ *
+ * @type {{ thumbnail: number, rendition: number, hash: number }}
+ */
+export const JOB_PRIORITY_BY_KIND = {
+  thumbnail: 1,
+  rendition: 2,
+  hash: 3,
+};
 
 /**
  * Builds an ioredis-compatible connection options object for BullMQ.
@@ -134,6 +150,71 @@ async function processThumbnailJob(job) {
 }
 
 /**
+ * Parses the `HASH_GENERATION_WINDOW` env var (e.g. `"0-6"`) into start/end
+ * hours (0-23, server local time). Returns `null` when unset or malformed,
+ * meaning hash jobs are not time-restricted.
+ *
+ * @param {string | undefined} value Raw env var value.
+ * @returns {{ startHour: number, endHour: number } | null} Parsed window, or
+ *   `null` when hash jobs should run anytime.
+ */
+function parseHashGenerationWindow(value) {
+  if (!value) {
+    return null;
+  }
+  const match = /^(\d{1,2})-(\d{1,2})$/.exec(value.trim());
+  const startHour = match ? Number(match[1]) : NaN;
+  const endHour = match ? Number(match[2]) : NaN;
+  const valid =
+    match &&
+    startHour >= 0 &&
+    startHour <= 23 &&
+    endHour >= 0 &&
+    endHour <= 23 &&
+    startHour !== endHour;
+  if (!valid) {
+    logger.warn(
+      `ignoring malformed HASH_GENERATION_WINDOW (expected "H-H", e.g. "0-6"): ${value}`,
+    );
+    return null;
+  }
+  return { startHour, endHour };
+}
+
+/**
+ * Checks whether `now`'s hour falls inside a start/end hour window, handling
+ * windows that wrap past midnight (e.g. `22-4`).
+ *
+ * @param {Date} now Current time.
+ * @param {{ startHour: number, endHour: number }} window Parsed window.
+ * @returns {boolean} `true` when `now` is inside the window.
+ */
+function isWithinHourWindow(now, window) {
+  const hour = now.getHours();
+  const { startHour, endHour } = window;
+  return startHour < endHour
+    ? hour >= startHour && hour < endHour
+    : hour >= startHour || hour < endHour;
+}
+
+/**
+ * Computes milliseconds from `now` until the next occurrence of
+ * `window.startHour`.
+ *
+ * @param {Date} now Current time.
+ * @param {{ startHour: number, endHour: number }} window Parsed window.
+ * @returns {number} Milliseconds to delay until the window opens.
+ */
+function msUntilWindowStart(now, window) {
+  const next = new Date(now);
+  next.setHours(window.startHour, 0, 0, 0);
+  if (next <= now) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
+/**
  * Processes a single duplicate-upload content-hash job: probe the source
  * file's decoded video stream with ffmpeg and notify the API of the result.
  * No output file is written, so unlike rendition/thumbnail jobs there's
@@ -146,14 +227,35 @@ async function processThumbnailJob(job) {
  * what {@link retryFailedHashJobs} checks against {@link MAX_HASH_JOB_RUNS}
  * to decide whether a failed job is retried again or discarded outright.
  *
+ * When `HASH_GENERATION_WINDOW` (e.g. `"0-6"`) is set and the current server
+ * hour falls outside it, the job defers itself: it moves back to BullMQ's
+ * delayed state until the window next opens and throws {@link DelayedError}
+ * (the signal BullMQ's Worker requires after a manual `moveToDelayed`, so it
+ * does not also mark the job complete/failed). `runCount` is not incremented
+ * for a deferral, only for an actual hash attempt.
+ *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes `inputFilename`.
+ * @param {string} [token] BullMQ lock token for this processing attempt,
+ *   required by `job.moveToDelayed` when deferring.
  * @returns {Promise<{ contentHash: string }>} Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails.
+ * @throws {DelayedError} When deferred until `HASH_GENERATION_WINDOW` opens.
  */
-async function processHashJob(job) {
+async function processHashJob(job, token) {
   const { inputFilename } = job.data;
   const jobId = String(job.id);
+
+  const window = parseHashGenerationWindow(process.env.HASH_GENERATION_WINDOW);
+  if (window && !isWithinHourWindow(new Date(), window)) {
+    const delayMs = msUntilWindowStart(new Date(), window);
+    logger.info(
+      `[hash ${jobId}] outside HASH_GENERATION_WINDOW (${process.env.HASH_GENERATION_WINDOW}); ` +
+        `deferring ~${Math.ceil(delayMs / 60000)}m`,
+    );
+    await job.moveToDelayed(Date.now() + delayMs, token);
+    throw new DelayedError();
+  }
 
   const runCount = (Number(job.data.runCount) || 0) + 1;
   await job.updateData({ ...job.data, runCount });
@@ -258,10 +360,12 @@ async function processRenditionJob(job) {
  *
  * @param {import('bullmq').Job} job BullMQ job (`data.kind` is `"thumbnail"`,
  *   `"hash"`, or `"rendition"`).
+ * @param {string} [token] BullMQ lock token for this attempt, passed through
+ *   to {@link processHashJob} in case it needs to defer itself.
  * @returns {Promise<object>} Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails.
  */
-export async function processTranscodeJob(job) {
+export async function processTranscodeJob(job, token) {
   const kind = job.data?.kind || "rendition";
   logger.info(`[worker] dequeued job ${job.id} (${kind})`);
 
@@ -269,7 +373,7 @@ export async function processTranscodeJob(job) {
     return processThumbnailJob(job);
   }
   if (kind === "hash") {
-    return processHashJob(job);
+    return processHashJob(job, token);
   }
   return processRenditionJob(job);
 }
@@ -358,7 +462,10 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
         profile: job.profile,
         timestampSeconds: job.timestampSeconds,
       },
-      opts: { jobId: job.jobId },
+      opts: {
+        jobId: job.jobId,
+        priority: JOB_PRIORITY_BY_KIND[job.kind] ?? JOB_PRIORITY_BY_KIND.rendition,
+      },
     })),
   );
 }
