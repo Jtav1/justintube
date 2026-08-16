@@ -79,6 +79,10 @@ export const User = sequelize.define(
       allowNull: false,
       defaultValue: "pending",
     }),
+    lastLogIn: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     createdAt: timestampColumn("created_at"),
     updatedAt: timestampColumn("updated_at"),
   },

@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { Home, User, ListVideo, ThumbsUp, History, Star, Users, UsersRound, UserCheck, ShieldCheck, TriangleAlert, Braces } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
-import packageJson from '../../package.json'
+import { formatRelativeDate } from '../lib/format.js'
 import './Sidebar.css'
 
 const REPO_URL = 'https://github.com/Jtav1/justintube/'
@@ -152,6 +152,11 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
         <div className="sidebar-footer-row">
           <span className="sidebar-footer-text">Justintube v2.0</span>
         </div>
+        {user?.lastLogIn && (
+          <div className="sidebar-footer-row">
+            <span className="sidebar-footer-text">Last login: {formatRelativeDate(user.lastLogIn)}</span>
+          </div>
+        )}
         <div className="sidebar-footer-row">
           <div className="sidebar-footer-links">
             <a

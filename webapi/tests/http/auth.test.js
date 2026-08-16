@@ -126,6 +126,40 @@ describe("auth routes", () => {
     expect(me.body.username).toBe("bob");
   });
 
+  test("login sets lastLogIn; API key auth does not", async () => {
+    const passwordHash = await hashPassword("password123");
+    const user = await seedUser({
+      username: "dana",
+      email: "dana@example.com",
+      passwordHash,
+      emailVerified: true,
+    });
+    expect(user.lastLogIn).toBeFalsy();
+
+    const rawKey = "jt_test_api_key_dana_001";
+    await seedUserApiKey(user.id, rawKey);
+
+    const client = createTestClient();
+    const meViaKey = await client
+      .get("/api/v1/auth/me")
+      .set("Authorization", `Bearer ${rawKey}`);
+    expect(meViaKey.status).toBe(200);
+    expect(meViaKey.body.lastLogIn).toBeNull();
+
+    const agent = createTestAgent();
+    const csrf = await fetchCsrf(agent);
+    const login = await agent
+      .post("/api/v1/auth/login")
+      .set("X-CSRF-Token", csrf)
+      .send({ username: "dana", password: "password123" });
+
+    expect(login.status).toBe(200);
+    expect(typeof login.body.user.lastLogIn).toBe("string");
+
+    const reloaded = await User.findByPk(user.id);
+    expect(reloaded.lastLogIn).not.toBeNull();
+  });
+
   test("rejects bad login credentials", async () => {
     const passwordHash = await hashPassword("password123");
     await seedUser({
