@@ -62,9 +62,11 @@ describe("me / notification-preferences routes", () => {
   test("GET after registration reflects each type's seeded default preference", async () => {
     // Registration seeds an explicit row per active type (see
     // ensureUserNotificationSettings), so this asserts against the real
-    // seeded values rather than a "no row" fallback. Likes/comments are
-    // opt-in (default off); everything else is opt-out (default on).
-    const OPT_IN_TYPES = new Set(["like", "comment"]);
+    // seeded values rather than a "no row" fallback. In-app delivery
+    // defaults to on for every type; email delivery for
+    // subscription/like/comment is opt-in (default off), everything else
+    // opt-out (default on).
+    const EMAIL_OPT_IN_TYPES = new Set(["subscription", "like", "comment"]);
 
     const activeTypes = await NotificationType.findAll({
       where: { enabled: true },
@@ -81,9 +83,9 @@ describe("me / notification-preferences routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.preferences).toHaveLength(activeTypes.length);
     for (const pref of res.body.preferences) {
-      const expectedDefault = !OPT_IN_TYPES.has(pref.notificationType);
-      expect(pref.enabled).toBe(expectedDefault);
-      expect(pref.emailEnabled).toBe(expectedDefault);
+      expect(pref.enabled).toBe(true);
+      const expectedEmailDefault = !EMAIL_OPT_IN_TYPES.has(pref.notificationType);
+      expect(pref.emailEnabled).toBe(expectedEmailDefault);
     }
   });
 
@@ -112,10 +114,10 @@ describe("me / notification-preferences routes", () => {
       (pref) => pref.notificationType === "like",
     );
     expect(like.enabled).toBe(false);
-    // "like" and "comment" both default to enabled: false (opt-in); only
-    // exclude those two from the "everything else defaults true" check.
+    // "enabled" (in-app) defaults to true for every type; only the patched
+    // "like" row should have flipped to false.
     const others = get.body.preferences.filter(
-      (pref) => pref.notificationType !== "like" && pref.notificationType !== "comment",
+      (pref) => pref.notificationType !== "like",
     );
     for (const pref of others) {
       expect(pref.enabled).toBe(true);

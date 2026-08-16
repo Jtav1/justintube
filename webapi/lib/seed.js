@@ -96,8 +96,9 @@ const DEFAULT_API_KEY_SCOPES = [
  * `ensureUserNotificationSettings`) — every user gets an explicit row for
  * every active type, so these are the only place "default" preferences are
  * decided; nothing downstream should special-case a missing row anymore.
- * Likes/comments are opt-in (off until the user turns them on); everything
- * else is opt-out (on until the user turns it off).
+ * Email delivery for subscription/like/comment notifications is opt-in (off
+ * until the user turns it on); everything else is opt-out (on until the
+ * user turns it off). In-app delivery defaults to on for every type.
  *
  * `inAppLocked: true` marks a type whose in-app delivery can't be turned off
  * by the user - moderation actions, account status changes, and sitewide
@@ -114,13 +115,13 @@ const DEFAULT_NOTIFICATION_TYPES = [
     name: "subscription",
     description: "New video from one of your subscriptions",
     defaultEnabled: true,
-    defaultEmailEnabled: true,
+    defaultEmailEnabled: false,
   },
-  { name: "like", description: "New like received", defaultEnabled: false, defaultEmailEnabled: false },
+  { name: "like", description: "New like received", defaultEnabled: true, defaultEmailEnabled: false },
   {
     name: "comment",
     description: "New comment received",
-    defaultEnabled: false,
+    defaultEnabled: true,
     defaultEmailEnabled: false,
   },
   {
