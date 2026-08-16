@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { TOKEN_TTL_MS as PASSWORD_RESET_TOKEN_TTL_MS } from "../auth/password-reset.js";
 import { logger } from "../logger.js";
 
 /** @type {import("nodemailer").Transporter|null} */
@@ -220,6 +221,79 @@ export async function sendVerificationEmail({ to, token }) {
     from,
     to,
     subject: "Verify your Justintube email",
+    text: textLines.join("\n"),
+    html: htmlBody,
+  });
+}
+
+/**
+ * Builds the password reset link or fallback token text for email bodies.
+ *
+ * @private
+ * @param {string} token Raw password reset token.
+ * @returns {{ link: string|null, tokenLine: string }} Link and plain-token fallback text.
+ */
+function resetPasswordLinkContent(token) {
+  const publicUrl = String(process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
+  if (publicUrl) {
+    return {
+      link: `${publicUrl}/reset-password?token=${encodeURIComponent(token)}`,
+      tokenLine: "",
+    };
+  }
+  return {
+    link: null,
+    tokenLine: `Your password reset token is: ${token}`,
+  };
+}
+
+/**
+ * Sends a password reset message to a user.
+ *
+ * @param {object} params Recipient and token details.
+ * @param {string} params.to Recipient email address.
+ * @param {string} params.token Raw password reset token (included in link or body).
+ * @returns {Promise<void>} Resolves when the message has been accepted by SMTP.
+ * @throws {Error} When email is disabled or SMTP delivery fails.
+ */
+export async function sendPasswordResetEmail({ to, token }) {
+  if (!emailEnabled()) {
+    throw new Error("Email is not configured.");
+  }
+
+  const from = String(process.env.MAIL_FROM_ADDRESS || "").trim();
+  const { link, tokenLine } = resetPasswordLinkContent(token);
+  const ttlHours = Math.round(PASSWORD_RESET_TOKEN_TTL_MS / (60 * 60 * 1000));
+
+  if (!link) {
+    logger.error(
+      "sendPasswordResetEmail: PUBLIC_APP_URL is not configured, so the reset email will be" +
+        " sent without a usable link. Set PUBLIC_APP_URL so recipients can complete the reset.",
+    );
+  }
+
+  const textLines = [
+    "A password reset was requested for your Justintube account.",
+    "",
+    link
+      ? `Click the link below to reset your password, or copy and paste it into your web browser:\n${link}`
+      : tokenLine,
+    "",
+    `This link expires in ${ttlHours} hour(s). If you did not request this, you can ignore this message.`,
+  ];
+
+  const htmlBody = link
+    ? `<p>A password reset was requested for your Justintube account.</p>` +
+      `<p>Click the link below to reset your password, or copy and paste it into your web browser:</p>` +
+      `<p><a href="${link}">Reset password</a></p>` +
+      `<p>${link}</p>` +
+      `<p>This link expires in ${ttlHours} hour(s).</p>`
+    : `<p>A password reset was requested for your Justintube account.</p><p>${tokenLine}</p><p>This token expires in ${ttlHours} hour(s).</p>`;
+
+  await getTransport().sendMail({
+    from,
+    to,
+    subject: "Reset your Justintube password",
     text: textLines.join("\n"),
     html: htmlBody,
   });

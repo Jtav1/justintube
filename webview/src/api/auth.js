@@ -89,3 +89,26 @@ export async function changePassword(currentPassword, newPassword) {
   const res = await apiClient.post('/api/v1/auth/password', { currentPassword, newPassword })
   return res.data
 }
+
+/**
+ * Requests a password reset email. Always resolves successfully regardless
+ * of whether the username/email pair matches an account.
+ * @param {string} username
+ * @param {string} email
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function forgotPassword(username, email) {
+  const res = await apiClient.post('/api/v1/auth/forgot-password', { username, email })
+  return res.data
+}
+
+/**
+ * Consumes a one-time password reset token, setting a new password.
+ * @param {string} token
+ * @param {string} newPassword
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function resetPassword(token, newPassword) {
+  const res = await apiClient.post('/api/v1/auth/reset-password', { token, newPassword })
+  return res.data
+}
