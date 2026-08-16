@@ -4,6 +4,8 @@ import VideoListing from './pages/VideoListing.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
 import VerifyEmailPage from './pages/VerifyEmailPage.jsx'
+import ForgotPasswordPage from './pages/ForgotPasswordPage.jsx'
+import ResetPasswordPage from './pages/ResetPasswordPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
 import UploadPage from './pages/UploadPage.jsx'
 import GoLivePage from './pages/GoLivePage.jsx'
@@ -50,6 +52,8 @@ function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route element={<AppLayout />}>
         <Route path="/" element={<VideoListing />} />
         <Route path="/reports" element={<ReportsPage />} />

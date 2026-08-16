@@ -11,6 +11,7 @@ import { Livestream } from "./livestream.js";
 import { Notification } from "./notification.js";
 import { NotificationType } from "./notification-type.js";
 import { OriginalUpload } from "./original-upload.js";
+import { PasswordResetToken } from "./password-reset-token.js";
 import { PlaylistAccess } from "./playlist-access.js";
 import { PlaylistItem } from "./playlist-item.js";
 import { Report } from "./report.js";
@@ -110,6 +111,15 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
   EmailVerificationToken.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(PasswordResetToken, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  PasswordResetToken.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "CASCADE",
   });
@@ -559,6 +569,7 @@ export const models = {
   Role,
   User,
   EmailVerificationToken,
+  PasswordResetToken,
   UserApiKey,
   UserApiKeyScope,
   SsoProvider,
@@ -606,6 +617,7 @@ export {
   Notification,
   NotificationType,
   OriginalUpload,
+  PasswordResetToken,
   PlaylistAccess,
   PlaylistItem,
   Report,
