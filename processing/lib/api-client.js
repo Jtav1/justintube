@@ -160,3 +160,49 @@ export async function notifyContentHashFailed(jobId, error) {
     error,
   });
 }
+
+/**
+ * Notifies the API that a FILETYPES_CONVERTIBLE upload's normalize job
+ * (remux/transcode to H.264/AAC MP4) completed successfully.
+ *
+ * @param {string} jobId BullMQ job id (`normalize-<videoId>`).
+ * @param {object} metadata Completion fields.
+ * @param {number} metadata.fileSizeBytes Output size in bytes.
+ * @param {number|null} metadata.videoWidth Output width (null for audio-only).
+ * @param {number|null} metadata.videoHeight Output height (null for audio-only).
+ * @param {string|null} metadata.resolution Resolution label (null for audio-only).
+ * @param {string} metadata.storagePath Relative storage path (under `original/`).
+ * @param {string} metadata.fileExtension New extension (`mp4` or `m4a`).
+ * @param {string|null} metadata.mimeType MIME type.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyOriginalUploadNormalizeComplete(jobId, metadata) {
+  return postInternal(
+    `/internal/original-uploads/${encodeURIComponent(jobId)}/normalize-complete`,
+    {
+      fileSizeBytes: metadata.fileSizeBytes,
+      videoWidth: metadata.videoWidth,
+      videoHeight: metadata.videoHeight,
+      resolution: metadata.resolution,
+      storagePath: metadata.storagePath,
+      fileExtension: metadata.fileExtension,
+      mimeType: metadata.mimeType,
+    },
+  );
+}
+
+/**
+ * Notifies the API that a FILETYPES_CONVERTIBLE upload's normalize job failed.
+ *
+ * @param {string} jobId BullMQ job id (`normalize-<videoId>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyOriginalUploadNormalizeFailed(jobId, error) {
+  return postInternal(
+    `/internal/original-uploads/${encodeURIComponent(jobId)}/normalize-failed`,
+    { error },
+  );
+}

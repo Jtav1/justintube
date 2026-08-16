@@ -280,6 +280,11 @@ async function ensureSqliteMissingColumns() {
       column: "content_hash",
       ddl: "`content_hash` VARCHAR(128) NULL",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "skip_thumbnail",
+      ddl: "`skip_thumbnail` TINYINT(1) NOT NULL DEFAULT 0",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

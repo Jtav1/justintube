@@ -5,16 +5,20 @@ import {
   notifyContentHashFailed,
   notifyFileVersionComplete,
   notifyFileVersionFailed,
+  notifyOriginalUploadNormalizeComplete,
+  notifyOriginalUploadNormalizeFailed,
   notifyThumbnailComplete,
 } from "./api-client.js";
 import {
+  resolveNormalizedOutputPath,
   resolveOriginalInputPath,
   resolveThumbnailOutputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
-import { collectOutputMetadata, computeContentHash } from "./probe.js";
+import { collectOutputMetadata, computeContentHash, probeStreamCodecs } from "./probe.js";
 import {
   buildFfmpegArgs,
+  buildNormalizeFfmpegArgs,
   buildThumbnailFfmpegArgs,
   runFfmpeg,
 } from "./transcode.js";
@@ -41,17 +45,22 @@ export const MAX_HASH_JOB_RUNS = 7;
 /**
  * BullMQ job priority per job kind (lower number = dequeued first among
  * currently-waiting jobs). Thumbnails are cheap and user-visible fastest, so
- * they jump ahead of multi-minute rendition transcodes; duplicate-upload
- * hash probes are pure background work and sort last. Priority only affects
- * ordering among jobs already waiting - it does not preempt a job a worker
- * has already started.
+ * they jump ahead of everything else. Normalize jobs come next — they're the
+ * highest-priority kind after thumbnails because every other job for that
+ * same upload (renditions, thumbnail, duplicate-hash) is blocked behind one
+ * finishing, so letting it queue behind unrelated rendition/hash jobs from
+ * other uploads would stall that whole upload. Rendition transcodes and
+ * duplicate-upload hash probes sort last, in that order. Priority only
+ * affects ordering among jobs already waiting - it does not preempt a job a
+ * worker has already started.
  *
- * @type {{ thumbnail: number, rendition: number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
-  rendition: 2,
-  hash: 3,
+  normalize: 2,
+  rendition: 3,
+  hash: 4,
 };
 
 /**
@@ -287,6 +296,84 @@ async function processHashJob(job, token) {
 }
 
 /**
+ * Processes a single normalize job: an upload accepted through
+ * FILETYPES_CONVERTIBLE (a common container ffmpeg reads, but not one
+ * FILETYPES_ALLOWED serves as-is) gets remuxed/transcoded into an H.264/AAC
+ * MP4 (or M4A for audio-only) at its original dimensions - never scaled,
+ * unlike a rendition job. Probes the source's actual stream codecs so
+ * `buildNormalizeFfmpegArgs` can copy whichever streams are already in the
+ * target codec instead of blindly re-encoding both.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` and `outputFilename`.
+ * @returns {Promise<{
+ *   outputFilename: string,
+ *   fileSizeBytes: number,
+ *   videoWidth: number|null,
+ *   videoHeight: number|null,
+ *   resolution: string|null,
+ *   storagePath: string,
+ *   mimeType: string|null
+ * }>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+async function processNormalizeJob(job) {
+  const { inputFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[normalize ${jobId}] processing started: ${inputFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const outputPath = resolveNormalizedOutputPath(outputFilename);
+  const codecs = await probeStreamCodecs(inputPath);
+  const args = buildNormalizeFfmpegArgs({ inputPath, outputPath, codecs });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await job.updateProgress(80);
+
+  const outputContainer = outputFilename.split(".").pop() || "mp4";
+  const metadata = await collectOutputMetadata({
+    outputPath,
+    outputFilename,
+    outputContainer,
+  });
+  // collectOutputMetadata's storagePath assumes `transcoded/` (its usual
+  // caller); normalize output lives in `original/` instead.
+  metadata.storagePath = `original/${outputFilename}`;
+
+  const notify = await notifyOriginalUploadNormalizeComplete(jobId, {
+    ...metadata,
+    fileExtension: outputContainer,
+  });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed normalize ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[normalize ${jobId}] processing completed: ${outputFilename}`);
+
+  return {
+    outputFilename,
+    fileSizeBytes: metadata.fileSizeBytes,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+    resolution: metadata.resolution,
+    storagePath: metadata.storagePath,
+    mimeType: metadata.mimeType,
+  };
+}
+
+/**
  * Processes a single rendition transcode job: resolve paths, run ffmpeg,
  * collect metadata, notify the API, and return the result payload.
  *
@@ -359,7 +446,7 @@ async function processRenditionJob(job) {
  * Processes a single queued job, dispatching on `job.data.kind`.
  *
  * @param {import('bullmq').Job} job BullMQ job (`data.kind` is `"thumbnail"`,
- *   `"hash"`, or `"rendition"`).
+ *   `"hash"`, `"normalize"`, or `"rendition"`).
  * @param {string} [token] BullMQ lock token for this attempt, passed through
  *   to {@link processHashJob} in case it needs to defer itself.
  * @returns {Promise<object>} Result payload stored on the completed job.
@@ -374,6 +461,9 @@ export async function processTranscodeJob(job, token) {
   }
   if (kind === "hash") {
     return processHashJob(job, token);
+  }
+  if (kind === "normalize") {
+    return processNormalizeJob(job);
   }
   return processRenditionJob(job);
 }
@@ -454,7 +544,9 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
           ? "ffmpeg-thumbnail"
           : job.kind === "hash"
             ? "ffmpeg-hash"
-            : "ffmpeg-transcode",
+            : job.kind === "normalize"
+              ? "ffmpeg-normalize"
+              : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -628,6 +720,18 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed hash job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "normalize") {
+    logger.error({ message }, `[normalize ${jobId}] processing failed`);
+    const notify = await notifyOriginalUploadNormalizeFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed normalize job ${jobId}`,
       );
     }
     return;

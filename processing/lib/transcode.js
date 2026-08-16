@@ -76,7 +76,7 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} jobId Stable BullMQ job id.
  * @property {string} [outputFilename] Basename under the job kind's output
  *   directory. Absent when `kind === "hash"` (no output file is written).
- * @property {"rendition"|"thumbnail"|"hash"} kind Job kind.
+ * @property {"rendition"|"thumbnail"|"hash"|"normalize"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  */
@@ -346,7 +346,10 @@ function validateOptionalTimestampSeconds(value, fieldName) {
  * `timestampSeconds` and skips that gating entirely — a single-frame grab
  * isn't a real transcode and shouldn't be blocked by `ENABLE_TRANSCODING`.
  * `"hash"` (duplicate-upload content hashing) needs only `jobId` - it never
- * writes an output file, so `outputFilename` is omitted entirely.
+ * writes an output file, so `outputFilename` is omitted entirely. `"normalize"`
+ * (remux/transcode a FILETYPES_CONVERTIBLE upload to H.264/AAC MP4) needs
+ * only `jobId` + `outputFilename` - no profile (it never scales) and no
+ * hardware/mode gating (it always runs in software).
  *
  * @param {unknown} job Raw job object.
  * @param {number} index Zero-based index for error messages.
@@ -371,6 +374,11 @@ export function validateTranscodeJob(job, index) {
     body.outputFilename,
     `jobs[${index}].outputFilename`,
   );
+
+  if (body.kind === "normalize") {
+    return { jobId, outputFilename, kind: "normalize" };
+  }
+
   const kind = body.kind === "thumbnail" ? "thumbnail" : "rendition";
 
   if (kind === "thumbnail") {
@@ -594,6 +602,39 @@ export function buildFfmpegArgs({ inputPath, outputPath, profile }) {
     profile.outputContainer,
     outputPath,
   ];
+}
+
+/**
+ * Builds the ffmpeg argument list for a normalize job: rewraps/re-encodes an
+ * upload accepted through the FILETYPES_CONVERTIBLE tier into an H.264/AAC
+ * MP4 (or an audio-only MP4-family file, conventionally named `.m4a`) at the
+ * source's original dimensions. Unlike {@link buildFfmpegArgs}, this never
+ * scales, and copies each stream (`-c:v copy` / `-c:a copy`) instead of
+ * re-encoding it whenever the source is already in the target codec — a
+ * "remux" rather than a full transcode for streams that don't need one.
+ * Always runs in software (no hardware-accel branch) — normalize is a
+ * comparatively rare, one-off, often copy-heavy operation, not worth the
+ * added complexity for v1.
+ *
+ * @param {object} options Normalize execution options.
+ * @param {string} options.inputPath Absolute path to the source file.
+ * @param {string} options.outputPath Absolute path for the output file.
+ * @param {{ hasVideo: boolean, videoCodec: string|null, hasAudio: boolean, audioCodec: string|null }} options.codecs
+ *   Source stream presence/codecs from `probeStreamCodecs`.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildNormalizeFfmpegArgs({ inputPath, outputPath, codecs }) {
+  const args = ["-y", "-i", inputPath];
+
+  if (codecs.hasVideo) {
+    args.push("-c:v", codecs.videoCodec === "h264" ? "copy" : resolveVideoEncoder("h264"));
+  }
+  if (codecs.hasAudio) {
+    args.push("-c:a", codecs.audioCodec === "aac" ? "copy" : resolveAudioEncoder("aac"));
+  }
+
+  args.push("-f", "mp4", outputPath);
+  return args;
 }
 
 /**
