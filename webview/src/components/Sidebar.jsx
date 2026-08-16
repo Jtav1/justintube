@@ -150,7 +150,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
       <footer className="sidebar-footer">
         <hr className="sidebar-footer-divider" />
         <div className="sidebar-footer-row">
-          <span className="sidebar-footer-text">Justintube v1.2-beta</span>
+          <span className="sidebar-footer-text">Justintube v2.0</span>
         </div>
         <div className="sidebar-footer-row">
           <div className="sidebar-footer-links">

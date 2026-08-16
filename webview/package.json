@@ -1,7 +1,7 @@
 {
   "name": "justintube-webview",
   "private": true,
-  "version": "1.1",
+  "version": "2.0",
   "type": "module",
   "engines": {
     "node": ">=20.6.0"
