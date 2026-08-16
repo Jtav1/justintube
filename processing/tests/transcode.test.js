@@ -229,7 +229,7 @@ describe("thumbnail job validation and ffmpeg args", () => {
     ]);
   });
 
-  test("buildThumbnailFfmpegArgs scales via scale_qsv on the GPU when QSV hardware acceleration is configured", () => {
+  test("buildThumbnailFfmpegArgs requests hwaccel decode but always scales with the software filter when QSV is configured", () => {
     const originalEnv = {
       ENABLE_TRANSCODING: process.env.ENABLE_TRANSCODING,
       ENABLE_HW_ACCELERATED_TRANSCODING: process.env.ENABLE_HW_ACCELERATED_TRANSCODING,
@@ -255,8 +255,6 @@ describe("thumbnail job validation and ffmpeg args", () => {
         "qsv",
         "-hwaccel_device",
         "/dev/dri/renderD128",
-        "-hwaccel_output_format",
-        "qsv",
         "-ss",
         "12.3",
         "-i",
@@ -266,7 +264,7 @@ describe("thumbnail job validation and ffmpeg args", () => {
         "-an",
         "-sn",
         "-vf",
-        "scale_qsv=w='trunc(iw*min(min(426/iw,240/ih),1)/2)*2':h='trunc(ih*min(min(426/iw,240/ih),1)/2)*2',hwdownload",
+        "scale='min(426,iw)':'min(240,ih)':force_original_aspect_ratio=decrease",
         "-c:v",
         "libwebp",
         "-quality",
@@ -284,7 +282,7 @@ describe("thumbnail job validation and ffmpeg args", () => {
     }
   });
 
-  test("buildThumbnailFfmpegArgs falls back to the software scale filter for a non-QSV hardware accelerator", () => {
+  test("buildThumbnailFfmpegArgs requests hwaccel decode but always scales with the software filter for a non-QSV accelerator", () => {
     const originalEnv = {
       ENABLE_TRANSCODING: process.env.ENABLE_TRANSCODING,
       ENABLE_HW_ACCELERATED_TRANSCODING: process.env.ENABLE_HW_ACCELERATED_TRANSCODING,

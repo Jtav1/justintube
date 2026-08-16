@@ -614,34 +614,13 @@ const THUMBNAIL_MAX_HEIGHT = 240;
  * {@link THUMBNAIL_MAX_WIDTH}x{@link THUMBNAIL_MAX_HEIGHT} as a bounding box
  * (never upscale), preserving the source aspect ratio, and round both
  * dimensions to even numbers (`trunc(x/2)*2`) since that's required by most
- * pixel formats/encoders.
+ * pixel formats/encoders. Uses the software `scale` filter's built-in
+ * `force_original_aspect_ratio` option.
  *
- * The software `scale` filter has a built-in `force_original_aspect_ratio`
- * option for this. `scale_qsv` (used when decoding via Intel QuickSync, see
- * {@link buildThumbnailFfmpegArgs}) doesn't expose that convenience option -
- * confirmed via `ffmpeg -h filter=scale_qsv`, which lists only `w`/`h`
- * (freeform expression strings, default `"iw"`/`"ih"`), `format`, and `mode`
- * - so the same bounding-box math is spelled out by hand here instead, using
- * the same `iw`/`ih`/`trunc`/`min` expression syntax the software `scale`
- * filter's own docs use for even-dimension rounding. `scale_qsv` shares its
- * dimension-expression evaluator with `scale`/`scale_npp`/`scale_vaapi`, so
- * this expression syntax applies uniformly to both branches below.
- *
- * @param {boolean} useQsvFilter Whether the `scale_qsv` (GPU) filter or the
- *   software `scale` filter is being built for.
- * @returns {string} A `-vf` filter expression (without the trailing
- *   `hwdownload` needed to bring a `scale_qsv` output back to system memory
- *   for the CPU-only `libwebp` encoder - see {@link buildThumbnailFfmpegArgs}).
+ * @returns {string} A `-vf` filter expression.
  */
-function buildThumbnailScaleFilter(useQsvFilter) {
-  if (!useQsvFilter) {
-    return `scale='min(${THUMBNAIL_MAX_WIDTH},iw)':'min(${THUMBNAIL_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease`;
-  }
-
-  const scaleFactor = `min(min(${THUMBNAIL_MAX_WIDTH}/iw,${THUMBNAIL_MAX_HEIGHT}/ih),1)`;
-  return (
-    `scale_qsv=w='trunc(iw*${scaleFactor}/2)*2':h='trunc(ih*${scaleFactor}/2)*2'`
-  );
+function buildThumbnailScaleFilter() {
+  return `scale='min(${THUMBNAIL_MAX_WIDTH},iw)':'min(${THUMBNAIL_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease`;
 }
 
 /**
@@ -651,17 +630,8 @@ function buildThumbnailScaleFilter(useQsvFilter) {
  * `validateTranscodeJob`) — this is a lightweight frame grab, not a real
  * transcode, and `ENABLE_TRANSCODING=false` shouldn't block it. It still
  * decodes via hardware acceleration when this deployment has it configured
- * (see {@link resolveDecodeHardwareAccelArgs}), since that's a decode-side
- * benefit independent of the transcoding-enabled gate.
- *
- * When the configured hardware accelerator is QuickSync (QSV), the frame is
- * also scaled on the GPU via `scale_qsv` instead of the CPU `scale` filter -
- * `-hwaccel_output_format qsv` keeps the decoded frame as a QSV surface so
- * `scale_qsv` never has to re-upload it, and a trailing `hwdownload` brings
- * the scaled frame back to system memory for the CPU-only `libwebp` encoder
- * (`libwebp` has no hardware-encode path). Other accelerators (VAAPI, CUDA,
- * VideoToolbox) fall back to the software `scale` filter - this GPU path
- * isn't verified to translate to those APIs' filter chains.
+ * (see {@link resolveDecodeHardwareAccelArgs}), mirroring the decode-side
+ * input args {@link buildFfmpegArgs} uses for a real transcode.
  *
  * Encodes to WebP for efficient web delivery.
  *
@@ -678,32 +648,20 @@ export function buildThumbnailFfmpegArgs({
 }) {
   const config = getTranscodeConfig();
   const hwArgs = resolveDecodeHardwareAccelArgs(config);
-  const useQsvFilter =
-    config.useHardware &&
-    config.hardwareEncoders.length > 0 &&
-    resolveHardwareAccelerator(config.hardwareEncoders[0]) === "qsv";
-
-  const vf = useQsvFilter
-    ? `${buildThumbnailScaleFilter(true)},hwdownload`
-    : buildThumbnailScaleFilter(false);
 
   return [
     "-y",
     ...hwArgs,
-    ...(useQsvFilter ? ["-hwaccel_output_format", "qsv"] : []),
     "-ss",
     String(timestampSeconds),
     "-i",
     inputPath,
     "-frames:v",
     "1",
-    // No audio/subtitle streams are needed for a single-frame image output -
-    // telling ffmpeg to skip them up front avoids demuxer/decoder setup work
-    // for streams whose output would be discarded anyway.
     "-an",
     "-sn",
     "-vf",
-    vf,
+    buildThumbnailScaleFilter(),
     "-c:v",
     "libwebp",
     "-quality",
