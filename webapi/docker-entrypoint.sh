@@ -6,8 +6,8 @@ set -eu
 # app's writable mount points and drops from root to that user before exec'ing
 # the real command. Lets the same image match arbitrary host file ownership
 # across different servers without a rebuild.
-PUID="${PUID:-1001}"
-PGID="${PGID:-1001}"
+PUID="${PUID:-99}"
+PGID="${PGID:-100}"
 
 if [ "$(id -g app)" != "$PGID" ]; then
   groupmod -o -g "$PGID" app

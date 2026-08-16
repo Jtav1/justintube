@@ -37,7 +37,7 @@ External packages, blank line, then relative imports. Named imports/exports pref
 
 - Every function: `/** ... */` with a short description, `@param` per parameter (typed), `@returns`.
 - `@private` on internal helpers. Route handlers also note HTTP method + path, body/query shape, auth.
-- Inline `//` comments only for non-obvious "why" (constraints, security choices), on their own line above the code.
+- Inline `//` comments only for non-obvious "why" (constraints, security choices), on their own line above the code. These should be no more than 125 characters long.
 - Public HTTP endpoints get an `@openapi` YAML fragment in the handler JSDoc (merged via `swagger-jsdoc`, see [`loadOpenApi.js`](webapi/lib/loadOpenApi.js)) with `operationId`, `tags`, `security`, response codes.
 
 ## Web API routes

@@ -2844,7 +2844,8 @@ export function createVideosRouter() {
 
   /**
    * DELETE /videos/:id — deleteVideo
-   * Auth: required. Owner or admin. Cascades via FK.
+   * Auth: required. Owner or admin. Cascades via FK, and also removes the
+   * original, thumbnail, and transcoded files from disk.
    *
    * @openapi
    * /api/v1/videos/{id}:
@@ -2893,8 +2894,22 @@ export function createVideosRouter() {
         return;
       }
 
+      const [fileVersions, thumbnail] = await Promise.all([
+        FileVersion.findAll({ where: { originalUploadId: id } }),
+        VideoThumbnail.findOne({ where: { originalUploadId: id } }),
+      ]);
+      const mediaFilesToDelete = [resolveMediaPath(upload.storagePath)];
+      for (const version of fileVersions) {
+        mediaFilesToDelete.push(resolveMediaPath(version.storagePath));
+      }
+      if (thumbnail) {
+        mediaFilesToDelete.push(join(thumbnailsDir, thumbnail.thumbnailFilename));
+      }
+
       await upload.destroy();
       removeVideoDocument(id);
+      await Promise.all(mediaFilesToDelete.map((path) => unlink(path).catch(() => {})));
+
       res.status(200).json({ success: true });
     } catch (err) {
       logger.error({ err }, "deleteVideo failed");

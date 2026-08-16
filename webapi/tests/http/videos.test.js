@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   afterEach,
@@ -1047,6 +1047,33 @@ describe("Video discovery and metadata endpoints", () => {
         { id: upload.id },
       );
       expect(metadata).toHaveLength(0);
+    });
+
+    test("removes the original, transcoded, and thumbnail files from disk", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "owner-delete-files-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+      const version = await seedFileVersion(upload.id, {
+        status: "complete",
+        storagePath: `transcoded/${upload.videoId}.mp4`,
+      });
+      const thumbnail = await seedVideoThumbnail(upload.id);
+
+      const originalPath = writeMediaFixture(upload.storagePath, Buffer.from("original"));
+      const transcodedPath = writeMediaFixture(version.storagePath, Buffer.from("transcoded"));
+      const thumbnailPath = writeMediaFixture(
+        `thumbnails/${thumbnail.thumbnailFilename}`,
+        Buffer.from("thumb"),
+      );
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer owner-delete-files-key");
+
+      expect(res.status).toBe(200);
+      expect(existsSync(originalPath)).toBe(false);
+      expect(existsSync(transcodedPath)).toBe(false);
+      expect(existsSync(thumbnailPath)).toBe(false);
     });
   });
 

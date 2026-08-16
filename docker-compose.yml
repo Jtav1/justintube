@@ -85,6 +85,10 @@ services:
       MYSQL_USER: ${MYSQL_USER:-justintube}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set - see .env.example}
       MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
+      # Ownership of files written into the host data directories - see
+      # docker-entrypoint.sh and the root .env.example comment.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       MEDIA_STORAGE_DIRECTORY: /media
       SITEDATA_STORAGE_DIRECTORY: /sitedata
       PROCESSING_API_URL: http://processing:3001
@@ -190,6 +194,10 @@ services:
     environment:
       PORT: ${PROCESSING_PORT:-3001}
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      # Must match webapi's PUID/PGID above - both containers write into the
+      # shared media-data volume. See docker-entrypoint.sh.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       MEDIA_STORAGE_DIRECTORY: /media
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -260,6 +268,10 @@ services:
       # - no image rebuild needed to change this or to promote the same image
       # across environments.
       API_BASE_URL: ${API_BASE_URL:-http://localhost:3000}
+      # Doesn't need to match webapi/processing above - webview isn't on the
+      # media-data volume. See webview/docker-entrypoint.sh.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       # Curated defaults for the admin "Output Container" dropdown - see the
       # root .env.example comment for detail. UI convenience only, not a
       # server-side allowlist.
