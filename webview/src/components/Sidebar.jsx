@@ -3,7 +3,6 @@ import { Home, User, ListVideo, ThumbsUp, History, Star, Users, UsersRound, User
 import { useAuth } from '../context/useAuth.js'
 import apiClient from '../api/client.js'
 import { formatRelativeDate } from '../lib/format.js'
-import packageJson from '../../package.json'
 import './Sidebar.css'
 
 const REPO_URL = 'https://github.com/Jtav1/justintube/'
