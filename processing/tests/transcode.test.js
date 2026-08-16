@@ -217,14 +217,124 @@ describe("thumbnail job validation and ffmpeg args", () => {
       "/media/original/in.mp4",
       "-frames:v",
       "1",
+      "-an",
+      "-sn",
       "-vf",
-      "scale='min(854,iw)':'min(480,ih)':force_original_aspect_ratio=decrease",
+      "scale='min(426,iw)':'min(240,ih)':force_original_aspect_ratio=decrease",
       "-c:v",
       "libwebp",
       "-quality",
-      "80",
+      "70",
       "/media/thumbnails/out.webp",
     ]);
+  });
+
+  test("buildThumbnailFfmpegArgs scales via scale_qsv on the GPU when QSV hardware acceleration is configured", () => {
+    const originalEnv = {
+      ENABLE_TRANSCODING: process.env.ENABLE_TRANSCODING,
+      ENABLE_HW_ACCELERATED_TRANSCODING: process.env.ENABLE_HW_ACCELERATED_TRANSCODING,
+      GPU_ACCELERATION_DEVICE: process.env.GPU_ACCELERATION_DEVICE,
+      HW_ACCELERATED_TRANSCODING_ENCODERS: process.env.HW_ACCELERATED_TRANSCODING_ENCODERS,
+    };
+
+    try {
+      process.env.ENABLE_TRANSCODING = "true";
+      process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "true";
+      process.env.GPU_ACCELERATION_DEVICE = "/dev/dri/renderD128";
+      process.env.HW_ACCELERATED_TRANSCODING_ENCODERS = '["h264_qsv","hevc_qsv"]';
+
+      const args = buildThumbnailFfmpegArgs({
+        inputPath: "/media/original/in.mp4",
+        outputPath: "/media/thumbnails/out.webp",
+        timestampSeconds: 12.3,
+      });
+
+      expect(args).toEqual([
+        "-y",
+        "-hwaccel",
+        "qsv",
+        "-hwaccel_device",
+        "/dev/dri/renderD128",
+        "-hwaccel_output_format",
+        "qsv",
+        "-ss",
+        "12.3",
+        "-i",
+        "/media/original/in.mp4",
+        "-frames:v",
+        "1",
+        "-an",
+        "-sn",
+        "-vf",
+        "scale_qsv=w='trunc(iw*min(min(426/iw,240/ih),1)/2)*2':h='trunc(ih*min(min(426/iw,240/ih),1)/2)*2',hwdownload",
+        "-c:v",
+        "libwebp",
+        "-quality",
+        "70",
+        "/media/thumbnails/out.webp",
+      ]);
+    } finally {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
+
+  test("buildThumbnailFfmpegArgs falls back to the software scale filter for a non-QSV hardware accelerator", () => {
+    const originalEnv = {
+      ENABLE_TRANSCODING: process.env.ENABLE_TRANSCODING,
+      ENABLE_HW_ACCELERATED_TRANSCODING: process.env.ENABLE_HW_ACCELERATED_TRANSCODING,
+      GPU_ACCELERATION_DEVICE: process.env.GPU_ACCELERATION_DEVICE,
+      HW_ACCELERATED_TRANSCODING_ENCODERS: process.env.HW_ACCELERATED_TRANSCODING_ENCODERS,
+    };
+
+    try {
+      process.env.ENABLE_TRANSCODING = "true";
+      process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "true";
+      process.env.GPU_ACCELERATION_DEVICE = "/dev/dri/renderD128";
+      process.env.HW_ACCELERATED_TRANSCODING_ENCODERS = '["h264_vaapi"]';
+
+      const args = buildThumbnailFfmpegArgs({
+        inputPath: "/media/original/in.mp4",
+        outputPath: "/media/thumbnails/out.webp",
+        timestampSeconds: 12.3,
+      });
+
+      expect(args).toEqual([
+        "-y",
+        "-hwaccel",
+        "vaapi",
+        "-hwaccel_device",
+        "/dev/dri/renderD128",
+        "-ss",
+        "12.3",
+        "-i",
+        "/media/original/in.mp4",
+        "-frames:v",
+        "1",
+        "-an",
+        "-sn",
+        "-vf",
+        "scale='min(426,iw)':'min(240,ih)':force_original_aspect_ratio=decrease",
+        "-c:v",
+        "libwebp",
+        "-quality",
+        "70",
+        "/media/thumbnails/out.webp",
+      ]);
+    } finally {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
   });
 });
 
