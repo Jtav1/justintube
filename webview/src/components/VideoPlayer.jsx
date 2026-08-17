@@ -59,6 +59,10 @@ const RETRY_BACKOFF_MS = [500, 1500, 3000]
 // VideoSuggested).
 const AUTOPLAY_COUNTDOWN_SECONDS = 5
 
+// How long to wait, on a page load reached via the autoplay countdown
+// (`?autoplay=1`, see autoplayOnLoad), before starting playback.
+const AUTOPLAY_ON_LOAD_DELAY_MS = 2000
+
 /**
  * Picks the default rendition to play: always "original" when available,
  * otherwise falls back to whatever rendition is first.
@@ -77,6 +81,7 @@ function VideoPlayer({
   autoplayEnabled = false,
   onAutoplayNext,
   onAutoplayChange,
+  autoplayOnLoad = false,
 }) {
   const { user } = useAuth()
   const { error: toastError } = useToast()
@@ -202,6 +207,18 @@ function VideoPlayer({
   useEffect(() => {
     viewRecordedRef.current = false
   }, [video.id])
+
+  // Arrived via the autoplay countdown (?autoplay=1) - wait a beat, then
+  // start playback ourselves rather than requiring a click.
+  useEffect(() => {
+    if (!autoplayOnLoad) {
+      return undefined
+    }
+    const timeout = setTimeout(() => {
+      videoRef.current?.play().catch(() => {})
+    }, AUTOPLAY_ON_LOAD_DELAY_MS)
+    return () => clearTimeout(timeout)
+  }, [autoplayOnLoad])
 
   useEffect(() => {
     let cancelled = false

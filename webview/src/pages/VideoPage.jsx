@@ -21,6 +21,10 @@ function VideoPage() {
   // Set by TopBar's Random Video button (`?random=1`) so this page knows the
   // viewer arrived via shuffle - forces autoplay on (see below).
   const cameFromRandom = searchParams.get('random') === '1'
+  // Set by handleAutoplayNext (`?autoplay=1`) so this specific page load
+  // knows it was reached by the autoplay countdown, not a manual click -
+  // told to VideoPlayer, which waits a beat then starts playback itself.
+  const autoplayOnLoad = searchParams.get('autoplay') === '1'
 
   const [video, setVideo] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -111,10 +115,12 @@ function VideoPage() {
     }
     const next = suggestions[Math.floor(Math.random() * suggestions.length)]
     // Carries `random=1` forward so the chain of autoplayed videos keeps
-    // being treated as "arrived via random" on each hop. A manual click on a
-    // suggestion/search result/etc. is a plain link with no `random` param,
-    // so that kind of navigation intentionally does not carry this forward.
-    navigate(`/video?v=${next.videoId}&random=1`)
+    // being treated as "arrived via random" on each hop, and sets
+    // `autoplay=1` so the next page starts playback itself instead of
+    // waiting on a click. A manual click on a suggestion/search result/etc.
+    // is a plain link with neither param, so that kind of navigation
+    // intentionally does not carry either forward.
+    navigate(`/video?v=${next.videoId}&random=1&autoplay=1`)
   }
 
   useEffect(() => {
@@ -194,6 +200,7 @@ function VideoPage() {
               autoplayEnabled={!playlist && autoplayEnabled}
               onAutoplayNext={handleAutoplayNext}
               onAutoplayChange={handleAutoplayChange}
+              autoplayOnLoad={autoplayOnLoad}
             />
             <VideoComments video={video} />
           </div>
