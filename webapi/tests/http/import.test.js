@@ -430,7 +430,7 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       expect(versionRows[0].status).toBe("processing");
     });
 
-    test("marks the row failed with a statusMessage when processing fails to download", async () => {
+    test("rolls back the placeholder row when processing fails to download", async () => {
       globalThis.fetch = jest.fn(async () => ({
         ok: false,
         status: 500,
@@ -441,13 +441,16 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       const upload = await seedDownloadingUpload();
 
       await continueImport(upload, "https://example.com/watch?v=abc", {});
-      await upload.reload();
 
-      expect(upload.status).toBe("failed");
-      expect(upload.statusMessage).toBe("yt-dlp failed");
+      expect(await OriginalUpload.findByPk(upload.id)).toBeNull();
+      const metadataRows = await queryRows(
+        "SELECT * FROM VIDEO_METADATA WHERE original_upload_id = :id",
+        { id: upload.id },
+      );
+      expect(metadataRows).toHaveLength(0);
     });
 
-    test("marks the row failed when processing is unreachable", async () => {
+    test("rolls back the placeholder row when processing is unreachable", async () => {
       globalThis.fetch = jest.fn(async () => {
         throw new Error("fetch failed");
       });
@@ -456,13 +459,11 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       const upload = await seedDownloadingUpload();
 
       await continueImport(upload, "https://example.com/watch?v=abc", {});
-      await upload.reload();
 
-      expect(upload.status).toBe("failed");
-      expect(upload.statusMessage).toBe("fetch failed");
+      expect(await OriginalUpload.findByPk(upload.id)).toBeNull();
     });
 
-    test("marks the row failed when the downloaded file is missing on disk", async () => {
+    test("rolls back the placeholder row when the downloaded file is missing on disk", async () => {
       // No fixture written: processing claims success but the file isn't there.
       globalThis.fetch = jest.fn(async () => ({
         ok: true,
@@ -474,10 +475,30 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       const upload = await seedDownloadingUpload();
 
       await continueImport(upload, "https://example.com/watch?v=abc", {});
-      await upload.reload();
 
-      expect(upload.status).toBe("failed");
-      expect(upload.statusMessage).toBe("The video was downloaded but could not be stored.");
+      expect(await OriginalUpload.findByPk(upload.id)).toBeNull();
+    });
+
+    test("unlinks the downloaded source file when storing it under the videoId fails", async () => {
+      // Written under the epoch-style name processing would have used, but
+      // never renamed to <videoId>.<ext> since the target dir doesn't exist.
+      writeDownloadedFixture("1737900020.mp4");
+      globalThis.fetch = jest.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, filename: "1737900020.mp4" }),
+      }));
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+      // Pre-create a directory at the rename target so fs.rename fails
+      // (EISDIR/EPERM), exercising the storage-failure branch.
+      mkdirSync(join(originalDir, `${upload.videoId}.mp4`), { recursive: true });
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+
+      expect(await OriginalUpload.findByPk(upload.id)).toBeNull();
+      expect(existsSync(join(originalDir, "1737900020.mp4"))).toBe(false);
     });
   });
 });

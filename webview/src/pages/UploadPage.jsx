@@ -251,7 +251,17 @@ function UploadPage() {
         if (TERMINAL_UPLOAD_STATUSES.has(data.status)) {
           clearInterval(interval)
         }
-      } catch {
+      } catch (err) {
+        if (err?.response?.status === 404) {
+          // A failed import rolls its placeholder record back instead of
+          // leaving it stored as "failed" — a 404 here means it didn't
+          // survive, which is itself a terminal failure signal.
+          if (!cancelled) {
+            setProcessingStatus({ status: 'failed', statusMessage: null, fileVersions: [] })
+          }
+          clearInterval(interval)
+          return
+        }
         // Transient network/server hiccup — the next tick retries.
       }
     }
@@ -669,7 +679,8 @@ function UploadPage() {
           )}
           {status === 'failed' && (
             <p className="upload-error">
-              {processingStatus?.statusMessage || 'This import failed. Please try again.'}
+              {processingStatus?.statusMessage ||
+                (file ? 'This file could not be processed.' : 'This URL could not be imported.')}
             </p>
           )}
         </div>
