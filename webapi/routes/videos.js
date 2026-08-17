@@ -38,7 +38,7 @@ import {
   resolveViewerPermission,
 } from "../lib/video-access.js";
 import { isVideoHidden, loadHiddenUploadIds } from "../lib/video-hidden.js";
-import { DEFAULT_LIMIT, parsePagination } from "../lib/pagination.js";
+import { DEFAULT_LIMIT, MAX_LIMIT, parsePagination } from "../lib/pagination.js";
 import {
   addVideoToLikesPlaylist,
   removeVideoFromLikesPlaylist,
@@ -1045,39 +1045,33 @@ function sendNotFound(res) {
 }
 
 /**
- * Finds videos for a bulk browse/discovery list, optionally filtered and
- * ordered. Public videos are always included; `unlisted`/`hidden`/`private`
- * videos are included for their owner (`options.viewerUserId`); `private`
- * and `hidden` videos are additionally included for any viewer holding a
+ * Builds the shared `where`/`include` for a bulk browse/discovery query.
+ * Public videos are always included; `unlisted`/`hidden`/`private` videos
+ * are included for their owner (`options.viewerUserId`); `private` and
+ * `hidden` videos are additionally included for any viewer holding a
  * matching VIDEO_ACCESS grant. Everyone else never sees delisted, hidden, or
  * private content in these bulk lists. When `options.viewerUserId` is set,
  * videos that viewer has personally hidden (USER_HIDDEN_VIDEOS, see
  * lib/video-hidden.js — unrelated to VIDEO_METADATA.visibility) are excluded.
  *
+ * Shared by {@link listPublicVideos} (paginated) and {@link listRandomVideos}
+ * (random sample) so the visibility/grant/hidden-video filtering logic only
+ * lives in one place.
+ *
  * @param {object} [options] Query options.
  * @param {import('sequelize').WhereOptions} [options.uploadWhere] Extra ORIGINAL_UPLOADS where.
  * @param {import('sequelize').Includeable[]} [options.includes] Extra includes.
- * @param {import('sequelize').Order} [options.order] Order clause.
  * @param {number|null} [options.viewerUserId] Authenticated caller's id, if any.
- * @param {import('sequelize').Model|null} [options.viewerUser] Authenticated caller, used to
- *   attach each item's `viewerPermission` (see {@link loadViewerPermissionsByUploadId}).
- * @param {import('sequelize').Model|null} [options.viewerRole] Authenticated caller's role.
- * @param {number} [options.page] 1-based page number. Defaults to 1.
- * @param {number} [options.limit] Page size. Defaults to `DEFAULT_LIMIT`.
- * @returns {Promise<{items: object[], totalHits: number}>} Serialized video items for the
- *   requested page, plus the total number of matching videos across all pages.
+ * @returns {Promise<{where: import('sequelize').WhereOptions, include: import('sequelize').Includeable[]}>}
+ *   `findAll`/`count`-ready `where`/`include`.
  *
  * @remarks
- * `totalHits` is computed via a standalone `OriginalUpload.count()` using the same
- * `where`/`include` as the data query (rather than `findAndCountAll`), with
- * `distinct: true, col: "id"` so a `required: true` include that joins multiple rows per
- * upload doesn't inflate the count. This only stays correct if every `options.includes`
- * entry with `required: true` is guaranteed to match at most one row per upload (e.g. a
- * `hasOne` association, or a `hasMany` filtered down to a unique key) — a `required: true`
- * include that can match multiple rows per upload will silently return fewer than `limit`
- * distinct videos per page.
+ * Every `options.includes` entry with `required: true` must be guaranteed to match at most
+ * one row per upload (e.g. a `hasOne` association, or a `hasMany` filtered down to a unique
+ * key) — callers computing a distinct count against this query rely on that (see
+ * `listPublicVideos`'s `totalHits` remark).
  */
-async function listPublicVideos(options = {}) {
+async function buildDiscoveryFindOptions(options = {}) {
   const visibilityOr = [{ "$VideoMetadata.visibility$": "public" }];
   if (options.viewerUserId) {
     visibilityOr.push({
@@ -1111,7 +1105,7 @@ async function listPublicVideos(options = {}) {
     }
   }
 
-  const findOptions = {
+  return {
     where: {
       ...uploadWhere,
       [Op.or]: visibilityOr,
@@ -1123,6 +1117,63 @@ async function listPublicVideos(options = {}) {
       ...(options.includes || []),
     ],
   };
+}
+
+/**
+ * Batch-loads tags, reaction counts, and viewer permissions for a set of
+ * discovery-query rows and serializes each into a video payload. Shared by
+ * {@link listPublicVideos} and {@link listRandomVideos}.
+ *
+ * @param {import('sequelize').Model[]} rows ORIGINAL_UPLOADS rows (with VideoMetadata/VideoThumbnail/User preloaded).
+ * @param {import('sequelize').Model|null} [viewerUser] Authenticated caller, used to attach `viewerPermission`.
+ * @param {import('sequelize').Model|null} [viewerRole] Authenticated caller's role.
+ * @returns {Promise<object[]>} Serialized video items in the same order as `rows`.
+ */
+async function serializeDiscoveryRows(rows, viewerUser, viewerRole) {
+  const uploadIds = rows.map((upload) => upload.id);
+  const tagsByUploadId = await loadTagsByUploadId(uploadIds);
+  const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
+  const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
+    rows,
+    viewerUser,
+    viewerRole,
+  );
+  return rows.map((upload) =>
+    serializeVideo(upload, upload.VideoMetadata, {
+      tags: tagsByUploadId.get(upload.id) || [],
+      viewerPermission: viewerPermissionByUploadId.get(upload.id),
+      ...reactionCountsByUploadId.get(upload.id),
+    }),
+  );
+}
+
+/**
+ * Finds videos for a bulk browse/discovery list, optionally filtered and
+ * ordered. See {@link buildDiscoveryFindOptions} for the visibility/grant/
+ * hidden-video filtering rules.
+ *
+ * @param {object} [options] Query options.
+ * @param {import('sequelize').WhereOptions} [options.uploadWhere] Extra ORIGINAL_UPLOADS where.
+ * @param {import('sequelize').Includeable[]} [options.includes] Extra includes.
+ * @param {import('sequelize').Order} [options.order] Order clause.
+ * @param {number|null} [options.viewerUserId] Authenticated caller's id, if any.
+ * @param {import('sequelize').Model|null} [options.viewerUser] Authenticated caller, used to
+ *   attach each item's `viewerPermission` (see {@link loadViewerPermissionsByUploadId}).
+ * @param {import('sequelize').Model|null} [options.viewerRole] Authenticated caller's role.
+ * @param {number} [options.page] 1-based page number. Defaults to 1.
+ * @param {number} [options.limit] Page size. Defaults to `DEFAULT_LIMIT`.
+ * @returns {Promise<{items: object[], totalHits: number}>} Serialized video items for the
+ *   requested page, plus the total number of matching videos across all pages.
+ *
+ * @remarks
+ * `totalHits` is computed via a standalone `OriginalUpload.count()` using the same
+ * `where`/`include` as the data query (rather than `findAndCountAll`), with
+ * `distinct: true, col: "id"` so a `required: true` include that joins multiple rows per
+ * upload doesn't inflate the count. See {@link buildDiscoveryFindOptions} for the
+ * precondition this relies on.
+ */
+async function listPublicVideos(options = {}) {
+  const findOptions = await buildDiscoveryFindOptions(options);
 
   const page = options.page ?? 1;
   const limit = options.limit ?? DEFAULT_LIMIT;
@@ -1148,23 +1199,45 @@ async function listPublicVideos(options = {}) {
     subQuery: false,
   });
 
-  const uploadIds = rows.map((upload) => upload.id);
-  const tagsByUploadId = await loadTagsByUploadId(uploadIds);
-  const reactionCountsByUploadId = await loadReactionCountsByUploadId(uploadIds);
-  const viewerPermissionByUploadId = await loadViewerPermissionsByUploadId(
-    rows,
-    options.viewerUser,
-    options.viewerRole,
-  );
   return {
-    items: rows.map((upload) =>
-      serializeVideo(upload, upload.VideoMetadata, {
-        tags: tagsByUploadId.get(upload.id) || [],
-        viewerPermission: viewerPermissionByUploadId.get(upload.id),
-        ...reactionCountsByUploadId.get(upload.id),
-      }),
-    ),
+    items: await serializeDiscoveryRows(rows, options.viewerUser, options.viewerRole),
     totalHits,
+  };
+}
+
+/**
+ * Finds a random sample of videos the caller may see, using the same
+ * visibility/grant/hidden-video filtering as {@link listPublicVideos} (see
+ * {@link buildDiscoveryFindOptions}) but ordered randomly at the database
+ * level (`ORDER BY RANDOM()`/`RAND()` depending on dialect, via
+ * `sequelize.random()`) rather than paginated — a single `LIMIT quantity`
+ * over a randomly-ordered result set, so it naturally returns distinct rows
+ * with no risk of repeats within one call.
+ *
+ * @param {object} [options] Query options.
+ * @param {import('sequelize').WhereOptions} [options.uploadWhere] Extra ORIGINAL_UPLOADS where.
+ * @param {number} options.quantity Number of videos to return.
+ * @param {number|null} [options.viewerUserId] Authenticated caller's id, if any.
+ * @param {import('sequelize').Model|null} [options.viewerUser] Authenticated caller, used to
+ *   attach each item's `viewerPermission` (see {@link loadViewerPermissionsByUploadId}).
+ * @param {import('sequelize').Model|null} [options.viewerRole] Authenticated caller's role.
+ * @returns {Promise<{items: object[]}>} Up to `quantity` randomly-selected, serialized video items.
+ */
+async function listRandomVideos(options = {}) {
+  const findOptions = await buildDiscoveryFindOptions(options);
+
+  const rows = await OriginalUpload.findAll({
+    ...findOptions,
+    order: sequelize.random(),
+    limit: options.quantity,
+    // See listPublicVideos's subQuery: false remark — same reasoning applies
+    // here even though there's no association-column ORDER BY, because
+    // ORDER BY RANDOM() also can't be pushed into a column-limited subquery.
+    subQuery: false,
+  });
+
+  return {
+    items: await serializeDiscoveryRows(rows, options.viewerUser, options.viewerRole),
   };
 }
 
@@ -1603,6 +1676,34 @@ function parseUpdateCommentBody(body) {
 }
 
 /**
+ * Default number of videos returned by GET /videos/random when `quantity`
+ * is omitted.
+ *
+ * @type {number}
+ */
+const DEFAULT_RANDOM_QUANTITY = 10;
+
+/**
+ * Parses and validates the `quantity` query param for listRandomVideos,
+ * reusing `MAX_LIMIT` as the upper bound for consistency with the other
+ * list endpoints' page-size cap.
+ *
+ * @param {import('express').Request['query']} query Raw Express query object.
+ * @returns {{ok: true, quantity: number}|{ok: false, message: string}} Parsed quantity or error.
+ */
+function parseRandomQuantity(query) {
+  const raw =
+    query.quantity === undefined ? DEFAULT_RANDOM_QUANTITY : Number(query.quantity);
+  if (!Number.isInteger(raw) || raw < 1) {
+    return { ok: false, message: "quantity must be a positive integer." };
+  }
+  if (raw > MAX_LIMIT) {
+    return { ok: false, message: `quantity must be at most ${MAX_LIMIT}.` };
+  }
+  return { ok: true, quantity: raw };
+}
+
+/**
  * Builds the videos / tags / feed discovery router.
  *
  * @returns {import('express').Router} Router mounted under `/api/v1`.
@@ -1807,6 +1908,60 @@ export function createVideosRouter() {
       res.status(500).json({
         error: "internal_error",
         message: "Failed to list newest videos.",
+      });
+    }
+  });
+
+  /**
+   * GET /videos/random — listRandomVideos
+   * Auth: optional. A random sample of videos the caller may see (public,
+   * plus the caller's own unlisted/hidden/private videos and any videos
+   * shared with them via a VIDEO_ACCESS grant) — same visibility rules as
+   * listVideos, but unordered and not paginated.
+   *
+   * @openapi
+   * /api/v1/videos/random:
+   *   get:
+   *     tags: [Videos]
+   *     summary: List a random sample of videos the caller may see
+   *     operationId: listRandomVideos
+   *     parameters:
+   *       - name: quantity
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 99
+   *           default: 10
+   *     responses:
+   *       "200":
+   *         description: Random video sample (up to `quantity` items)
+   *       "400":
+   *         description: Invalid quantity
+   */
+  router.get("/videos/random", optionalAuth, async (req, res) => {
+    try {
+      const parsedQuantity = parseRandomQuantity(req.query);
+      if (!parsedQuantity.ok) {
+        res
+          .status(400)
+          .json({ error: "invalid_query", message: parsedQuantity.message });
+        return;
+      }
+
+      const { items } = await listRandomVideos({
+        quantity: parsedQuantity.quantity,
+        viewerUserId: req.user?.id ?? null,
+        viewerUser: req.user ?? null,
+        viewerRole: req.authRole ?? null,
+      });
+      res.status(200).json({ items });
+    } catch (err) {
+      logger.error({ err }, "listRandomVideos failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list random videos.",
       });
     }
   });

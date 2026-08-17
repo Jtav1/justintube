@@ -1362,6 +1362,85 @@ describe("Video discovery and metadata endpoints", () => {
     });
   });
 
+  describe("GET /videos/random (listRandomVideos)", () => {
+    test("returns only public videos for an anonymous caller, capped at quantity", async () => {
+      for (let i = 0; i < 5; i += 1) {
+        const upload = await seedUpload({ originalFilename: `rand-pub-${i}.mp4` });
+        await seedMetadata(upload.id, { title: `Random public ${i}`, visibility: "public" });
+      }
+      const privateUpload = await seedUpload({ originalFilename: "rand-priv.mp4" });
+      await seedMetadata(privateUpload.id, { title: "Random private", visibility: "private" });
+
+      const res = await client.get("/api/v1/videos/random").query({ quantity: 3 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(3);
+      const titles = res.body.items.map((item) => item.title);
+      expect(new Set(titles).size).toBe(3);
+      expect(titles).not.toContain("Random private");
+    });
+
+    test("defaults to 10 and never returns more than the number of visible videos", async () => {
+      const upload = await seedUpload({ originalFilename: "rand-only.mp4" });
+      await seedMetadata(upload.id, { title: "Only visible", visibility: "public" });
+
+      const res = await client.get("/api/v1/videos/random");
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0].title).toBe("Only visible");
+    });
+
+    test("includes the caller's own private video and a video shared via VIDEO_ACCESS", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "rand-owner-key");
+      const grantee = await seedUserWithRoleAndKey("viewer", "rand-grantee-key", {
+        username: "randgrantee",
+      });
+      const ownPrivate = await seedUpload({
+        userId: owner.id,
+        originalFilename: "rand-own-priv.mp4",
+      });
+      await seedMetadata(ownPrivate.id, { title: "My private", visibility: "private" });
+
+      const shared = await seedUpload({ originalFilename: "rand-shared.mp4" });
+      await seedMetadata(shared.id, { title: "Shared with grantee", visibility: "private" });
+      await seedVideoAccess(shared.id, grantee.id);
+
+      const otherPrivate = await seedUpload({ originalFilename: "rand-other-priv.mp4" });
+      await seedMetadata(otherPrivate.id, { title: "Not visible", visibility: "private" });
+
+      const ownerRes = await client
+        .get("/api/v1/videos/random")
+        .query({ quantity: 10 })
+        .set("Authorization", "Bearer rand-owner-key");
+      expect(ownerRes.status).toBe(200);
+      expect(ownerRes.body.items.map((item) => item.title)).toContain("My private");
+      expect(ownerRes.body.items.map((item) => item.title)).not.toContain("Not visible");
+
+      const granteeRes = await client
+        .get("/api/v1/videos/random")
+        .query({ quantity: 10 })
+        .set("Authorization", "Bearer rand-grantee-key");
+      expect(granteeRes.status).toBe(200);
+      expect(granteeRes.body.items.map((item) => item.title)).toContain(
+        "Shared with grantee",
+      );
+      expect(granteeRes.body.items.map((item) => item.title)).not.toContain("Not visible");
+    });
+
+    test("rejects a non-positive-integer quantity", async () => {
+      const res = await client.get("/api/v1/videos/random").query({ quantity: 0 });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_query");
+    });
+
+    test("rejects a quantity above the max limit", async () => {
+      const res = await client.get("/api/v1/videos/random").query({ quantity: 100 });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_query");
+    });
+  });
+
   describe("POST /videos/{id}/delist (delistVideo)", () => {
     test("sets visibility to unlisted for moderators", async () => {
       await seedUserWithRoleAndKey("moderator", "mod-delist-key");
