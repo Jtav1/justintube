@@ -31,6 +31,7 @@ import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../a
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import { readVolume, writeVolume } from '../lib/volume.js'
 import ChipInput from './ChipInput.jsx'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
@@ -478,6 +479,24 @@ function VideoPlayer({
   // timeout scheduled against the outgoing element.
   useEffect(() => clearPendingRetry, [memoizedSrc])
 
+  // The media element remounts fresh (key={memoizedSrc}) on every video
+  // change *and* every quality switch, resetting .volume to the browser
+  // default each time - reapply the user's saved preference whenever that
+  // happens rather than only on this component's own mount.
+  useEffect(() => {
+    const el = videoRef.current
+    if (el) {
+      el.volume = readVolume()
+    }
+  }, [memoizedSrc])
+
+  function handleVolumeChange() {
+    const el = videoRef.current
+    if (el) {
+      writeVolume(el.volume)
+    }
+  }
+
   function handleFirstPlay() {
     if (viewRecordedRef.current) {
       return
@@ -620,6 +639,7 @@ function VideoPlayer({
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handleFirstPlay}
               onEnded={handleEnded}
+              onVolumeChange={handleVolumeChange}
               onError={handlePlaybackError}
             />
           </div>
@@ -633,6 +653,7 @@ function VideoPlayer({
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
             onEnded={handleEnded}
+            onVolumeChange={handleVolumeChange}
             onError={handlePlaybackError}
           />
         )}
