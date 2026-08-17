@@ -54,6 +54,11 @@ const TRANSIENT_MEDIA_ERROR_CODES = new Set([
 ])
 const RETRY_BACKOFF_MS = [500, 1500, 3000]
 
+// How long the "Next video Autoplaying" countdown overlay counts down from
+// when the video ends and autoplay is on (see the Autoplay toggle in
+// VideoSuggested).
+const AUTOPLAY_COUNTDOWN_SECONDS = 5
+
 /**
  * Picks the default rendition to play: always "original" when available,
  * otherwise falls back to whatever rendition is first.
@@ -65,7 +70,14 @@ function pickDefaultRendition(renditions) {
   return renditions.find((r) => r.resolution === 'original') ?? renditions[0]
 }
 
-function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
+function VideoPlayer({
+  video,
+  onRemoveFromPlaylist,
+  onReport,
+  autoplayEnabled = false,
+  onAutoplayNext,
+  onAutoplayChange,
+}) {
   const { user } = useAuth()
   const { error: toastError } = useToast()
   const navigate = useNavigate()
@@ -102,6 +114,24 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
   const [subscribePending, setSubscribePending] = useState(false)
   const [hideError, setHideError] = useState(false)
   const [playbackError, setPlaybackError] = useState(false)
+  // Seconds remaining in the "Next video Autoplaying" overlay countdown;
+  // null means the overlay isn't showing.
+  const [autoplayCountdown, setAutoplayCountdown] = useState(null)
+  const [autoplayCountdownVideoId, setAutoplayCountdownVideoId] = useState(video.id)
+  if (video.id !== autoplayCountdownVideoId) {
+    setAutoplayCountdownVideoId(video.id)
+    setAutoplayCountdown(null)
+  }
+  // Autoplay turned off mid-countdown (Cancel button below, or the toggle in
+  // VideoSuggested) - drop the overlay so the ticking effect's cleanup runs
+  // and the scheduled navigation never fires.
+  const [countdownAutoplayEnabled, setCountdownAutoplayEnabled] = useState(autoplayEnabled)
+  if (autoplayEnabled !== countdownAutoplayEnabled) {
+    setCountdownAutoplayEnabled(autoplayEnabled)
+    if (!autoplayEnabled) {
+      setAutoplayCountdown(null)
+    }
+  }
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -439,6 +469,32 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
     recordView(video.id).catch((err) => console.error('Failed to record view:', err))
   }
 
+  function handleEnded() {
+    if (autoplayEnabled) {
+      setAutoplayCountdown(AUTOPLAY_COUNTDOWN_SECONDS)
+    }
+  }
+
+  function handleCancelAutoplay() {
+    onAutoplayChange?.(false)
+  }
+
+  // Ticks the overlay countdown down to 0 one second at a time, then hands
+  // off to the parent to actually navigate to the next video.
+  useEffect(() => {
+    if (autoplayCountdown === null) {
+      return undefined
+    }
+    if (autoplayCountdown === 0) {
+      onAutoplayNext?.()
+      return undefined
+    }
+    const timeout = setTimeout(() => {
+      setAutoplayCountdown((count) => count - 1)
+    }, 1000)
+    return () => clearTimeout(timeout)
+  }, [autoplayCountdown, onAutoplayNext])
+
   function applyReactionDelta(previousReaction, nextReaction) {
     setReactionDelta((prev) => ({
       likeCount: prev.likeCount
@@ -546,6 +602,7 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
               className="video-player-audio-element"
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handleFirstPlay}
+              onEnded={handleEnded}
               onError={handlePlaybackError}
             />
           </div>
@@ -558,8 +615,24 @@ function VideoPlayer({ video, onRemoveFromPlaylist, onReport }) {
             loop={loop}
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
+            onEnded={handleEnded}
             onError={handlePlaybackError}
           />
+        )}
+        {autoplayCountdown !== null && (
+          <div className="video-player-autoplay-overlay">
+            <div className="video-player-autoplay-spinner">
+              <span className="video-player-autoplay-count">{autoplayCountdown}</span>
+            </div>
+            <p>Next video Autoplaying</p>
+            <button
+              type="button"
+              className="video-player-autoplay-cancel-btn"
+              onClick={handleCancelAutoplay}
+            >
+              Cancel
+            </button>
+          </div>
         )}
         {playbackError && (
           <div className="video-player-error-overlay">

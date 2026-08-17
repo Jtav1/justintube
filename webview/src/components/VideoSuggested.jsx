@@ -21,14 +21,23 @@ function shuffle(items) {
 }
 
 /**
- * Suggested-videos rail shown alongside the video player: up to
+ * Suggested-videos rail shown alongside the video player: an Autoplay toggle
+ * (persisted to this browser, see lib/autoplay.js), followed by up to
  * TAG_MATCH_COUNT videos sharing a tag with the current video, plus random
  * videos from everything the viewer can access filling the rest of
  * TOTAL_COUNT - so a video with few/no tag matches still gets a full rail
  * of random suggestions instead of a short one.
- * @param {{video: object}} props The currently-playing video (from getVideo).
+ * @param {{
+ *   video: object,
+ *   autoplayEnabled: boolean,
+ *   onAutoplayChange: (enabled: boolean) => void,
+ *   onSuggestionsChange?: (items: object[]) => void,
+ * }} props The currently-playing video (from getVideo), the Autoplay toggle's
+ *   current value and setter (owned by VideoPage so VideoPlayer can read it
+ *   too), and an optional callback fired with this rail's loaded suggestions
+ *   (so VideoPage can pick one when autoplay's countdown finishes).
  */
-function VideoSuggested({ video }) {
+function VideoSuggested({ video, autoplayEnabled, onAutoplayChange, onSuggestionsChange }) {
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -84,6 +93,7 @@ function VideoSuggested({ video }) {
 
       if (!cancelled) {
         setSuggestions(results)
+        onSuggestionsChange?.(results)
         setLoading(false)
       }
     }
@@ -93,10 +103,21 @@ function VideoSuggested({ video }) {
     return () => {
       cancelled = true
     }
-  }, [video.id, video.tags])
+  }, [video.id, video.tags, onSuggestionsChange])
 
   return (
     <aside className="video-suggested">
+      <label className="video-suggested-autoplay">
+        <span className="video-suggested-autoplay-label">Autoplay</span>
+        <span className="video-suggested-autoplay-switch">
+          <input
+            type="checkbox"
+            checked={autoplayEnabled}
+            onChange={(event) => onAutoplayChange?.(event.target.checked)}
+          />
+          <span className="video-suggested-autoplay-track" />
+        </span>
+      </label>
       {!loading && suggestions.length === 0 && (
         <p className="video-suggested-empty">No suggestions available.</p>
       )}
