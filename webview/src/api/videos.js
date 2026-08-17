@@ -52,6 +52,17 @@ export async function getNewestVideos({ page, limit } = {}) {
 }
 
 /**
+ * Fetches a random sample of videos the current viewer may see (public,
+ * plus their own and any they hold a VIDEO_ACCESS grant for).
+ * @param {{ quantity?: number }} [params]
+ * @returns {Promise<{items: object[]}>}
+ */
+export async function getRandomVideos({ quantity } = {}) {
+  const res = await apiClient.get('/api/v1/videos/random', { params: { quantity } })
+  return res.data
+}
+
+/**
  * Lists videos the current user has liked (that they can still view), newest
  * like first. Requires authentication.
  * @param {{ page?: number, limit?: number }} [params]

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { getNewestVideos, searchVideos } from '../api/videos.js'
+import { getRandomVideos, searchVideos } from '../api/videos.js'
 import VideoCard from './VideoCard.jsx'
 import './VideoSuggested.css'
 
-const TARGET_COUNT = 10
-const TOP_TAG_COUNT = 3
+const TOTAL_COUNT = 15
+const TAG_MATCH_COUNT = 3
 
 /**
  * Fisher-Yates shuffle, non-mutating.
@@ -21,10 +21,11 @@ function shuffle(items) {
 }
 
 /**
- * Suggested-videos rail shown alongside the video player. Prefers videos
- * matching any of the current video's first few tags (searched individually
- * and merged), then fills any remaining slots with a random selection from
- * every video the viewer can access.
+ * Suggested-videos rail shown alongside the video player: up to
+ * TAG_MATCH_COUNT videos sharing a tag with the current video, plus random
+ * videos from everything the viewer can access filling the rest of
+ * TOTAL_COUNT - so a video with few/no tag matches still gets a full rail
+ * of random suggestions instead of a short one.
  * @param {{video: object}} props The currently-playing video (from getVideo).
  */
 function VideoSuggested({ video }) {
@@ -37,13 +38,15 @@ function VideoSuggested({ video }) {
     async function load() {
       setLoading(true)
       const seenIds = new Set([video.id])
-      let results = []
+      const results = []
 
-      const topTags = (video.tags ?? []).slice(0, TOP_TAG_COUNT)
-      if (topTags.length > 0) {
+      const tags = video.tags ?? []
+      if (tags.length > 0) {
         const tagSearches = await Promise.allSettled(
-          topTags.map((tag) => searchVideos({ tags: [tag], limit: TARGET_COUNT })),
+          tags.map((tag) => searchVideos({ tags: [tag], limit: TAG_MATCH_COUNT * 3 })),
         )
+        const tagPool = []
+        const tagPoolIds = new Set()
         for (const outcome of tagSearches) {
           if (outcome.status !== 'fulfilled') {
             // One tag's search failed (e.g. search backend unavailable) -
@@ -51,26 +54,36 @@ function VideoSuggested({ video }) {
             continue
           }
           for (const item of outcome.value.items ?? []) {
-            if (!seenIds.has(item.id)) {
-              seenIds.add(item.id)
-              results.push(item)
+            if (!seenIds.has(item.id) && !tagPoolIds.has(item.id)) {
+              tagPoolIds.add(item.id)
+              tagPool.push(item)
             }
           }
         }
-      }
-
-      if (results.length < TARGET_COUNT) {
-        try {
-          const all = await getNewestVideos()
-          const pool = (all.items ?? []).filter((item) => !seenIds.has(item.id))
-          results = results.concat(shuffle(pool).slice(0, TARGET_COUNT - results.length))
-        } catch {
-          // No fallback available; show whatever tag matches were found.
+        for (const item of shuffle(tagPool).slice(0, TAG_MATCH_COUNT)) {
+          seenIds.add(item.id)
+          results.push(item)
         }
       }
 
+      // Fill the rest of TOTAL_COUNT with random videos - this also
+      // backfills any tag-match shortfall, so the rail still reaches
+      // TOTAL_COUNT even when few/no tags matched.
+      const randomTarget = TOTAL_COUNT - results.length
+      try {
+        // Worst case every fetched video collides with seenIds, so ask for
+        // that many extra to still end up with randomTarget after filtering.
+        const { items } = await getRandomVideos({
+          quantity: randomTarget + seenIds.size,
+        })
+        const pool = (items ?? []).filter((item) => !seenIds.has(item.id))
+        results.push(...pool.slice(0, randomTarget))
+      } catch {
+        // No random fallback available; show whatever tag matches were found.
+      }
+
       if (!cancelled) {
-        setSuggestions(results.slice(0, TARGET_COUNT))
+        setSuggestions(results)
         setLoading(false)
       }
     }
