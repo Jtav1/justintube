@@ -19,14 +19,10 @@ import {
 import { searchUsers } from '../api/users.js'
 import ChipInput from '../components/ChipInput.jsx'
 import ProgressBar from '../components/ProgressBar.jsx'
+import ToggleSwitch from '../components/ToggleSwitch.jsx'
+import BulkUploadForm from '../components/BulkUploadForm.jsx'
+import { VISIBILITY_OPTIONS } from '../constants/visibility.js'
 import './UploadPage.css'
-
-const VISIBILITY_OPTIONS = [
-  { value: 'public', label: 'Public' },
-  { value: 'private', label: 'Private' },
-  { value: 'unlisted', label: 'Unlisted' },
-  { value: 'hidden', label: 'Hidden' },
-]
 
 const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
 const IMPORT_STATUS_POLL_MS = 30000
@@ -74,6 +70,58 @@ function thumbnailTimestampError(raw) {
   return null
 }
 
+let bulkCardIdCounter = 0
+
+function createEmptyBulkCard() {
+  return {
+    id: ++bulkCardIdCounter,
+    file: null,
+    title: '',
+    visibility: 'public',
+    status: 'idle',
+    progress: 0,
+    error: null,
+  }
+}
+
+function titleFromFilename(name) {
+  const dotIndex = name.lastIndexOf('.')
+  return dotIndex > 0 ? name.slice(0, dotIndex) : name
+}
+
+// Fills the first empty-file card with the first new file, appends fresh
+// cards (pre-filled) for any remaining files, then ensures the list always
+// ends with exactly one empty card - the standing drop/click target for
+// whatever file comes next.
+function addFilesToBulkCards(prevCards, files) {
+  const next = [...prevCards]
+  let fileIndex = 0
+
+  for (let i = 0; i < next.length && fileIndex < files.length; i++) {
+    if (next[i].file == null) {
+      const selected = files[fileIndex]
+      next[i] = {
+        ...next[i],
+        file: selected,
+        title: next[i].title.trim() ? next[i].title : titleFromFilename(selected.name),
+      }
+      fileIndex++
+    }
+  }
+
+  while (fileIndex < files.length) {
+    const selected = files[fileIndex]
+    next.push({ ...createEmptyBulkCard(), file: selected, title: titleFromFilename(selected.name) })
+    fileIndex++
+  }
+
+  if (next.length === 0 || next[next.length - 1].file != null) {
+    next.push(createEmptyBulkCard())
+  }
+
+  return next
+}
+
 function UploadPage() {
   const { user, loading: authLoading } = useAuth()
   const { success, error: toastError } = useToast()
@@ -94,6 +142,8 @@ function UploadPage() {
   const [file, setFile] = useState(null)
   const [dragActive, setDragActive] = useState(false)
   const [url, setUrl] = useState('')
+  const [bulkMode, setBulkMode] = useState(false)
+  const [bulkCards, setBulkCards] = useState(() => [createEmptyBulkCard()])
   const [thumbnailFile, setThumbnailFile] = useState(null)
   const [thumbnailTimestamp, setThumbnailTimestamp] = useState('')
   const [title, setTitle] = useState('')
@@ -380,6 +430,25 @@ function UploadPage() {
     }
   }
 
+  function handleBulkModeToggle(checked) {
+    setBulkMode(checked)
+    setBulkCards([createEmptyBulkCard()])
+    setFile(null)
+    setUrl('')
+  }
+
+  function handleBulkAddFiles(files) {
+    setBulkCards((prev) => addFilesToBulkCards(prev, files))
+  }
+
+  function handleBulkUpdateCard(id, patch) {
+    setBulkCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+  }
+
+  function handleBulkRemoveCard(id) {
+    setBulkCards((prev) => prev.filter((c) => c.id !== id))
+  }
+
   function addTagFromInput(rawText) {
     const parts = rawText
       .split(',')
@@ -437,6 +506,10 @@ function UploadPage() {
       thumbnailTimestampInvalid ||
       submitting
 
+  const bulkPopulatedCards = bulkCards.filter((c) => c.file)
+  const bulkSubmitDisabled =
+    submitting || bulkPopulatedCards.length === 0 || bulkPopulatedCards.some((c) => c.title.trim().length === 0)
+
   function handleFormKeyDown(event) {
     if (event.key !== 'Enter') {
       return
@@ -453,8 +526,61 @@ function UploadPage() {
     event.preventDefault()
   }
 
+  function finishUploadFlow(message) {
+    success(message)
+    setPostUploadPending(true)
+    setTimeout(() => navigate(`/users/${user.username}`), POST_UPLOAD_DELAY_MS)
+  }
+
+  async function handleBulkSubmit() {
+    if (bulkSubmitDisabled) {
+      return
+    }
+
+    const toUpload = bulkCards.filter((c) => c.file && c.status !== 'success')
+    setSubmitting(true)
+    let hadError = false
+
+    for (const card of toUpload) {
+      handleBulkUpdateCard(card.id, { status: 'uploading', progress: 0, error: null })
+      try {
+        const uploaded = await uploadVideoFile(card.file, {
+          onUploadProgress: (event) => {
+            if (event.total) {
+              handleBulkUpdateCard(card.id, { progress: Math.round((event.loaded / event.total) * 100) })
+            }
+          },
+        })
+        await updateVideo(uploaded.id, {
+          title: card.title.trim(),
+          description: null,
+          tags: [],
+          visibility: card.visibility,
+        })
+        handleBulkUpdateCard(card.id, { status: 'success', progress: 100 })
+      } catch {
+        hadError = true
+        handleBulkUpdateCard(card.id, { status: 'error', error: 'Upload failed.' })
+      }
+    }
+
+    setSubmitting(false)
+
+    if (hadError) {
+      toastError('Some videos failed to upload. Fix them and click Upload again.')
+    } else {
+      finishUploadFlow('Videos uploaded! They will finish processing in the background.')
+    }
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
+
+    if (bulkMode) {
+      await handleBulkSubmit()
+      return
+    }
+
     if (submitDisabled) {
       return
     }
@@ -589,9 +715,7 @@ function UploadPage() {
     // independently of this page — no need to wait around for it. A brief
     // spinner pause before navigating away gives the success toast a moment
     // to register instead of instantly redirecting.
-    success('Video uploaded! It will finish processing in the background.')
-    setPostUploadPending(true)
-    setTimeout(() => navigate(`/users/${user.username}`), POST_UPLOAD_DELAY_MS)
+    finishUploadFlow('Video uploaded! It will finish processing in the background.')
   }
 
   async function handleDelete() {
@@ -621,6 +745,26 @@ function UploadPage() {
         <h1>{isEditMode ? 'Edit Video' : 'Upload'}</h1>
 
         {!isEditMode && (
+          <ToggleSwitch
+            id="upload-bulk-toggle"
+            label="Bulk Upload"
+            checked={bulkMode}
+            onChange={handleBulkModeToggle}
+          />
+        )}
+
+        {!isEditMode && bulkMode && (
+          <BulkUploadForm
+            cards={bulkCards}
+            visibilityOptions={VISIBILITY_OPTIONS}
+            disabled={submitting}
+            onAddFiles={handleBulkAddFiles}
+            onUpdateCard={handleBulkUpdateCard}
+            onRemoveCard={handleBulkRemoveCard}
+          />
+        )}
+
+        {!isEditMode && !bulkMode && (
           <>
             <div className="upload-source-row">
               <label
@@ -682,186 +826,194 @@ function UploadPage() {
           </>
         )}
 
-        <div className="upload-field-group">
-          <label htmlFor="upload-thumbnail-input">Thumbnail</label>
-          {!isEditMode && !importAvailable && (
-            <p className="upload-hint">
-              Automatic thumbnail generation is unavailable right now — you can upload one
-              manually instead.
-            </p>
-          )}
-          <div className="upload-thumbnail-row">
-            <label htmlFor="upload-thumbnail-input" className="upload-thumbnail-picker">
-              <UploadCloud size={20} />
-              <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
-              <input
-                id="upload-thumbnail-input"
-                ref={thumbnailInputRef}
-                type="file"
-                accept="image/*"
-                className="upload-dropzone-input"
-                onChange={handleThumbnailInputChange}
-              />
-              {thumbnailFile && (
-                <button
-                  type="button"
-                  className="upload-dropzone-clear"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    setThumbnailFile(null)
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-            </label>
-
-            {!isEditMode && (
-              <div className="upload-thumbnail-timestamp">
-                <label htmlFor="upload-thumbnail-timestamp">Frame at (sec)</label>
-                <input
-                  id="upload-thumbnail-timestamp"
-                  type="text"
-                  inputMode="decimal"
-                  value={thumbnailTimestamp}
-                  onChange={(event) => setThumbnailTimestamp(event.target.value)}
-                  disabled={Boolean(thumbnailFile)}
-                  placeholder="Random"
-                  aria-invalid={thumbnailTimestampInvalid}
-                />
-                {thumbnailTimestampInvalid && (
-                  <p className="upload-error upload-thumbnail-timestamp-error">
-                    {thumbnailTimestampError(thumbnailTimestamp)}
-                  </p>
-                )}
-              </div>
+        {!bulkMode && (
+          <>
+          <div className="upload-field-group">
+            <label htmlFor="upload-thumbnail-input">Thumbnail</label>
+            {!isEditMode && !importAvailable && (
+              <p className="upload-hint">
+                Automatic thumbnail generation is unavailable right now — you can upload one
+                manually instead.
+              </p>
             )}
+            <div className="upload-thumbnail-row">
+              <label htmlFor="upload-thumbnail-input" className="upload-thumbnail-picker">
+                <UploadCloud size={20} />
+                <span>{thumbnailFile ? thumbnailFile.name : 'Choose a thumbnail image'}</span>
+                <input
+                  id="upload-thumbnail-input"
+                  ref={thumbnailInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="upload-dropzone-input"
+                  onChange={handleThumbnailInputChange}
+                />
+                {thumbnailFile && (
+                  <button
+                    type="button"
+                    className="upload-dropzone-clear"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setThumbnailFile(null)
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </label>
+
+              {!isEditMode && (
+                <div className="upload-thumbnail-timestamp">
+                  <label htmlFor="upload-thumbnail-timestamp">Frame at (sec)</label>
+                  <input
+                    id="upload-thumbnail-timestamp"
+                    type="text"
+                    inputMode="decimal"
+                    value={thumbnailTimestamp}
+                    onChange={(event) => setThumbnailTimestamp(event.target.value)}
+                    disabled={Boolean(thumbnailFile)}
+                    placeholder="Random"
+                    aria-invalid={thumbnailTimestampInvalid}
+                  />
+                  {thumbnailTimestampInvalid && (
+                    <p className="upload-error upload-thumbnail-timestamp-error">
+                      {thumbnailTimestampError(thumbnailTimestamp)}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
 
-        <label htmlFor="upload-title">
-          Title <span className="required-mark" aria-hidden="true">*</span>
-        </label>
-        <input
-          id="upload-title"
-          type="text"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          maxLength={MAX_TITLE_LENGTH}
-          required
-        />
-
-        <label htmlFor="upload-description">Description</label>
-        <textarea
-          id="upload-description"
-          rows={3}
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          maxLength={MAX_DESCRIPTION_LENGTH}
-        />
-
-        <label htmlFor="upload-visibility">Visibility</label>
-        <select
-          id="upload-visibility"
-          value={visibility}
-          onChange={(event) => setVisibility(event.target.value)}
-          disabled={isEditMode && !viewerIsOwnerOrAdmin}
-        >
-          {VISIBILITY_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        {isEditMode && !viewerIsOwnerOrAdmin && (
-          <p className="upload-hint">Only the owner or an admin can change visibility.</p>
-        )}
-
-        {isAdmin && (
-          <label className="upload-checkbox">
-            <input
-              type="checkbox"
-              checked={featured}
-              onChange={(event) => setFeatured(event.target.checked)}
-            />
-            Featured
+          <label htmlFor="upload-title">
+            Title <span className="required-mark" aria-hidden="true">*</span>
           </label>
-        )}
-
-        {viewerIsOwnerOrAdmin && visibility === 'private' && (
-          <div className="upload-field-group">
-            <label>Share with</label>
-            <ChipInput
-              chips={viewers.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
-              onRemove={removeViewer}
-              inputValue={viewerQuery}
-              onInputChange={setViewerQuery}
-              suggestions={
-                viewerSearchActive
-                  ? viewerSuggestions.map((s) => ({
-                      key: String(s.userId),
-                      label: recipientLabel(s),
-                    }))
-                  : []
-              }
-              onSelectSuggestion={addViewer}
-              suggestionsLoading={viewerSearchLoading}
-              placeholder="Search by username or display name..."
-            />
-          </div>
-        )}
-
-        {viewerIsOwnerOrAdmin && !editorsExpanded && (
-          <button
-            type="button"
-            className="upload-link-button"
-            onClick={() => setEditorsExpanded(true)}
-          >
-            + Add Editors
-          </button>
-        )}
-
-        {viewerIsOwnerOrAdmin && editorsExpanded && (
-          <div className="upload-field-group">
-            <label>Editors</label>
-            <ChipInput
-              chips={editors.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
-              onRemove={removeEditor}
-              inputValue={editorQuery}
-              onInputChange={setEditorQuery}
-              suggestions={
-                editorSearchActive
-                  ? editorSuggestions.map((s) => ({
-                      key: String(s.userId),
-                      label: recipientLabel(s),
-                    }))
-                  : []
-              }
-              onSelectSuggestion={addEditor}
-              suggestionsLoading={editorSearchLoading}
-              placeholder="Search by username or display name..."
-            />
-          </div>
-        )}
-
-        <div className="upload-field-group">
-          <label>Tags</label>
-          <ChipInput
-            chips={tags.map((tag) => ({ key: tag, label: tag }))}
-            onRemove={removeTag}
-            inputValue={tagInput}
-            onInputChange={setTagInput}
-            onAddFreeform={addTagFromInput}
-            placeholder="Add tags (comma or Enter)"
-            inputMaxLength={MAX_TAG_LENGTH}
+          <input
+            id="upload-title"
+            type="text"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={MAX_TITLE_LENGTH}
+            required
           />
-        </div>
 
-        {uploadPercent != null && (
-          <ProgressBar value={uploadPercent} label={`Uploading (${uploadPercent}%)...`} />
+          <label htmlFor="upload-description">Description</label>
+          <textarea
+            id="upload-description"
+            rows={3}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            maxLength={MAX_DESCRIPTION_LENGTH}
+          />
+
+          <label htmlFor="upload-visibility">Visibility</label>
+          <select
+            id="upload-visibility"
+            value={visibility}
+            onChange={(event) => setVisibility(event.target.value)}
+            disabled={isEditMode && !viewerIsOwnerOrAdmin}
+          >
+            {VISIBILITY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {isEditMode && !viewerIsOwnerOrAdmin && (
+            <p className="upload-hint">Only the owner or an admin can change visibility.</p>
+          )}
+
+          {isAdmin && (
+            <label className="upload-checkbox">
+              <input
+                type="checkbox"
+                checked={featured}
+                onChange={(event) => setFeatured(event.target.checked)}
+              />
+              Featured
+            </label>
+          )}
+
+          {viewerIsOwnerOrAdmin && visibility === 'private' && (
+            <div className="upload-field-group">
+              <label>Share with</label>
+              <ChipInput
+                chips={viewers.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
+                onRemove={removeViewer}
+                inputValue={viewerQuery}
+                onInputChange={setViewerQuery}
+                suggestions={
+                  viewerSearchActive
+                    ? viewerSuggestions.map((s) => ({
+                        key: String(s.userId),
+                        label: recipientLabel(s),
+                      }))
+                    : []
+                }
+                onSelectSuggestion={addViewer}
+                suggestionsLoading={viewerSearchLoading}
+                placeholder="Search by username or display name..."
+              />
+            </div>
+          )}
+
+          {viewerIsOwnerOrAdmin && !editorsExpanded && (
+            <button
+              type="button"
+              className="upload-link-button"
+              onClick={() => setEditorsExpanded(true)}
+            >
+              + Add Editors
+            </button>
+          )}
+
+          {viewerIsOwnerOrAdmin && editorsExpanded && (
+            <div className="upload-field-group">
+              <label>Editors</label>
+              <ChipInput
+                chips={editors.map((r) => ({ key: String(r.userId), label: recipientLabel(r) }))}
+                onRemove={removeEditor}
+                inputValue={editorQuery}
+                onInputChange={setEditorQuery}
+                suggestions={
+                  editorSearchActive
+                    ? editorSuggestions.map((s) => ({
+                        key: String(s.userId),
+                        label: recipientLabel(s),
+                      }))
+                    : []
+                }
+                onSelectSuggestion={addEditor}
+                suggestionsLoading={editorSearchLoading}
+                placeholder="Search by username or display name..."
+              />
+            </div>
+          )}
+
+          <div className="upload-field-group">
+            <label>Tags</label>
+            <ChipInput
+              chips={tags.map((tag) => ({ key: tag, label: tag }))}
+              onRemove={removeTag}
+              inputValue={tagInput}
+              onInputChange={setTagInput}
+              onAddFreeform={addTagFromInput}
+              placeholder="Add tags (comma or Enter)"
+              inputMaxLength={MAX_TAG_LENGTH}
+            />
+          </div>
+
+          {uploadPercent != null && (
+            <ProgressBar value={uploadPercent} label={`Uploading (${uploadPercent}%)...`} />
+          )}
+          </>
         )}
 
-        <button type="submit" className="upload-submit" disabled={submitDisabled}>
+        <button
+          type="submit"
+          className="upload-submit"
+          disabled={bulkMode ? bulkSubmitDisabled : submitDisabled}
+        >
           {isEditMode
             ? submitting
               ? 'Saving...'
