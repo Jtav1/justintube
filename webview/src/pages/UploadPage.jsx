@@ -30,6 +30,9 @@ const VISIBILITY_OPTIONS = [
 
 const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
 const IMPORT_STATUS_POLL_MS = 30000
+// Brief buffering pause (spinner shown) after a successful new-upload
+// submission, before navigating away.
+const POST_UPLOAD_DELAY_MS = 2000
 
 // Mirrors webapi's VIDEO_METADATA.title / .description and CONTENT_TAGS.tag
 // column limits (see webapi/lib/models/video-metadata.js,
@@ -114,6 +117,9 @@ function UploadPage() {
 
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // True for the brief spinner pause between a successful new-upload
+  // submission and navigating away (see POST_UPLOAD_DELAY_MS).
+  const [postUploadPending, setPostUploadPending] = useState(false)
 
   const [importAvailable, setImportAvailable] = useState(true)
 
@@ -311,6 +317,17 @@ function UploadPage() {
           <p className="upload-error">
             You need uploader access and a verified email to upload videos.
           </p>
+        </div>
+      </section>
+    )
+  }
+
+  if (postUploadPending) {
+    return (
+      <section className="upload-page">
+        <div className="upload-card upload-card-pending">
+          <div className="upload-pending-spinner" />
+          <p>Finishing up...</p>
         </div>
       </section>
     )
@@ -569,9 +586,12 @@ function UploadPage() {
     }
 
     // Download/transcode work is queued server-side and continues
-    // independently of this page — no need to wait around for it.
+    // independently of this page — no need to wait around for it. A brief
+    // spinner pause before navigating away gives the success toast a moment
+    // to register instead of instantly redirecting.
     success('Video uploaded! It will finish processing in the background.')
-    navigate(`/users/${user.username}`)
+    setPostUploadPending(true)
+    setTimeout(() => navigate(`/users/${user.username}`), POST_UPLOAD_DELAY_MS)
   }
 
   async function handleDelete() {

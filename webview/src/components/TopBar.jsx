@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Menu, TriangleAlert, MoreVertical, Palette, Radio, Search, UserRound, Video } from 'lucide-react'
+import { Dices, Menu, TriangleAlert, MoreVertical, Palette, Radio, Search, UserRound, Video } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useSiteConfig } from '../context/useSiteConfig.js'
+import { useToast } from '../context/useToast.js'
 import apiClient from '../api/client.js'
+import { getRandomVideos } from '../api/videos.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import SearchAutocomplete from './SearchAutocomplete.jsx'
 import ThemeSelector from './ThemeSelector.jsx'
@@ -13,6 +15,7 @@ import './TopBar.css'
 function TopBar({ onToggleSidebar, backgroundUrl }) {
   const { user, logout } = useAuth()
   const { livestreamEnabled } = useSiteConfig()
+  const { error: toastError } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -24,6 +27,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
   const userMenuRef = useRef(null)
   const userToggleRef = useRef(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [randomVideoLoading, setRandomVideoLoading] = useState(false)
 
   // Keeps the search box in sync with the URL only on the results page -
   // elsewhere it's free local state that starts empty on navigation. Adjusted
@@ -42,6 +46,26 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
       return
     }
     navigate(`/search?q=${encodeURIComponent(trimmed)}`)
+  }
+
+  async function handleRandomVideo() {
+    if (randomVideoLoading) {
+      return
+    }
+    setRandomVideoLoading(true)
+    try {
+      const { items } = await getRandomVideos({ quantity: 1 })
+      const video = items?.[0]
+      if (!video) {
+        toastError('No videos available.')
+        return
+      }
+      navigate(`/video?v=${video.videoId}&random=1`)
+    } catch {
+      toastError('Failed to load a random video.')
+    } finally {
+      setRandomVideoLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -212,6 +236,16 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             <span>Go Live</span>
           </Link>
         )}
+        <button
+          type="button"
+          className="topbar-random-btn"
+          aria-label="Random Video"
+          title="Random Video"
+          onClick={handleRandomVideo}
+          disabled={randomVideoLoading}
+        >
+          <Dices size={20} />
+        </button>
         {user && (
           <button
             type="button"

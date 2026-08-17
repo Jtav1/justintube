@@ -69,6 +69,28 @@
   }
 }
 
+.upload-card-pending {
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  text-align: center;
+}
+
+.upload-pending-spinner {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: upload-pending-spin 1s linear infinite;
+}
+
+@keyframes upload-pending-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .upload-source-row {
   display: flex;
   align-items: stretch;

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getVideo, unhideVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
+import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
@@ -17,6 +18,13 @@ function VideoPage() {
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
   const playlistId = searchParams.get('list')
+  // Set by TopBar's Random Video button (`?random=1`) so this page knows the
+  // viewer arrived via shuffle - forces autoplay on (see below).
+  const cameFromRandom = searchParams.get('random') === '1'
+  // Set by handleAutoplayNext (`?autoplay=1`) so this specific page load
+  // knows it was reached by the autoplay countdown, not a manual click -
+  // told to VideoPlayer, which waits a beat then starts playback itself.
+  const autoplayOnLoad = searchParams.get('autoplay') === '1'
 
   const [video, setVideo] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -24,6 +32,21 @@ function VideoPage() {
   const [hiddenByViewer, setHiddenByViewer] = useState(false)
   const [playlist, setPlaylist] = useState(null)
   const [reloadCount, setReloadCount] = useState(0)
+  const [autoplayEnabled, setAutoplayEnabled] = useState(() => readAutoplayEnabled())
+  // Mirrors VideoSuggested's loaded suggestions so autoplay-next can pick a
+  // random one without VideoSuggested needing to own navigation itself.
+  const [suggestions, setSuggestions] = useState([])
+
+  // Arriving via the Random Video button forces autoplay on going forward
+  // (it's a persisted, browser-wide preference, not just for this view).
+  // Adjusted during render (not an effect), same pattern as TopBar's
+  // syncedSearchKey - `videoId` guards it to firing once per random arrival
+  // rather than on every render.
+  const [lastForcedRandomVideoId, setLastForcedRandomVideoId] = useState(null)
+  if (cameFromRandom && videoId !== lastForcedRandomVideoId) {
+    setLastForcedRandomVideoId(videoId)
+    setAutoplayEnabled(true)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -75,6 +98,30 @@ function VideoPage() {
     }
   }
 
+  // Persists autoplayEnabled to this browser whenever it changes, regardless
+  // of whether the change came from the user toggling it or arriving via the
+  // Random Video button above.
+  useEffect(() => {
+    writeAutoplayEnabled(autoplayEnabled)
+  }, [autoplayEnabled])
+
+  function handleAutoplayChange(enabled) {
+    setAutoplayEnabled(enabled)
+  }
+
+  function handleAutoplayNext() {
+    if (suggestions.length === 0) {
+      return
+    }
+    const next = suggestions[Math.floor(Math.random() * suggestions.length)]
+    // Carries `random=1` forward so the chain of autoplayed videos keeps
+    // being treated as "arrived via random" on each hop, and sets
+    // `autoplay=1` so the next page starts playback itself instead of
+    // waiting on a click. A manual click on a suggestion/search result/etc.
+    // is a plain link with neither param, so that kind of navigation
+    // intentionally does not carry either forward.
+    navigate(`/video?v=${next.videoId}&random=1&autoplay=1`)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -150,13 +197,22 @@ function VideoPage() {
               video={video}
               onRemoveFromPlaylist={canEditPlaylist ? handleRemoveFromPlaylist : undefined}
               onReport={user ? handleReport : undefined}
+              autoplayEnabled={!playlist && autoplayEnabled}
+              onAutoplayNext={handleAutoplayNext}
+              onAutoplayChange={handleAutoplayChange}
+              autoplayOnLoad={autoplayOnLoad}
             />
             <VideoComments video={video} />
           </div>
           {playlist ? (
             <PlaylistQueue playlist={playlist} currentVideoId={videoId} />
           ) : (
-            <VideoSuggested video={video} />
+            <VideoSuggested
+              video={video}
+              autoplayEnabled={autoplayEnabled}
+              onAutoplayChange={handleAutoplayChange}
+              onSuggestionsChange={setSuggestions}
+            />
           )}
         </div>
       )}
