@@ -182,6 +182,28 @@
   background: var(--accent-bg);
 }
 
+.topbar-random-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.topbar-random-btn:hover {
+  background: var(--accent-bg);
+}
+
+.topbar-random-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .topbar-theme-toggle {
   display: inline-flex;
   align-items: center;

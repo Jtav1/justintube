@@ -17,6 +17,11 @@ function VideoPage() {
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
   const playlistId = searchParams.get('list')
+  // Set by TopBar's Random Video button (`?random=1`) so this page knows the
+  // viewer arrived via shuffle, not a normal link/search click. Not yet used
+  // for anything - reserved for future random-specific behavior (e.g. a
+  // "shuffle again" affordance).
+  const cameFromRandom = searchParams.get('random') === '1'
 
   const [video, setVideo] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -135,7 +140,7 @@ function VideoPage() {
   }
 
   return (
-    <section className="video-page">
+    <section className="video-page" data-from-random={cameFromRandom || undefined}>
       {error && <p className="video-page-error">{error}</p>}
       {hiddenByViewer && (
         <div className="video-page-hidden-notice">
