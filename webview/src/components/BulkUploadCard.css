@@ -1,0 +1,131 @@
+.bulk-upload-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 36px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.bulk-upload-card-drop-target {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.bulk-upload-card-error {
+  border-color: #d33;
+}
+
+.bulk-upload-card-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .bulk-upload-card-row {
+    flex-direction: column;
+  }
+}
+
+.bulk-upload-card-file {
+  position: relative;
+  flex: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.bulk-upload-card-file:hover {
+  border-color: var(--accent-border);
+  color: var(--text-h);
+}
+
+.bulk-upload-card-file span {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulk-upload-card-file-locked {
+  border-style: solid;
+  color: var(--text-h);
+  cursor: default;
+}
+
+.bulk-upload-card-file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.bulk-upload-card-title,
+.bulk-upload-card-visibility {
+  font: inherit;
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+  min-width: 0;
+}
+
+.bulk-upload-card-title:focus-visible,
+.bulk-upload-card-visibility:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.bulk-upload-card-title:disabled,
+.bulk-upload-card-visibility:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bulk-upload-card-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.bulk-upload-card-remove:hover:not(:disabled) {
+  background: var(--accent-border);
+}
+
+.bulk-upload-card-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bulk-upload-card-error-text {
+  margin: 0;
+  font-size: 13px;
+  color: #d33;
+}
+
+.bulk-upload-card-success-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent);
+}
