@@ -870,13 +870,47 @@ async function importVideo(req, res) {
 }
 
 /**
+ * Rolls back a failed URL import: deletes the placeholder ORIGINAL_UPLOADS
+ * row (cascading its VIDEO_METADATA and any FILE_VERSIONS rows already
+ * created) and unlinks any file it had written, so a failed
+ * `POST /videos/import` attempt never leaves a persisted record or an
+ * orphaned file behind. Logs `statusMessage` server-side since it's no
+ * longer stored anywhere the client can read it.
+ *
+ * @private
+ * @param {import('sequelize').Model} upload Placeholder upload row to roll back.
+ * @param {string} statusMessage Human-readable failure reason, logged only.
+ * @param {string[]} [extraFiles] Extra absolute paths to unlink (e.g. a
+ *   downloaded source file that never got renamed to `upload.storagePath`).
+ * @returns {Promise<void>} Resolves once the row and files are gone.
+ */
+async function rollbackFailedImport(upload, statusMessage, extraFiles = []) {
+  logger.error({ statusMessage }, `[import] rolled back failed import for ${upload.videoId}`);
+
+  const versions = await FileVersion.findAll({ where: { originalUploadId: upload.id } });
+  const filesToDelete = [...extraFiles];
+  if (upload.storagePath) {
+    filesToDelete.push(join(mediaDir, upload.storagePath));
+  }
+  for (const version of versions) {
+    if (version.storagePath) {
+      filesToDelete.push(join(mediaDir, version.storagePath));
+    }
+  }
+
+  await upload.destroy();
+  await Promise.all(filesToDelete.map((path) => unlink(path).catch(() => {})));
+}
+
+/**
  * Finishes an in-progress URL import that `importVideo` started: downloads
  * the source via the processing service, renames it into `original/` under
  * the upload's videoId, fills in the real file metadata on the placeholder
  * `upload` row, then delegates to `finalizeUploadTranscodes` exactly like
- * the old synchronous import path did. Never throws — any failure marks
- * `upload.status = "failed"` with a human-readable `statusMessage` and
- * returns. Exported so tests can await it directly instead of racing the
+ * the old synchronous import path did. Never throws — any failure rolls the
+ * placeholder row (and any file it wrote) back via
+ * {@link rollbackFailedImport} instead of leaving a "failed" record behind.
+ * Exported so tests can await it directly instead of racing the
  * fire-and-forget call `importVideo` makes.
  *
  * @param {import('sequelize').Model} upload Placeholder ORIGINAL_UPLOADS row
@@ -889,19 +923,16 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
   try {
     const download = await requestDownload(url);
     if (!download.ok) {
-      await upload.update({
-        status: "failed",
-        statusMessage: describeDownloadFailure(download),
-      });
+      await rollbackFailedImport(upload, describeDownloadFailure(download));
       return;
     }
 
     const downloadedFilename = download.body?.filename;
     if (typeof downloadedFilename !== "string" || !downloadedFilename) {
-      await upload.update({
-        status: "failed",
-        statusMessage: "The processing service did not return a downloaded filename.",
-      });
+      await rollbackFailedImport(
+        upload,
+        "The processing service did not return a downloaded filename.",
+      );
       return;
     }
 
@@ -927,10 +958,9 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
         join(originalDir, storedFilename),
       );
     } catch {
-      await upload.update({
-        status: "failed",
-        statusMessage: "The video was downloaded but could not be stored.",
-      });
+      await rollbackFailedImport(upload, "The video was downloaded but could not be stored.", [
+        join(originalDir, downloadedFilename),
+      ]);
       return;
     }
 
@@ -955,12 +985,10 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
     await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
   } catch (err) {
     logger.error({ err }, "[import] continueImport failed unexpectedly");
-    await upload
-      .update({
-        status: "failed",
-        statusMessage: "An unexpected error occurred while importing this video.",
-      })
-      .catch(() => {});
+    await rollbackFailedImport(
+      upload,
+      "An unexpected error occurred while importing this video.",
+    ).catch(() => {});
   }
 }
 
