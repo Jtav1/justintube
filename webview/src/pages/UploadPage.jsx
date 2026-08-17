@@ -669,7 +669,8 @@ function UploadPage() {
           )}
           {status === 'failed' && (
             <p className="upload-error">
-              {processingStatus?.statusMessage || 'This import failed. Please try again.'}
+              {processingStatus?.statusMessage ||
+                (file ? 'This file could not be processed.' : 'This URL could not be imported.')}
             </p>
           )}
         </div>
