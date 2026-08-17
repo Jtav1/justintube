@@ -260,17 +260,6 @@ export async function getImportStatus() {
 }
 
 /**
- * Polls an upload's download/transcode progress. Owner or admin only. Used
- * by the upload page to drive its progress bar after creation.
- * @param {number} id
- * @returns {Promise<{status: string, statusMessage: string|null, fileVersions: Array<{id: number, resolution: string|null, status: string}>}>}
- */
-export async function getVideoProcessingStatus(id) {
-  const res = await apiClient.get(`/api/v1/videos/${id}/processing-status`)
-  return res.data
-}
-
-/**
  * Uploads (or replaces) a video's thumbnail image. Usable by the video
  * owner or a moderator/admin.
  * @param {number} id

@@ -15,7 +15,6 @@ import {
   getImportStatus,
   updateVideoThumbnail,
   getVideo,
-  getVideoProcessingStatus,
 } from '../api/videos.js'
 import { searchUsers } from '../api/users.js'
 import ChipInput from '../components/ChipInput.jsx'
@@ -31,11 +30,6 @@ const VISIBILITY_OPTIONS = [
 
 const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
 const IMPORT_STATUS_POLL_MS = 30000
-const PROCESSING_POLL_MS = 2000
-// Statuses GET /videos/:id/processing-status can return that mean there's
-// nothing left to wait on — "uploaded" covers the zero-transcode-job case
-// (e.g. an audio upload with no matching audio profiles).
-const TERMINAL_UPLOAD_STATUSES = new Set(['ready', 'partial', 'failed', 'uploaded'])
 
 // Mirrors webapi's VIDEO_METADATA.title / .description and CONTENT_TAGS.tag
 // column limits (see webapi/lib/models/video-metadata.js,
@@ -123,13 +117,10 @@ function UploadPage() {
 
   const [importAvailable, setImportAvailable] = useState(true)
 
-  // Set once creation succeeds (file upload or URL import); drives the
-  // processing-status poll below and switches the page from the form to a
-  // progress panel. Ephemeral by design — a refresh loses this, but the
-  // upload/import itself keeps running server-side regardless.
+  // Tracks the in-flight file transfer only — the transcode/download work
+  // that follows creation is queued server-side and runs independently of
+  // this page, so there's nothing further to wait on or poll here.
   const [uploadPercent, setUploadPercent] = useState(null)
-  const [trackingId, setTrackingId] = useState(null)
-  const [processingStatus, setProcessingStatus] = useState(null)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -232,58 +223,6 @@ function UploadPage() {
       clearInterval(interval)
     }
   }, [isEditMode])
-
-  useEffect(() => {
-    if (!trackingId) {
-      return undefined
-    }
-
-    let cancelled = false
-    let interval
-
-    async function poll() {
-      try {
-        const data = await getVideoProcessingStatus(trackingId)
-        if (cancelled) {
-          return
-        }
-        setProcessingStatus(data)
-        if (TERMINAL_UPLOAD_STATUSES.has(data.status)) {
-          clearInterval(interval)
-        }
-      } catch (err) {
-        if (err?.response?.status === 404) {
-          // A failed import rolls its placeholder record back instead of
-          // leaving it stored as "failed" — a 404 here means it didn't
-          // survive, which is itself a terminal failure signal.
-          if (!cancelled) {
-            setProcessingStatus({ status: 'failed', statusMessage: null, fileVersions: [] })
-          }
-          clearInterval(interval)
-          return
-        }
-        // Transient network/server hiccup — the next tick retries.
-      }
-    }
-
-    poll()
-    interval = setInterval(poll, PROCESSING_POLL_MS)
-
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [trackingId])
-
-  useEffect(() => {
-    if (!trackingId || !processingStatus) {
-      return
-    }
-    if (TERMINAL_UPLOAD_STATUSES.has(processingStatus.status) && processingStatus.status !== 'failed') {
-      success('Video is ready!')
-      navigate(`/users/${user.username}`)
-    }
-  }, [trackingId, processingStatus, navigate, user.username, success])
 
   const viewerSearchActive = visibility === 'private' && viewerQuery.trim().length > 0
 
@@ -629,11 +568,10 @@ function UploadPage() {
       return
     }
 
-    // Creation + setup succeeded — hand off to the processing-status poller
-    // (below) instead of navigating immediately, so the download/transcode
-    // progress bar is actually visible instead of the page unmounting out
-    // from under it.
-    setTrackingId(createdId)
+    // Download/transcode work is queued server-side and continues
+    // independently of this page — no need to wait around for it.
+    success('Video uploaded! It will finish processing in the background.')
+    navigate(`/users/${user.username}`)
   }
 
   async function handleDelete() {
@@ -655,37 +593,6 @@ function UploadPage() {
 
     success('Video deleted.')
     navigate(`/users/${user.username}`)
-  }
-
-  if (trackingId) {
-    const status = processingStatus?.status ?? 'downloading'
-    const fileVersions = processingStatus?.fileVersions ?? []
-    const transcodePercent = fileVersions.length > 0
-      ? Math.round(
-          (fileVersions.filter((v) => v.status === 'complete').length / fileVersions.length) * 100,
-        )
-      : null
-    return (
-      <section className="upload-page">
-        <div className="upload-card">
-          <h1>Upload</h1>
-          {status === 'downloading' && (
-            <ProgressBar indeterminate label="Downloading..." />
-          )}
-          {status === 'processing' && (
-            transcodePercent != null
-              ? <ProgressBar value={transcodePercent} label={`Processing (${transcodePercent}%)...`} />
-              : <ProgressBar indeterminate label="Processing..." />
-          )}
-          {status === 'failed' && (
-            <p className="upload-error">
-              {processingStatus?.statusMessage ||
-                (file ? 'This file could not be processed.' : 'This URL could not be imported.')}
-            </p>
-          )}
-        </div>
-      </section>
-    )
   }
 
   return (
