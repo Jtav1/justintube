@@ -117,6 +117,13 @@ services:
       # backend stays instantly consistent and ignores these.
       SEARCH_REINDEX_ENABLED: ${SEARCH_REINDEX_ENABLED:-true}
       SEARCH_REINDEX_CRON: ${SEARCH_REINDEX_CRON:-0 3 * * *}
+      # Periodic notification email digest (API-side cron). "like"/"comment"/
+      # "subscription" notifications are queued instead of emailed one-by-one;
+      # this cron batches each user's outstanding queued notifications (max
+      # 20 per email, with a link to the rest) into a single email per run.
+      # Requires SMTP_HOST/MAIL_FROM_ADDRESS below to be set; otherwise a no-op.
+      NOTIFICATION_EMAIL_DIGEST_ENABLED: ${NOTIFICATION_EMAIL_DIGEST_ENABLED:-true}
+      NOTIFICATION_EMAIL_DIGEST_CRON: ${NOTIFICATION_EMAIL_DIGEST_CRON:-0 * * * *}
       # Advanced search (Meilisearch) is optional. Leave ENABLE_ADVANCED_SEARCH
       # unset/false to run without the search service.
       ENABLE_ADVANCED_SEARCH: ${ENABLE_ADVANCED_SEARCH:-true}

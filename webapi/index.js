@@ -18,6 +18,7 @@ import {
 } from "./lib/search-reindex.js";
 import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
 import { startHashReconcileCron } from "./lib/hash-reconcile.js";
+import { startNotificationEmailDigestCron } from "./lib/notification-email-digest.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
 import { createInternalLivestreamsRouter } from "./routes/internal-livestreams.js";
@@ -295,6 +296,12 @@ async function start() {
     await startHashReconcileCron();
   } catch (err) {
     logger.error({ err }, "Failed to start hash reconcile cron");
+  }
+
+  try {
+    await startNotificationEmailDigestCron();
+  } catch (err) {
+    logger.error({ err }, "Failed to start notification email digest cron");
   }
 
   try {

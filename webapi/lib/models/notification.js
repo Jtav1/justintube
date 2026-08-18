@@ -56,6 +56,21 @@ export const Notification = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    /**
+     * Email delivery status for this notification. `"not_applicable"` (the
+     * default) covers both non-email-batched types, whose email (if any) is
+     * sent immediately by `createNotification` without ever touching this
+     * column, and rows the recipient didn't want emailed at all. Types
+     * batched into the periodic digest (`lib/notification-email-digest.js`
+     * - currently "like", "comment", "subscription") are set to `"pending"`
+     * on creation when the recipient wants email, then flipped to `"sent"`
+     * once a digest run has included them.
+     */
+    emailStatus: {
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: "not_applicable",
+    },
     createdAt: timestampColumn("created_at"),
   },
   {

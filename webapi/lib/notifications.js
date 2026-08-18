@@ -4,6 +4,17 @@ import { Notification, NotificationType, User, UserNotificationSetting } from ".
 import { logger } from "./logger.js";
 
 /**
+ * Notification type names whose email delivery is batched into a periodic
+ * digest (`lib/notification-email-digest.js`) rather than sent immediately
+ * per event - these can fire often enough (every like, comment, or new
+ * video from a subscription) that an immediate email per event would be
+ * spammy. Every other type still emails immediately, same as before.
+ *
+ * @type {Set<string>}
+ */
+const BATCHED_EMAIL_NOTIFICATION_TYPES = new Set(["like", "comment", "subscription"]);
+
+/**
  * Creates an in-app notification for a user, and best-effort emails them
  * too when their preferences call for it. The single delivery primitive
  * every notification-triggering event (likes, comments, subscriptions,
@@ -16,9 +27,13 @@ import { logger } from "./logger.js";
  * recipient's per-type `enabled` preference, except for types marked
  * `inAppLocked` in `DEFAULT_NOTIFICATION_TYPES` (moderation/account/admin),
  * which always get an in-app row regardless of that preference - only their
- * email copy can be opted out of. Never throws - failures are logged and
- * swallowed so the triggering request never fails because of notification
- * delivery.
+ * email copy can be opted out of. For `BATCHED_EMAIL_NOTIFICATION_TYPES`
+ * ("like", "comment", "subscription"), a wanted email isn't sent here at
+ * all - the row is marked `emailStatus: "pending"` and picked up by the
+ * periodic digest (`lib/notification-email-digest.js`) instead, so a busy
+ * video doesn't spam its owner with one email per like/comment. Never
+ * throws - failures are logged and swallowed so the triggering request
+ * never fails because of notification delivery.
  *
  * @param {object} params
  * @param {number} params.recipientUserId Id of the user to notify.
@@ -66,24 +81,33 @@ export async function createNotification({
       where: { userId: recipientUserId, notificationTypeId: type.id },
     });
 
-    if (wantsInAppNotification(type.name, setting)) {
-      await Notification.create({
-        userId: recipientUserId,
-        notificationTypeId: type.id,
+    const notification = wantsInAppNotification(type.name, setting)
+      ? await Notification.create({
+          userId: recipientUserId,
+          notificationTypeId: type.id,
+          title,
+          message,
+          target,
+        })
+      : null;
+
+    if (BATCHED_EMAIL_NOTIFICATION_TYPES.has(type.name)) {
+      // No in-app row means nothing for the digest to include (and nowhere
+      // for its "view your notifications" link to point), so there's
+      // nothing to queue - matches the non-batched behavior below, which
+      // likewise can't email without something to send.
+      await maybeQueueBatchedNotificationEmail({ notification, setting, typeName: type.name });
+    } else {
+      await maybeSendNotificationEmail({
+        recipientUserId,
+        setting,
+        typeName: type.name,
         title,
         message,
-        target,
+        link,
+        notification,
       });
     }
-
-    await maybeSendNotificationEmail({
-      recipientUserId,
-      setting,
-      typeName: type.name,
-      title,
-      message,
-      link,
-    });
   } catch (err) {
     logger.error({ err }, `createNotification (${typeName}) failed`);
   }
@@ -129,6 +153,10 @@ function wantsInAppNotification(typeName, setting) {
  * @param {string} params.title Notification title (used as the email subject).
  * @param {string} params.message Notification message body.
  * @param {string|null} params.link Optional URL to include in the email body.
+ * @param {import('sequelize').Model|null} [params.notification] The in-app
+ *   NOTIFICATIONS row just created for this event, if any - flipped to
+ *   `emailStatus: "sent"` once the email goes out, purely for record-keeping
+ *   (nothing reads this back for non-batched types).
  * @returns {Promise<void>} Resolves once email delivery has been attempted (or skipped).
  */
 async function maybeSendNotificationEmail({
@@ -138,6 +166,7 @@ async function maybeSendNotificationEmail({
   title,
   message,
   link,
+  notification = null,
 }) {
   if (!emailEnabled()) {
     return;
@@ -157,7 +186,43 @@ async function maybeSendNotificationEmail({
 
   try {
     await sendNotificationEmail({ to: recipient.email, title, message, link });
+    if (notification) {
+      await notification.update({ emailStatus: "sent" });
+    }
   } catch (err) {
     logger.error({ err }, "sendNotificationEmail failed");
   }
+}
+
+/**
+ * Queues a batched-email-type notification (`BATCHED_EMAIL_NOTIFICATION_TYPES`
+ * - "like", "comment", "subscription") for the next digest run instead of
+ * emailing it immediately, by marking its row `emailStatus: "pending"`. Gated
+ * on the same global SMTP switch and per-type email preference as
+ * `maybeSendNotificationEmail`; when either says no, the row is simply left
+ * `emailStatus: "not_applicable"` and never picked up by the digest.
+ *
+ * @private
+ * @param {object} params
+ * @param {import('sequelize').Model|null} params.notification The in-app
+ *   NOTIFICATIONS row just created for this event. A no-op when null - there
+ *   is nothing to mark pending, and nothing to link to from a digest email.
+ * @param {import('sequelize').Model|null} params.setting The recipient's
+ *   USER_NOTIFICATION_SETTINGS row for this type, if any.
+ * @param {string} params.typeName NOTIFICATION_TYPES.name, for the missing-row fallback default.
+ * @returns {Promise<void>} Resolves once the row has been marked (or left alone).
+ */
+async function maybeQueueBatchedNotificationEmail({ notification, setting, typeName }) {
+  if (!notification || !emailEnabled()) {
+    return;
+  }
+
+  const wantsEmail = setting
+    ? setting.emailEnabled === true
+    : getNotificationTypeDefaults(typeName).emailEnabled;
+  if (!wantsEmail) {
+    return;
+  }
+
+  await notification.update({ emailStatus: "pending" });
 }
