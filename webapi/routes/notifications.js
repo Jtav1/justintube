@@ -6,6 +6,7 @@ import { requireAuth } from "../lib/auth/require-auth.js";
 import { Notification, NotificationType } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
 import { logger } from "../lib/logger.js";
+import { parsePositiveInt } from "./videos.js";
 
 /**
  * Serializes a Notification row (with its joined NotificationType) for API
@@ -119,7 +120,7 @@ export function createNotificationsRouter() {
       const { page, limit } = pagination;
 
       const { rows, count } = await Notification.findAndCountAll({
-        where: { userId: req.user.id },
+        where: { userId: req.user.id, deleted: false },
         include: [{ model: NotificationType, attributes: ["name"] }],
         order: [["createdAt", "DESC"]],
         limit,
@@ -208,6 +209,73 @@ export function createNotificationsRouter() {
         success: false,
         error: "internal_error",
         message: "Failed to mark notifications as read.",
+      });
+    }
+  });
+
+  /**
+   * Soft-deletes a single notification owned by the authenticated user. The
+   * row is kept (its `deleted` flag is set) rather than removed, and is
+   * excluded from `GET /notifications` afterward. 404s if the notification
+   * doesn't exist or belongs to another user.
+   * DELETE /api/v1/notifications/:id
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/notifications/{id}:
+   *   delete:
+   *     tags: [Notifications]
+   *     summary: Delete one of my notifications
+   *     operationId: deleteNotification
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *       - name: id
+   *         in: path
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       204:
+   *         description: Notification deleted
+   *       400:
+   *         description: Invalid id
+   *       401:
+   *         description: Not authenticated
+   *       404:
+   *         description: Notification not found
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 empty or an error response.
+   */
+  router.delete("/notifications/:id", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({ error: "invalid_id", message: "id must be a positive integer." });
+        return;
+      }
+
+      const notification = await Notification.findOne({
+        where: { id, userId: req.user.id, deleted: false },
+      });
+      if (!notification) {
+        res.status(404).json({ error: "not_found", message: "Notification not found." });
+        return;
+      }
+
+      notification.deleted = true;
+      await notification.save();
+
+      res.status(204).send();
+    } catch (err) {
+      logger.error({ err }, "deleteNotification failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to delete notification.",
       });
     }
   });

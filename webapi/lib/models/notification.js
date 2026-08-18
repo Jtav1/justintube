@@ -46,6 +46,16 @@ export const Notification = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    /**
+     * Soft-delete flag set when the owning user deletes this notification
+     * from their tray/notifications page. The row is kept (not removed) but
+     * excluded from all listing queries.
+     */
+    deleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     createdAt: timestampColumn("created_at"),
   },
   {

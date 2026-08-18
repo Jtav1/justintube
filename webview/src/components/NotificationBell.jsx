@@ -5,6 +5,7 @@ import { Bell, Settings } from 'lucide-react'
 import {
   listNotifications,
   markNotificationsRead,
+  deleteNotification,
   getNotificationPreferences,
 } from '../api/notifications.js'
 import { useToast } from '../context/useToast.js'
@@ -134,6 +135,15 @@ function NotificationBell() {
     markNotificationsRead([id]).catch(() => toastError('Failed to mark notification as read.'))
   }
 
+  async function handleDelete(id) {
+    try {
+      await deleteNotification(id)
+      setItems((prev) => prev.filter((item) => item.id !== id))
+    } catch {
+      toastError('Failed to delete notification.')
+    }
+  }
+
   const hasUnread = items.some((item) => item.readAt == null)
 
   return (
@@ -172,6 +182,7 @@ function NotificationBell() {
                 key={item.id}
                 notification={item}
                 onRead={handleRead}
+                onDelete={handleDelete}
                 onNavigate={() => setOpen(false)}
               />
             ))}
