@@ -823,7 +823,7 @@ function UploadPage() {
                   <div className="upload-or">or</div>
 
                   <div className="upload-url-field">
-                    <label htmlFor="upload-url">Import from URL</label>
+                    <label htmlFor="upload-url"><b>Import from URL</b> - EXPERIMENTAL!<br />youtube links may fail silently</label>
                     <input
                       id="upload-url"
                       type="text"

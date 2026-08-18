@@ -14,6 +14,7 @@ import {
   seedUser,
   seedUserApiKey,
   seedVideoAccess,
+  seedVideoLike,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -485,6 +486,48 @@ describe("GET /users/:username/videos (listUserVideos)", () => {
     expect(viewsRes.body.items.map((item) => item.title)).toEqual([
       "Newer, more views",
       "Older, fewer views",
+    ]);
+
+    const viewsAscRes = await client.get("/api/v1/users/sort_owner/videos?sort=views_asc");
+    expect(viewsAscRes.status).toBe(200);
+    expect(viewsAscRes.body.items.map((item) => item.title)).toEqual([
+      "Older, fewer views",
+      "Newer, more views",
+    ]);
+  });
+
+  test("sort=likes and sort=likes_asc reorder the video list by like count", async () => {
+    const owner = await seedUser({ username: "likesort_owner", email: "likesort_owner@example.com" });
+
+    const fewLikes = await seedUpload({ userId: owner.id });
+    await seedMetadata(fewLikes.id, { title: "One like", visibility: "public" });
+    await seedVideoLike(fewLikes.id, { userId: null });
+
+    const manyLikes = await seedUpload({ userId: owner.id });
+    await seedMetadata(manyLikes.id, { title: "Three likes", visibility: "public" });
+    await seedVideoLike(manyLikes.id, { userId: null });
+    await seedVideoLike(manyLikes.id, { userId: null });
+    await seedVideoLike(manyLikes.id, { userId: null });
+
+    const noLikes = await seedUpload({ userId: owner.id });
+    await seedMetadata(noLikes.id, { title: "No likes", visibility: "public" });
+
+    const client = createTestClient();
+
+    const likesRes = await client.get("/api/v1/users/likesort_owner/videos?sort=likes");
+    expect(likesRes.status).toBe(200);
+    expect(likesRes.body.items.map((item) => item.title)).toEqual([
+      "Three likes",
+      "One like",
+      "No likes",
+    ]);
+
+    const likesAscRes = await client.get("/api/v1/users/likesort_owner/videos?sort=likes_asc");
+    expect(likesAscRes.status).toBe(200);
+    expect(likesAscRes.body.items.map((item) => item.title)).toEqual([
+      "No likes",
+      "One like",
+      "Three likes",
     ]);
   });
 

@@ -26,7 +26,7 @@ function GithubIcon({ size = 20, title }) {
 }
 
 function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
-  const { user } = useAuth()
+  const { user, previousLogIn } = useAuth()
   const location = useLocation()
 
   const ownProfilePath = user ? `/users/${user.username}` : null
@@ -152,9 +152,9 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
         <div className="sidebar-footer-row">
           <span className="sidebar-footer-text">Justintube v2.0</span>
         </div>
-        {user?.lastLogIn && (
+        {user && previousLogIn && (
           <div className="sidebar-footer-row">
-            <span className="sidebar-footer-text">Last login: {formatRelativeDate(user.lastLogIn)}</span>
+            <span className="sidebar-footer-text">Last login: {formatRelativeDate(previousLogIn)}</span>
           </div>
         )}
         <div className="sidebar-footer-row">

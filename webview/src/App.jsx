@@ -12,6 +12,7 @@ import GoLivePage from './pages/GoLivePage.jsx'
 import LiveWatchPage from './pages/LiveWatchPage.jsx'
 import { useSiteConfig } from './context/useSiteConfig.js'
 import CreatePlaylistPage from './pages/CreatePlaylistPage.jsx'
+import PlaylistPage from './pages/PlaylistPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
 import ControlPanelPage from './pages/AdminPanel.jsx'
 import AdminThemesPage from './pages/AdminThemes.jsx'
@@ -71,6 +72,7 @@ function App() {
         {livestreamEnabled && <Route path="/live/:id" element={<LiveWatchPage />} />}
         <Route path="/playlists/new" element={<CreatePlaylistPage />} />
         <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
+        <Route path="/playlists/:id" element={<PlaylistPage />} />
         <Route path="/users/:username/playlists" element={<UserPlaylistsPage />} />
         <Route path="/playlists" element={<PlaylistsPage />} />
         <Route path="/liked/:username" element={<LikedVideosPage />} />
