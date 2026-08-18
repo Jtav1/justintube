@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { fetchCsrfToken } from '../api/auth.js'
 import { useAuth } from '../context/useAuth.js'
 import './AuthForm.css'
@@ -15,6 +15,7 @@ function errorMessage(err) {
 function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -38,7 +39,12 @@ function LoginPage() {
     setError(null)
     try {
       await login(username, password)
-      navigate('/')
+      // A handful of pages (currently just the CAST join link) bounce here
+      // with a return destination in location.state so scanning a QR code
+      // while logged out lands back on the thing being joined, not the
+      // homepage - every other entry point to this page omits `from`, so
+      // this stays a no-op default everywhere else.
+      navigate(location.state?.from ?? '/')
     } catch (err) {
       setError(errorMessage(err))
     } finally {

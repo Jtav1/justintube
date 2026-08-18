@@ -4,6 +4,9 @@ import AppLayout from './layouts/AppLayout.jsx'
 import VideoListing from './pages/VideoListing.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
+import CastPage from './pages/CastPage.jsx'
+import CastJoinPage from './pages/CastJoinPage.jsx'
+import CastDisplayPage from './pages/CastDisplayPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
 import SearchResultsPage from './pages/SearchResults.jsx'
 import { useSiteConfig } from './context/useSiteConfig.js'
@@ -51,7 +54,7 @@ function ReportFormRoute() {
 }
 
 function App() {
-  const { livestreamEnabled } = useSiteConfig()
+  const { livestreamEnabled, castEnabled } = useSiteConfig()
 
   return (
     <Suspense fallback={<RouteLoadingFallback />}>
@@ -76,6 +79,7 @@ function App() {
           <Route path="/upload" element={<UploadPage />} />
           {livestreamEnabled && <Route path="/go-live" element={<GoLivePage />} />}
           {livestreamEnabled && <Route path="/live/:id" element={<LiveWatchPage />} />}
+          {castEnabled && <Route path="/cast/:id" element={<CastPage />} />}
           <Route path="/playlists/new" element={<CreatePlaylistPage />} />
           <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
           <Route path="/playlists/:id" element={<PlaylistPage />} />
@@ -98,6 +102,7 @@ function App() {
         </Route>
       </Routes>
     </Suspense>
+        
   )
 }
 
