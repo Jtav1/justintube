@@ -447,6 +447,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 16px;
   margin-bottom: 16px;
 }
 
@@ -455,6 +456,7 @@
   margin-right: auto;
 }
 
+.profile-filter,
 .profile-sort {
   display: flex;
   align-items: center;

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowRight, TriangleAlert, Pencil, UserRound } from 'lucide-react'
+import {
+  ArrowDownWideNarrow,
+  ArrowRight,
+  Funnel,
+  TriangleAlert,
+  Pencil,
+  UserRound,
+} from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
@@ -22,6 +29,7 @@ import {
 } from '../api/users.js'
 import { listUserPlaylists } from '../api/playlists.js'
 import { USER_ROLES } from '../lib/roles.js'
+import { VISIBILITY_OPTIONS } from '../constants/visibility.js'
 import VideoCard from '../components/VideoCard.jsx'
 import PlaylistCard from '../components/PlaylistCard.jsx'
 import './ProfilePage.css'
@@ -39,7 +47,15 @@ const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
   { value: 'oldest', label: 'Oldest' },
   { value: 'views', label: 'Most viewed' },
+  { value: 'views_asc', label: 'Least viewed' },
+  { value: 'likes', label: 'Most liked' },
+  { value: 'likes_asc', label: 'Least liked' },
 ]
+
+// Order matches VISIBILITY_OPTIONS (Public, Private, Unlisted, Hidden) with
+// "All" appended last - the dropdown still defaults to "all" via the
+// visibilityFilter state below, independent of list order.
+const FILTER_OPTIONS = [...VISIBILITY_OPTIONS, { value: 'all', label: 'All' }]
 
 function ProfilePage() {
   const { username } = useParams()
@@ -51,6 +67,10 @@ function ProfilePage() {
 
   const [profile, setProfile] = useState(null)
   const [sort, setSort] = useState('newest')
+  // Client-side only (filters the already-loaded page of videos) - never
+  // persisted, and always resets to "all" on navigating to a new profile
+  // since it's plain component state.
+  const [visibilityFilter, setVisibilityFilter] = useState('all')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -395,6 +415,10 @@ function ProfilePage() {
     setSort(event.target.value)
   }
 
+  function handleVisibilityFilterChange(event) {
+    setVisibilityFilter(event.target.value)
+  }
+
   const hasMoreVideos = Boolean(profile) && page < profile.videos.totalPages
 
   const handleLoadMoreVideos = useCallback(() => {
@@ -431,6 +455,11 @@ function ProfilePage() {
   const visiblePlaylists = playlistsOverflowing
     ? playlists.slice(0, Math.max(playlistsColumns - 1, 0))
     : playlists ?? []
+
+  const displayedVideos =
+    visibilityFilter === 'all'
+      ? videos.items
+      : videos.items.filter((video) => video.visibility === visibilityFilter)
 
   return (
     <section className="profile-page">
@@ -735,7 +764,19 @@ function ProfilePage() {
             All Videos ({videos.totalHits} Total)
           </h2>
         )}
+        <label className="profile-filter">
+          <Funnel size={16} />
+          Filter by
+          <select value={visibilityFilter} onChange={handleVisibilityFilterChange}>
+            {FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="profile-sort">
+          <ArrowDownWideNarrow size={16} />
           Sort by
           <select value={sort} onChange={handleSortChange}>
             {SORT_OPTIONS.map((option) => (
@@ -747,11 +788,13 @@ function ProfilePage() {
         </label>
       </div>
 
-      {!loading && videos.items.length === 0 && (
-        <p className="profile-status">No videos yet.</p>
+      {!loading && displayedVideos.length === 0 && (
+        <p className="profile-status">
+          {visibilityFilter === 'all' ? 'No videos yet.' : 'No videos match this filter.'}
+        </p>
       )}
       <div className="profile-videos-grid">
-        {videos.items.map((video) => (
+        {displayedVideos.map((video) => (
           <VideoCard key={video.id} video={video} />
         ))}
       </div>
