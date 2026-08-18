@@ -48,6 +48,8 @@ import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { requestTranscodeBatch } from "../lib/processing-client.js";
+import { THUMBNAIL_OUTPUT_EXT, parseThumbnailTimestampTenths } from "./uploads.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -2531,6 +2533,147 @@ export function createVideosRouter() {
     },
   );
   router.use(thumbnailUploadErrorHandler);
+
+  /**
+   * Regenerates a video's auto-generated thumbnail at a specific timestamp,
+   * queuing a single processing "thumbnail" job that overwrites whatever
+   * thumbnail (auto-generated or manually uploaded) currently exists — the
+   * job's output filename is always `<videoId>.<THUMBNAIL_OUTPUT_EXT>`, and
+   * `POST /internal/thumbnails/:uploadUuid/complete` (called back by
+   * processing once the frame is extracted) updates the existing
+   * VIDEO_THUMBNAIL row in place rather than creating a new one. Owner/admin
+   * only, matching POST /videos/:id/thumbnail. Video-only — audio uploads
+   * never get an auto-generated thumbnail.
+   * POST /videos/:id/thumbnail/regenerate — { thumbnailTimestamp: number }.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/thumbnail/regenerate:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Regenerate a video's thumbnail at a specific timestamp
+   *     operationId: regenerateVideoThumbnail
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [thumbnailTimestamp]
+   *             properties:
+   *               thumbnailTimestamp:
+   *                 type: number
+   *     responses:
+   *       "202":
+   *         description: Thumbnail regeneration queued
+   *       "400":
+   *         description: Invalid id, invalid/missing thumbnailTimestamp, or not a video
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not the video owner and not an admin
+   *       "404":
+   *         description: Unknown video id
+   *       "502":
+   *         description: Processing service unavailable
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 202 on success or an error response.
+   */
+  router.post(
+    "/videos/:id/thumbnail/regenerate",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload } = loaded;
+        if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only the owner or an admin can update this video's thumbnail.",
+          });
+          return;
+        }
+
+        if (upload.mediaType !== "video") {
+          res.status(400).json({
+            error: "invalid_body",
+            message: "Only videos have an auto-generated thumbnail to regenerate.",
+          });
+          return;
+        }
+
+        const parsedTimestamp = parseThumbnailTimestampTenths(req.body?.thumbnailTimestamp);
+        if (!parsedTimestamp.ok || parsedTimestamp.tenths == null) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: parsedTimestamp.ok
+              ? "thumbnailTimestamp is required."
+              : parsedTimestamp.message,
+          });
+          return;
+        }
+
+        const storedFilename = `${upload.videoId}.${upload.fileExtension}`;
+        const enqueue = await requestTranscodeBatch({
+          filename: storedFilename,
+          jobs: [
+            {
+              jobId: upload.videoId,
+              outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+              kind: "thumbnail",
+              timestampSeconds: parsedTimestamp.tenths / 10,
+            },
+          ],
+        });
+
+        if (!enqueue.ok) {
+          logger.error({ error: enqueue.error }, "regenerateVideoThumbnail enqueue failed");
+          res.status(502).json({
+            error: "processing_unavailable",
+            message: "Failed to queue thumbnail regeneration.",
+          });
+          return;
+        }
+
+        await upload.update({ thumbnailTimestampTenths: parsedTimestamp.tenths });
+
+        res.status(202).json({ success: true });
+      } catch (err) {
+        logger.error({ err }, "regenerateVideoThumbnail failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to regenerate thumbnail.",
+        });
+      }
+    },
+  );
 
   /**
    * PATCH /videos/:id — updateVideo

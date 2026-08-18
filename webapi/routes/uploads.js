@@ -101,7 +101,7 @@ const maxUploadSizeBytes =
  *
  * @type {string}
  */
-const THUMBNAIL_OUTPUT_EXT = "webp";
+export const THUMBNAIL_OUTPUT_EXT = "webp";
 
 /**
  * Normalizes a file's extension to a lowercase value without the leading dot.
@@ -624,7 +624,7 @@ async function startUploadConversion(upload, storedFilename) {
  * @returns {{ok: true, tenths: number|null}|{ok: false, message: string}}
  *   Parsed tenths-of-a-second (null when omitted), or a validation error.
  */
-function parseThumbnailTimestampTenths(raw) {
+export function parseThumbnailTimestampTenths(raw) {
   if (raw === undefined || raw === null || raw === "") {
     return { ok: true, tenths: null };
   }

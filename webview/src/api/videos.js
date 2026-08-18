@@ -285,6 +285,22 @@ export async function updateVideoThumbnail(id, file) {
 }
 
 /**
+ * Queues regeneration of a video's auto-generated thumbnail at a specific
+ * timestamp, overwriting whatever thumbnail (auto-generated or manually
+ * uploaded) currently exists once processing extracts the new frame. Video
+ * only — owner or admin.
+ * @param {number} id
+ * @param {number} thumbnailTimestamp Seconds (fractional) into the video.
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function regenerateVideoThumbnail(id, thumbnailTimestamp) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/thumbnail/regenerate`, {
+    thumbnailTimestamp,
+  })
+  return res.data
+}
+
+/**
  * Likes a video, toggling the reaction off if already liked (replaces any
  * existing dislike).
  * @param {number} id Numeric video id.
