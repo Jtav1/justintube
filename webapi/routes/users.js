@@ -4,7 +4,7 @@ import { unlink } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { Op, col, fn } from "sequelize";
+import { Op, col, fn, literal } from "sequelize";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
@@ -319,17 +319,49 @@ function canManageUserProfile(req, targetUserId) {
 /**
  * Query-param values accepted by the `sort` param on the user-videos
  * listing endpoints, mapped to the `[VideoMetadata column, direction]` pair
- * used to build the Sequelize `order` clause. Mirrors the vocabulary already
- * used by `routes/search.js`'s `SORT_OPTIONS` (minus `relevance`, which has
- * no meaning outside full-text search).
+ * used to build the Sequelize `order` clause. `likes`/`likes_asc` map to
+ * `null` since like counts aren't a VideoMetadata column — they're ordered
+ * via a correlated subquery instead (see `buildUserVideosOrder`). Mirrors
+ * the vocabulary already used by `routes/search.js`'s `SORT_OPTIONS` (minus
+ * `relevance`, which has no meaning outside full-text search).
  *
- * @type {Record<string, [string, "ASC"|"DESC"]>}
+ * @type {Record<string, [string, "ASC"|"DESC"]|null>}
  */
 const USER_VIDEOS_SORT_OPTIONS = {
   newest: ["createdAt", "DESC"],
   oldest: ["createdAt", "ASC"],
   views: ["viewCount", "DESC"],
+  views_asc: ["viewCount", "ASC"],
+  likes: null,
+  likes_asc: null,
 };
+
+/**
+ * Correlated subquery counting a video's likes (VIDEO_LIKES rows with
+ * `likeValue = 1`), for use as a Sequelize `order` entry when sorting by
+ * like count isn't possible via a plain column. `OriginalUpload` is the
+ * alias Sequelize gives the root table of `loadUserPublicVideosPage`'s query
+ * (matches the convention already used in `listTags`'s `ContentTag` literal).
+ *
+ * @type {import('sequelize').Literal}
+ */
+const LIKE_COUNT_SUBQUERY = literal(
+  "(SELECT COUNT(*) FROM `VIDEO_LIKES` WHERE `VIDEO_LIKES`.`original_upload_id` = `OriginalUpload`.`id` AND `VIDEO_LIKES`.`like_value` = 1)",
+);
+
+/**
+ * Builds the Sequelize `order` clause for a validated user-videos `sort` key.
+ *
+ * @param {string} sort One of `USER_VIDEOS_SORT_OPTIONS`'s keys.
+ * @returns {Array} Sequelize `order` array.
+ */
+function buildUserVideosOrder(sort) {
+  if (sort === "likes" || sort === "likes_asc") {
+    return [[LIKE_COUNT_SUBQUERY, sort === "likes" ? "DESC" : "ASC"]];
+  }
+  const [sortColumn, sortDirection] = USER_VIDEOS_SORT_OPTIONS[sort];
+  return [[{ model: VideoMetadata, as: "VideoMetadata" }, sortColumn, sortDirection]];
+}
 
 /**
  * Parses and validates the `sort` query param for the user-videos listing
@@ -470,8 +502,6 @@ async function loadUserPublicVideosPage(
     }
   }
 
-  const [sortColumn, sortDirection] = USER_VIDEOS_SORT_OPTIONS[sort];
-
   const where = { userId, [Op.or]: visibilityOr };
   if (viewerUserId != null) {
     const hiddenUploadIds = await loadHiddenUploadIds(viewerUserId);
@@ -487,7 +517,7 @@ async function loadUserPublicVideosPage(
       { model: VideoThumbnail, required: false },
       { model: User, required: false },
     ],
-    order: [[{ model: VideoMetadata, as: "VideoMetadata" }, sortColumn, sortDirection]],
+    order: buildUserVideosOrder(sort),
     limit,
     offset: (page - 1) * limit,
     subQuery: false,
@@ -711,7 +741,7 @@ export function createUsersRouter() {
    *         required: false
    *         schema:
    *           type: string
-   *           enum: [newest, oldest, views]
+   *           enum: [newest, oldest, views, views_asc, likes, likes_asc]
    *           default: newest
    *     responses:
    *       "200":
@@ -807,7 +837,7 @@ export function createUsersRouter() {
    *         required: false
    *         schema:
    *           type: string
-   *           enum: [newest, oldest, views]
+   *           enum: [newest, oldest, views, views_asc, likes, likes_asc]
    *           default: newest
    *     responses:
    *       "200":
