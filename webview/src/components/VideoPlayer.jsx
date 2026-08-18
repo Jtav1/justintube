@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   EyeOff,
@@ -83,6 +83,9 @@ function VideoPlayer({
   onAutoplayNext,
   onAutoplayChange,
   autoplayOnLoad = false,
+  onVideoEnded,
+  onVideoError,
+  ref,
 }) {
   const { user } = useAuth()
   const { error: toastError } = useToast()
@@ -157,6 +160,42 @@ function VideoPlayer({
   const viewRecordedRef = useRef(false)
   const titleRef = useRef(null)
   const measureCanvasRef = useRef(null)
+
+  // External imperative control surface for CAST (see CastPage/CastDisplayPage):
+  // synced playback needs to drive play/pause/seek from outside this
+  // component's own controls. `seek` reuses the exact same
+  // resumeStateRef/handleLoadedMetadata mechanism the quality-switch flow
+  // above relies on, so a seek requested right as `video` changes (and the
+  // element remounts via `key={memoizedSrc}`, not yet ready) is queued and
+  // applied automatically once metadata loads, instead of silently no-oping
+  // against an element that hasn't loaded anything yet.
+  useImperativeHandle(ref, () => ({
+    // Deliberately does not swallow a rejection here (unlike the internal
+    // autoplay/seek call sites below) - CastDisplayPage needs to detect an
+    // autoplay-block rejection to show its "click to enable" overlay.
+    // Callers that don't care can just add their own .catch(() => {}).
+    play() {
+      return videoRef.current?.play()
+    },
+    pause() {
+      videoRef.current?.pause()
+    },
+    seek(seconds, { play: shouldPlay } = {}) {
+      const el = videoRef.current
+      if (!el) return
+      if (el.readyState >= 1) {
+        el.currentTime = seconds
+        if (shouldPlay === true) el.play().catch(() => {})
+        if (shouldPlay === false) el.pause()
+      } else {
+        resumeStateRef.current = { currentTime: seconds, wasPlaying: shouldPlay ?? false }
+      }
+    },
+    getState() {
+      const el = videoRef.current
+      return { currentTime: el?.currentTime ?? 0, paused: el?.paused ?? true }
+    },
+  }), [])
   const [titleShrunk, setTitleShrunk] = useState(false)
 
   useEffect(() => {
@@ -461,6 +500,7 @@ function VideoPlayer({
     }
 
     setPlaybackError(true)
+    onVideoError?.()
   }
 
   function handleRetryPlayback() {
@@ -506,6 +546,7 @@ function VideoPlayer({
   }
 
   function handleEnded() {
+    onVideoEnded?.()
     if (autoplayEnabled) {
       setAutoplayCountdown(AUTOPLAY_COUNTDOWN_SECONDS)
     }

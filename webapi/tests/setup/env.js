@@ -26,11 +26,16 @@ process.env.AVATAR_FILETYPES_ALLOWED = "jpg,jpeg,png,webp";
 process.env.PROCESSING_API_URL = "http://processing.test:3001";
 // Pinned so a developer's real webapi/.env (loaded by "dotenv/config" in
 // index.js, which only fills in variables not already set) can't leak its
-// local ENABLE_TRANSCODING value into the test suite - tests assume the
-// default-enabled behavior unless a specific test overrides it.
+// local ENABLE_TRANSCODING/ENABLE_VIDEO_IMPORTS values into the test suite -
+// tests assume the default-enabled behavior unless a specific test overrides
+// it (e.g. a developer running the API locally with ENABLE_VIDEO_IMPORTS=false
+// because they don't have the processing container running should still get
+// a clean test run from the same shell).
 process.env.ENABLE_TRANSCODING = "true";
+process.env.ENABLE_VIDEO_IMPORTS = "true";
 process.env.HLS_BASE_URL = "http://hls.test:8888";
 process.env.ENABLE_LIVESTREAM = "true";
+process.env.ENABLE_CAST = "true";
 process.env.INTERNAL_SERVICE_TOKEN = "test-internal-token";
 process.env.TRANSCODE_RECONCILE_ENABLED = "false";
 process.env.SESSION_SECRET = "test-session-secret";

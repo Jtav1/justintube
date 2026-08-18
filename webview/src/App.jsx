@@ -10,6 +10,9 @@ import ProfilePage from './pages/ProfilePage.jsx'
 import UploadPage from './pages/UploadPage.jsx'
 import GoLivePage from './pages/GoLivePage.jsx'
 import LiveWatchPage from './pages/LiveWatchPage.jsx'
+import CastPage from './pages/CastPage.jsx'
+import CastJoinPage from './pages/CastJoinPage.jsx'
+import CastDisplayPage from './pages/CastDisplayPage.jsx'
 import { useSiteConfig } from './context/useSiteConfig.js'
 import CreatePlaylistPage from './pages/CreatePlaylistPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
@@ -45,7 +48,7 @@ function ReportFormRoute() {
 }
 
 function App() {
-  const { livestreamEnabled } = useSiteConfig()
+  const { livestreamEnabled, castEnabled } = useSiteConfig()
 
   return (
     <Routes>
@@ -54,6 +57,8 @@ function App() {
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      {castEnabled && <Route path="/cast/join" element={<CastJoinPage />} />}
+      {castEnabled && <Route path="/cast/:id/display" element={<CastDisplayPage />} />}
       <Route element={<AppLayout />}>
         <Route path="/" element={<VideoListing />} />
         <Route path="/reports" element={<ReportsPage />} />
@@ -69,6 +74,7 @@ function App() {
         <Route path="/upload" element={<UploadPage />} />
         {livestreamEnabled && <Route path="/go-live" element={<GoLivePage />} />}
         {livestreamEnabled && <Route path="/live/:id" element={<LiveWatchPage />} />}
+        {castEnabled && <Route path="/cast/:id" element={<CastPage />} />}
         <Route path="/playlists/new" element={<CreatePlaylistPage />} />
         <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
         <Route path="/users/:username/playlists" element={<UserPlaylistsPage />} />

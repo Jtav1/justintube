@@ -1,9 +1,11 @@
 import { Router } from "express";
+import { castEnabled } from "../lib/cast-config.js";
 import { livestreamEnabled } from "../lib/livestream-config.js";
 import { createAdminBroadcastRouter } from "./admin-broadcast.js";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
+import { createCastRouter } from "./cast.js";
 import { createDuplicateUploadFlagsRouter } from "./duplicate-upload-flags.js";
 import { createLivestreamsRouter } from "./livestreams.js";
 import { createMeRouter } from "./me.js";
@@ -64,16 +66,6 @@ export function registerStubRoutes(router) {
   // Search & discovery (unimplemented remainders)
   r("get", "/videos/:id/reaction", "getVideoReaction");
   r("delete", "/videos/:id/reaction", "clearVideoReaction");
-
-  // CAST
-  r("post", "/cast", "createCastSpace");
-  r("post", "/cast/join", "joinCastSpace");
-  r("get", "/cast/:id", "getCastSpace");
-  r("post", "/cast/:id/playlist", "addCastPlaylistItem");
-  r("delete", "/cast/:id/playlist/:videoId", "removeCastPlaylistItem");
-  r("get", "/cast/:id/members", "listCastMembers");
-  r("get", "/cast/:id/display", "getCastDisplay");
-  r("get", "/cast/:id/sync", "castSyncWebSocket");
 }
 
 /**
@@ -96,6 +88,12 @@ export function createApiRouter() {
   if (livestreamEnabled()) {
     router.use(createMeStreamKeyRouter());
     router.use(createLivestreamsRouter());
+  }
+  // Gated on ENABLE_CAST the same way; see the livestream comment above.
+  // Realtime sync (the /cast Socket.IO namespace) is wired separately in
+  // index.js's start() - this only covers the REST surface.
+  if (castEnabled()) {
+    router.use(createCastRouter());
   }
   router.use(createNotificationPreferencesRouter());
   router.use(createNotificationsRouter());

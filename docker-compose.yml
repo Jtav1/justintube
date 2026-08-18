@@ -107,6 +107,10 @@ services:
       # RTMP ingest server (streaming service, below) and its HLS output.
       RTMP_INGEST_URL: ${RTMP_INGEST_URL:-rtmp://localhost:1935/live}
       HLS_BASE_URL: ${HLS_BASE_URL:-http://localhost:8888}
+      # CAST shared-watch-session feature flag - defaults on, unlike
+      # ENABLE_LIVESTREAM, since it needs no extra service (its realtime
+      # layer attaches directly to this container's own process).
+      ENABLE_CAST: ${ENABLE_CAST:-true}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set - see .env.example}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       TRUST_PROXY: ${TRUST_PROXY:-1}

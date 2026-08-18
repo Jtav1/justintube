@@ -1,6 +1,9 @@
 import { sequelize } from "../db.js";
 import { AccessPermission } from "./access-permission.js";
 import { ApiKeyScope } from "./api-key-scope.js";
+import { CastQueueItem } from "./cast-queue-item.js";
+import { CastSession } from "./cast-session.js";
+import { CastSessionMember } from "./cast-session-member.js";
 import { Comment } from "./comment.js";
 import { ContentTag } from "./content-tag.js";
 import { DuplicateUploadFlag } from "./duplicate-upload-flag.js";
@@ -314,11 +317,79 @@ function registerAssociations() {
     foreignKey: "permissionId",
   });
   
+  User.hasMany(CastSession, {
+    as: "OwnedCastSessions",
+    foreignKey: "ownerUserId",
+    onDelete: "CASCADE",
+  });
+  CastSession.belongsTo(User, {
+    as: "Owner",
+    foreignKey: "ownerUserId",
+    onDelete: "CASCADE",
+  });
+
+  UserPlaylist.hasMany(CastSession, {
+    foreignKey: "sourcePlaylistId",
+    onDelete: "SET NULL",
+  });
+  CastSession.belongsTo(UserPlaylist, {
+    as: "SourcePlaylist",
+    foreignKey: "sourcePlaylistId",
+    onDelete: "SET NULL",
+  });
+
+  CastSession.hasMany(CastQueueItem, {
+    foreignKey: "castSessionId",
+    onDelete: "CASCADE",
+  });
+  CastQueueItem.belongsTo(CastSession, {
+    foreignKey: "castSessionId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasMany(CastQueueItem, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  CastQueueItem.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(CastQueueItem, {
+    as: "AddedCastQueueItems",
+    foreignKey: "addedByUserId",
+    onDelete: "SET NULL",
+  });
+  CastQueueItem.belongsTo(User, {
+    as: "AddedBy",
+    foreignKey: "addedByUserId",
+    onDelete: "SET NULL",
+  });
+
+  CastSession.hasMany(CastSessionMember, {
+    foreignKey: "castSessionId",
+    onDelete: "CASCADE",
+  });
+  CastSessionMember.belongsTo(CastSession, {
+    foreignKey: "castSessionId",
+    onDelete: "CASCADE",
+  });
+
+  User.hasMany(CastSessionMember, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+  CastSessionMember.belongsTo(User, {
+    foreignKey: "userId",
+    onDelete: "CASCADE",
+  });
+
   User.hasMany(UserHiddenVideo, {
     foreignKey: "userId",
     onDelete: "CASCADE",
   });
-  
+
   UserHiddenVideo.belongsTo(User, {
     foreignKey: "userId",
     onDelete: "CASCADE",
@@ -566,6 +637,9 @@ registerAssociations();
 export const models = {
   AccessPermission,
   ApiKeyScope,
+  CastSession,
+  CastQueueItem,
+  CastSessionMember,
   Role,
   User,
   EmailVerificationToken,
@@ -607,6 +681,9 @@ export const models = {
 export {
   AccessPermission,
   ApiKeyScope,
+  CastQueueItem,
+  CastSession,
+  CastSessionMember,
   Comment,
   ContentTag,
   DuplicateUploadFlag,

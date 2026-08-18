@@ -17,6 +17,11 @@ tags:
     description: Media upload
   - name: Videos
     description: Video discovery, metadata, engagement, and access
+  - name: Cast
+    description: >-
+      Shared watch sessions (join codes, queue, membership, playback
+      control). Realtime sync runs out-of-band over Socket.IO (the /cast
+      namespace, see lib/cast/realtime.js), not REST.
   - name: Reports
     description: User-filed policy reports against videos, users, playlists, or the site
   - name: Internal

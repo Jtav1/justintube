@@ -1,6 +1,6 @@
 # Justintube
 
-A self-hosted video platform: YouTube-like frontend, self-hosted transcoding pipeline, and shared watch sessions (CAST) (FUTURE!). Built from the bottom up because you know back end is best
+A self-hosted video platform: YouTube-like frontend, self-hosted transcoding pipeline, and shared watch sessions (CAST). Built from the bottom up because you know back end is best
 
 This software is a collaborative effort between myself (Justin) and a few friends who can choose to add themselves to this readme and other docs :)
 
@@ -14,7 +14,7 @@ Quick shout out to them though, https://mediacms.io/ https://github.com/mediacms
 
 - **Video platform basics** — upload (including yt-dlp URL import), FFmpeg transcoding to multiple resolutions with configurable hardware acceleration, video tagging, search with typeahead suggestions, subscriptions, likes, playlists, watch history, and notifications.
 - **Access control** — email-verified accounts with optional SSO linking (FUTURE), RBAC roles (Admin / Moderator / Uploader / Viewer / Locked), and per-video visibility (public, private with grants, hidden, unlisted).
-- **CAST shared watch sessions** — (FUTURE/PLANNED) start a session from a playlist or a single video, share a session code, and watch together: a live session queue (a copy seeded from the playlist — the source is never mutated), synced play/pause/skip/seek for everyone, presence, an activity feed, emoji reactions, and an in-app display view for casting to a TV. Realtime sync runs over Socket.IO (namespace `/cast`, one room per session). Based on the dixtube-live prototype by [SpinnerMaster][https://github.com/SpinnerMaster]
+- **CAST shared watch sessions** — start a session from a playlist, a single video, or empty, share a join code (with a QR code to scan), and watch together: a live session queue (a copy seeded from the playlist — the source is never mutated), synced play/pause/skip/seek for everyone, presence, an activity feed, emoji reactions, and an in-app display view for casting to a TV. The owner can kick members and end the session. Realtime sync runs over Socket.IO (namespace `/cast`, one room per session). Based on the dixtube-live prototype by [SpinnerMaster](https://github.com/SpinnerMaster)
 - **Admin tools** — user/role management, API keys, system config, transcode profiles, featured videos, moderation (de-listing, bans).
 
 See [webapi/openapi.yaml](webapi/openapi.yaml) for the OpenAPI base document and [docs/api-checklist.md](docs/api-checklist.md) for implementation progress.
