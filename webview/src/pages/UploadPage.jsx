@@ -14,6 +14,7 @@ import {
   setVideoFeatured,
   getImportStatus,
   updateVideoThumbnail,
+  regenerateVideoThumbnail,
   getVideo,
 } from '../api/videos.js'
 import { searchUsers } from '../api/users.js'
@@ -386,6 +387,10 @@ function UploadPage() {
   const fileLocked = url.trim().length > 0
   const urlLocked = file != null
   const selectedFileIsAudio = isAudioFile(file)
+  // Audio uploads never get an auto-generated thumbnail (see
+  // finalizeUploadTranscodes on the server) - hide the frame-timestamp field
+  // in edit mode so it's not offered for something that can't do anything.
+  const isEditingAudio = isEditMode && editUpload?.mediaType === 'audio'
 
   function handleFileSelected(selectedFile) {
     setFile(selectedFile)
@@ -496,11 +501,14 @@ function UploadPage() {
     setEditors((prev) => prev.filter((r) => r.userId !== Number(userId)))
   }
 
+  // In edit mode an empty value means "leave the thumbnail alone" (not
+  // "random frame" like on a fresh upload), but it's still validated
+  // whenever the field is non-empty.
   const thumbnailTimestampInvalid =
-    !isEditMode && !thumbnailFile && thumbnailTimestampError(thumbnailTimestamp) != null
+    !thumbnailFile && thumbnailTimestampError(thumbnailTimestamp) != null
 
   const submitDisabled = isEditMode
-    ? title.trim().length === 0 || submitting
+    ? title.trim().length === 0 || thumbnailTimestampInvalid || submitting
     : (!file && url.trim().length === 0) ||
       title.trim().length === 0 ||
       thumbnailTimestampInvalid ||
@@ -655,6 +663,17 @@ function UploadPage() {
         toastError(
           'Your video was uploaded and configured, but the custom thumbnail could not be saved. ' +
             'You can try uploading it again from your profile.',
+        )
+        setSubmitting(false)
+        return
+      }
+    } else if (isEditMode && thumbnailTimestampToSend !== undefined) {
+      try {
+        await regenerateVideoThumbnail(createdId, thumbnailTimestampToSend)
+      } catch {
+        toastError(
+          'Your changes were saved, but the thumbnail could not be regenerated. ' +
+            'You can try again from the edit page.',
         )
         setSubmitting(false)
         return
@@ -862,7 +881,7 @@ function UploadPage() {
                 )}
               </label>
 
-              {!isEditMode && (
+              {!isEditingAudio && (
                 <div className="upload-thumbnail-timestamp">
                   <label htmlFor="upload-thumbnail-timestamp">Frame at (sec)</label>
                   <input
@@ -872,7 +891,7 @@ function UploadPage() {
                     value={thumbnailTimestamp}
                     onChange={(event) => setThumbnailTimestamp(event.target.value)}
                     disabled={Boolean(thumbnailFile)}
-                    placeholder="Random"
+                    placeholder={isEditMode ? 'Leave blank to keep current thumbnail' : 'Random'}
                     aria-invalid={thumbnailTimestampInvalid}
                   />
                   {thumbnailTimestampInvalid && (
@@ -883,6 +902,12 @@ function UploadPage() {
                 </div>
               )}
             </div>
+            {isEditMode && !isEditingAudio && (
+              <p className="upload-hint">
+                Setting a frame here generates a new thumbnail from that point in the video,
+                replacing the current one, once you save.
+              </p>
+            )}
           </div>
 
           <label htmlFor="upload-title">
