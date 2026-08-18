@@ -38,6 +38,11 @@ function PlaylistCard({ playlist }) {
     navigate(`/playlists/${playlist.id}/edit`)
   }
 
+  async function handleCopyLink() {
+    closeMenu()
+    await navigator.clipboard.writeText(`${window.location.origin}/playlists/${playlist.id}`)
+  }
+
   useEffect(() => {
     if (!menuOpen) {
       return undefined
@@ -89,26 +94,36 @@ function PlaylistCard({ playlist }) {
             {playlist.itemCount} {playlist.itemCount === 1 ? 'video' : 'videos'}
           </p>
         </div>
-        {canEdit && (
-          <div className="playlist-card-menu" ref={menuRef}>
-            <button
-              type="button"
-              className="playlist-card-menu-toggle"
-              aria-label="Playlist options"
-              title="Playlist options"
-              onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
-            >
-              <MoreVertical size={18} />
-            </button>
-            {menuOpen && (
-              <div className="playlist-card-menu-dropdown" ref={dropdownRef}>
+        <div className="playlist-card-menu" ref={menuRef}>
+          <button
+            type="button"
+            className="playlist-card-menu-toggle"
+            aria-label="Playlist options"
+            title="Playlist options"
+            onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+          >
+            <MoreVertical size={18} />
+          </button>
+          {menuOpen && (
+            <div className="playlist-card-menu-dropdown" ref={dropdownRef}>
+              <Link
+                to={`/playlists/${playlist.id}`}
+                className="playlist-card-menu-item"
+                onClick={closeMenu}
+              >
+                View Playlist
+              </Link>
+              <button type="button" className="playlist-card-menu-item" onClick={handleCopyLink}>
+                Copy Link
+              </button>
+              {canEdit && (
                 <button type="button" className="playlist-card-menu-item" onClick={handleEditPlaylist}>
                   Edit Playlist
                 </button>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </article>
   )

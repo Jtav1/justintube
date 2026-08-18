@@ -163,6 +163,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .playlist-card-menu-item:hover {
