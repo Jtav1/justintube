@@ -215,30 +215,7 @@ describe("createNotification (lib/notifications.js)", () => {
       });
 
       expect(mockSendNotificationEmail).not.toHaveBeenCalled();
-    });
-
-    test("emails an opt-in type once the user explicitly enables it", async () => {
-      mockEmailEnabled.mockReturnValue(true);
-      const user = await seedUser({ email: "owner@example.com" });
-      await seedUserNotificationSetting(user.id, {
-        notificationTypeId: likeTypeId,
-        emailEnabled: true,
-      });
-
-      await notifications.createNotification({
-        recipientUserId: user.id,
-        typeName: "like",
-        title: "Video received a Like",
-        message: "m",
-        link: "https://example.com/video?v=abc123",
-      });
-
-      expect(mockSendNotificationEmail).toHaveBeenCalledWith({
-        to: "owner@example.com",
-        title: "Video received a Like",
-        message: "m",
-        link: "https://example.com/video?v=abc123",
-      });
+      expect((await notificationsFor(user.id))[0].email_status).toBe("not_applicable");
     });
 
     test("emails an opt-out type (admin) by default - the seeded row starts emailEnabled: true", async () => {
@@ -309,6 +286,86 @@ describe("createNotification (lib/notifications.js)", () => {
       });
 
       expect(mockSendNotificationEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("batched email digest queuing (like/comment/subscription)", () => {
+    test("queues instead of emailing immediately, once the user explicitly enables email", async () => {
+      mockEmailEnabled.mockReturnValue(true);
+      const user = await seedUser({ email: "owner@example.com" });
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: likeTypeId,
+        emailEnabled: true,
+      });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "like",
+        title: "Video received a Like",
+        message: "m",
+        link: "https://example.com/video?v=abc123",
+      });
+
+      expect(mockSendNotificationEmail).not.toHaveBeenCalled();
+      const rows = await notificationsFor(user.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].email_status).toBe("pending");
+    });
+
+    test("leaves the row not_applicable when the user hasn't opted in to email", async () => {
+      mockEmailEnabled.mockReturnValue(true);
+      const user = await seedUser({ email: "owner@example.com" });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "comment",
+        title: "t",
+        message: "m",
+      });
+
+      const rows = await notificationsFor(user.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].email_status).toBe("not_applicable");
+    });
+
+    test("leaves the row not_applicable when SMTP is disabled, regardless of preferences", async () => {
+      mockEmailEnabled.mockReturnValue(false);
+      const user = await seedUser({ email: "owner@example.com" });
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: likeTypeId,
+        emailEnabled: true,
+      });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "like",
+        title: "t",
+        message: "m",
+      });
+
+      const rows = await notificationsFor(user.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].email_status).toBe("not_applicable");
+    });
+
+    test("queues nothing when there is no in-app row to queue (in-app disabled for the type)", async () => {
+      mockEmailEnabled.mockReturnValue(true);
+      const user = await seedUser({ email: "owner@example.com" });
+      await seedUserNotificationSetting(user.id, {
+        notificationTypeId: likeTypeId,
+        enabled: false,
+        emailEnabled: true,
+      });
+
+      await notifications.createNotification({
+        recipientUserId: user.id,
+        typeName: "like",
+        title: "t",
+        message: "m",
+      });
+
+      expect(mockSendNotificationEmail).not.toHaveBeenCalled();
+      expect(await notificationsFor(user.id)).toHaveLength(0);
     });
   });
 });

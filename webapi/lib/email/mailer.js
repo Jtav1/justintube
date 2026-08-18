@@ -404,6 +404,66 @@ export async function sendNotificationEmail({ to, title, message, link = null })
 }
 
 /**
+ * Sends a single digest email summarizing multiple outstanding notifications
+ * at once - the delivery mechanism behind the periodic digest cron
+ * (`lib/notification-email-digest.js`), which batches "like"/"comment"/
+ * "subscription" notifications instead of emailing each one immediately.
+ *
+ * @param {object} params Recipient and content details.
+ * @param {string} params.to Recipient email address.
+ * @param {{title: string, message: string}[]} params.notifications
+ *   Notifications to list in the email (already capped by the caller, e.g.
+ *   to 20 per email - this function lists exactly what it's given).
+ * @param {number} params.totalCount Total outstanding notification count
+ *   this digest is for, which may exceed `notifications.length` when more
+ *   were left for a future run; used for the subject line and an "...and N
+ *   more" footer.
+ * @param {string|null} [params.link] Absolute URL to the notifications page, if any.
+ * @returns {Promise<void>} Resolves when the message has been accepted by SMTP.
+ * @throws {Error} When email is disabled or SMTP delivery fails.
+ */
+export async function sendNotificationDigestEmail({ to, notifications, totalCount, link = null }) {
+  if (!emailEnabled()) {
+    throw new Error("Email is not configured.");
+  }
+
+  const from = String(process.env.MAIL_FROM_ADDRESS || "").trim();
+  const publicUrl = String(process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
+  const signature = `- justintube (<${publicUrl}>)`;
+  const overflow = totalCount - notifications.length;
+  const subject =
+    totalCount === 1 ? "You have a new notification" : `You have ${totalCount} new notifications`;
+
+  const textLines = [
+    `${subject}:`,
+    "",
+    ...notifications.map((n) => `- ${n.title}: ${messageToPlainText(n.message)}`),
+    overflow > 0 ? `...and ${overflow} more.` : null,
+    "",
+    link ? `View all notifications: ${link}` : null,
+  ].filter((line) => line !== null);
+  const text = `${textLines.join("\n")}\n${signature}`;
+
+  const htmlItems = notifications
+    .map((n) => `<li><strong>${escapeHtml(n.title)}</strong>: ${messageToHtml(n.message)}</li>`)
+    .join("");
+  const htmlBody =
+    `<p>${escapeHtml(subject)}:</p>` +
+    `<ul>${htmlItems}</ul>` +
+    (overflow > 0 ? `<p>...and ${overflow} more.</p>` : "") +
+    (link ? `<p><a href="${link}">View all notifications</a></p>` : "") +
+    `<p>${escapeHtml(signature)}</p>`;
+
+  await getTransport().sendMail({
+    from,
+    to,
+    subject,
+    text,
+    html: htmlBody,
+  });
+}
+
+/**
  * Resets the cached transport (for tests).
  *
  * @returns {void} No return value.

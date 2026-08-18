@@ -290,6 +290,11 @@ async function ensureSqliteMissingColumns() {
       column: "deleted",
       ddl: "`deleted` TINYINT(1) NOT NULL DEFAULT 0",
     },
+    {
+      table: "NOTIFICATIONS",
+      column: "email_status",
+      ddl: "`email_status` VARCHAR(20) NOT NULL DEFAULT 'not_applicable'",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {
