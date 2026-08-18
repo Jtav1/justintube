@@ -80,6 +80,12 @@
   cursor: default;
 }
 
+.playlist-queue-skip-active {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
 .playlist-queue-list {
   display: flex;
   flex-direction: column;

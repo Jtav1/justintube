@@ -1,6 +1,8 @@
-import { Pencil, SkipBack, SkipForward } from 'lucide-react'
+import { useState } from 'react'
+import { Pencil, Shuffle, SkipBack, SkipForward } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
+import { readPlaylistShuffleEnabled, writePlaylistShuffleEnabled } from '../lib/playlist-shuffle.js'
 import VideoCard from './VideoCard.jsx'
 import './PlaylistQueue.css'
 
@@ -17,6 +19,7 @@ import './PlaylistQueue.css'
 function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveItem }) {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const [shuffleEnabled, setShuffleEnabled] = useState(() => readPlaylistShuffleEnabled())
   const items = playlist.items ?? []
   const currentIndex = items.findIndex((item) => item.videoId === currentVideoId)
 
@@ -24,13 +27,42 @@ function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveIte
   const canEdit = Boolean(user)
     && (String(user.id) === String(playlist.owner?.id) || user.role === 'admin')
   const canSkipBack = currentIndex > 0
-  const canSkipForward = currentIndex !== -1 && currentIndex < items.length - 1
+  // Shuffle can jump forward from anywhere (any other item is fair game);
+  // in-order mode still requires an actual next item to advance to.
+  const canSkipForward = shuffleEnabled
+    ? items.length > 1
+    : currentIndex !== -1 && currentIndex < items.length - 1
 
   function goToIndex(index) {
     const target = items[index]
     if (target) {
       navigate(`/video?v=${target.videoId}&list=${playlist.id}`)
     }
+  }
+
+  function handleToggleShuffle() {
+    setShuffleEnabled((prev) => {
+      const next = !prev
+      writePlaylistShuffleEnabled(next)
+      return next
+    })
+  }
+
+  // Picks a random item other than the one currently playing (when possible)
+  // so shuffling always moves you somewhere new.
+  function handleSkipForward() {
+    if (!shuffleEnabled) {
+      goToIndex(currentIndex + 1)
+      return
+    }
+    if (items.length < 2) {
+      return
+    }
+    let index = Math.floor(Math.random() * items.length)
+    if (index === currentIndex) {
+      index = (index + 1) % items.length
+    }
+    goToIndex(index)
   }
 
   return (
@@ -71,9 +103,19 @@ function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveIte
         </button>
         <button
           type="button"
+          className={`playlist-queue-skip${shuffleEnabled ? ' playlist-queue-skip-active' : ''}`}
+          onClick={handleToggleShuffle}
+          aria-label={shuffleEnabled ? 'Disable shuffle' : 'Enable shuffle'}
+          title={shuffleEnabled ? 'Disable shuffle' : 'Enable shuffle'}
+          aria-pressed={shuffleEnabled}
+        >
+          <Shuffle size={18} />
+        </button>
+        <button
+          type="button"
           className="playlist-queue-skip"
           disabled={!canSkipForward}
-          onClick={() => goToIndex(currentIndex + 1)}
+          onClick={handleSkipForward}
           aria-label="Next video in playlist"
           title="Next video in playlist"
         >
