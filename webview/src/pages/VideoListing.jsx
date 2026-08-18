@@ -6,12 +6,17 @@ import { listLivestreams } from '../api/livestreams.js'
 import { useToast } from '../context/useToast.js'
 import { useSiteConfig } from '../context/useSiteConfig.js'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
+import { useIsMobile } from '../lib/viewport.js'
 import VideoCard from '../components/VideoCard.jsx'
 import LiveStreamCard from '../components/LiveStreamCard.jsx'
 import './VideoListing.css'
 
 const PAGE_LIMIT = 24
 const FEATURED_LIMIT = 12
+
+// On mobile the featured row becomes a one-card-at-a-time swipeable carousel
+// instead of being fit to measured column count - cap it at a fixed count.
+const MOBILE_FEATURED_LIMIT = 5
 
 // Must match .video-listing-grid's grid-template-columns/gap in VideoListing.css
 // (repeat(auto-fill, minmax(FEATURED_MIN_CARD_WIDTH, 1fr)), gap: FEATURED_GRID_GAP),
@@ -22,6 +27,7 @@ const FEATURED_GRID_GAP = 10
 function VideoListing() {
   const { error: toastError } = useToast()
   const { livestreamEnabled } = useSiteConfig()
+  const isMobile = useIsMobile()
   const [live, setLive] = useState([])
   const [featured, setFeatured] = useState([])
   const [recent, setRecent] = useState([])
@@ -145,10 +151,14 @@ function VideoListing() {
     onLoadMore: handleLoadMoreRecent,
   })
 
-  const featuredOverflowing = featured.length > featuredColumns
-  const visibleFeatured = featuredOverflowing
-    ? featured.slice(0, Math.max(featuredColumns - 1, 0))
-    : featured
+  const featuredOverflowing = isMobile
+    ? featured.length > MOBILE_FEATURED_LIMIT
+    : featured.length > featuredColumns
+  const visibleFeatured = isMobile
+    ? featured.slice(0, MOBILE_FEATURED_LIMIT)
+    : featuredOverflowing
+      ? featured.slice(0, Math.max(featuredColumns - 1, 0))
+      : featured
 
   return (
     <section className="video-listing">
@@ -170,7 +180,7 @@ function VideoListing() {
       {featured.length > 0 && (
         <div className="video-listing-section">
           <h2 className="video-listing-section-title">Featured Videos</h2>
-          <div className="video-listing-grid" ref={featuredGridRef}>
+          <div className="video-listing-grid video-listing-featured-grid" ref={featuredGridRef}>
             {visibleFeatured.map((video) => (
               <VideoCard key={video.id} video={video} />
             ))}
