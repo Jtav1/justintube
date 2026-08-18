@@ -15,7 +15,7 @@ import {
   UserRound,
   VideoOff,
 } from 'lucide-react'
-import { formatViewCount } from '../lib/format.js'
+import { formatRelativeDate, formatViewCount } from '../lib/format.js'
 import apiClient from '../api/client.js'
 import {
   addVideoTags,
@@ -766,6 +766,10 @@ function VideoPlayer({
             </div>
             <p className="video-player-stats">
               {formatViewCount(video.viewCount)} &middot;{' '}
+              <span title={new Date(video.createdAt).toLocaleString()}>
+                {formatRelativeDate(video.createdAt)}
+              </span>{' '}
+              &middot;{' '}
               <span className="video-player-visibility">{video.visibility}</span>
             </p>
             {video.description && (
