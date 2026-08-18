@@ -181,5 +181,100 @@ describe("notifications routes", () => {
       const bobRow = await Notification.findByPk(bobNotification.id);
       expect(bobRow.readAt).toBeNull();
     });
+
+    test("excludes deleted notifications from the list", async () => {
+      const agent = createTestAgent();
+      const { user: alice } = await registerSession(agent, {
+        username: "alice_delfilter",
+        email: "alice_delfilter@example.com",
+      });
+      const visible = await seedNotification(alice.id, { title: "Visible" });
+      await seedNotification(alice.id, { title: "Deleted", deleted: true });
+
+      const res = await agent.get("/api/v1/notifications");
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0].id).toBe(visible.id);
+    });
+  });
+
+  describe("DELETE /api/v1/notifications/:id", () => {
+    test("unauthenticated DELETE returns 403 (no CSRF token on an anonymous session)", async () => {
+      const client = createTestClient();
+      const res = await client.delete("/api/v1/notifications/1");
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("csrf_invalid");
+    });
+
+    test("rejects a non-numeric id", async () => {
+      const agent = createTestAgent();
+      await registerSession(agent, {
+        username: "alice_baddelid",
+        email: "alice_baddelid@example.com",
+      });
+      const csrfToken = await fetchCsrf(agent);
+
+      const res = await agent
+        .delete("/api/v1/notifications/not-a-number")
+        .set("X-CSRF-Token", csrfToken);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_id");
+    });
+
+    test("404s for another user's notification, and does not delete it", async () => {
+      const bob = await seedUser({ username: "bob_del", email: "bob_del@example.com" });
+      const bobNotification = await seedNotification(bob.id);
+
+      const agent = createTestAgent();
+      await registerSession(agent, {
+        username: "alice_del",
+        email: "alice_del@example.com",
+      });
+      const csrfToken = await fetchCsrf(agent);
+
+      const res = await agent
+        .delete(`/api/v1/notifications/${bobNotification.id}`)
+        .set("X-CSRF-Token", csrfToken);
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("not_found");
+
+      const bobRow = await Notification.findByPk(bobNotification.id);
+      expect(bobRow.deleted).toBe(false);
+    });
+
+    test("soft-deletes the requesting user's own notification", async () => {
+      const agent = createTestAgent();
+      const { user: alice } = await registerSession(agent, {
+        username: "alice_owndel",
+        email: "alice_owndel@example.com",
+      });
+      const notification = await seedNotification(alice.id);
+      const csrfToken = await fetchCsrf(agent);
+
+      const res = await agent
+        .delete(`/api/v1/notifications/${notification.id}`)
+        .set("X-CSRF-Token", csrfToken);
+      expect(res.status).toBe(204);
+
+      const row = await Notification.findByPk(notification.id);
+      expect(row).not.toBeNull();
+      expect(row.deleted).toBe(true);
+    });
+
+    test("returns 404 when deleting an already-deleted notification", async () => {
+      const agent = createTestAgent();
+      const { user: alice } = await registerSession(agent, {
+        username: "alice_redel",
+        email: "alice_redel@example.com",
+      });
+      const notification = await seedNotification(alice.id, { deleted: true });
+      const csrfToken = await fetchCsrf(agent);
+
+      const res = await agent
+        .delete(`/api/v1/notifications/${notification.id}`)
+        .set("X-CSRF-Token", csrfToken);
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("not_found");
+    });
   });
 });

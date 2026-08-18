@@ -285,6 +285,11 @@ async function ensureSqliteMissingColumns() {
       column: "skip_thumbnail",
       ddl: "`skip_thumbnail` TINYINT(1) NOT NULL DEFAULT 0",
     },
+    {
+      table: "NOTIFICATIONS",
+      column: "deleted",
+      ddl: "`deleted` TINYINT(1) NOT NULL DEFAULT 0",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

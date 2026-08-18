@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { Trash2 } from 'lucide-react'
 import { formatRelativeDate } from '../lib/format.js'
 import { buildNotificationLink } from '../lib/notification-links.js'
 import { parseNotificationMessage } from '../lib/notification-message.js'
@@ -51,9 +52,9 @@ function renderMessage(message, onNavigate) {
  * another `<a>`.
  *
  * @param {{ notification: object, onRead: (id: number) => void,
- *   titleOnly?: boolean, onNavigate?: () => void }} props
+ *   onDelete?: (id: number) => void, titleOnly?: boolean, onNavigate?: () => void }} props
  */
-function NotificationItem({ notification, onRead, titleOnly = false, onNavigate }) {
+function NotificationItem({ notification, onRead, onDelete, titleOnly = false, onNavigate }) {
   const { id, title, message, readAt, createdAt } = notification
   const isUnread = readAt == null
   const href = buildNotificationLink(notification)
@@ -66,6 +67,19 @@ function NotificationItem({ notification, onRead, titleOnly = false, onNavigate 
     // Only ever fire once per mounted notification id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  /**
+   * Handles the delete button click. Stops the click from bubbling to the
+   * row's own `<Link>` (when the whole row is clickable) so deleting never
+   * also triggers navigation.
+   *
+   * @param {import('react').MouseEvent} event
+   */
+  function handleDeleteClick(event) {
+    event.preventDefault()
+    event.stopPropagation()
+    onDelete(id)
+  }
 
   const titleEl =
     href && titleOnly ? (
@@ -89,6 +103,17 @@ function NotificationItem({ notification, onRead, titleOnly = false, onNavigate 
         </p>
         <p className="notification-item-time">{formatRelativeDate(createdAt)}</p>
       </div>
+      {onDelete && (
+        <button
+          type="button"
+          className="notification-item-delete"
+          onClick={handleDeleteClick}
+          aria-label="Delete notification"
+          title="Delete notification"
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </>
   )
 

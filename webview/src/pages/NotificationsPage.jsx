@@ -4,6 +4,7 @@ import { Settings } from 'lucide-react'
 import {
   listNotifications,
   markNotificationsRead,
+  deleteNotification,
   getNotificationPreferences,
 } from '../api/notifications.js'
 import { useToast } from '../context/useToast.js'
@@ -62,6 +63,15 @@ function NotificationsPage() {
     markNotificationsRead([id]).catch(() => toastError('Failed to mark notification as read.'))
   }
 
+  async function handleDelete(id) {
+    try {
+      await deleteNotification(id)
+      setItems((prev) => prev.filter((item) => item.id !== id))
+    } catch {
+      toastError('Failed to delete notification.')
+    }
+  }
+
   return (
     <section className="notifications-page">
       <div className="notifications-page-header">
@@ -78,7 +88,13 @@ function NotificationsPage() {
 
       <div className="notifications-page-list">
         {items.map((item) => (
-          <NotificationItem key={item.id} notification={item} onRead={handleRead} titleOnly />
+          <NotificationItem
+            key={item.id}
+            notification={item}
+            onRead={handleRead}
+            onDelete={handleDelete}
+            titleOnly
+          />
         ))}
       </div>
 

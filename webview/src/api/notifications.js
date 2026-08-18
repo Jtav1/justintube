@@ -21,6 +21,15 @@ export async function markNotificationsRead(notificationIds) {
 }
 
 /**
+ * Deletes (soft-deletes) a single notification owned by the current session.
+ * @param {number} notificationId
+ * @returns {Promise<void>}
+ */
+export async function deleteNotification(notificationId) {
+  await apiClient.delete(`/api/v1/notifications/${notificationId}`)
+}
+
+/**
  * Fetches the current session's notification preferences: one entry per
  * active notification type, defaulting to `enabled: true` when the user has
  * no explicit setting for that type. `enabledLocked: true` marks types whose
