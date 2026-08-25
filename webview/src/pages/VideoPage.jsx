@@ -36,6 +36,10 @@ function VideoPage() {
   // Mirrors VideoSuggested's loaded suggestions so autoplay-next can pick a
   // random one without VideoSuggested needing to own navigation itself.
   const [suggestions, setSuggestions] = useState([])
+  // Expands the player to the full width of the page (between the sidebar
+  // and the screen edge) by stacking the suggested/queue rail below it
+  // instead of beside it - toggled by VideoPlayer's overlay button.
+  const [expanded, setExpanded] = useState(false)
 
   // Arriving via the Random Video button forces autoplay on going forward
   // (it's a persisted, browser-wide preference, not just for this view).
@@ -191,7 +195,7 @@ function VideoPage() {
         </div>
       )}
       {!loading && !error && !hiddenByViewer && video && (
-        <div className="video-page-layout">
+        <div className={`video-page-layout${expanded ? ' video-page-layout-expanded' : ''}`}>
           <div className="video-page-main">
             <VideoPlayer
               video={video}
@@ -201,6 +205,8 @@ function VideoPage() {
               onAutoplayNext={handleAutoplayNext}
               onAutoplayChange={handleAutoplayChange}
               autoplayOnLoad={autoplayOnLoad}
+              expanded={expanded}
+              onToggleExpand={() => setExpanded((prev) => !prev)}
             />
             <VideoComments video={video} />
           </div>
