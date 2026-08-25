@@ -34,12 +34,6 @@
 }
 
 .notification-bell-menu {
-  /* position: fixed + top/right/width are set inline in NotificationBell.jsx,
-     computed and clamped from the toggle button's screen position - this
-     dropdown is portaled to <body> so it stays fully within the viewport
-     instead of overflowing off-screen when the toggle isn't flush with the
-     viewport's right edge (e.g. mobile layouts, where other topbar icons
-     sit to its right) or when the viewport is resized while it's open. */
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);

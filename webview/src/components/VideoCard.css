@@ -167,10 +167,6 @@
 }
 
 .video-card-menu-dropdown {
-  /* position: fixed + top/bottom/right are set inline in VideoCard.jsx,
-     computed from the toggle button's screen position - this dropdown is
-     portaled to <body> so it isn't clipped by a scrollable ancestor (e.g.
-     the playlist queue's scrollable rail). */
   display: flex;
   flex-direction: column;
   min-width: 160px;
