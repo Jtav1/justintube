@@ -16,6 +16,27 @@
   margin: 0;
 }
 
+.notifications-page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notifications-page-mark-all {
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.notifications-page-mark-all:hover {
+  background: var(--accent-bg);
+}
+
 .notifications-page-settings-link {
   display: inline-flex;
   align-items: center;

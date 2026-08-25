@@ -70,6 +70,12 @@
   border-top: 1px solid var(--border);
 }
 
+.notification-bell-footer-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .notification-bell-view-all {
   color: var(--accent);
   text-decoration: none;
@@ -77,6 +83,21 @@
 }
 
 .notification-bell-view-all:hover {
+  text-decoration: underline;
+}
+
+.notification-bell-mark-all {
+  font: inherit;
+  font-size: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.notification-bell-mark-all:hover {
+  color: var(--accent);
   text-decoration: underline;
 }
 

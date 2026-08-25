@@ -214,6 +214,57 @@ export function createNotificationsRouter() {
   });
 
   /**
+   * Marks all of the authenticated user's unread, non-deleted notifications
+   * as read with the current time.
+   * POST /api/v1/notifications/read-all
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/notifications/read-all:
+   *   post:
+   *     tags: [Notifications]
+   *     summary: Mark all of my notifications as read
+   *     operationId: markAllNotificationsRead
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: Notifications marked read
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
+   */
+  router.post("/notifications/read-all", requireAuth, requireApiKeyScope("profile_edit"), async (req, res) => {
+    try {
+      await Notification.update(
+        { readAt: new Date() },
+        {
+          where: {
+            userId: req.user.id,
+            deleted: false,
+            readAt: null,
+          },
+        },
+      );
+
+      res.status(200).json({ success: true });
+    } catch (err) {
+      logger.error({ err }, "markAllNotificationsRead failed");
+      res.status(500).json({
+        success: false,
+        error: "internal_error",
+        message: "Failed to mark all notifications as read.",
+      });
+    }
+  });
+
+  /**
    * Soft-deletes a single notification owned by the authenticated user. The
    * row is kept (its `deleted` flag is set) rather than removed, and is
    * excluded from `GET /notifications` afterward. 404s if the notification

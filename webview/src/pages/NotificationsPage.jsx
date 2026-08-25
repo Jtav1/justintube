@@ -4,6 +4,7 @@ import { Settings } from 'lucide-react'
 import {
   listNotifications,
   markNotificationsRead,
+  markAllNotificationsRead,
   deleteNotification,
   getNotificationPreferences,
 } from '../api/notifications.js'
@@ -72,14 +73,33 @@ function NotificationsPage() {
     }
   }
 
+  async function handleMarkAllRead() {
+    const now = new Date().toISOString()
+    setItems((prev) => prev.map((item) => (item.readAt == null ? { ...item, readAt: now } : item)))
+    try {
+      await markAllNotificationsRead()
+    } catch {
+      toastError('Failed to mark all notifications as read.')
+    }
+  }
+
+  const hasUnread = items.some((item) => item.readAt == null)
+
   return (
     <section className="notifications-page">
       <div className="notifications-page-header">
         <h1>Notifications</h1>
-        <Link to="/settings#notification-settings" className="notifications-page-settings-link">
-          <Settings size={16} />
-          Notification settings
-        </Link>
+        <div className="notifications-page-header-actions">
+          {hasUnread && (
+            <button type="button" className="notifications-page-mark-all" onClick={handleMarkAllRead}>
+              Mark all read
+            </button>
+          )}
+          <Link to="/settings#notification-settings" className="notifications-page-settings-link">
+            <Settings size={16} />
+            Notification settings
+          </Link>
+        </div>
       </div>
 
       {!loading && items.length === 0 && (
