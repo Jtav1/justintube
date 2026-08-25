@@ -198,6 +198,78 @@ describe("notifications routes", () => {
     });
   });
 
+  describe("POST /api/v1/notifications/read-all", () => {
+    test("unauthenticated POST returns 403 (no CSRF token on an anonymous session)", async () => {
+      const client = createTestClient();
+      const res = await client.post("/api/v1/notifications/read-all");
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("csrf_invalid");
+    });
+
+    test("without a CSRF token returns 403", async () => {
+      const agent = createTestAgent();
+      await registerSession(agent, {
+        username: "alice_all_nocsrf",
+        email: "alice_all_nocsrf@example.com",
+      });
+
+      const res = await agent.post("/api/v1/notifications/read-all");
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("csrf_invalid");
+    });
+
+    test("marks only the requesting user's unread notifications as read", async () => {
+      const bob = await seedUser({ username: "bob_readall", email: "bob_readall@example.com" });
+      const bobNotification = await seedNotification(bob.id);
+
+      const agent = createTestAgent();
+      const { user: alice } = await registerSession(agent, {
+        username: "alice_readall",
+        email: "alice_readall@example.com",
+      });
+      const unread = await seedNotification(alice.id, { title: "Unread" });
+      const alreadyRead = await seedNotification(alice.id, {
+        title: "Already read",
+        readAt: new Date(Date.now() - 60_000),
+      });
+      const csrfToken = await fetchCsrf(agent);
+
+      const res = await agent
+        .post("/api/v1/notifications/read-all")
+        .set("X-CSRF-Token", csrfToken);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
+
+      const unreadRow = await Notification.findByPk(unread.id);
+      expect(unreadRow.readAt).not.toBeNull();
+
+      const alreadyReadRow = await Notification.findByPk(alreadyRead.id);
+      expect(alreadyReadRow.readAt.getTime()).toBe(alreadyRead.readAt.getTime());
+
+      const bobRow = await Notification.findByPk(bobNotification.id);
+      expect(bobRow.readAt).toBeNull();
+    });
+
+    test("does not resurrect deleted notifications", async () => {
+      const agent = createTestAgent();
+      const { user: alice } = await registerSession(agent, {
+        username: "alice_readall_del",
+        email: "alice_readall_del@example.com",
+      });
+      const deleted = await seedNotification(alice.id, { title: "Deleted", deleted: true });
+      const csrfToken = await fetchCsrf(agent);
+
+      const res = await agent
+        .post("/api/v1/notifications/read-all")
+        .set("X-CSRF-Token", csrfToken);
+      expect(res.status).toBe(200);
+
+      const deletedRow = await Notification.findByPk(deleted.id);
+      expect(deletedRow.readAt).toBeNull();
+    });
+  });
+
   describe("DELETE /api/v1/notifications/:id", () => {
     test("unauthenticated DELETE returns 403 (no CSRF token on an anonymous session)", async () => {
       const client = createTestClient();

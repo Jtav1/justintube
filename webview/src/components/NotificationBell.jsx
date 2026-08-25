@@ -5,6 +5,7 @@ import { Bell, Settings } from 'lucide-react'
 import {
   listNotifications,
   markNotificationsRead,
+  markAllNotificationsRead,
   deleteNotification,
   getNotificationPreferences,
 } from '../api/notifications.js'
@@ -144,6 +145,16 @@ function NotificationBell() {
     }
   }
 
+  async function handleMarkAllRead() {
+    const now = new Date().toISOString()
+    setItems((prev) => prev.map((item) => (item.readAt == null ? { ...item, readAt: now } : item)))
+    try {
+      await markAllNotificationsRead()
+    } catch {
+      toastError('Failed to mark all notifications as read.')
+    }
+  }
+
   const hasUnread = items.some((item) => item.readAt == null)
 
   return (
@@ -188,9 +199,16 @@ function NotificationBell() {
             ))}
           </div>
           <div className="notification-bell-footer">
-            <Link to="/notifications" className="notification-bell-view-all" onClick={() => setOpen(false)}>
-              View all
-            </Link>
+            <div className="notification-bell-footer-links">
+              <Link to="/notifications" className="notification-bell-view-all" onClick={() => setOpen(false)}>
+                View all
+              </Link>
+              {hasUnread && (
+                <button type="button" className="notification-bell-mark-all" onClick={handleMarkAllRead}>
+                  Mark all read
+                </button>
+              )}
+            </div>
             <Link
               to="/settings#notification-settings"
               className="notification-bell-settings"

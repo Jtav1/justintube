@@ -21,6 +21,15 @@ export async function markNotificationsRead(notificationIds) {
 }
 
 /**
+ * Marks all of the current session's unread notifications as read.
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function markAllNotificationsRead() {
+  const res = await apiClient.post('/api/v1/notifications/read-all')
+  return res.data
+}
+
+/**
  * Deletes (soft-deletes) a single notification owned by the current session.
  * @param {number} notificationId
  * @returns {Promise<void>}
