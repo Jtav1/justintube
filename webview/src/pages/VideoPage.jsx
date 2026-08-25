@@ -5,6 +5,7 @@ import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useIsMobile } from '../lib/viewport.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
@@ -15,6 +16,7 @@ function VideoPage() {
   const { user } = useAuth()
   const { error: toastError } = useToast()
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
   const playlistId = searchParams.get('list')
@@ -195,7 +197,7 @@ function VideoPage() {
         </div>
       )}
       {!loading && !error && !hiddenByViewer && video && (
-        <div className={`video-page-layout${expanded ? ' video-page-layout-expanded' : ''}`}>
+        <div className={`video-page-layout${expanded && !isMobile ? ' video-page-layout-expanded' : ''}`}>
           <div className="video-page-main">
             <VideoPlayer
               video={video}
@@ -205,8 +207,8 @@ function VideoPage() {
               onAutoplayNext={handleAutoplayNext}
               onAutoplayChange={handleAutoplayChange}
               autoplayOnLoad={autoplayOnLoad}
-              expanded={expanded}
-              onToggleExpand={() => setExpanded((prev) => !prev)}
+              expanded={expanded && !isMobile}
+              onToggleExpand={isMobile ? undefined : () => setExpanded((prev) => !prev)}
             />
             <VideoComments video={video} />
           </div>
