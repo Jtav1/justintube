@@ -6,6 +6,8 @@ import {
   Link as LinkIcon,
   ListMinus,
   ListPlus,
+  Maximize2,
+  Minimize2,
   TriangleAlert,
   Pencil,
   Repeat,
@@ -83,6 +85,8 @@ function VideoPlayer({
   onAutoplayNext,
   onAutoplayChange,
   autoplayOnLoad = false,
+  expanded = false,
+  onToggleExpand,
 }) {
   const { user } = useAuth()
   const { error: toastError } = useToast()
@@ -722,6 +726,18 @@ function VideoPlayer({
           >
             <Repeat size={18} />
           </button>
+          {onToggleExpand && (
+            <button
+              type="button"
+              className={`video-player-icon-btn${expanded ? ' video-player-icon-btn-active' : ''}`}
+              aria-label={expanded ? 'Collapse player' : 'Expand player'}
+              title={expanded ? 'Collapse player' : 'Expand player'}
+              aria-pressed={expanded}
+              onClick={onToggleExpand}
+            >
+              {expanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
+          )}
         </div>
       </div>
 

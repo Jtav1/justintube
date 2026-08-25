@@ -5,6 +5,7 @@ import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useIsMobile } from '../lib/viewport.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
@@ -15,6 +16,7 @@ function VideoPage() {
   const { user } = useAuth()
   const { error: toastError } = useToast()
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
   const playlistId = searchParams.get('list')
@@ -36,6 +38,10 @@ function VideoPage() {
   // Mirrors VideoSuggested's loaded suggestions so autoplay-next can pick a
   // random one without VideoSuggested needing to own navigation itself.
   const [suggestions, setSuggestions] = useState([])
+  // Expands the player to the full width of the page (between the sidebar
+  // and the screen edge) by stacking the suggested/queue rail below it
+  // instead of beside it - toggled by VideoPlayer's overlay button.
+  const [expanded, setExpanded] = useState(false)
 
   // Arriving via the Random Video button forces autoplay on going forward
   // (it's a persisted, browser-wide preference, not just for this view).
@@ -191,7 +197,7 @@ function VideoPage() {
         </div>
       )}
       {!loading && !error && !hiddenByViewer && video && (
-        <div className="video-page-layout">
+        <div className={`video-page-layout${expanded && !isMobile ? ' video-page-layout-expanded' : ''}`}>
           <div className="video-page-main">
             <VideoPlayer
               video={video}
@@ -201,6 +207,8 @@ function VideoPage() {
               onAutoplayNext={handleAutoplayNext}
               onAutoplayChange={handleAutoplayChange}
               autoplayOnLoad={autoplayOnLoad}
+              expanded={expanded && !isMobile}
+              onToggleExpand={isMobile ? undefined : () => setExpanded((prev) => !prev)}
             />
             <VideoComments video={video} />
           </div>

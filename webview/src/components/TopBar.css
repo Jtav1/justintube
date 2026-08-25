@@ -336,8 +336,6 @@
   background: var(--accent-border);
 }
 
-/* Placed at the end of the file so these rules win the cascade over the
-   unconditional declarations above (same specificity, later source order). */
 @media (max-width: 640px) {
   .topbar {
     display: grid;
