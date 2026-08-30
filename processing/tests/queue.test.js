@@ -4,6 +4,13 @@ import { DelayedError } from "bullmq";
 const computeContentHash = jest.fn();
 const notifyContentHashComplete = jest.fn();
 const notifyContentHashFailed = jest.fn();
+const notifyThumbnailComplete = jest.fn();
+const probeEmbeddedThumbnailStream = jest.fn();
+const resolveThumbnailOutputPath = jest.fn();
+const buildThumbnailFfmpegArgs = jest.fn();
+const buildEmbeddedThumbnailFfmpegArgs = jest.fn();
+const runFfmpeg = jest.fn();
+const stat = jest.fn();
 
 // Must run before any import of lib/queue.js (which imports these modules at
 // load time) - mock registration has to precede the dynamic import below
@@ -12,30 +19,109 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   computeContentHash,
   collectOutputMetadata: jest.fn(),
   probeStreamCodecs: jest.fn(),
+  probeEmbeddedThumbnailStream,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
   notifyContentHashFailed,
   notifyFileVersionComplete: jest.fn(),
   notifyFileVersionFailed: jest.fn(),
-  notifyThumbnailComplete: jest.fn(),
+  notifyThumbnailComplete,
   notifyOriginalUploadNormalizeComplete: jest.fn(),
   notifyOriginalUploadNormalizeFailed: jest.fn(),
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveOriginalInputPath: jest.fn((filename) => `/media/original/${filename}`),
-  resolveThumbnailOutputPath: jest.fn(),
+  resolveThumbnailOutputPath,
   resolveTranscodedOutputPath: jest.fn(),
   resolveNormalizedOutputPath: jest.fn(),
 }));
 jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildFfmpegArgs: jest.fn(),
-  buildThumbnailFfmpegArgs: jest.fn(),
+  buildThumbnailFfmpegArgs,
+  buildEmbeddedThumbnailFfmpegArgs,
   buildNormalizeFfmpegArgs: jest.fn(),
-  runFfmpeg: jest.fn(),
+  runFfmpeg,
+}));
+jest.unstable_mockModule("node:fs/promises", () => ({
+  stat,
 }));
 
 const { processTranscodeJob, MAX_HASH_JOB_RUNS } = await import("../lib/queue.js");
+
+/**
+ * Builds a fake BullMQ job for a "thumbnail" kind job.
+ *
+ * @param {object} [dataOverrides] Initial job.data overrides.
+ * @returns {object} Fake job.
+ */
+function makeThumbnailJob(dataOverrides = {}) {
+  return {
+    id: "thumb-abc123",
+    data: {
+      kind: "thumbnail",
+      inputFilename: "clip.mp3",
+      outputFilename: "thumb-abc123.webp",
+      timestampSeconds: 5,
+      ...dataOverrides,
+    },
+    updateProgress: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
+  beforeEach(() => {
+    probeEmbeddedThumbnailStream.mockReset();
+    resolveThumbnailOutputPath.mockReset().mockImplementation((f) => `/media/thumbnails/${f}`);
+    buildThumbnailFfmpegArgs.mockReset().mockReturnValue(["frame-grab-args"]);
+    buildEmbeddedThumbnailFfmpegArgs.mockReset().mockReturnValue(["embedded-art-args"]);
+    runFfmpeg.mockReset().mockResolvedValue(undefined);
+    stat.mockReset().mockResolvedValue({ size: 1234 });
+    notifyThumbnailComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("extracts embedded cover art instead of grabbing a frame when present", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(2);
+    const job = makeThumbnailJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(buildEmbeddedThumbnailFfmpegArgs).toHaveBeenCalledWith({
+      inputPath: "/media/original/clip.mp3",
+      outputPath: "/media/thumbnails/thumb-abc123.webp",
+      streamIndex: 2,
+    });
+    expect(buildThumbnailFfmpegArgs).not.toHaveBeenCalled();
+    expect(runFfmpeg).toHaveBeenCalledWith(["embedded-art-args"]);
+    expect(result).toEqual({ outputFilename: "thumb-abc123.webp" });
+  });
+
+  test("falls back to a timestamped frame grab when no embedded art exists", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(null);
+    const job = makeThumbnailJob();
+
+    await processTranscodeJob(job);
+
+    expect(buildThumbnailFfmpegArgs).toHaveBeenCalledWith({
+      inputPath: "/media/original/clip.mp3",
+      outputPath: "/media/thumbnails/thumb-abc123.webp",
+      timestampSeconds: 5,
+    });
+    expect(buildEmbeddedThumbnailFfmpegArgs).not.toHaveBeenCalled();
+    expect(runFfmpeg).toHaveBeenCalledWith(["frame-grab-args"]);
+  });
+
+  test("falls back to a frame grab when the embedded-art probe itself fails", async () => {
+    probeEmbeddedThumbnailStream.mockRejectedValue(new Error("ffprobe exited with code 1"));
+    const job = makeThumbnailJob();
+
+    await processTranscodeJob(job);
+
+    expect(buildThumbnailFfmpegArgs).toHaveBeenCalled();
+    expect(buildEmbeddedThumbnailFfmpegArgs).not.toHaveBeenCalled();
+    expect(runFfmpeg).toHaveBeenCalledWith(["frame-grab-args"]);
+  });
+});
 
 /**
  * Builds a fake BullMQ job for a "hash" kind job, tracking `updateData`

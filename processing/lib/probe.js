@@ -160,6 +160,52 @@ export async function probeStreamCodecs(filePath) {
 }
 
 /**
+ * Probes a media file for an embedded cover-art / attached-thumbnail stream
+ * — ID3 APIC frames in audio files, MP4 `covr` atoms, Matroska attached
+ * pictures, etc. ffmpeg/ffprobe surface these as a video stream flagged
+ * `disposition.attached_pic`, distinct from any real decoded video stream
+ * (and present on audio-only files, which have no other video stream at
+ * all). When present, thumbnail generation should extract this image
+ * directly instead of grabbing a decoded frame — see `processThumbnailJob`.
+ *
+ * @param {string} filePath Absolute path to the media file.
+ * @returns {Promise<number|null>} The attached-picture stream's ffmpeg
+ *   stream index, or null when none is present.
+ * @throws {Error} When ffprobe exits non-zero or cannot be spawned.
+ */
+export async function probeEmbeddedThumbnailStream(filePath) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "stream=index,codec_type:stream_disposition=attached_pic",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+
+  const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+  const attachedPic = streams.find(
+    (s) =>
+      s?.codec_type === "video" &&
+      Number(s?.disposition?.attached_pic) === 1,
+  );
+
+  return Number.isInteger(attachedPic?.index) ? attachedPic.index : null;
+}
+
+/**
  * Returns true when applying `profile` would upscale the source (profile
  * height or width exceeds the source). Profiles at or below the source size
  * are eligible for downscale / same-size re-encode.

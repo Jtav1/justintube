@@ -712,6 +712,44 @@ export function buildThumbnailFfmpegArgs({
 }
 
 /**
+ * Builds the ffmpeg argument list for extracting an embedded cover-art /
+ * attached-thumbnail stream (see `probeEmbeddedThumbnailStream`) as the video's
+ * thumbnail, rather than decoding and grabbing a frame at a timestamp. Reuses
+ * the same bounding-box scale + WebP encode as {@link buildThumbnailFfmpegArgs}
+ * so both paths produce an equivalent output regardless of source.
+ *
+ * @param {object} options Thumbnail execution options.
+ * @param {string} options.inputPath Absolute path to the source media file.
+ * @param {string} options.outputPath Absolute path for the output `.webp` file.
+ * @param {number} options.streamIndex ffmpeg stream index of the attached picture.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildEmbeddedThumbnailFfmpegArgs({
+  inputPath,
+  outputPath,
+  streamIndex,
+}) {
+  return [
+    "-y",
+    "-i",
+    inputPath,
+    "-map",
+    `0:${streamIndex}`,
+    "-frames:v",
+    "1",
+    "-an",
+    "-sn",
+    "-vf",
+    buildThumbnailScaleFilter(),
+    "-c:v",
+    "libwebp",
+    "-quality",
+    "70",
+    outputPath,
+  ];
+}
+
+/**
  * Runs ffmpeg with the given argument list via `execFile`.
  *
  * @param {string[]} args FFmpeg CLI arguments (no binary name).

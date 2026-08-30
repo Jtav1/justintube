@@ -15,8 +15,14 @@ import {
   resolveThumbnailOutputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
-import { collectOutputMetadata, computeContentHash, probeStreamCodecs } from "./probe.js";
 import {
+  collectOutputMetadata,
+  computeContentHash,
+  probeEmbeddedThumbnailStream,
+  probeStreamCodecs,
+} from "./probe.js";
+import {
+  buildEmbeddedThumbnailFfmpegArgs,
   buildFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildThumbnailFfmpegArgs,
@@ -106,11 +112,16 @@ export function createTranscodeQueue(connection) {
 }
 
 /**
- * Processes a single thumbnail (frame-extraction) job: resolve paths, run
- * ffmpeg, confirm the output exists, and notify the API. Unlike rendition
- * jobs, no FILE_VERSIONS row exists for a thumbnail, so there's no
- * width/height/resolution metadata to collect — the API only needs the
- * output filename.
+ * Processes a single thumbnail job: resolve paths, run ffmpeg, confirm the
+ * output exists, and notify the API. Unlike rendition jobs, no FILE_VERSIONS
+ * row exists for a thumbnail, so there's no width/height/resolution metadata
+ * to collect — the API only needs the output filename.
+ *
+ * Prioritizes any embedded cover art / attached thumbnail already present in
+ * the source (ID3 art on audio files, MP4 `covr` atoms, Matroska attached
+ * pictures, etc. — see `probeEmbeddedThumbnailStream`) over generating one,
+ * for both video and audio-only uploads. Only falls back to a timestamped
+ * frame grab (the prior, only, behavior) when no such embedded image exists.
  *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
@@ -130,11 +141,35 @@ async function processThumbnailJob(job) {
 
   const inputPath = resolveOriginalInputPath(inputFilename);
   const outputPath = resolveThumbnailOutputPath(outputFilename);
-  const args = buildThumbnailFfmpegArgs({
-    inputPath,
-    outputPath,
-    timestampSeconds,
-  });
+
+  let embeddedStreamIndex = null;
+  try {
+    embeddedStreamIndex = await probeEmbeddedThumbnailStream(inputPath);
+  } catch (err) {
+    logger.error(
+      { err },
+      `[thumbnail ${jobId}] embedded-thumbnail probe failed; falling back to frame grab`,
+    );
+  }
+
+  const args =
+    embeddedStreamIndex != null
+      ? buildEmbeddedThumbnailFfmpegArgs({
+          inputPath,
+          outputPath,
+          streamIndex: embeddedStreamIndex,
+        })
+      : buildThumbnailFfmpegArgs({
+          inputPath,
+          outputPath,
+          timestampSeconds,
+        });
+
+  if (embeddedStreamIndex != null) {
+    logger.info(
+      `[thumbnail ${jobId}] using embedded cover art (stream 0:${embeddedStreamIndex})`,
+    );
+  }
 
   await job.updateProgress(40);
   await runFfmpeg(args);
