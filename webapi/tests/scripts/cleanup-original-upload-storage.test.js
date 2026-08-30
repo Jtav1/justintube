@@ -59,7 +59,7 @@ describe("cleanup-original-upload-storage script", () => {
   test("--dry-run deletes nothing and leaves the manifest untouched", async () => {
     const { oldAbsPath, newAbsPath } = await seedAndCopyOneUpload();
 
-    const result = await cleanupOriginalUploadStorage({ confirm: false });
+    const result = await cleanupOriginalUploadStorage({ dryRun: true });
 
     expect(result.deleted).toBe(0);
     expect(existsSync(oldAbsPath)).toBe(true);
@@ -68,10 +68,10 @@ describe("cleanup-original-upload-storage script", () => {
     expect(manifest).toHaveLength(1);
   });
 
-  test("--confirm deletes the old file, leaves the new file, and empties the manifest", async () => {
+  test("default (no flag) deletes the old file, leaves the new file, and empties the manifest", async () => {
     const { oldAbsPath, newAbsPath } = await seedAndCopyOneUpload();
 
-    const result = await cleanupOriginalUploadStorage({ confirm: true });
+    const result = await cleanupOriginalUploadStorage();
 
     expect(result.deleted).toBe(1);
     expect(existsSync(oldAbsPath)).toBe(false);
@@ -80,11 +80,11 @@ describe("cleanup-original-upload-storage script", () => {
     expect(manifest).toHaveLength(0);
   });
 
-  test("re-running --confirm after entries are already cleaned up is a safe no-op", async () => {
+  test("re-running after entries are already cleaned up is a safe no-op", async () => {
     await seedAndCopyOneUpload();
-    await cleanupOriginalUploadStorage({ confirm: true });
+    await cleanupOriginalUploadStorage();
 
-    const secondRun = await cleanupOriginalUploadStorage({ confirm: true });
+    const secondRun = await cleanupOriginalUploadStorage();
 
     expect(secondRun.deleted).toBe(0);
     expect(secondRun.failed).toBe(0);
@@ -95,7 +95,7 @@ describe("cleanup-original-upload-storage script", () => {
     // Simulate something having gone wrong between the two script runs.
     await rm(newAbsPath, { force: true });
 
-    const result = await cleanupOriginalUploadStorage({ confirm: true });
+    const result = await cleanupOriginalUploadStorage();
 
     expect(result.failed).toBe(1);
     expect(result.deleted).toBe(0);
@@ -107,7 +107,7 @@ describe("cleanup-original-upload-storage script", () => {
   });
 
   test("reports nothing to clean up when the manifest is empty", async () => {
-    const result = await cleanupOriginalUploadStorage({ confirm: true });
+    const result = await cleanupOriginalUploadStorage();
     expect(result).toEqual({ deleted: 0, skipped: 0, failed: 0 });
   });
 });

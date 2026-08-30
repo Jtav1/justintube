@@ -198,6 +198,99 @@ describe("copy-original-upload-storage script", () => {
     });
   });
 
+  describe("dry-run mode", () => {
+    test("migrateOriginalUploads reports counts but copies nothing, updates nothing, and writes no manifest entry", async () => {
+      const owner = await seedUser({ emailVerified: true });
+      const upload = await seedUpload({
+        userId: owner.id,
+        fileExtension: "mp4",
+        storagePath: "original/dry-run-flat.mp4",
+      });
+      await writeFakeMediaFile("original/dry-run-flat.mp4");
+
+      const result = await migrateOriginalUploads({ dryRun: true });
+
+      expect(result.migrated).toBe(1);
+      expect(result.failed).toBe(0);
+
+      const reloaded = await OriginalUpload.findByPk(upload.id);
+      // Row is untouched - still the old storagePath, uuid unchanged.
+      expect(reloaded.storagePath).toBe("original/dry-run-flat.mp4");
+      // No new file was ever written.
+      expect(existsSync(resolveMediaPath(`original/${owner.id}/${reloaded.uuid}.mp4`))).toBe(false);
+      // Nothing recorded to the manifest, since nothing was actually copied.
+      expect(await readManifest()).toEqual([]);
+    });
+
+    test("migrateOriginalUploads dry-run still reports the db-only (resume) case without writing", async () => {
+      const owner = await seedUser({ emailVerified: true });
+      const upload = await seedUpload({
+        userId: owner.id,
+        fileExtension: "mp4",
+        storagePath: "original/dry-run-resume.mp4",
+      });
+      await writeFakeMediaFile(`original/${owner.id}/${upload.uuid}.mp4`);
+
+      const result = await migrateOriginalUploads({ dryRun: true });
+
+      expect(result.migrated).toBe(1);
+      const reloaded = await OriginalUpload.findByPk(upload.id);
+      expect(reloaded.storagePath).toBe("original/dry-run-resume.mp4");
+      expect(await readManifest()).toEqual([]);
+    });
+
+    test("migrateOriginalUploads dry-run still reports a missing source file as failed", async () => {
+      const owner = await seedUser({ emailVerified: true });
+      await seedUpload({
+        userId: owner.id,
+        fileExtension: "mp4",
+        storagePath: "original/dry-run-missing.mp4",
+      });
+
+      const result = await migrateOriginalUploads({ dryRun: true });
+
+      expect(result.failed).toBe(1);
+    });
+
+    test("migrateFileVersions dry-run copies nothing and updates nothing", async () => {
+      const owner = await seedUser({ emailVerified: true });
+      const upload = await seedUpload({ userId: owner.id });
+      const version = await seedFileVersion(upload.id, {
+        storagePath: "transcoded/dry-run-old.mp4",
+      });
+      await writeFakeMediaFile("transcoded/dry-run-old.mp4");
+
+      const result = await migrateFileVersions({ dryRun: true });
+
+      expect(result.migrated).toBe(1);
+      const reloaded = await FileVersion.findByPk(version.id);
+      expect(reloaded.storagePath).toBe("transcoded/dry-run-old.mp4");
+      expect(
+        existsSync(resolveMediaPath(`transcoded/${owner.id}/${version.uuidName}.mp4`)),
+      ).toBe(false);
+    });
+
+    test("migrateThumbnails dry-run copies nothing and updates nothing", async () => {
+      const owner = await seedUser({ emailVerified: true });
+      const upload = await seedUpload({ userId: owner.id });
+      const thumbnail = await seedVideoThumbnail(upload.id, {
+        thumbnailFilename: "dry-run-old-thumb.jpg",
+      });
+      const oldAbsPath = resolveMediaPath("thumbnails/dry-run-old-thumb.jpg");
+      await mkdir(dirname(oldAbsPath), { recursive: true });
+      await writeFile(oldAbsPath, "fake thumbnail bytes");
+
+      const result = await migrateThumbnails({ dryRun: true });
+
+      expect(result.migrated).toBe(1);
+      const reloaded = await VideoThumbnail.findByPk(thumbnail.id);
+      expect(reloaded.thumbnailFilename).toBe("dry-run-old-thumb.jpg");
+      expect(existsSync(resolveMediaPath(`thumbnails/${owner.id}/dry-run-old-thumb.jpg`))).toBe(
+        false,
+      );
+    });
+  });
+
   describe("readManifest", () => {
     test("returns an empty array when no manifest file exists yet", async () => {
       expect(MANIFEST_PATH).toBeTruthy();

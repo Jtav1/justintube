@@ -48,13 +48,17 @@ async function appendManifestEntry(entry) {
  * `cleanup-original-upload-storage.js` removes it, and only after the admin
  * has verified the new layout.
  *
+ * @param {{ dryRun?: boolean }} [options] `dryRun: true` reports what would
+ *   happen (paths, existence checks) without copying any file, writing any
+ *   row, or touching the manifest.
  * @returns {Promise<{ migrated: number, skipped: number, failed: number }>} Run summary.
  */
-export async function migrateOriginalUploads() {
+export async function migrateOriginalUploads({ dryRun = false } = {}) {
   const rows = await OriginalUpload.findAll();
   let migrated = 0;
   let skipped = 0;
   let failed = 0;
+  const prefix = dryRun ? "[dry-run] " : "";
 
   for (const upload of rows) {
     try {
@@ -81,14 +85,18 @@ export async function migrateOriginalUploads() {
 
       if (existsSync(newAbsPath)) {
         // File already copied (interrupted prior run) - just fix up the row.
-        await upload.update({ uuid, storagePath: newStoragePath });
-        await appendManifestEntry({
-          table: "ORIGINAL_UPLOADS",
-          id: upload.id,
-          oldAbsolutePath: oldAbsPath,
-          newAbsolutePath: newAbsPath,
-        });
-        console.log(`[db-only] ORIGINAL_UPLOADS ${upload.id}: already at ${newStoragePath}`);
+        console.log(
+          `${prefix}[db-only] ORIGINAL_UPLOADS ${upload.id}: already at ${newStoragePath}`,
+        );
+        if (!dryRun) {
+          await upload.update({ uuid, storagePath: newStoragePath });
+          await appendManifestEntry({
+            table: "ORIGINAL_UPLOADS",
+            id: upload.id,
+            oldAbsolutePath: oldAbsPath,
+            newAbsolutePath: newAbsPath,
+          });
+        }
         migrated++;
         continue;
       }
@@ -101,17 +109,20 @@ export async function migrateOriginalUploads() {
         continue;
       }
 
-      const oldStoragePath = upload.storagePath;
-      await mkdir(dirname(newAbsPath), { recursive: true });
-      await copyFile(oldAbsPath, newAbsPath);
-      await upload.update({ uuid, storagePath: newStoragePath });
-      await appendManifestEntry({
-        table: "ORIGINAL_UPLOADS",
-        id: upload.id,
-        oldAbsolutePath: oldAbsPath,
-        newAbsolutePath: newAbsPath,
-      });
-      console.log(`[ok] ORIGINAL_UPLOADS ${upload.id}: ${oldStoragePath} -> ${newStoragePath}`);
+      console.log(
+        `${prefix}[ok] ORIGINAL_UPLOADS ${upload.id}: ${upload.storagePath} -> ${newStoragePath}`,
+      );
+      if (!dryRun) {
+        await mkdir(dirname(newAbsPath), { recursive: true });
+        await copyFile(oldAbsPath, newAbsPath);
+        await upload.update({ uuid, storagePath: newStoragePath });
+        await appendManifestEntry({
+          table: "ORIGINAL_UPLOADS",
+          id: upload.id,
+          oldAbsolutePath: oldAbsPath,
+          newAbsolutePath: newAbsPath,
+        });
+      }
       migrated++;
     } catch (err) {
       console.error(`[error] ORIGINAL_UPLOADS ${upload.id} failed:`, err);
@@ -119,7 +130,9 @@ export async function migrateOriginalUploads() {
     }
   }
 
-  console.log(`ORIGINAL_UPLOADS: migrated=${migrated} skipped=${skipped} failed=${failed}`);
+  console.log(
+    `${prefix}ORIGINAL_UPLOADS: migrated=${migrated} skipped=${skipped} failed=${failed}`,
+  );
   return { migrated, skipped, failed };
 }
 
@@ -129,13 +142,16 @@ export async function migrateOriginalUploads() {
  * the *parent* upload's userId) and updates `storagePath`. No new column -
  * renditions already have UUID filenames, only the folder changes.
  *
+ * @param {{ dryRun?: boolean }} [options] `dryRun: true` reports what would
+ *   happen without copying any file, writing any row, or touching the manifest.
  * @returns {Promise<{ migrated: number, skipped: number, failed: number }>} Run summary.
  */
-export async function migrateFileVersions() {
+export async function migrateFileVersions({ dryRun = false } = {}) {
   const versions = await FileVersion.findAll();
   let migrated = 0;
   let skipped = 0;
   let failed = 0;
+  const prefix = dryRun ? "[dry-run] " : "";
 
   for (const version of versions) {
     try {
@@ -154,13 +170,18 @@ export async function migrateFileVersions() {
       const newAbsPath = resolveMediaPath(newStoragePath);
 
       if (existsSync(newAbsPath)) {
-        await version.update({ storagePath: newStoragePath });
-        await appendManifestEntry({
-          table: "FILE_VERSIONS",
-          id: version.id,
-          oldAbsolutePath: oldAbsPath,
-          newAbsolutePath: newAbsPath,
-        });
+        console.log(
+          `${prefix}[db-only] FILE_VERSIONS ${version.id}: already at ${newStoragePath}`,
+        );
+        if (!dryRun) {
+          await version.update({ storagePath: newStoragePath });
+          await appendManifestEntry({
+            table: "FILE_VERSIONS",
+            id: version.id,
+            oldAbsolutePath: oldAbsPath,
+            newAbsolutePath: newAbsPath,
+          });
+        }
         migrated++;
         continue;
       }
@@ -169,24 +190,29 @@ export async function migrateFileVersions() {
         // Pending/failed render - nothing to copy, but the path still needs
         // to point at where the file will eventually land.
         console.warn(
-          `[skip] FILE_VERSIONS ${version.id}: source missing at ${version.storagePath} (pending/failed?)`,
+          `${prefix}[skip] FILE_VERSIONS ${version.id}: source missing at ${version.storagePath} (pending/failed?)`,
         );
-        await version.update({ storagePath: newStoragePath });
+        if (!dryRun) {
+          await version.update({ storagePath: newStoragePath });
+        }
         skipped++;
         continue;
       }
 
-      const oldStoragePath = version.storagePath;
-      await mkdir(dirname(newAbsPath), { recursive: true });
-      await copyFile(oldAbsPath, newAbsPath);
-      await version.update({ storagePath: newStoragePath });
-      await appendManifestEntry({
-        table: "FILE_VERSIONS",
-        id: version.id,
-        oldAbsolutePath: oldAbsPath,
-        newAbsolutePath: newAbsPath,
-      });
-      console.log(`[ok] FILE_VERSIONS ${version.id}: ${oldStoragePath} -> ${newStoragePath}`);
+      console.log(
+        `${prefix}[ok] FILE_VERSIONS ${version.id}: ${version.storagePath} -> ${newStoragePath}`,
+      );
+      if (!dryRun) {
+        await mkdir(dirname(newAbsPath), { recursive: true });
+        await copyFile(oldAbsPath, newAbsPath);
+        await version.update({ storagePath: newStoragePath });
+        await appendManifestEntry({
+          table: "FILE_VERSIONS",
+          id: version.id,
+          oldAbsolutePath: oldAbsPath,
+          newAbsolutePath: newAbsPath,
+        });
+      }
       migrated++;
     } catch (err) {
       console.error(`[error] FILE_VERSIONS ${version.id} failed:`, err);
@@ -194,7 +220,7 @@ export async function migrateFileVersions() {
     }
   }
 
-  console.log(`FILE_VERSIONS: migrated=${migrated} skipped=${skipped} failed=${failed}`);
+  console.log(`${prefix}FILE_VERSIONS: migrated=${migrated} skipped=${skipped} failed=${failed}`);
   return { migrated, skipped, failed };
 }
 
@@ -206,13 +232,16 @@ export async function migrateFileVersions() {
  * their videoId-based basename, manual uploads keep their uuid-based one) -
  * only the folder changes.
  *
+ * @param {{ dryRun?: boolean }} [options] `dryRun: true` reports what would
+ *   happen without copying any file, writing any row, or touching the manifest.
  * @returns {Promise<{ migrated: number, skipped: number, failed: number }>} Run summary.
  */
-export async function migrateThumbnails() {
+export async function migrateThumbnails({ dryRun = false } = {}) {
   const thumbnails = await VideoThumbnail.findAll();
   let migrated = 0;
   let skipped = 0;
   let failed = 0;
+  const prefix = dryRun ? "[dry-run] " : "";
 
   for (const thumbnail of thumbnails) {
     try {
@@ -231,13 +260,18 @@ export async function migrateThumbnails() {
       const newAbsPath = join(mediaDir, "thumbnails", newFilename);
 
       if (existsSync(newAbsPath)) {
-        await thumbnail.update({ thumbnailFilename: newFilename });
-        await appendManifestEntry({
-          table: "VIDEO_THUMBNAIL",
-          id: thumbnail.id,
-          oldAbsolutePath: oldAbsPath,
-          newAbsolutePath: newAbsPath,
-        });
+        console.log(
+          `${prefix}[db-only] VIDEO_THUMBNAIL ${thumbnail.id}: already at ${newFilename}`,
+        );
+        if (!dryRun) {
+          await thumbnail.update({ thumbnailFilename: newFilename });
+          await appendManifestEntry({
+            table: "VIDEO_THUMBNAIL",
+            id: thumbnail.id,
+            oldAbsolutePath: oldAbsPath,
+            newAbsolutePath: newAbsPath,
+          });
+        }
         migrated++;
         continue;
       }
@@ -250,19 +284,20 @@ export async function migrateThumbnails() {
         continue;
       }
 
-      const oldThumbnailFilename = thumbnail.thumbnailFilename;
-      await mkdir(dirname(newAbsPath), { recursive: true });
-      await copyFile(oldAbsPath, newAbsPath);
-      await thumbnail.update({ thumbnailFilename: newFilename });
-      await appendManifestEntry({
-        table: "VIDEO_THUMBNAIL",
-        id: thumbnail.id,
-        oldAbsolutePath: oldAbsPath,
-        newAbsolutePath: newAbsPath,
-      });
       console.log(
-        `[ok] VIDEO_THUMBNAIL ${thumbnail.id}: ${oldThumbnailFilename} -> ${newFilename}`,
+        `${prefix}[ok] VIDEO_THUMBNAIL ${thumbnail.id}: ${thumbnail.thumbnailFilename} -> ${newFilename}`,
       );
+      if (!dryRun) {
+        await mkdir(dirname(newAbsPath), { recursive: true });
+        await copyFile(oldAbsPath, newAbsPath);
+        await thumbnail.update({ thumbnailFilename: newFilename });
+        await appendManifestEntry({
+          table: "VIDEO_THUMBNAIL",
+          id: thumbnail.id,
+          oldAbsolutePath: oldAbsPath,
+          newAbsolutePath: newAbsPath,
+        });
+      }
       migrated++;
     } catch (err) {
       console.error(`[error] VIDEO_THUMBNAIL ${thumbnail.id} failed:`, err);
@@ -270,7 +305,9 @@ export async function migrateThumbnails() {
     }
   }
 
-  console.log(`VIDEO_THUMBNAIL: migrated=${migrated} skipped=${skipped} failed=${failed}`);
+  console.log(
+    `${prefix}VIDEO_THUMBNAIL: migrated=${migrated} skipped=${skipped} failed=${failed}`,
+  );
   return { migrated, skipped, failed };
 }
 
@@ -304,22 +341,34 @@ export async function readManifest() {
  * layout before running `cleanup-original-upload-storage.js` to reclaim the
  * disk space. Safe to re-run: every row is checked against its expected
  * final state before any work is done, so an interrupted run can simply be
- * re-invoked. Run with `npm run copy-original-upload-storage` (inside the
- * `justintube-api` container in production: `docker compose exec webapi
- * npm run copy-original-upload-storage`).
+ * re-invoked. Pass `--dry-run` to preview what would be copied/updated
+ * without writing anything. Run with `npm run migrate-upload-storage`
+ * (inside the `justintube-api` container in production: `docker compose exec
+ * webapi npm run migrate-upload-storage -- --dry-run`, then again without
+ * `--dry-run` to actually copy).
  *
  * @returns {Promise<void>} Resolves once all three tables have been processed.
  */
 async function main() {
-  console.log("Starting storage-layout migration (copy phase)...");
-  await migrateOriginalUploads();
-  await migrateFileVersions();
-  await migrateThumbnails();
-  console.log(`Done. Manifest: ${MANIFEST_PATH}`);
+  const dryRun = process.argv.slice(2).includes("--dry-run");
   console.log(
-    "Old files were left in place. Once you've verified the new layout, run " +
-      "`npm run cleanup-original-upload-storage -- --dry-run` and then `--confirm`.",
+    dryRun
+      ? "Starting storage-layout migration (copy phase, dry run) ..."
+      : "Starting storage-layout migration (copy phase) ...",
   );
+  await migrateOriginalUploads({ dryRun });
+  await migrateFileVersions({ dryRun });
+  await migrateThumbnails({ dryRun });
+  if (dryRun) {
+    console.log("Dry run complete. Nothing was written. Re-run without --dry-run to apply.");
+  } else {
+    console.log(`Done. Manifest: ${MANIFEST_PATH}`);
+    console.log(
+      "Old files were left in place. Once you've verified the new layout, run " +
+        "`npm run cleanup-old-upload-storage -- --dry-run` to preview, then " +
+        "`npm run cleanup-old-upload-storage` to actually delete them.",
+    );
+  }
 }
 
 const isMain =
