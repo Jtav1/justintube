@@ -296,6 +296,50 @@ describe("POST /internal/original-uploads/:jobId/normalize-complete and normaliz
     expect(renditionCall).toBeDefined();
   });
 
+  test("preserves the userId subfolder segment when deriving the filename sent to processing", async () => {
+    globalThis.fetch = acceptAllJobsFetchMock();
+
+    const owner = await seedUser({ emailVerified: true });
+    const upload = await seedUpload({
+      status: "converting",
+      fileExtension: "mov",
+      userId: owner.id,
+      storagePath: `original/${generateOldStoragePathSuffix()}`,
+    });
+    await seedMetadata(upload.id);
+
+    // Regression test: newStoredFilename used to be storagePath.split("/").pop()
+    // (only the basename), which silently dropped the "<userId>/" subfolder
+    // segment and would leave finalizeUploadTranscodes/enqueueDuplicateHashCheck
+    // sending processing a filename it could no longer find under original/.
+    const newStoragePath = `original/${owner.id}/newuuid-1234.mp4`;
+    await client
+      .post(`/internal/original-uploads/normalize-${upload.videoId}/normalize-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: newStoragePath,
+        fileExtension: "mp4",
+      });
+
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.storagePath).toBe(newStoragePath);
+    expect(reloaded.uuid).toBe("newuuid-1234");
+
+    const expectedFilename = `${owner.id}/newuuid-1234.mp4`;
+    const transcodeCall = globalThis.fetch.mock.calls.find((call) => {
+      const body = JSON.parse(String(call[1].body));
+      return body.filename === expectedFilename;
+    });
+    expect(transcodeCall).toBeDefined();
+
+    // Every job in the batch (both the hash job and finalizeUploadTranscodes's
+    // jobs) must have received the full subfolder-aware filename.
+    for (const call of globalThis.fetch.mock.calls) {
+      const body = JSON.parse(String(call[1].body));
+      expect(body.filename).toBe(expectedFilename);
+    }
+  });
+
   test("honors a persisted skipThumbnail=true when finalizing", async () => {
     globalThis.fetch = acceptAllJobsFetchMock();
 

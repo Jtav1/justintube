@@ -151,7 +151,11 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
   });
 
   test("owner can queue thumbnail regeneration at a timestamp", async () => {
-    const { ownerKey, uploadId } = await seedOwnedVideo({ videoId: "regenvid1", fileExtension: "mp4" });
+    const { ownerId, ownerKey, uploadId } = await seedOwnedVideo({
+      videoId: "regenvid1",
+      fileExtension: "mp4",
+    });
+    const seededRow = await OriginalUpload.findByPk(uploadId);
     const fetchMock = acceptJobFetchMock();
     globalThis.fetch = fetchMock;
 
@@ -166,11 +170,12 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/transcode");
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    expect(payload.filename).toBe("regenvid1.mp4");
+    // Derived from storagePath (uuid-based), not reconstructed from videoId.
+    expect(payload.filename).toBe(seededRow.storagePath.replace(/^original\//, ""));
     expect(payload.jobs).toEqual([
       {
         jobId: "regenvid1",
-        outputFilename: "regenvid1.webp",
+        outputFilename: `${ownerId}/regenvid1.webp`,
         kind: "thumbnail",
         timestampSeconds: 12.5,
       },

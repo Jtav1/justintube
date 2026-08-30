@@ -1,5 +1,5 @@
 import { accessSync, constants, mkdirSync } from "node:fs";
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
@@ -52,29 +52,56 @@ export class TranscodeValidationError extends Error {
 }
 
 /**
- * Validates that `filename` is a plain basename (no path separators or `..`).
+ * Validates that `value` is either a plain basename, or exactly one
+ * subfolder segment plus a basename (`<segment>/<basename>`), where
+ * `segment` is a positive-integer userId or the literal `_unowned` — the
+ * per-user media layout convention shared with webapi. Rejects traversal,
+ * absolute paths, multiple nesting levels, and empty segments.
  *
- * @param {unknown} filename Value from the request body.
- * @returns {string} Sanitized basename string.
- * @throws {TranscodeValidationError} When the filename is missing or unsafe.
+ * @param {unknown} value Value from the request body.
+ * @param {string} fieldLabel Field name to use in error messages.
+ * @returns {string} Sanitized relative path string.
+ * @throws {TranscodeValidationError} When the value is missing or unsafe.
  */
-export function validateInputFilename(filename) {
-  if (typeof filename !== "string" || !filename.trim()) {
+function validateRelativeMediaPath(value, fieldLabel) {
+  if (typeof value !== "string" || !value.trim()) {
     throw new TranscodeValidationError(
-      "filename is required and must be a string",
+      `${fieldLabel} is required and must be a string`,
     );
   }
 
-  const trimmed = filename.trim();
+  const trimmed = value.trim();
   if (
-    trimmed !== basename(trimmed) ||
     trimmed.includes("..") ||
-    trimmed.includes("/") ||
     trimmed.includes("\\") ||
-    trimmed.includes(sep)
+    trimmed.includes(sep) ||
+    isAbsolute(trimmed)
   ) {
     throw new TranscodeValidationError(
-      "filename must be a basename without path separators",
+      `${fieldLabel} must not contain traversal or absolute paths`,
+    );
+  }
+
+  const parts = trimmed.split("/");
+  if (parts.length > 2 || parts.some((part) => !part)) {
+    throw new TranscodeValidationError(
+      `${fieldLabel} must be a basename, or "<userId|_unowned>/<basename>"`,
+    );
+  }
+
+  if (parts.length === 2) {
+    const [segment, name] = parts;
+    if (segment !== "_unowned" && !/^[1-9][0-9]*$/.test(segment)) {
+      throw new TranscodeValidationError(
+        `${fieldLabel} subfolder must be a positive integer userId or "_unowned"`,
+      );
+    }
+    if (name !== basename(name)) {
+      throw new TranscodeValidationError(`${fieldLabel} basename is invalid`);
+    }
+  } else if (trimmed !== basename(trimmed)) {
+    throw new TranscodeValidationError(
+      `${fieldLabel} must be a basename without path separators`,
     );
   }
 
@@ -82,10 +109,26 @@ export function validateInputFilename(filename) {
 }
 
 /**
- * Resolves an original-media basename to an absolute path under `originalDir`
- * and confirms the file is readable.
+ * Validates that `filename` is a plain basename, or a
+ * `<userId|_unowned>/<basename>` relative path (see
+ * {@link validateRelativeMediaPath}).
  *
- * @param {string} filename Validated basename under `/media/original`.
+ * @param {unknown} filename Value from the request body.
+ * @returns {string} Sanitized relative path string.
+ * @throws {TranscodeValidationError} When the filename is missing or unsafe.
+ */
+export function validateInputFilename(filename) {
+  return validateRelativeMediaPath(filename, "filename");
+}
+
+/**
+ * Resolves an original-media relative path to an absolute path under
+ * `originalDir` and confirms the file is readable. Deliberately does not
+ * create any directory — a missing subfolder here means "not found", not
+ * "create it for me" (unlike the output resolvers below, which do write into
+ * a not-yet-existing per-user subfolder).
+ *
+ * @param {string} filename Validated relative path under `/media/original`.
  * @returns {string} Absolute path to the readable original file.
  * @throws {TranscodeValidationError} When the file is missing or unreadable.
  */
@@ -105,38 +148,55 @@ export function resolveOriginalInputPath(filename) {
 }
 
 /**
- * Builds the absolute output path for a transcoded basename under
- * `transcodedDir`.
+ * Validates `outputFilename` and resolves it to an absolute path under
+ * `baseDir`, creating its parent directory (e.g. a not-yet-existing per-user
+ * subfolder) if needed.
  *
- * @param {string} outputFilename Basename to write under `/media/transcoded`.
+ * @param {string} baseDir Absolute directory the output belongs under.
+ * @param {string} outputFilename Relative path to write under `baseDir`.
+ * @param {string} fieldLabel Field name to use in error messages.
+ * @returns {string} Absolute path for the output file.
+ */
+function resolveOutputPath(baseDir, outputFilename, fieldLabel) {
+  const safeName = validateRelativeMediaPath(outputFilename, fieldLabel);
+  const absolutePath = join(baseDir, safeName);
+  mkdirSync(dirname(absolutePath), { recursive: true });
+  return absolutePath;
+}
+
+/**
+ * Builds the absolute output path for a transcoded rendition under
+ * `transcodedDir`, e.g. `<userId>/<uuid>.<ext>`.
+ *
+ * @param {string} outputFilename Relative path to write under `/media/transcoded`.
  * @returns {string} Absolute path for the output file.
  */
 export function resolveTranscodedOutputPath(outputFilename) {
-  return join(transcodedDir, outputFilename);
+  return resolveOutputPath(transcodedDir, outputFilename, "outputFilename");
 }
 
 /**
- * Builds the absolute output path for a normalize job's basename under
+ * Builds the absolute output path for a normalize job's output under
  * `originalDir` — the normalized (H.264/AAC MP4) file becomes the upload's
  * new "original", so it belongs alongside other original uploads rather than
  * in `transcodedDir` (which holds derived renditions, not sources). Its
- * basename always differs from the source input's (new extension), so this
- * never collides with the file ffmpeg is reading.
+ * basename always differs from the source input's (new extension/new uuid),
+ * so this never collides with the file ffmpeg is reading.
  *
- * @param {string} outputFilename Basename to write under `/media/original`.
+ * @param {string} outputFilename Relative path to write under `/media/original`.
  * @returns {string} Absolute path for the output file.
  */
 export function resolveNormalizedOutputPath(outputFilename) {
-  return join(originalDir, outputFilename);
+  return resolveOutputPath(originalDir, outputFilename, "outputFilename");
 }
 
 /**
- * Builds the absolute output path for a thumbnail basename under
- * `thumbnailsDir`.
+ * Builds the absolute output path for a thumbnail under `thumbnailsDir`, e.g.
+ * `<userId>/<basename>`.
  *
- * @param {string} outputFilename Basename to write under `/media/thumbnails`.
+ * @param {string} outputFilename Relative path to write under `/media/thumbnails`.
  * @returns {string} Absolute path for the output file.
  */
 export function resolveThumbnailOutputPath(outputFilename) {
-  return join(thumbnailsDir, outputFilename);
+  return resolveOutputPath(thumbnailsDir, outputFilename, "outputFilename");
 }

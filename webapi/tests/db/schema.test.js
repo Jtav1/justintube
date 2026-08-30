@@ -73,8 +73,8 @@ describe("Video-upload schema (SQLite)", () => {
     test("ORIGINAL_UPLOADS.status defaults to 'uploaded'", async () => {
       const result = await execute(
         `INSERT INTO ORIGINAL_UPLOADS
-           (original_filename, video_id, file_extension, storage_path)
-         VALUES ('a.mp4', 'defat', 'mp4', 'defat.mp4')`,
+           (original_filename, video_id, uuid, file_extension, storage_path)
+         VALUES ('a.mp4', 'defat', '11111111-1111-1111-1111-111111111111', 'mp4', 'original/_unowned/defat.mp4')`,
       );
       const rows = await queryRows(
         "SELECT * FROM ORIGINAL_UPLOADS WHERE id = :id",

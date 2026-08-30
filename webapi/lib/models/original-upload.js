@@ -25,6 +25,16 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       unique: "uq_video_id",
     },
+    /**
+     * Internal storage filename (no extension) — the on-disk basename for
+     * this upload's original file, distinct from the public `videoId`. Never
+     * exposed in API responses.
+     */
+    uuid: {
+      type: DataTypes.STRING(36),
+      allowNull: false,
+      unique: "uq_original_uploads_uuid",
+    },
     fileExtension: {
       type: DataTypes.STRING(16),
       allowNull: false,

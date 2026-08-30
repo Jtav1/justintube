@@ -1,4 +1,5 @@
 import { unlink } from "node:fs/promises";
+import { basename } from "node:path";
 import { Router } from "express";
 import { Op } from "sequelize";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
@@ -364,12 +365,18 @@ export function createInternalOriginalUploadsRouter() {
     }
 
     const previousStoragePath = upload.storagePath;
-    const newStoredFilename = storagePath.split("/").pop();
+    // Path relative to original/, e.g. "42/<newUuid>.mp4" — must keep the
+    // subfolder segment (not just the basename), or the subsequent
+    // finalizeUploadTranscodes/enqueueDuplicateHashCheck calls would send
+    // processing a filename it can no longer find under original/.
+    const newStoredFilename = storagePath.replace(/^original\//, "");
+    const newUuid = basename(newStoredFilename, `.${fileExtension}`);
 
     await upload.update({
       fileExtension,
       mimeType: typeof body.mimeType === "string" ? body.mimeType : null,
       storagePath,
+      uuid: newUuid,
       videoWidth: typeof body.videoWidth === "number" ? body.videoWidth : null,
       videoHeight: typeof body.videoHeight === "number" ? body.videoHeight : null,
       resolution: typeof body.resolution === "string" ? body.resolution : null,

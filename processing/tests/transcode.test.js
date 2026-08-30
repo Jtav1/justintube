@@ -24,14 +24,40 @@ describe("validateInputFilename", () => {
     expect(validateInputFilename("abc.mp4")).toBe("abc.mp4");
   });
 
-  test("rejects path traversal and separators", () => {
+  test("accepts one userId subfolder segment", () => {
+    expect(validateInputFilename("42/abc.mp4")).toBe("42/abc.mp4");
+  });
+
+  test("accepts the _unowned subfolder", () => {
+    expect(validateInputFilename("_unowned/abc.mp4")).toBe("_unowned/abc.mp4");
+  });
+
+  test("rejects path traversal, absolute paths, and separators", () => {
     expect(() => validateInputFilename("../secret.mp4")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("42/../abc.mp4")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("/etc/passwd")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("")).toThrow(TranscodeValidationError);
+  });
+
+  test("rejects multi-level nesting and a non-userId subfolder segment", () => {
+    expect(() => validateInputFilename("a/b/abc.mp4")).toThrow(
       TranscodeValidationError,
     );
     expect(() => validateInputFilename("original/abc.mp4")).toThrow(
       TranscodeValidationError,
     );
-    expect(() => validateInputFilename("")).toThrow(TranscodeValidationError);
+    expect(() => validateInputFilename("0/abc.mp4")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("42/")).toThrow(
+      TranscodeValidationError,
+    );
   });
 });
 

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { extname, join, relative } from "node:path";
 import { Router } from "express";
 import multer from "multer";
 import { Op, col, fn, literal } from "sequelize";
@@ -11,7 +11,7 @@ import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
 import { requireUploader } from "../lib/auth/require-uploader.js";
-import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
+import { mimeTypeForImage, resolveMediaPath, userStorageSegment } from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
   AccessPermission,
@@ -109,12 +109,35 @@ function normalizedThumbnailExtension(filename) {
 }
 
 /**
- * Multer storage engine that writes thumbnail uploads to `thumbnails/`
- * under the media root using a freshly generated UUID as the filename
- * (preserving the original extension).
+ * Multer storage engine that writes thumbnail uploads to
+ * `thumbnails/<userId>/` under the media root using a freshly generated
+ * UUID as the filename (preserving the original extension). Unlike direct
+ * video upload, the requester (`req.user`) isn't necessarily the video's
+ * owner here — an admin/moderator can update a thumbnail for someone else's
+ * video — so the owning video's `userId` is looked up directly, before the
+ * route handler's own ownership check runs. This mirrors the "async DB work
+ * inside a multer callback" pattern already used for the direct-upload
+ * `filename` callback (`generateUniqueVideoId()`); the resulting write is no
+ * riskier than today's behavior, which already writes-then-unlinks-on-403.
  */
 const thumbnailStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, thumbnailsDir),
+  destination: async (req, _file, cb) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      let segment = "_unowned";
+      if (id != null) {
+        const owner = await OriginalUpload.findByPk(id, { attributes: ["userId"] });
+        if (owner) {
+          segment = userStorageSegment(owner.userId);
+        }
+      }
+      const dir = join(thumbnailsDir, segment);
+      mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    } catch (err) {
+      cb(err);
+    }
+  },
   filename: (_req, file, cb) => {
     const ext = normalizedThumbnailExtension(file.originalname);
     cb(null, ext ? `${randomUUID()}.${ext}` : randomUUID());
@@ -2469,9 +2492,7 @@ export function createVideosRouter() {
         const id = parsePositiveInt(req.params.id);
         if (id == null) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(
-              () => {},
-            );
+            await unlink(req.file.path).catch(() => {});
           }
           res.status(400).json({
             error: "invalid_id",
@@ -2483,9 +2504,7 @@ export function createVideosRouter() {
         const loaded = await loadUploadWithMetadata(id);
         if (!loaded) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(
-              () => {},
-            );
+            await unlink(req.file.path).catch(() => {});
           }
           sendNotFound(res);
           return;
@@ -2494,9 +2513,7 @@ export function createVideosRouter() {
         const { upload } = loaded;
         if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(
-              () => {},
-            );
+            await unlink(req.file.path).catch(() => {});
           }
           res.status(403).json({
             error: "forbidden",
@@ -2512,15 +2529,19 @@ export function createVideosRouter() {
           return;
         }
 
+        // Relative to thumbnailsDir, e.g. "42/<uuid>.jpg" — forward slashes
+        // for cross-platform DB consistency.
+        const relativeThumbnailFilename = relative(thumbnailsDir, req.file.path).replace(/\\/g, "/");
+
         const [thumbnail, created] = await VideoThumbnail.findOrCreate({
           where: { originalUploadId: upload.id },
-          defaults: { thumbnailFilename: req.file.filename },
+          defaults: { thumbnailFilename: relativeThumbnailFilename },
         });
 
         let previousFilename = null;
-        if (!created && thumbnail.thumbnailFilename !== req.file.filename) {
+        if (!created && thumbnail.thumbnailFilename !== relativeThumbnailFilename) {
           previousFilename = thumbnail.thumbnailFilename;
-          await thumbnail.update({ thumbnailFilename: req.file.filename });
+          await thumbnail.update({ thumbnailFilename: relativeThumbnailFilename });
         }
         if (previousFilename) {
           await unlink(join(thumbnailsDir, previousFilename)).catch(() => {});
@@ -2533,7 +2554,7 @@ export function createVideosRouter() {
           .json({ thumbnailUrl: `/api/v1/videos/${upload.id}/thumbnail` });
       } catch (err) {
         if (req.file) {
-          await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
+          await unlink(req.file.path).catch(() => {});
         }
         logger.error({ err }, "updateVideoThumbnail failed");
         res.status(500).json({
@@ -2651,13 +2672,17 @@ export function createVideosRouter() {
           return;
         }
 
-        const storedFilename = `${upload.videoId}.${upload.fileExtension}`;
+        // Derived from storagePath (not reconstructed from videoId+extension)
+        // since the on-disk filename is a uuid nested under a per-user
+        // subfolder, not the videoId itself — matches transcode-reconcile.js's pattern.
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const segment = userStorageSegment(upload.userId);
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
             {
               jobId: upload.videoId,
-              outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+              outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
               kind: "thumbnail",
               timestampSeconds: parsedTimestamp.tenths / 10,
             },

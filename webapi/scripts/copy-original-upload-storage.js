@@ -1,0 +1,332 @@
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { FileVersion, OriginalUpload, VideoThumbnail } from "../lib/models/index.js";
+import { mediaDir, resolveMediaPath, userStorageSegment } from "../lib/media-meta.js";
+
+/**
+ * Directory the resumable manifest lives under. Overridable via
+ * `STORAGE_MIGRATION_STATE_DIR` (used by tests to isolate parallel Jest
+ * workers from each other and from the real `scripts/state/` directory);
+ * defaults to `scripts/state/` alongside this file in production.
+ *
+ * @type {string}
+ */
+const STATE_DIR =
+  process.env.STORAGE_MIGRATION_STATE_DIR ||
+  join(dirname(fileURLToPath(import.meta.url)), "state");
+
+/**
+ * Absolute path to the resumable manifest this script appends to on every
+ * successful copy - the source of truth `cleanup-original-upload-storage.js`
+ * reads from to know which old files are safe to delete. Never guesses at
+ * old paths independently.
+ *
+ * @type {string}
+ */
+export const MANIFEST_PATH = join(STATE_DIR, "storage-migration-manifest.jsonl");
+
+/**
+ * Appends one manifest entry (as a JSON line) recording a successfully
+ * copy-verified old/new file pair.
+ *
+ * @param {{ table: string, id: number, oldAbsolutePath: string, newAbsolutePath: string }} entry
+ * @returns {Promise<void>} Resolves once the line has been appended.
+ */
+async function appendManifestEntry(entry) {
+  await mkdir(dirname(MANIFEST_PATH), { recursive: true });
+  await writeFile(MANIFEST_PATH, `${JSON.stringify(entry)}\n`, { flag: "a" });
+}
+
+/**
+ * Migrates every `ORIGINAL_UPLOADS` row: backfills `uuid` (if not already
+ * set) and copies the source file from its old flat/legacy location to
+ * `original/<userId|_unowned>/<uuid>.<ext>`, updating `storagePath` to
+ * match. The old file is left in place untouched - only
+ * `cleanup-original-upload-storage.js` removes it, and only after the admin
+ * has verified the new layout.
+ *
+ * @returns {Promise<{ migrated: number, skipped: number, failed: number }>} Run summary.
+ */
+export async function migrateOriginalUploads() {
+  const rows = await OriginalUpload.findAll();
+  let migrated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const upload of rows) {
+    try {
+      if (!upload.storagePath || !upload.fileExtension) {
+        // Stuck "downloading" import placeholder (download never completed) -
+        // nothing on disk to move.
+        console.log(`[skip] ORIGINAL_UPLOADS ${upload.id}: no storagePath/fileExtension yet`);
+        skipped++;
+        continue;
+      }
+
+      const uuid = upload.uuid || randomUUID();
+      const segment = userStorageSegment(upload.userId);
+      const newStoragePath = `original/${segment}/${uuid}.${upload.fileExtension}`;
+
+      if (upload.storagePath === newStoragePath && upload.uuid) {
+        // Already fully migrated by a prior run.
+        skipped++;
+        continue;
+      }
+
+      const oldAbsPath = resolveMediaPath(upload.storagePath);
+      const newAbsPath = resolveMediaPath(newStoragePath);
+
+      if (existsSync(newAbsPath)) {
+        // File already copied (interrupted prior run) - just fix up the row.
+        await upload.update({ uuid, storagePath: newStoragePath });
+        await appendManifestEntry({
+          table: "ORIGINAL_UPLOADS",
+          id: upload.id,
+          oldAbsolutePath: oldAbsPath,
+          newAbsolutePath: newAbsPath,
+        });
+        console.log(`[db-only] ORIGINAL_UPLOADS ${upload.id}: already at ${newStoragePath}`);
+        migrated++;
+        continue;
+      }
+
+      if (!existsSync(oldAbsPath)) {
+        console.error(
+          `[error] ORIGINAL_UPLOADS ${upload.id}: source file missing at ${upload.storagePath}`,
+        );
+        failed++;
+        continue;
+      }
+
+      const oldStoragePath = upload.storagePath;
+      await mkdir(dirname(newAbsPath), { recursive: true });
+      await copyFile(oldAbsPath, newAbsPath);
+      await upload.update({ uuid, storagePath: newStoragePath });
+      await appendManifestEntry({
+        table: "ORIGINAL_UPLOADS",
+        id: upload.id,
+        oldAbsolutePath: oldAbsPath,
+        newAbsolutePath: newAbsPath,
+      });
+      console.log(`[ok] ORIGINAL_UPLOADS ${upload.id}: ${oldStoragePath} -> ${newStoragePath}`);
+      migrated++;
+    } catch (err) {
+      console.error(`[error] ORIGINAL_UPLOADS ${upload.id} failed:`, err);
+      failed++;
+    }
+  }
+
+  console.log(`ORIGINAL_UPLOADS: migrated=${migrated} skipped=${skipped} failed=${failed}`);
+  return { migrated, skipped, failed };
+}
+
+/**
+ * Migrates every `FILE_VERSIONS` row: copies the rendition file from its old
+ * flat location to `transcoded/<userId|_unowned>/<uuidName>.<ext>` (keyed by
+ * the *parent* upload's userId) and updates `storagePath`. No new column -
+ * renditions already have UUID filenames, only the folder changes.
+ *
+ * @returns {Promise<{ migrated: number, skipped: number, failed: number }>} Run summary.
+ */
+export async function migrateFileVersions() {
+  const versions = await FileVersion.findAll();
+  let migrated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const version of versions) {
+    try {
+      const parent = await OriginalUpload.findByPk(version.originalUploadId, {
+        attributes: ["userId"],
+      });
+      const segment = userStorageSegment(parent?.userId ?? null);
+      const newStoragePath = `transcoded/${segment}/${version.uuidName}.${version.fileExtension}`;
+
+      if (version.storagePath === newStoragePath) {
+        skipped++;
+        continue;
+      }
+
+      const oldAbsPath = resolveMediaPath(version.storagePath);
+      const newAbsPath = resolveMediaPath(newStoragePath);
+
+      if (existsSync(newAbsPath)) {
+        await version.update({ storagePath: newStoragePath });
+        await appendManifestEntry({
+          table: "FILE_VERSIONS",
+          id: version.id,
+          oldAbsolutePath: oldAbsPath,
+          newAbsolutePath: newAbsPath,
+        });
+        migrated++;
+        continue;
+      }
+
+      if (!existsSync(oldAbsPath)) {
+        // Pending/failed render - nothing to copy, but the path still needs
+        // to point at where the file will eventually land.
+        console.warn(
+          `[skip] FILE_VERSIONS ${version.id}: source missing at ${version.storagePath} (pending/failed?)`,
+        );
+        await version.update({ storagePath: newStoragePath });
+        skipped++;
+        continue;
+      }
+
+      const oldStoragePath = version.storagePath;
+      await mkdir(dirname(newAbsPath), { recursive: true });
+      await copyFile(oldAbsPath, newAbsPath);
+      await version.update({ storagePath: newStoragePath });
+      await appendManifestEntry({
+        table: "FILE_VERSIONS",
+        id: version.id,
+        oldAbsolutePath: oldAbsPath,
+        newAbsolutePath: newAbsPath,
+      });
+      console.log(`[ok] FILE_VERSIONS ${version.id}: ${oldStoragePath} -> ${newStoragePath}`);
+      migrated++;
+    } catch (err) {
+      console.error(`[error] FILE_VERSIONS ${version.id} failed:`, err);
+      failed++;
+    }
+  }
+
+  console.log(`FILE_VERSIONS: migrated=${migrated} skipped=${skipped} failed=${failed}`);
+  return { migrated, skipped, failed };
+}
+
+/**
+ * Migrates every `VIDEO_THUMBNAIL` row: copies the thumbnail image from its
+ * old flat location to `thumbnails/<userId|_unowned>/<basename>` (keyed by
+ * the *parent* upload's userId) and updates `thumbnailFilename`. No new
+ * column and no filename-convention change (auto-generated thumbnails keep
+ * their videoId-based basename, manual uploads keep their uuid-based one) -
+ * only the folder changes.
+ *
+ * @returns {Promise<{ migrated: number, skipped: number, failed: number }>} Run summary.
+ */
+export async function migrateThumbnails() {
+  const thumbnails = await VideoThumbnail.findAll();
+  let migrated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const thumbnail of thumbnails) {
+    try {
+      if (thumbnail.thumbnailFilename.includes("/")) {
+        // Already migrated (basename already nested under a subfolder).
+        skipped++;
+        continue;
+      }
+
+      const parent = await OriginalUpload.findByPk(thumbnail.originalUploadId, {
+        attributes: ["userId"],
+      });
+      const segment = userStorageSegment(parent?.userId ?? null);
+      const newFilename = `${segment}/${thumbnail.thumbnailFilename}`;
+      const oldAbsPath = join(mediaDir, "thumbnails", thumbnail.thumbnailFilename);
+      const newAbsPath = join(mediaDir, "thumbnails", newFilename);
+
+      if (existsSync(newAbsPath)) {
+        await thumbnail.update({ thumbnailFilename: newFilename });
+        await appendManifestEntry({
+          table: "VIDEO_THUMBNAIL",
+          id: thumbnail.id,
+          oldAbsolutePath: oldAbsPath,
+          newAbsolutePath: newAbsPath,
+        });
+        migrated++;
+        continue;
+      }
+
+      if (!existsSync(oldAbsPath)) {
+        console.warn(
+          `[skip] VIDEO_THUMBNAIL ${thumbnail.id}: source missing at ${thumbnail.thumbnailFilename}`,
+        );
+        skipped++;
+        continue;
+      }
+
+      const oldThumbnailFilename = thumbnail.thumbnailFilename;
+      await mkdir(dirname(newAbsPath), { recursive: true });
+      await copyFile(oldAbsPath, newAbsPath);
+      await thumbnail.update({ thumbnailFilename: newFilename });
+      await appendManifestEntry({
+        table: "VIDEO_THUMBNAIL",
+        id: thumbnail.id,
+        oldAbsolutePath: oldAbsPath,
+        newAbsolutePath: newAbsPath,
+      });
+      console.log(
+        `[ok] VIDEO_THUMBNAIL ${thumbnail.id}: ${oldThumbnailFilename} -> ${newFilename}`,
+      );
+      migrated++;
+    } catch (err) {
+      console.error(`[error] VIDEO_THUMBNAIL ${thumbnail.id} failed:`, err);
+      failed++;
+    }
+  }
+
+  console.log(`VIDEO_THUMBNAIL: migrated=${migrated} skipped=${skipped} failed=${failed}`);
+  return { migrated, skipped, failed };
+}
+
+/**
+ * Reads the current manifest file, if any (used by tests / callers that want
+ * to inspect what's been recorded so far without re-running a migration).
+ *
+ * @returns {Promise<Array<{ table: string, id: number, oldAbsolutePath: string, newAbsolutePath: string }>>}
+ */
+export async function readManifest() {
+  try {
+    const raw = await readFile(MANIFEST_PATH, "utf8");
+    return raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  }
+}
+
+/**
+ * Copies every original upload, rendition, and thumbnail file into its new
+ * per-user-subfolder location and backfills `ORIGINAL_UPLOADS.uuid`,
+ * updating each row's storage path/filename to match. Never deletes
+ * anything - old files are left in place so an admin can verify the new
+ * layout before running `cleanup-original-upload-storage.js` to reclaim the
+ * disk space. Safe to re-run: every row is checked against its expected
+ * final state before any work is done, so an interrupted run can simply be
+ * re-invoked. Run with `npm run copy-original-upload-storage` (inside the
+ * `justintube-api` container in production: `docker compose exec webapi
+ * npm run copy-original-upload-storage`).
+ *
+ * @returns {Promise<void>} Resolves once all three tables have been processed.
+ */
+async function main() {
+  console.log("Starting storage-layout migration (copy phase)...");
+  await migrateOriginalUploads();
+  await migrateFileVersions();
+  await migrateThumbnails();
+  console.log(`Done. Manifest: ${MANIFEST_PATH}`);
+  console.log(
+    "Old files were left in place. Once you've verified the new layout, run " +
+      "`npm run cleanup-original-upload-storage -- --dry-run` and then `--confirm`.",
+  );
+}
+
+const isMain =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  main().catch((err) => {
+    console.error("copy-original-upload-storage failed:", err);
+    process.exit(1);
+  });
+}

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, statSync } from "node:fs";
 import { rename, unlink } from "node:fs/promises";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { Router } from "express";
 import multer from "multer";
 import { csrfProtection } from "../lib/auth/csrf.js";
@@ -13,6 +13,7 @@ import {
   mediaTypeForExtension,
   mimeTypeForContainer,
   plannedTranscodedStoragePath,
+  userStorageSegment,
 } from "../lib/media-meta.js";
 import {
   markUploadFileVersionsFailed,
@@ -115,19 +116,33 @@ function normalizedExtension(filename) {
 }
 
 /**
- * Multer storage engine that writes uploads to `original/` under the media
- * root using a freshly generated video id as the filename (preserving the
- * original extension).
+ * Multer storage engine that writes uploads to `original/<userId>/` under the
+ * media root using a freshly generated UUID as the filename (preserving the
+ * original extension) — the video id is still generated (for the public
+ * `videoId` column) but no longer doubles as the on-disk filename. `req.user`
+ * is always the video's owner for a direct upload (no admin-uploads-for-
+ * someone-else path exists here), so the destination can be chosen directly
+ * without a rename-after-write step.
  */
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, originalDir),
+  destination: (req, _file, cb) => {
+    try {
+      const dir = join(originalDir, userStorageSegment(req.user?.id ?? null));
+      mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    } catch (err) {
+      cb(err);
+    }
+  },
   filename: async (_req, file, cb) => {
     try {
       const ext = normalizedExtension(file.originalname);
       const videoId = await generateUniqueVideoId();
-      // Stash the video id so the handler can reuse it for the DB record.
+      const uuid = randomUUID();
+      // Stash both ids so the handler can reuse them for the DB record.
       file.generatedVideoId = videoId;
-      cb(null, ext ? `${videoId}.${ext}` : videoId);
+      file.generatedUuid = uuid;
+      cb(null, ext ? `${uuid}.${ext}` : uuid);
     } catch (err) {
       cb(err);
     }
@@ -309,6 +324,8 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
     where: { mediaType: upload.mediaType },
   });
 
+  const segment = userStorageSegment(upload.userId);
+
   /** @type {import('sequelize').Model[]} */
   const versions = [];
   try {
@@ -324,7 +341,7 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
         fileExtension: ext,
         mimeType: mimeTypeForContainer(ext),
         fileSizeBytes: null,
-        storagePath: plannedTranscodedStoragePath(versionUuid, ext),
+        storagePath: plannedTranscodedStoragePath(upload.userId, versionUuid, ext),
         status: "pending",
         videoWidth: row.outputWidth,
         videoHeight: row.outputHeight,
@@ -356,7 +373,7 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
 
   const renditionJobs = versions.map((version, index) => ({
     jobId: version.uuidName,
-    outputFilename: `${version.uuidName}.${version.fileExtension}`,
+    outputFilename: `${segment}/${version.uuidName}.${version.fileExtension}`,
     kind: "rendition",
     profile: toTranscodeProfilePayload(profiles[index]),
   }));
@@ -371,7 +388,7 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
     upload.mediaType === "video" && !skipThumbnail
       ? {
           jobId: upload.videoId,
-          outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+          outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
           kind: "thumbnail",
           timestampSeconds:
             upload.thumbnailTimestampTenths != null
@@ -567,12 +584,17 @@ export function enqueueDuplicateHashCheck(upload, storedFilename) {
  */
 async function startUploadConversion(upload, storedFilename) {
   const outputExtension = upload.mediaType === "audio" ? "m4a" : "mp4";
+  // Normalize output replaces the raw source and becomes the upload's new
+  // canonical "original" file — a distinct physical file, so it gets its own
+  // fresh uuid rather than reusing videoId as a filename stem.
+  const newUuid = randomUUID();
+  const segment = userStorageSegment(upload.userId);
   const enqueue = await requestTranscodeBatch({
     filename: storedFilename,
     jobs: [
       {
         jobId: `normalize-${upload.videoId}`,
-        outputFilename: `${upload.videoId}.${outputExtension}`,
+        outputFilename: `${segment}/${newUuid}.${outputExtension}`,
         kind: "normalize",
       },
     ],
@@ -676,7 +698,7 @@ async function uploadVideo(req, res) {
   const thumbnailTimestamp = parseThumbnailTimestampTenths(req.body?.thumbnailTimestamp);
   if (!thumbnailTimestamp.ok) {
     // Roll back the already-stored file so we don't leave orphaned media behind.
-    await unlink(join(originalDir, file.filename)).catch(() => {});
+    await unlink(file.path).catch(() => {});
     res.status(400).json({
       error: "invalid_body",
       message: thumbnailTimestamp.message,
@@ -687,9 +709,12 @@ async function uploadVideo(req, res) {
   const skipThumbnail = parseSkipThumbnail(req.body?.skipThumbnail);
 
   const videoId = file.generatedVideoId;
+  const uuid = file.generatedUuid;
   const fileExtension = normalizedExtension(file.originalname);
-  // Relative storage path uses forward slashes for cross-platform DB consistency.
-  const storagePath = `original/${file.filename}`;
+  // Path relative to originalDir, e.g. "42/<uuid>.mp4" — forward slashes for
+  // cross-platform DB consistency (path.relative returns backslashes on Windows).
+  const storedFilename = relative(originalDir, file.path).replace(/\\/g, "/");
+  const storagePath = `original/${storedFilename}`;
 
   let upload;
   try {
@@ -698,6 +723,7 @@ async function uploadVideo(req, res) {
         {
           originalFilename: file.originalname,
           videoId,
+          uuid,
           fileExtension,
           mimeType: mimeTypeForContainer(fileExtension) || file.mimetype || null,
           mediaType: mediaTypeForExtension(fileExtension),
@@ -720,7 +746,7 @@ async function uploadVideo(req, res) {
     });
   } catch (err) {
     // Roll back the stored file so we don't leave orphaned media behind.
-    await unlink(join(originalDir, file.filename)).catch(() => {});
+    await unlink(file.path).catch(() => {});
     res.status(500).json({
       error: "upload_persist_failed",
       message: "The file was received but could not be recorded.",
@@ -734,10 +760,10 @@ async function uploadVideo(req, res) {
     // source, and the duplicate-hash check should hash the final playable
     // file — both are deferred until normalize-complete (see
     // routes/internal-original-uploads.js) instead of running now.
-    result = await startUploadConversion(upload, file.filename);
+    result = await startUploadConversion(upload, storedFilename);
   } else {
-    enqueueDuplicateHashCheck(upload, file.filename);
-    result = await finalizeUploadTranscodes(upload, file.filename, { skipThumbnail });
+    enqueueDuplicateHashCheck(upload, storedFilename);
+    result = await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
   }
   res.status(result.status).json(result.body);
 }
@@ -817,6 +843,11 @@ async function importVideo(req, res) {
 
   const skipThumbnail = parseSkipThumbnail(req.body?.skipThumbnail);
   const videoId = await generateUniqueVideoId();
+  // Generated now (like the direct-upload path's multer filename callback)
+  // rather than waiting for the download to complete — continueImport reuses
+  // this same uuid as the final on-disk filename once the file actually
+  // exists, so the placeholder row is never left with a null uuid.
+  const uuid = randomUUID();
 
   let upload;
   try {
@@ -832,6 +863,7 @@ async function importVideo(req, res) {
           // to "private").
           originalFilename: "",
           videoId,
+          uuid,
           fileExtension: "",
           mimeType: null,
           fileSizeBytes: null,
@@ -948,11 +980,16 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
           ? "video"
           : "audio"
         : mediaTypeForExtension(fileExtension);
-    const storedFilename = fileExtension ? `${upload.videoId}.${fileExtension}` : upload.videoId;
+    // Reuses the uuid generated at placeholder-creation time (importVideo)
+    // as the final on-disk filename, now that the file actually exists.
+    const uuid = upload.uuid;
+    const segment = userStorageSegment(upload.userId);
+    const storedFilename = fileExtension ? `${segment}/${uuid}.${fileExtension}` : `${segment}/${uuid}`;
     // Relative storage path uses forward slashes for cross-platform DB consistency.
     const storagePath = `original/${storedFilename}`;
 
     try {
+      mkdirSync(join(originalDir, segment), { recursive: true });
       await rename(
         join(originalDir, downloadedFilename),
         join(originalDir, storedFilename),
@@ -973,6 +1010,7 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
 
     await upload.update({
       originalFilename: downloadedFilename,
+      uuid,
       fileExtension,
       mimeType: mimeTypeForContainer(fileExtension),
       mediaType,
