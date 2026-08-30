@@ -803,34 +803,45 @@ function renderUnfurlHtml(upload, metadata, renditions) {
 }
 
 /**
- * Serializes a COMMENTS row for API responses.
+ * Serializes a COMMENTS row for API responses. Soft-deleted comments (see
+ * `deletedAt` on the model) have their `author` and `body` redacted to
+ * `null` and their distinguished flags forced to `false` — the frontend
+ * renders these as a "[Deleted]" placeholder when the comment still has
+ * replies, or omits it entirely when it doesn't (both replies and the
+ * childless-vs-not decision are computed client-side from the flat list,
+ * since deleting a comment never removes its row or its replies.
  *
  * @param {import('sequelize').Model} comment Comment instance (expects `User` preloaded).
  * @returns {{
  *   id: number,
  *   originalUploadId: number,
  *   parentCommentId: number|null,
- *   author: {userId: number|null, username: string|null, displayName: string|null},
- *   body: string,
+ *   author: {userId: number|null, username: string|null, displayName: string|null}|null,
+ *   body: string|null,
  *   distinguishedMod: boolean,
  *   distinguishedAdmin: boolean,
+ *   deletedAt: Date|null,
  *   createdAt: Date,
  *   updatedAt: Date
  * }} Public comment payload.
  */
 function serializeComment(comment) {
+  const isDeleted = comment.deletedAt != null;
   return {
     id: comment.id,
     originalUploadId: comment.originalUploadId,
     parentCommentId: comment.parentCommentId ?? null,
-    author: serializeUserRef(
-      comment.userId,
-      comment.User?.username,
-      comment.User?.displayName,
-    ),
-    body: comment.body,
-    distinguishedMod: Boolean(comment.distinguishedMod),
-    distinguishedAdmin: Boolean(comment.distinguishedAdmin),
+    author: isDeleted
+      ? null
+      : serializeUserRef(
+          comment.userId,
+          comment.User?.username,
+          comment.User?.displayName,
+        ),
+    body: isDeleted ? null : comment.body,
+    distinguishedMod: isDeleted ? false : Boolean(comment.distinguishedMod),
+    distinguishedAdmin: isDeleted ? false : Boolean(comment.distinguishedAdmin),
+    deletedAt: comment.deletedAt ?? null,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
   };
@@ -4375,7 +4386,11 @@ export function createVideosRouter() {
         }
 
         const comment = await Comment.findByPk(commentId);
-        if (!comment || comment.originalUploadId !== upload.id) {
+        if (
+          !comment ||
+          comment.originalUploadId !== upload.id ||
+          comment.deletedAt
+        ) {
           sendNotFound(res);
           return;
         }
@@ -4435,7 +4450,15 @@ export function createVideosRouter() {
    * DELETE /videos/:id/comments/:commentId — deleteComment
    * Auth: required. The author may delete their own comment; a moderator may
    * delete any comment that isn't distinguishedAdmin; an admin may delete any
-   * comment unconditionally. Deleting a comment cascades to its replies.
+   * comment unconditionally. This is a soft delete (`deletedAt` is set, the
+   * row and its replies are kept) — `serializeComment` redacts the author and
+   * body once `deletedAt` is set, and replies are left untouched rather than
+   * cascade-deleted, since removing a comment shouldn't destroy conversation
+   * that grew on top of it. When a moderator/admin deletes someone else's
+   * comment (not a self-delete), the author gets a "moderation" notification;
+   * `createNotification` itself already no-ops on self-notifications, so an
+   * author who happens to be a moderator/admin deleting their own comment is
+   * covered without an extra check.
    *
    * @openapi
    * /api/v1/videos/{id}/comments/{commentId}:
@@ -4496,7 +4519,11 @@ export function createVideosRouter() {
         }
 
         const comment = await Comment.findByPk(commentId);
-        if (!comment || comment.originalUploadId !== upload.id) {
+        if (
+          !comment ||
+          comment.originalUploadId !== upload.id ||
+          comment.deletedAt
+        ) {
           sendNotFound(res);
           return;
         }
@@ -4514,7 +4541,18 @@ export function createVideosRouter() {
           return;
         }
 
-        await comment.destroy();
+        await comment.update({ deletedAt: new Date() });
+
+        await createNotification({
+          recipientUserId: comment.userId,
+          actorUserId: req.user.id,
+          typeName: "moderation",
+          title: "Comment Removed",
+          message: `Your comment on "${metadata.title}" was removed by a moderator.`,
+          target: upload.videoId,
+          link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+        });
+
         res.status(204).send();
       } catch (err) {
         logger.error({ err }, "deleteComment failed");

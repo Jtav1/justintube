@@ -391,3 +391,28 @@ export async function createComment(id, { body, parentCommentId, distinguishedMo
   })
   return res.data
 }
+
+/**
+ * Edits a comment's body (author-only), or toggles its distinguished flags
+ * (moderator/admin-only).
+ * @param {number} id Numeric video id.
+ * @param {number} commentId Comment id to update.
+ * @param {{ body?: string, distinguishedMod?: boolean, distinguishedAdmin?: boolean }} updates
+ * @returns {Promise<object>}
+ */
+export async function updateComment(id, commentId, updates) {
+  const res = await apiClient.patch(`/api/v1/videos/${id}/comments/${commentId}`, updates)
+  return res.data
+}
+
+/**
+ * Deletes a comment (and, via DB cascade, any of its replies). Allowed for
+ * the comment's own author, moderators (on non-admin-distinguished comments),
+ * and admins.
+ * @param {number} id Numeric video id.
+ * @param {number} commentId Comment id to delete.
+ * @returns {Promise<void>}
+ */
+export async function deleteComment(id, commentId) {
+  await apiClient.delete(`/api/v1/videos/${id}/comments/${commentId}`)
+}

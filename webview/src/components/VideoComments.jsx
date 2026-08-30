@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { UserRound } from 'lucide-react'
-import { createComment, listComments } from '../api/videos.js'
+import { createComment, deleteComment, listComments, updateComment } from '../api/videos.js'
 import { formatRelativeDate } from '../lib/format.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
@@ -13,7 +13,15 @@ const MAX_INDENT_DEPTH = 3
 
 /**
  * Builds a flat, depth-annotated, parent-before-children ordering of a flat
- * comment list, newest-first at every level.
+ * comment list, newest-first at every level. A deleted comment (`deletedAt`
+ * set — the backend soft-deletes and redacts `author`/`body` rather than
+ * removing the row, so replies keep a valid parent) is omitted entirely when
+ * it has no replies, or when every one of its replies is itself omitted this
+ * same way (recursively — a whole dead-end chain of nothing-but-deleted
+ * comments collapses away together). It's kept in the order (as a
+ * "[Deleted]" placeholder — see the render below) as soon as any descendant,
+ * at any depth, is still live, so that descendant keeps a parent to nest
+ * under.
  *
  * @param {object[]} comments Flat comments from `listComments`.
  * @returns {Array<object & {depth: number}>} Depth-first ordered comments.
@@ -40,10 +48,28 @@ function buildDisplayOrder(comments) {
     siblings.sort(byNewest)
   }
 
+  // Memoized bottom-up: a live comment is never hidden; a deleted comment is
+  // hidden iff it has no replies, or every reply is (recursively) hidden too.
+  const hiddenById = new Map()
+  function isHidden(comment) {
+    if (!comment.deletedAt) {
+      return false
+    }
+    if (hiddenById.has(comment.id)) {
+      return hiddenById.get(comment.id)
+    }
+    const children = childrenByParent.get(comment.id) ?? []
+    const hidden = children.length === 0 || children.every(isHidden)
+    hiddenById.set(comment.id, hidden)
+    return hidden
+  }
+
   const ordered = []
   function visit(nodes, depth) {
     for (const node of nodes) {
-      ordered.push({ ...node, depth })
+      if (!isHidden(node)) {
+        ordered.push({ ...node, depth })
+      }
       visit(childrenByParent.get(node.id) ?? [], depth + 1)
     }
   }
@@ -177,6 +203,62 @@ function CommentComposer({ isModerator, isAdmin, commentsEnabled, submitLabel, o
 }
 
 /**
+ * Inline body editor for a single existing comment, shown in place of its
+ * rendered text while editing. Only the body can be changed here —
+ * `distinguishedMod`/`distinguishedAdmin` are toggled elsewhere and aren't
+ * editable by a comment's own author.
+ *
+ * @param {{
+ *   initialBody: string,
+ *   onSave: (body: string) => Promise<void>,
+ *   onCancel: () => void,
+ * }} props
+ */
+function CommentEditForm({ initialBody, onSave, onCancel }) {
+  const { error: toastError } = useToast()
+  const [body, setBody] = useState(initialBody)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const trimmed = body.trim()
+    if (!trimmed || submitting) {
+      return
+    }
+    setSubmitting(true)
+    try {
+      await onSave(trimmed)
+    } catch {
+      toastError('Failed to update comment.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form className="video-comments-composer" onSubmit={handleSubmit}>
+      <textarea
+        rows={2}
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        autoFocus
+      />
+      <div className="video-comments-composer-row">
+        <div />
+        <div className="video-comments-composer-actions">
+          <button type="button" className="video-comments-cancel" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" disabled={!body.trim() || submitting}>
+            Save
+          </button>
+        </div>
+      </div>
+    </form>
+  )
+}
+
+/**
  * Video comments section: a composer plus a recursively-nested comment list.
  * Nesting indent stops increasing past depth 3; from depth 4 on, comments are
  * capped to 50% of this component's width.
@@ -189,6 +271,7 @@ function VideoComments({ video }) {
   const [comments, setComments] = useState([])
   const [loading, setLoading] = useState(true)
   const [replyingToId, setReplyingToId] = useState(null)
+  const [editingId, setEditingId] = useState(null)
 
   const isModerator = user?.role === 'moderator'
   const isAdmin = user?.role === 'admin'
@@ -237,6 +320,40 @@ function VideoComments({ video }) {
     setReplyingToId(null)
   }
 
+  async function handleUpdate(comment, body) {
+    const updated = await updateComment(video.id, comment.id, { body })
+    setComments((prev) => prev.map((c) => (c.id === comment.id ? updated : c)))
+    setEditingId(null)
+  }
+
+  async function handleDelete(comment) {
+    if (!window.confirm('Delete this comment? This cannot be undone.')) {
+      return
+    }
+    try {
+      await deleteComment(video.id, comment.id)
+      // The API soft-deletes (204, no body): mirror what a refetch would
+      // return so replies keep their parent and buildDisplayOrder can decide
+      // whether to show a "[Deleted]" placeholder or hide it entirely.
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === comment.id
+            ? {
+                ...c,
+                deletedAt: new Date().toISOString(),
+                author: null,
+                body: null,
+                distinguishedMod: false,
+                distinguishedAdmin: false,
+              }
+            : c,
+        ),
+      )
+    } catch {
+      toastError('Failed to delete comment.')
+    }
+  }
+
   return (
     <section className="video-comments">
       <h2 className="video-comments-title">Comments</h2>
@@ -267,7 +384,20 @@ function VideoComments({ video }) {
             marginLeft,
             width: comment.depth >= MAX_INDENT_DEPTH + 1 ? '50%' : `calc(100% - ${marginLeft}px)`,
           }
-          const authorName = comment.author?.displayName || comment.author?.username
+          const authorName = comment.deletedAt
+            ? '[Deleted]'
+            : comment.author?.displayName || comment.author?.username
+          const isOwnComment = user && Number(user.id) === Number(comment.author?.userId)
+          // Mirrors the backend's deleteComment authorization: the author
+          // may always delete their own comment; a moderator may delete any
+          // comment that isn't distinguishedAdmin; an admin may delete any
+          // comment. Never true for an already-deleted comment - it has
+          // nothing left to delete, and no edit/delete affordance should
+          // show on a "[Deleted]" placeholder.
+          const canDeleteComment =
+            !comment.deletedAt &&
+            (isOwnComment || isAdmin || (isModerator && !comment.distinguishedAdmin))
+          const isEditing = editingId === comment.id
 
           const itemClassName = comment.distinguishedAdmin
             ? 'video-comments-item video-comments-item-admin'
@@ -298,15 +428,57 @@ function VideoComments({ video }) {
                     {formatRelativeDate(comment.createdAt)}
                   </span>
                 </p>
-                <p className="video-comments-item-text">{comment.body}</p>
-                {user && composerAvailable && (
-                  <button
-                    type="button"
-                    className="video-comments-reply-toggle"
-                    onClick={() => setReplyingToId((prev) => (prev === comment.id ? null : comment.id))}
-                  >
-                    Reply
-                  </button>
+                {isEditing ? (
+                  <CommentEditForm
+                    initialBody={comment.body}
+                    onSave={(body) => handleUpdate(comment, body)}
+                    onCancel={() => setEditingId(null)}
+                  />
+                ) : comment.deletedAt ? (
+                  <p className="video-comments-item-text video-comments-item-text-deleted">
+                    [Deleted]
+                  </p>
+                ) : (
+                  <p className="video-comments-item-text">
+                    {comment.body}
+                    {comment.updatedAt !== comment.createdAt && (
+                      <span className="video-comments-edited-tag"> (edited)</span>
+                    )}
+                  </p>
+                )}
+                {!isEditing && (
+                  <div className="video-comments-item-actions">
+                    {user && composerAvailable && (
+                      <button
+                        type="button"
+                        className="video-comments-reply-toggle"
+                        onClick={() => setReplyingToId((prev) => (prev === comment.id ? null : comment.id))}
+                      >
+                        Reply
+                      </button>
+                    )}
+                    {isOwnComment && !comment.deletedAt && (
+                      <button
+                        type="button"
+                        className="video-comments-reply-toggle"
+                        onClick={() => {
+                          setEditingId(comment.id)
+                          setReplyingToId(null)
+                        }}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {canDeleteComment && (
+                      <button
+                        type="button"
+                        className="video-comments-reply-toggle video-comments-delete-toggle"
+                        onClick={() => handleDelete(comment)}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 )}
                 {replyingToId === comment.id && (
                   <CommentComposer
