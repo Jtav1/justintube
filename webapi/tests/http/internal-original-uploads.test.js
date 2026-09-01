@@ -488,6 +488,71 @@ describe("POST /internal/original-uploads/:jobId/embed-complete and embed-failed
     expect(reloaded.embedVideoStoragePath).toBe(`transcoded/${upload.videoId}-new-embed.mp4`);
   });
 
+  test("records isDefault: true for a placeholder-sourced completion", async () => {
+    const upload = await seedUpload({ mediaType: "audio" });
+    await seedMetadata(upload.id);
+
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}-uuid1/embed-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: `transcoded/${upload.videoId}-embed.mp4`,
+        isDefault: true,
+      });
+
+    expect(res.status).toBe(200);
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.embedVideoStoragePath).toBe(`transcoded/${upload.videoId}-embed.mp4`);
+    expect(reloaded.embedVideoIsDefault).toBe(true);
+  });
+
+  test("a real (non-default) completion upgrades an existing placeholder-sourced embed video", async () => {
+    const upload = await seedUpload({
+      mediaType: "audio",
+      embedVideoStoragePath: "transcoded/default-embed.mp4",
+      embedVideoIsDefault: true,
+    });
+    await seedMetadata(upload.id);
+
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}-uuid2/embed-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: `transcoded/${upload.videoId}-real-embed.mp4`,
+        isDefault: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("complete");
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.embedVideoStoragePath).toBe(`transcoded/${upload.videoId}-real-embed.mp4`);
+    expect(reloaded.embedVideoIsDefault).toBe(false);
+  });
+
+  test("a stale placeholder-sourced completion does NOT downgrade an existing real embed video", async () => {
+    const upload = await seedUpload({
+      mediaType: "audio",
+      embedVideoStoragePath: "transcoded/real-embed.mp4",
+      embedVideoIsDefault: false,
+    });
+    await seedMetadata(upload.id);
+
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}-uuid3/embed-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: `transcoded/${upload.videoId}-late-default-embed.mp4`,
+        isDefault: true,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("skipped_stale_default");
+    // The real embed video already recorded is left completely untouched.
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.embedVideoStoragePath).toBe("transcoded/real-embed.mp4");
+    expect(reloaded.embedVideoIsDefault).toBe(false);
+  });
+
   test("embed-failed just logs: leaves the upload's embed fields untouched", async () => {
     const upload = await seedUpload({ mediaType: "audio" });
     await seedMetadata(upload.id);

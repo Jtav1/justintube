@@ -92,7 +92,17 @@ function VideoPlayer({
   const { error: toastError } = useToast()
   const navigate = useNavigate()
   const renditions = video.renditions ?? []
-  const isAudio = video.mediaType === 'audio'
+  // Only ever set for an upload the server confirmed has no genuine video
+  // stream (see webapi's enqueueAudioEmbedVideo) - a thumbnail image and the
+  // audio muxed into a real playable MP4, purely so this player (and
+  // link-unfurl bots) have something to show instead of a blank video area.
+  // Its mere presence is the signal that this upload had no video stream to
+  // begin with, so it's used in place of the original stream whenever it
+  // exists, superseding mediaType for the audio-vs-video rendering choice.
+  const embedVideoUrl = video.embedVideoUrl
+    ? `${apiClient.defaults.baseURL}${video.embedVideoUrl}`
+    : null
+  const isAudio = video.mediaType === 'audio' && !embedVideoUrl
   const [selectedRendition, setSelectedRendition] = useState(() => pickDefaultRendition(renditions))
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false)
   const [loop, setLoop] = useState(false)
@@ -185,9 +195,11 @@ function VideoPlayer({
     return () => observer.disconnect()
   }, [video.title])
 
-  const streamUrl = selectedRendition
-    ? `${apiClient.defaults.baseURL}${selectedRendition.streamUrl}`
-    : null
+  const streamUrl = embedVideoUrl
+    ? embedVideoUrl
+    : selectedRendition
+      ? `${apiClient.defaults.baseURL}${selectedRendition.streamUrl}`
+      : null
 
   const canEdit =
     video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
@@ -686,7 +698,9 @@ function VideoPlayer({
           </div>
         )}
         <div className="video-player-controls-overlay">
-          {renditions.length > 0 && (
+          {/* The embed video is a single fixed asset (no alternate
+              qualities) - quality selection doesn't apply while it's in use. */}
+          {!embedVideoUrl && renditions.length > 0 && (
             <div className="video-player-quality" ref={qualityMenuRef}>
               <button
                 type="button"

@@ -6,6 +6,7 @@ const collectOutputMetadata = jest.fn();
 const notifyContentHashComplete = jest.fn();
 const notifyContentHashFailed = jest.fn();
 const notifyThumbnailComplete = jest.fn();
+const notifyThumbnailFailed = jest.fn();
 const notifyEmbedVideoComplete = jest.fn();
 const probeEmbeddedThumbnailStream = jest.fn();
 const resolveThumbnailOutputPath = jest.fn();
@@ -32,6 +33,7 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyFileVersionComplete: jest.fn(),
   notifyFileVersionFailed: jest.fn(),
   notifyThumbnailComplete,
+  notifyThumbnailFailed,
   notifyOriginalUploadNormalizeComplete: jest.fn(),
   notifyOriginalUploadNormalizeFailed: jest.fn(),
   notifyEmbedVideoComplete,
@@ -56,7 +58,9 @@ jest.unstable_mockModule("node:fs/promises", () => ({
   stat,
 }));
 
-const { processTranscodeJob, MAX_HASH_JOB_RUNS } = await import("../lib/queue.js");
+const { processTranscodeJob, notifyTranscodeJobFailed, MAX_HASH_JOB_RUNS } = await import(
+  "../lib/queue.js"
+);
 
 /**
  * Builds a fake BullMQ job for a "thumbnail" kind job.
@@ -185,6 +189,7 @@ describe("processTranscodeJob (kind: embed)", () => {
       storagePath: "transcoded/42/embed-abc123.mp4",
       videoWidth: 480,
       videoHeight: 480,
+      isDefault: false,
     }));
     expect(result).toEqual({
       outputFilename: "42/embed-abc123.mp4",
@@ -195,12 +200,39 @@ describe("processTranscodeJob (kind: embed)", () => {
     });
   });
 
+  test("echoes isDefault: true back to the completion callback for a placeholder-sourced mux", async () => {
+    const job = makeEmbedJob({ thumbnailFilename: "default-audio-thumbnail.png", isDefault: true });
+
+    await processTranscodeJob(job);
+
+    expect(notifyEmbedVideoComplete).toHaveBeenCalledWith("embed-abc123", expect.objectContaining({
+      isDefault: true,
+    }));
+  });
+
   test("propagates an ffmpeg failure instead of notifying completion", async () => {
     runFfmpeg.mockReset().mockRejectedValue(new Error("ffmpeg exited with code 1"));
     const job = makeEmbedJob();
 
     await expect(processTranscodeJob(job)).rejects.toThrow("ffmpeg exited with code 1");
     expect(notifyEmbedVideoComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe("notifyTranscodeJobFailed (kind: thumbnail)", () => {
+  beforeEach(() => {
+    notifyThumbnailFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("calls back to the API so it can fall back to the placeholder thumbnail when eligible", async () => {
+    const job = { id: "thumb-abc123", data: { kind: "thumbnail" } };
+
+    await notifyTranscodeJobFailed(job, new Error("no video/art stream to grab a frame from"));
+
+    expect(notifyThumbnailFailed).toHaveBeenCalledWith(
+      "thumb-abc123",
+      "no video/art stream to grab a frame from",
+    );
   });
 });
 

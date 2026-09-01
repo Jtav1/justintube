@@ -127,6 +127,22 @@ describe("POST /videos/:id/thumbnail", () => {
     expect(String(rows[0].thumbnail_filename)).toMatch(/\.jpg$/);
   });
 
+  test("marks the upload skipThumbnail so no future auto-generation can overwrite the user-provided thumbnail", async () => {
+    const { ownerKey, uploadId } = await seedOwnedVideo();
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/thumbnail`)
+      .set("Authorization", `Bearer ${ownerKey}`)
+      .attach("file", Buffer.from("fake-image-bytes"), "thumb.jpg");
+    expect(res.status).toBe(200);
+
+    const rows = await queryRows(
+      "SELECT skip_thumbnail FROM ORIGINAL_UPLOADS WHERE id = :id",
+      { id: uploadId },
+    );
+    expect(Boolean(rows[0].skip_thumbnail)).toBe(true);
+  });
+
   test("re-uploading replaces the existing thumbnail (single row, old file removed)", async () => {
     const { ownerKey, uploadId } = await seedOwnedVideo();
 
@@ -199,9 +215,13 @@ describe("POST /videos/:id/thumbnail", () => {
       const body = JSON.parse(String(options.body));
       expect(body.filename).toBe(`${upload.userId}/${upload.uuid}.${upload.fileExtension}`);
       expect(body.jobs).toHaveLength(1);
+      // jobId includes a random UUID suffix (see enqueueAudioEmbedVideo) so
+      // repeat enqueues for the same upload don't collide on the same
+      // BullMQ jobId - only the fixed `embed-<videoId>-` prefix is stable.
+      expect(body.jobs[0].jobId).toMatch(new RegExp(`^embed-${upload.videoId}-`));
       expect(body.jobs[0]).toMatchObject({
-        jobId: `embed-${upload.videoId}`,
         kind: "embed",
+        isDefault: false,
       });
       expect(body.jobs[0].thumbnailFilename).toMatch(
         new RegExp(`^${upload.userId}/.+\\.jpg$`),

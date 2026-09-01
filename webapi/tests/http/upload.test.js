@@ -71,9 +71,12 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
    * the shape `finalizeUploadTranscodes` always sends now, even with zero
    * transcode profiles.
    *
+   * @param {{ hasVideoStream?: boolean|null }} [sourceOverrides] Extra fields
+   *   merged into the mocked response's `source` object (defaults to no
+   *   `source` at all, matching every other test in this file).
    * @returns {jest.Mock} Mock matching the `globalThis.fetch` contract.
    */
-  function acceptAllJobsFetchMock() {
+  function acceptAllJobsFetchMock(sourceOverrides) {
     return jest.fn(async (_url, options) => {
       const body = JSON.parse(String(options.body));
       return {
@@ -86,6 +89,9 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
             outputFilename: job.outputFilename,
             profileId: job.profile?.id ?? null,
           })),
+          ...(sourceOverrides
+            ? { source: { videoWidth: null, videoHeight: null, ...sourceOverrides } }
+            : {}),
         }),
       };
     });
@@ -218,7 +224,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     });
   });
 
-  test("classifies an uploaded audio file as mediaType audio and never contacts processing", async () => {
+  test("classifies an uploaded audio file as mediaType audio and still enqueues a thumbnail job (embedded-art extraction)", async () => {
     const fetchMock = acceptAllJobsFetchMock();
     globalThis.fetch = fetchMock;
 
@@ -229,21 +235,27 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(res.status).toBe(201);
     expect(res.body.mediaType).toBe("audio");
     expect(res.body.fileVersions).toEqual([]);
-    // No audio transcode profiles are configured by default, so there's
-    // nothing to send to processing at all - not even a thumbnail job.
-    expect(fetchMock).not.toHaveBeenCalled();
+    // No audio transcode profiles are configured by default, but a thumbnail
+    // job is still sent - processing tries extracting embedded cover art
+    // (ID3 APIC, etc.) before falling back to a (for audio, always-failing)
+    // timestamped frame grab. Only if THAT job reports failure does the API
+    // fall back to the placeholder embed video (see
+    // /internal/thumbnails/:uploadUuid/failed) - nothing is enqueued eagerly
+    // up front, so exactly one request goes out here.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const batchPayload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(batchPayload.jobs).toHaveLength(1);
+    expect(batchPayload.jobs[0]).toMatchObject({
+      jobId: res.body.videoId,
+      kind: "thumbnail",
+    });
 
     const rows = await queryRows(
       "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
       { videoId: res.body.videoId },
     );
     expect(rows[0].media_type).toBe("audio");
-
-    const thumbRows = await queryRows(
-      "SELECT * FROM VIDEO_THUMBNAIL WHERE original_upload_id = :id",
-      { id: res.body.id },
-    );
-    expect(thumbRows).toHaveLength(0);
   });
 
   test("classifies an uploaded video file as mediaType video", async () => {
@@ -257,6 +269,28 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(res.status).toBe(201);
     expect(res.body.mediaType).toBe("video");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("persists source.hasVideoStream from the probe response, distinct from the extension-based mediaType", async () => {
+    // A ".mp4" upload is classified mediaType "video" purely by extension,
+    // but the probe (processing) can find no genuine video stream - e.g. an
+    // audio-only file someone saved with a .mp4 extension. hasVideoStream is
+    // what enqueueAudioEmbedVideo actually gates on, not mediaType.
+    const fetchMock = acceptAllJobsFetchMock({ hasVideoStream: false });
+    globalThis.fetch = fetchMock;
+
+    await seedUploaderCreds();
+    const res = await uploadRequest()
+      .attach("file", Buffer.from("tiny"), "clip.mp4");
+
+    expect(res.status).toBe(201);
+    expect(res.body.mediaType).toBe("video");
+
+    const rows = await queryRows(
+      "SELECT has_video_stream FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
+      { videoId: res.body.videoId },
+    );
+    expect(Boolean(rows[0].has_video_stream)).toBe(false);
   });
 
   test("only applies audio-flagged transcode profiles to an audio upload", async () => {
@@ -281,9 +315,11 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    // Only the rendition job for the audio-flagged profile - no thumbnail job.
-    expect(payload.jobs).toHaveLength(1);
-    expect(payload.jobs[0].kind).toBe("rendition");
+    // The rendition job for the audio-flagged profile, plus the thumbnail job
+    // every upload gets regardless of transcode profiles (embedded-art
+    // extraction for audio - see finalizeUploadTranscodes).
+    expect(payload.jobs).toHaveLength(2);
+    expect(payload.jobs.map((job) => job.kind).sort()).toEqual(["rendition", "thumbnail"]);
   });
 
   test("persists thumbnailTimestamp and forwards it to processing as seconds", async () => {

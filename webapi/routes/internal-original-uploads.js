@@ -13,6 +13,7 @@ import {
 } from "../lib/models/index.js";
 import { createNotification } from "../lib/notifications.js";
 import { logger } from "../lib/logger.js";
+import { VIDEO_ID_LENGTH } from "../lib/video-id.js";
 import { enqueueDuplicateHashCheck, finalizeUploadTranscodes } from "./uploads.js";
 
 /**
@@ -71,14 +72,21 @@ function videoIdFromNormalizeJobId(jobId) {
 }
 
 /**
- * Recovers the `videoId` an `embed-<videoId>` BullMQ job id was built from.
+ * Recovers the `videoId` an `embed-<videoId>-<uuid>` BullMQ job id was built
+ * from. Unlike `videoIdFromNormalizeJobId`/`videoIdFromHashJobId`, this can't
+ * just take everything after the prefix — `enqueueAudioEmbedVideo`
+ * (routes/uploads.js) appends a random UUID after the videoId so repeat
+ * enqueues for the same upload get distinct jobIds — so this takes exactly
+ * `VIDEO_ID_LENGTH` characters instead, matching that fixed-width column.
  *
  * @private
  * @param {string} jobId Raw `:jobId` route param.
  * @returns {string} The video id, or an empty string when the prefix doesn't match.
  */
 function videoIdFromEmbedJobId(jobId) {
-  return jobId.startsWith("embed-") ? jobId.slice("embed-".length) : "";
+  return jobId.startsWith("embed-")
+    ? jobId.slice("embed-".length, "embed-".length + VIDEO_ID_LENGTH)
+    : "";
 }
 
 /**
@@ -491,9 +499,21 @@ export function createInternalOriginalUploadsRouter() {
    * audio, muxed into a real MP4 - see `enqueueAudioEmbedVideo` in
    * routes/uploads.js) and removes whichever previous embed video file this
    * upload had, if any, now that the new one is confirmed on disk.
+   *
+   * An upload's embed video can be (re)generated more than once - an eager
+   * placeholder-sourced job at upload time, then a real-art-sourced one once
+   * cover art is found or a custom thumbnail is uploaded - and those two
+   * jobs race independently, so completion order isn't guaranteed to match
+   * enqueue order. `isDefault` on the incoming payload (echoed back from
+   * whatever `enqueueAudioEmbedVideo` originally sent) is what prevents a
+   * slow placeholder-sourced completion from clobbering a real result that
+   * already landed: skipped only when there's already a real (non-default)
+   * embed video recorded and this completion is itself placeholder-sourced;
+   * every other case (nothing recorded yet, refreshing an existing
+   * placeholder, or a newer real result) is accepted normally.
    * POST /internal/original-uploads/:jobId/embed-complete with
-   * { storagePath, videoWidth?, videoHeight? }. `:jobId` is `embed-<videoId>`.
-   * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
+   * { storagePath, videoWidth?, videoHeight?, isDefault? }. `:jobId` is
+   * `embed-<videoId>-<uuid>`. Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
    *
    * @openapi
    * /internal/original-uploads/{jobId}/embed-complete:
@@ -518,9 +538,10 @@ export function createInternalOriginalUploadsRouter() {
    *               storagePath: { type: string }
    *               videoWidth: { type: number, nullable: true }
    *               videoHeight: { type: number, nullable: true }
+   *               isDefault: { type: boolean }
    *     responses:
    *       200:
-   *         description: Embed video recorded
+   *         description: Embed video recorded (or skipped, as a stale placeholder-sourced result)
    *       400:
    *         description: Invalid jobId or missing storagePath
    *       404:
@@ -559,12 +580,25 @@ export function createInternalOriginalUploadsRouter() {
       return;
     }
 
+    const incomingIsDefault = Boolean(body.isDefault);
+    const hasExisting = Boolean(upload.embedVideoStoragePath);
+    const isStaleDowngrade = hasExisting && !upload.embedVideoIsDefault && incomingIsDefault;
+    if (isStaleDowngrade) {
+      logger.info(
+        `[original-uploads] discarding stale placeholder-sourced embed video for upload ${upload.videoId} ` +
+          `- a real one already landed`,
+      );
+      res.status(200).json({ success: true, videoId, status: "skipped_stale_default" });
+      return;
+    }
+
     const previousStoragePath = upload.embedVideoStoragePath;
 
     await upload.update({
       embedVideoStoragePath: storagePath,
       embedVideoWidth: typeof body.videoWidth === "number" ? body.videoWidth : null,
       embedVideoHeight: typeof body.videoHeight === "number" ? body.videoHeight : null,
+      embedVideoIsDefault: incomingIsDefault,
     });
 
     if (previousStoragePath && previousStoragePath !== storagePath) {
