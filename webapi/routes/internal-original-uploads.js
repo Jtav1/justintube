@@ -71,6 +71,17 @@ function videoIdFromNormalizeJobId(jobId) {
 }
 
 /**
+ * Recovers the `videoId` an `embed-<videoId>` BullMQ job id was built from.
+ *
+ * @private
+ * @param {string} jobId Raw `:jobId` route param.
+ * @returns {string} The video id, or an empty string when the prefix doesn't match.
+ */
+function videoIdFromEmbedJobId(jobId) {
+  return jobId.startsWith("embed-") ? jobId.slice("embed-".length) : "";
+}
+
+/**
  * Notifies every admin/moderator that a possible duplicate upload needs
  * review, linking to both the new upload and the existing match. The
  * in-app message embeds `[label](/video?v=...)` markdown-style links -
@@ -473,6 +484,160 @@ export function createInternalOriginalUploadsRouter() {
     });
 
     res.status(200).json({ success: true, videoId, status: "failed" });
+  });
+
+  /**
+   * Records a completed link-unfurl embed video (audio upload's thumbnail +
+   * audio, muxed into a real MP4 - see `enqueueAudioEmbedVideo` in
+   * routes/uploads.js) and removes whichever previous embed video file this
+   * upload had, if any, now that the new one is confirmed on disk.
+   * POST /internal/original-uploads/:jobId/embed-complete with
+   * { storagePath, videoWidth?, videoHeight? }. `:jobId` is `embed-<videoId>`.
+   * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
+   *
+   * @openapi
+   * /internal/original-uploads/{jobId}/embed-complete:
+   *   post:
+   *     tags: [Internal]
+   *     summary: Record a completed link-unfurl embed video for an audio upload
+   *     operationId: originalUploadEmbedComplete
+   *     security:
+   *       - internalServiceToken: []
+   *     parameters:
+   *       - name: jobId
+   *         in: path
+   *         required: true
+   *         schema: { type: string }
+   *     requestBody:
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [storagePath]
+   *             properties:
+   *               storagePath: { type: string }
+   *               videoWidth: { type: number, nullable: true }
+   *               videoHeight: { type: number, nullable: true }
+   *     responses:
+   *       200:
+   *         description: Embed video recorded
+   *       400:
+   *         description: Invalid jobId or missing storagePath
+   *       404:
+   *         description: Upload not found
+   *
+   * @param {import('express').Request} req Request with `jobId` param + completion body.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200, 400, or 404.
+   */
+  router.post("/original-uploads/:jobId/embed-complete", async (req, res) => {
+    const videoId = videoIdFromEmbedJobId(String(req.params.jobId || "").trim());
+    if (!videoId) {
+      res.status(400).json({
+        error: "invalid_job_id",
+        message: "jobId must be of the form embed-<videoId>.",
+      });
+      return;
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const storagePath = typeof body.storagePath === "string" ? body.storagePath.trim() : "";
+    if (!storagePath) {
+      res.status(400).json({
+        error: "invalid_body",
+        message: "storagePath is required.",
+      });
+      return;
+    }
+
+    const upload = await OriginalUpload.findOne({ where: { videoId } });
+    if (!upload) {
+      res.status(404).json({
+        error: "not_found",
+        message: "Upload not found.",
+      });
+      return;
+    }
+
+    const previousStoragePath = upload.embedVideoStoragePath;
+
+    await upload.update({
+      embedVideoStoragePath: storagePath,
+      embedVideoWidth: typeof body.videoWidth === "number" ? body.videoWidth : null,
+      embedVideoHeight: typeof body.videoHeight === "number" ? body.videoHeight : null,
+    });
+
+    if (previousStoragePath && previousStoragePath !== storagePath) {
+      await unlink(resolveMediaPath(previousStoragePath)).catch(() => {});
+    }
+
+    res.status(200).json({ success: true, videoId, status: "complete" });
+  });
+
+  /**
+   * Logs a failed link-unfurl embed video job. Purely informational - the
+   * upload was never blocked on this job (it runs entirely in the background
+   * after the upload/thumbnail are already live), so there's nothing to
+   * release or roll back; the unfurl page simply keeps falling back to its
+   * non-video behavior for this upload.
+   * POST /internal/original-uploads/:jobId/embed-failed with { error? }.
+   * `:jobId` is `embed-<videoId>`. Auth: Bearer INTERNAL_SERVICE_TOKEN
+   * (router-level).
+   *
+   * @openapi
+   * /internal/original-uploads/{jobId}/embed-failed:
+   *   post:
+   *     tags: [Internal]
+   *     summary: Record a failed link-unfurl embed video job
+   *     operationId: originalUploadEmbedFailed
+   *     security:
+   *       - internalServiceToken: []
+   *     parameters:
+   *       - name: jobId
+   *         in: path
+   *         required: true
+   *         schema: { type: string }
+   *     requestBody:
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               error: { type: string }
+   *     responses:
+   *       200:
+   *         description: Failure logged
+   *       404:
+   *         description: Upload not found
+   *
+   * @param {import('express').Request} req Request with `jobId` param + optional `error` string.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200, 400, or 404.
+   */
+  router.post("/original-uploads/:jobId/embed-failed", async (req, res) => {
+    const videoId = videoIdFromEmbedJobId(String(req.params.jobId || "").trim());
+    if (!videoId) {
+      res.status(400).json({
+        error: "invalid_job_id",
+        message: "jobId must be of the form embed-<videoId>.",
+      });
+      return;
+    }
+
+    const upload = await OriginalUpload.findOne({ where: { videoId } });
+    if (!upload) {
+      res.status(404).json({
+        error: "not_found",
+        message: "Upload not found.",
+      });
+      return;
+    }
+
+    const message =
+      req.body && typeof req.body.error === "string" ? req.body.error : "embed video job failed";
+    logger.error({ message }, `[original-uploads] embed video job failed for upload ${upload.videoId}`);
+
+    res.status(200).json({ success: true });
   });
 
   return router;

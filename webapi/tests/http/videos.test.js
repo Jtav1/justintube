@@ -511,6 +511,81 @@ describe("Video discovery and metadata endpoints", () => {
     });
   });
 
+  describe("GET /videos/{id}/embed-video (getVideoEmbedVideo)", () => {
+    test("streams the audio upload's muxed embed video with HTTP Range support", async () => {
+      const upload = await seedUpload({
+        mediaType: "audio",
+        embedVideoStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-embed.mp4`,
+        embedVideoWidth: 480,
+        embedVideoHeight: 480,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      const contents = Buffer.from("fake-mp4-bytes");
+      writeMediaFixture(upload.embedVideoStoragePath, contents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/embed-video`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("video/mp4");
+      expect(res.headers["accept-ranges"]).toBe("bytes");
+      expect(Buffer.compare(res.body, contents)).toBe(0);
+    });
+
+    test("honors a Range header with 206 partial content", async () => {
+      const upload = await seedUpload({
+        mediaType: "audio",
+        embedVideoStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-embed.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(upload.embedVideoStoragePath, Buffer.from("0123456789"));
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/embed-video`)
+        .set("Range", "bytes=2-4")
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-range"]).toBe("bytes 2-4/10");
+      expect(res.body.toString()).toBe("234");
+    });
+
+    test("returns 404 when no embed video has been generated yet", async () => {
+      const upload = await seedUpload({ mediaType: "audio" });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/embed-video`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "embed-owner-key");
+      const upload = await seedUpload({
+        userId: owner.id,
+        mediaType: "audio",
+        embedVideoStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-embed.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "private" });
+      writeMediaFixture(upload.embedVideoStoragePath, Buffer.from("data"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/embed-video`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe("GET /videos/{id}/thumbnail (getVideoThumbnail)", () => {
     test("serves the thumbnail image for a public video", async () => {
       const upload = await seedUpload();

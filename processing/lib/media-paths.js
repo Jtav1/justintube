@@ -63,7 +63,7 @@ export class TranscodeValidationError extends Error {
  * @returns {string} Sanitized relative path string.
  * @throws {TranscodeValidationError} When the value is missing or unsafe.
  */
-function validateRelativeMediaPath(value, fieldLabel) {
+export function validateRelativeMediaPath(value, fieldLabel) {
   if (typeof value !== "string" || !value.trim()) {
     throw new TranscodeValidationError(
       `${fieldLabel} is required and must be a string`,
@@ -136,6 +136,32 @@ export function resolveOriginalInputPath(filename) {
   } catch {
     throw new TranscodeValidationError(
       `input file not found in original/: ${safeName}`,
+    );
+  }
+
+  return absolutePath;
+}
+
+/**
+ * Resolves a thumbnail-image relative path to an absolute path under
+ * `thumbnailsDir` and confirms the file is readable. Read-only, like
+ * `resolveOriginalInputPath` — a missing subfolder means "not found", not
+ * "create it for me".
+ *
+ * @param {string} filename Relative path under `/media/thumbnails`
+ *   (`<userId|_unowned>/<basename>` or a plain basename).
+ * @returns {string} Absolute path to the readable thumbnail file.
+ * @throws {TranscodeValidationError} When the file is missing or unreadable.
+ */
+export function resolveThumbnailInputPath(filename) {
+  const safeName = validateRelativeMediaPath(filename, "thumbnailFilename");
+  const absolutePath = join(thumbnailsDir, safeName);
+
+  try {
+    accessSync(absolutePath, constants.R_OK);
+  } catch {
+    throw new TranscodeValidationError(
+      `thumbnail file not found in thumbnails/: ${safeName}`,
     );
   }
 

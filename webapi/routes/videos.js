@@ -49,7 +49,11 @@ import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { requestTranscodeBatch } from "../lib/processing-client.js";
-import { THUMBNAIL_OUTPUT_EXT, parseThumbnailTimestampTenths } from "./uploads.js";
+import {
+  THUMBNAIL_OUTPUT_EXT,
+  enqueueAudioEmbedVideo,
+  parseThumbnailTimestampTenths,
+} from "./uploads.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -664,13 +668,21 @@ const AUDIO_EMBED_HEIGHT = 80;
  * rendition yet) is a non-player page and gets a plain "Justintube - <title>"
  * description instead.
  *
- * Audio uploads deliberately reuse `og:video` (not just `og:audio`) pointing
- * at the audio stream, with `og:video:type` set to the real audio MIME type
- * — Discord has no separate audio-embed mechanism and ignores `og:audio`
- * entirely, but it *will* render a compact inline audio player from
- * `og:video` metadata once the stream's actual `Content-Type` comes back as
- * audio, which is exactly what this points it at. `og:audio` tags are also
- * included alongside for the few other unfurlers that do honor them.
+ * Audio uploads deliberately point `og:video` (not just `og:audio`) at a
+ * real playable video whenever one is available — Discord has no
+ * `og:audio`-based player at all and simply shows a plain link card for it,
+ * but it *will* render a full inline video player from `og:video`. Once
+ * `enqueueAudioEmbedVideo` (routes/uploads.js) has produced a muxed
+ * thumbnail+audio MP4 for this upload (`upload.embedVideoStoragePath`),
+ * `og:video`/`twitter:player:stream` point at that (`GET
+ * /videos/:id/embed-video`, `video/mp4`, real width/height) instead of the
+ * raw audio stream. Until then — no thumbnail yet, or the mux job hasn't
+ * finished — this falls back to the old behavior of pointing `og:video` at
+ * the raw audio stream with a fixed compact-player size
+ * (`AUDIO_EMBED_WIDTH`/`HEIGHT`); some unfurlers do render *something*
+ * playable from that even without a video stream, so it's still better than
+ * nothing. `og:audio` tags always point at the real audio stream (never the
+ * muxed video), for the few unfurlers that do honor them.
  *
  * `twitter:card` is `"player"` (full inline playback) only when
  * `publicApiOrigin()` is HTTPS — Twitter/X will not validate an `http://`
@@ -735,9 +747,16 @@ function renderUnfurlHtml(upload, metadata, renditions) {
 
   let twitterCard = "summary";
   if (embedsMedia) {
-    const mediaUrl = `${apiOrigin}${smallest.streamUrl}`;
-    const mediaType =
-      smallest.mimeType || (isVideo ? "video/mp4" : "audio/mpeg");
+    const hasEmbedVideo = !isVideo && Boolean(upload.embedVideoStoragePath);
+    const mediaUrl = hasEmbedVideo
+      ? `${apiOrigin}/api/v1/videos/${upload.id}/embed-video`
+      : `${apiOrigin}${smallest.streamUrl}`;
+    const mediaType = hasEmbedVideo
+      ? "video/mp4"
+      : smallest.mimeType || (isVideo ? "video/mp4" : "audio/mpeg");
+    const mediaWidth = hasEmbedVideo ? upload.embedVideoWidth : smallest.width;
+    const mediaHeight = hasEmbedVideo ? upload.embedVideoHeight : smallest.height;
+
     tags.push(`<meta property="og:video" content="${escapeHtml(mediaUrl)}">`);
     tags.push(
       `<meta property="og:video:secure_url" content="${escapeHtml(mediaUrl)}">`,
@@ -745,16 +764,18 @@ function renderUnfurlHtml(upload, metadata, renditions) {
     tags.push(
       `<meta property="og:video:type" content="${escapeHtml(mediaType)}">`,
     );
-    if (smallest.width != null && smallest.height != null) {
+    if (mediaWidth != null && mediaHeight != null) {
       tags.push(
-        `<meta property="og:video:width" content="${smallest.width}">`,
+        `<meta property="og:video:width" content="${mediaWidth}">`,
       );
       tags.push(
-        `<meta property="og:video:height" content="${smallest.height}">`,
+        `<meta property="og:video:height" content="${mediaHeight}">`,
       );
     } else if (!isVideo) {
-      // Audio renditions have no natural width/height, but Discord requires
-      // og:video:width/height to be present to activate the embed at all.
+      // No embed video yet (no thumbnail, or the mux job hasn't finished) —
+      // audio renditions have no natural width/height of their own, but
+      // Discord requires og:video:width/height to be present to activate the
+      // embed at all, so fall back to a fixed compact-player size.
       tags.push(
         `<meta property="og:video:width" content="${AUDIO_EMBED_WIDTH}">`,
       );
@@ -763,11 +784,14 @@ function renderUnfurlHtml(upload, metadata, renditions) {
       );
     }
     if (!isVideo) {
-      // Semantically-correct tags for the few unfurlers that do honor them,
-      // alongside the og:video Discord-compatibility tags above.
-      tags.push(`<meta property="og:audio" content="${escapeHtml(mediaUrl)}">`);
+      // Semantically-correct tags for the few unfurlers that do honor them —
+      // always the real audio stream, never the muxed embed video, alongside
+      // the og:video Discord-compatibility tags above.
+      const audioUrl = `${apiOrigin}${smallest.streamUrl}`;
+      const audioType = smallest.mimeType || "audio/mpeg";
+      tags.push(`<meta property="og:audio" content="${escapeHtml(audioUrl)}">`);
       tags.push(
-        `<meta property="og:audio:type" content="${escapeHtml(mediaType)}">`,
+        `<meta property="og:audio:type" content="${escapeHtml(audioType)}">`,
       );
     }
 
@@ -776,9 +800,9 @@ function renderUnfurlHtml(upload, metadata, renditions) {
       twitterCard = "player";
       const playerUrl = `${apiOrigin}/api/v1/videos/${upload.id}/player`;
       const width =
-        smallest.width || upload.videoWidth || (isVideo ? 480 : AUDIO_EMBED_WIDTH);
+        mediaWidth || upload.videoWidth || (isVideo ? 480 : AUDIO_EMBED_WIDTH);
       const height =
-        smallest.height || upload.videoHeight || (isVideo ? 270 : AUDIO_EMBED_HEIGHT);
+        mediaHeight || upload.videoHeight || (isVideo ? 270 : AUDIO_EMBED_HEIGHT);
       tags.push(
         `<meta name="twitter:player" content="${escapeHtml(playerUrl)}">`,
       );
@@ -2349,6 +2373,80 @@ export function createVideosRouter() {
   });
 
   /**
+   * GET /videos/:id/embed-video — getVideoEmbedVideo
+   * Auth: optional. Private requires owner, grant, or admin. Streams an
+   * audio upload's thumbnail+audio MP4 (see `enqueueAudioEmbedVideo` in
+   * routes/uploads.js) with HTTP Range support — the `og:video`/
+   * `twitter:player:stream` target `renderUnfurlHtml` points link-unfurl
+   * bots at for audio uploads, since Discord has no `og:audio` player.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/embed-video:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Stream an audio upload's link-unfurl embed video (supports HTTP Range requests)
+   *     operationId: getVideoEmbedVideo
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Full file (no Range header sent)
+   *       "206":
+   *         description: Partial content (Range header honored)
+   *       "404":
+   *         description: Not found, inaccessible, or no embed video generated yet
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the streamed file or a 404/500 error.
+   */
+  router.get("/videos/:id/embed-video", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.embedVideoStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      const absolutePath = resolveMediaPath(upload.embedVideoStoragePath);
+      await streamFileWithRangeSupport(req, res, absolutePath, "video/mp4");
+    } catch (err) {
+      logger.error({ err }, "getVideoEmbedVideo failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to stream embed video.",
+        });
+      }
+    }
+  });
+
+  /**
    * GET /videos/:id/thumbnail — getVideoThumbnail
    * Auth: optional. Private requires owner, grant, or admin.
    *
@@ -2548,6 +2646,8 @@ export function createVideosRouter() {
         }
 
         syncVideoIndex(upload.id);
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        enqueueAudioEmbedVideo(upload, relativeThumbnailFilename, storedFilename);
 
         res
           .status(200)

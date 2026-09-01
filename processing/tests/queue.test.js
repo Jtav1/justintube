@@ -2,13 +2,18 @@ import { jest } from "@jest/globals";
 import { DelayedError } from "bullmq";
 
 const computeContentHash = jest.fn();
+const collectOutputMetadata = jest.fn();
 const notifyContentHashComplete = jest.fn();
 const notifyContentHashFailed = jest.fn();
 const notifyThumbnailComplete = jest.fn();
+const notifyEmbedVideoComplete = jest.fn();
 const probeEmbeddedThumbnailStream = jest.fn();
 const resolveThumbnailOutputPath = jest.fn();
+const resolveThumbnailInputPath = jest.fn();
+const resolveTranscodedOutputPath = jest.fn();
 const buildThumbnailFfmpegArgs = jest.fn();
 const buildEmbeddedThumbnailFfmpegArgs = jest.fn();
+const buildEmbedFfmpegArgs = jest.fn();
 const runFfmpeg = jest.fn();
 const stat = jest.fn();
 
@@ -17,7 +22,7 @@ const stat = jest.fn();
 // under native ESM.
 jest.unstable_mockModule("../lib/probe.js", () => ({
   computeContentHash,
-  collectOutputMetadata: jest.fn(),
+  collectOutputMetadata,
   probeStreamCodecs: jest.fn(),
   probeEmbeddedThumbnailStream,
 }));
@@ -29,17 +34,21 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyThumbnailComplete,
   notifyOriginalUploadNormalizeComplete: jest.fn(),
   notifyOriginalUploadNormalizeFailed: jest.fn(),
+  notifyEmbedVideoComplete,
+  notifyEmbedVideoFailed: jest.fn(),
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveOriginalInputPath: jest.fn((filename) => `/media/original/${filename}`),
   resolveThumbnailOutputPath,
-  resolveTranscodedOutputPath: jest.fn(),
+  resolveThumbnailInputPath,
+  resolveTranscodedOutputPath,
   resolveNormalizedOutputPath: jest.fn(),
 }));
 jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildFfmpegArgs: jest.fn(),
   buildThumbnailFfmpegArgs,
   buildEmbeddedThumbnailFfmpegArgs,
+  buildEmbedFfmpegArgs,
   buildNormalizeFfmpegArgs: jest.fn(),
   runFfmpeg,
 }));
@@ -120,6 +129,78 @@ describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
     expect(buildThumbnailFfmpegArgs).toHaveBeenCalled();
     expect(buildEmbeddedThumbnailFfmpegArgs).not.toHaveBeenCalled();
     expect(runFfmpeg).toHaveBeenCalledWith(["frame-grab-args"]);
+  });
+});
+
+/**
+ * Builds a fake BullMQ job for an "embed" kind job.
+ *
+ * @param {object} [dataOverrides] Initial job.data overrides.
+ * @returns {object} Fake job.
+ */
+function makeEmbedJob(dataOverrides = {}) {
+  return {
+    id: "embed-abc123",
+    data: {
+      kind: "embed",
+      inputFilename: "clip.mp3",
+      thumbnailFilename: "42/cover.jpg",
+      outputFilename: "42/embed-abc123.mp4",
+      ...dataOverrides,
+    },
+    updateProgress: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe("processTranscodeJob (kind: embed)", () => {
+  beforeEach(() => {
+    resolveThumbnailInputPath.mockReset().mockImplementation((f) => `/media/thumbnails/${f}`);
+    resolveTranscodedOutputPath.mockReset().mockImplementation((f) => `/media/transcoded/${f}`);
+    buildEmbedFfmpegArgs.mockReset().mockReturnValue(["embed-args"]);
+    runFfmpeg.mockReset().mockResolvedValue(undefined);
+    collectOutputMetadata.mockReset().mockResolvedValue({
+      fileSizeBytes: 4321,
+      videoWidth: 480,
+      videoHeight: 480,
+      resolution: "480p",
+      storagePath: "transcoded/42/embed-abc123.mp4",
+      mimeType: "video/mp4",
+    });
+    notifyEmbedVideoComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("mux the audio input with the thumbnail image and reports the result", async () => {
+    const job = makeEmbedJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(resolveThumbnailInputPath).toHaveBeenCalledWith("42/cover.jpg");
+    expect(buildEmbedFfmpegArgs).toHaveBeenCalledWith({
+      imagePath: "/media/thumbnails/42/cover.jpg",
+      audioPath: "/media/original/clip.mp3",
+      outputPath: "/media/transcoded/42/embed-abc123.mp4",
+    });
+    expect(runFfmpeg).toHaveBeenCalledWith(["embed-args"]);
+    expect(notifyEmbedVideoComplete).toHaveBeenCalledWith("embed-abc123", expect.objectContaining({
+      storagePath: "transcoded/42/embed-abc123.mp4",
+      videoWidth: 480,
+      videoHeight: 480,
+    }));
+    expect(result).toEqual({
+      outputFilename: "42/embed-abc123.mp4",
+      fileSizeBytes: 4321,
+      videoWidth: 480,
+      videoHeight: 480,
+      storagePath: "transcoded/42/embed-abc123.mp4",
+    });
+  });
+
+  test("propagates an ffmpeg failure instead of notifying completion", async () => {
+    runFfmpeg.mockReset().mockRejectedValue(new Error("ffmpeg exited with code 1"));
+    const job = makeEmbedJob();
+
+    await expect(processTranscodeJob(job)).rejects.toThrow("ffmpeg exited with code 1");
+    expect(notifyEmbedVideoComplete).not.toHaveBeenCalled();
   });
 });
 

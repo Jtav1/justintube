@@ -566,6 +566,69 @@ export function enqueueDuplicateHashCheck(upload, storedFilename) {
 }
 
 /**
+ * For an audio upload that now has a thumbnail, fires off an `"embed"`
+ * processing job that muxes the thumbnail image with the audio into a real
+ * MP4 — purely so link-unfurl bots that only render `og:video` (Discord in
+ * particular; see `renderUnfurlHtml` in routes/videos.js) have something
+ * genuinely playable to embed for audio uploads. Video uploads are skipped
+ * entirely — they already have a real video stream to point unfurlers at.
+ *
+ * Fire-and-forget like `enqueueDuplicateHashCheck`: the caller (the
+ * thumbnail-upload route) does not await this and its response is never
+ * touched by it. The completion callback
+ * (`/internal/original-uploads/:jobId/embed-complete`) is what actually
+ * updates `embedVideoStoragePath`/width/height and cleans up whichever
+ * previous embed video this upload had, once the new one is confirmed on
+ * disk — nothing is deleted here up front, so a failed regeneration never
+ * leaves the upload with no working embed video at all.
+ *
+ * Reuses the fixed jobId `embed-<videoId>` (like `normalize-<videoId>`
+ * elsewhere in this file) - if a previous embed job for this same upload is
+ * still queued/active when the thumbnail changes again, this enqueue is a
+ * silent no-op (BullMQ dedupes by jobId) and the in-flight job keeps running
+ * against the older thumbnail. Acceptable for v1: the same limitation
+ * already exists for normalize/hash jobs, and worst case a re-upload shortly
+ * after finishes the regeneration anyway.
+ *
+ * @private
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} thumbnailFilename Relative path under `thumbnails/` (e.g. `"42/cover.jpg"`).
+ * @param {string} storedFilename Basename of the audio source file under `original/`.
+ * @returns {void} Nothing — the embed job is enqueued in the background.
+ */
+export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename) {
+  if (upload.mediaType !== "audio" || !transcodingEnabled()) {
+    return;
+  }
+
+  const segment = userStorageSegment(upload.userId);
+  const outputFilename = `${segment}/${randomUUID()}-embed.mp4`;
+
+  requestTranscodeBatch({
+    filename: storedFilename,
+    jobs: [
+      {
+        jobId: `embed-${upload.videoId}`,
+        outputFilename,
+        kind: "embed",
+        thumbnailFilename,
+      },
+    ],
+  })
+    .then((enqueue) => {
+      if (!enqueue.ok) {
+        logger.warn(
+          { error: enqueue.error },
+          `[upload] audio-embed enqueue failed for ${upload.videoId}`,
+        );
+      }
+    })
+    .catch((err) => {
+      logger.warn({ err }, `[upload] audio-embed enqueue threw for ${upload.videoId}`);
+    });
+}
+
+/**
  * Kicks off server-side normalization for an upload accepted through the
  * FILETYPES_CONVERTIBLE tier (a common container ffmpeg can read but that
  * FILETYPES_ALLOWED doesn't serve as-is): enqueues a single `"normalize"`

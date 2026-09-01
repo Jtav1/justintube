@@ -129,6 +129,56 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
       expect(res.text).not.toContain('name="twitter:description"');
     });
 
+    test("prefers the muxed embed video over the raw audio stream for og:video once one has been generated", async () => {
+      const upload = await seedUpload({
+        mediaType: "audio",
+        embedVideoStoragePath: "transcoded/abc-embed.mp4",
+        embedVideoWidth: 480,
+        embedVideoHeight: 480,
+      });
+      await seedMetadata(upload.id, { title: "Podcast with cover art", visibility: "public" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "240p",
+        mimeType: "audio/mpeg",
+      });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/unfurl`);
+
+      expect(res.status).toBe(200);
+      // og:video now points at the real muxed video, not the raw audio stream.
+      expect(res.text).toContain(
+        `property="og:video" content="http://localhost:3000/api/v1/videos/${upload.id}/embed-video"`,
+      );
+      expect(res.text).toContain('property="og:video:type" content="video/mp4"');
+      expect(res.text).toContain('property="og:video:width" content="480"');
+      expect(res.text).toContain('property="og:video:height" content="480"');
+      // og:audio still points at the real audio stream, never the embed video.
+      expect(res.text).toContain(
+        `property="og:audio" content="http://localhost:3000/api/v1/videos/${upload.id}/stream?quality=240p"`,
+      );
+      expect(res.text).toContain('property="og:audio:type" content="audio/mpeg"');
+    });
+
+    test("falls back to the raw audio stream for og:video when no embed video has been generated yet", async () => {
+      const upload = await seedUpload({ mediaType: "audio" });
+      await seedMetadata(upload.id, { title: "Podcast without art", visibility: "public" });
+      await seedFileVersion(upload.id, {
+        status: "complete",
+        resolution: "240p",
+        mimeType: "audio/mpeg",
+      });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/unfurl`);
+
+      expect(res.status).toBe(200);
+      expect(res.text).toContain(
+        `property="og:video" content="http://localhost:3000/api/v1/videos/${upload.id}/stream?quality=240p"`,
+      );
+      expect(res.text).toContain('property="og:video:width" content="480"');
+      expect(res.text).toContain('property="og:video:height" content="80"');
+    });
+
     test("emits twitter:card=player for an audio upload only when PUBLIC_API_URL is HTTPS", async () => {
       const upload = await seedUpload({ mediaType: "audio" });
       await seedMetadata(upload.id, { title: "Secure podcast", visibility: "public" });

@@ -5,6 +5,7 @@ import {
   originalDir,
   resolveNormalizedOutputPath,
   resolveOriginalInputPath,
+  resolveThumbnailInputPath,
   resolveThumbnailOutputPath,
   resolveTranscodedOutputPath,
   thumbnailsDir,
@@ -80,5 +81,24 @@ describe("resolveOriginalInputPath finds a file placed under a userId subfolder"
     writeFileSync(filePath, "not a real video, just bytes for the test");
 
     expect(resolveOriginalInputPath("987654/real.mp4")).toBe(filePath);
+  });
+});
+
+describe("resolveThumbnailInputPath", () => {
+  test("resolves a thumbnail image under a userId subfolder without creating anything", () => {
+    expect(existsSync(join(thumbnailsDir, "987654"))).toBe(false);
+    expect(() => resolveThumbnailInputPath("987654/missing.jpg")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(existsSync(join(thumbnailsDir, "987654"))).toBe(false);
+  });
+
+  test("resolves successfully once the thumbnail file actually exists", () => {
+    const dir = join(thumbnailsDir, "987654");
+    const filePath = join(dir, "cover.jpg");
+    resolveThumbnailOutputPath("987654/placeholder.webp"); // mkdirs the subfolder as a side effect
+    writeFileSync(filePath, "not a real image, just bytes for the test");
+
+    expect(resolveThumbnailInputPath("987654/cover.jpg")).toBe(filePath);
   });
 });
