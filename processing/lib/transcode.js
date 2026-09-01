@@ -3,7 +3,7 @@ import "dotenv/config";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { TranscodeValidationError } from "./media-paths.js";
+import { TranscodeValidationError, validateRelativeMediaPath } from "./media-paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -76,9 +76,11 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} jobId Stable BullMQ job id.
  * @property {string} [outputFilename] Basename under the job kind's output
  *   directory. Absent when `kind === "hash"` (no output file is written).
- * @property {"rendition"|"thumbnail"|"hash"|"normalize"} kind Job kind.
+ * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
+ * @property {string} [thumbnailFilename] Present when `kind === "embed"` — relative
+ *   path under `/media/thumbnails` to loop as the muxed output's video stream.
  */
 
 /**
@@ -349,7 +351,16 @@ function validateOptionalTimestampSeconds(value, fieldName) {
  * writes an output file, so `outputFilename` is omitted entirely. `"normalize"`
  * (remux/transcode a FILETYPES_CONVERTIBLE upload to H.264/AAC MP4) needs
  * only `jobId` + `outputFilename` - no profile (it never scales) and no
- * hardware/mode gating (it always runs in software).
+ * hardware/mode gating (it always runs in software). `"embed"` (mux an
+ * audio-only upload with its thumbnail image into a playable MP4, for link
+ * unfurlers that only render `og:video`) needs `jobId` + `outputFilename` +
+ * `thumbnailFilename` - no profile, no gating.
+ *
+ * `outputFilename` (and `thumbnailFilename`) are validated with
+ * {@link validateRelativeMediaPath} rather than {@link requireSafeToken} -
+ * both may legitimately be a `<userId|_unowned>/<basename>` path under the
+ * per-user media layout, which `requireSafeToken`'s bare-token pattern would
+ * reject outright.
  *
  * @param {unknown} job Raw job object.
  * @param {number} index Zero-based index for error messages.
@@ -370,13 +381,21 @@ export function validateTranscodeJob(job, index) {
     return { jobId, kind: "hash" };
   }
 
-  const outputFilename = requireSafeToken(
+  const outputFilename = validateRelativeMediaPath(
     body.outputFilename,
     `jobs[${index}].outputFilename`,
   );
 
   if (body.kind === "normalize") {
     return { jobId, outputFilename, kind: "normalize" };
+  }
+
+  if (body.kind === "embed") {
+    const thumbnailFilename = validateRelativeMediaPath(
+      body.thumbnailFilename,
+      `jobs[${index}].thumbnailFilename`,
+    );
+    return { jobId, outputFilename, kind: "embed", thumbnailFilename };
   }
 
   const kind = body.kind === "thumbnail" ? "thumbnail" : "rendition";
@@ -638,6 +657,74 @@ export function buildNormalizeFfmpegArgs({ inputPath, outputPath, codecs }) {
 }
 
 /**
+ * Maximum frame dimensions for an `"embed"` job's looped video stream (a
+ * bounding box, not a hard target) — generously sized since the source is
+ * already a small thumbnail image, not something worth downscaling further.
+ *
+ * @type {number}
+ */
+const EMBED_VIDEO_MAX_WIDTH = 854;
+
+/**
+ * @type {number}
+ */
+const EMBED_VIDEO_MAX_HEIGHT = 480;
+
+/**
+ * Builds the ffmpeg argument list for an `"embed"` job: mux an audio-only
+ * upload with a single looped still image (its thumbnail) into a real MP4
+ * with both a video and an audio stream. Exists purely so link-unfurl bots
+ * (Discord in particular) that only render `og:video` — never `og:audio` —
+ * have something genuinely playable to point at for audio uploads.
+ *
+ * `-tune stillimage` plus a static source frame keeps the video stream
+ * essentially free to encode (one real keyframe, near-zero delta after that),
+ * so the output is only marginally larger than the raw audio. `-shortest`
+ * stops the (otherwise infinitely-looped, per `-loop 1`) image stream once
+ * the audio ends. The scale+pad filter fits the image within a bounding box
+ * and forces even output dimensions (via `ceil(iw/2)*2`) regardless of the
+ * source image's own dimensions/parity, both required for H.264. Audio is
+ * always re-encoded to AAC rather than copied — unlike `buildNormalizeFfmpegArgs`,
+ * the source codec (mp3, opus, flac, ...) is often not one the MP4 container
+ * can hold at all, so there is no safe "copy when already matching" case here.
+ *
+ * @param {object} options Embed execution options.
+ * @param {string} options.imagePath Absolute path to the thumbnail image to loop.
+ * @param {string} options.audioPath Absolute path to the source audio file.
+ * @param {string} options.outputPath Absolute path for the output `.mp4` file.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildEmbedFfmpegArgs({ imagePath, audioPath, outputPath }) {
+  return [
+    "-y",
+    "-loop",
+    "1",
+    "-i",
+    imagePath,
+    "-i",
+    audioPath,
+    "-vf",
+    `scale='min(${EMBED_VIDEO_MAX_WIDTH},iw)':'min(${EMBED_VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease,pad='ceil(iw/2)*2':'ceil(ih/2)*2'`,
+    "-c:v",
+    "libx264",
+    "-tune",
+    "stillimage",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-shortest",
+    "-movflags",
+    "+faststart",
+    "-f",
+    "mp4",
+    outputPath,
+  ];
+}
+
+/**
  * Maximum thumbnail frame dimensions (a bounding box, not a hard target) —
  * matches the app's existing "480p" rendition convention.
  *
@@ -697,6 +784,44 @@ export function buildThumbnailFfmpegArgs({
     String(timestampSeconds),
     "-i",
     inputPath,
+    "-frames:v",
+    "1",
+    "-an",
+    "-sn",
+    "-vf",
+    buildThumbnailScaleFilter(),
+    "-c:v",
+    "libwebp",
+    "-quality",
+    "70",
+    outputPath,
+  ];
+}
+
+/**
+ * Builds the ffmpeg argument list for extracting an embedded cover-art /
+ * attached-thumbnail stream (see `probeEmbeddedThumbnailStream`) as the video's
+ * thumbnail, rather than decoding and grabbing a frame at a timestamp. Reuses
+ * the same bounding-box scale + WebP encode as {@link buildThumbnailFfmpegArgs}
+ * so both paths produce an equivalent output regardless of source.
+ *
+ * @param {object} options Thumbnail execution options.
+ * @param {string} options.inputPath Absolute path to the source media file.
+ * @param {string} options.outputPath Absolute path for the output `.webp` file.
+ * @param {number} options.streamIndex ffmpeg stream index of the attached picture.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildEmbeddedThumbnailFfmpegArgs({
+  inputPath,
+  outputPath,
+  streamIndex,
+}) {
+  return [
+    "-y",
+    "-i",
+    inputPath,
+    "-map",
+    `0:${streamIndex}`,
     "-frames:v",
     "1",
     "-an",

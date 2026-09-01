@@ -3,6 +3,7 @@ import {
   validateInputFilename,
 } from "../lib/media-paths.js";
 import {
+  buildEmbedFfmpegArgs,
   buildFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildOutputFilename,
@@ -24,14 +25,40 @@ describe("validateInputFilename", () => {
     expect(validateInputFilename("abc.mp4")).toBe("abc.mp4");
   });
 
-  test("rejects path traversal and separators", () => {
+  test("accepts one userId subfolder segment", () => {
+    expect(validateInputFilename("42/abc.mp4")).toBe("42/abc.mp4");
+  });
+
+  test("accepts the _unowned subfolder", () => {
+    expect(validateInputFilename("_unowned/abc.mp4")).toBe("_unowned/abc.mp4");
+  });
+
+  test("rejects path traversal, absolute paths, and separators", () => {
     expect(() => validateInputFilename("../secret.mp4")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("42/../abc.mp4")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("/etc/passwd")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("")).toThrow(TranscodeValidationError);
+  });
+
+  test("rejects multi-level nesting and a non-userId subfolder segment", () => {
+    expect(() => validateInputFilename("a/b/abc.mp4")).toThrow(
       TranscodeValidationError,
     );
     expect(() => validateInputFilename("original/abc.mp4")).toThrow(
       TranscodeValidationError,
     );
-    expect(() => validateInputFilename("")).toThrow(TranscodeValidationError);
+    expect(() => validateInputFilename("0/abc.mp4")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(() => validateInputFilename("42/")).toThrow(
+      TranscodeValidationError,
+    );
   });
 });
 
@@ -237,6 +264,109 @@ describe("thumbnail job validation and ffmpeg args", () => {
     expect(result).toEqual({
       filename: "clip.mov",
       jobs: [{ jobId: "normalize-abc123", outputFilename: "abc123.mp4", kind: "normalize" }],
+    });
+  });
+
+  test("validateTranscodeJob accepts a per-user-subfolder outputFilename (regression: outputFilename must accept the <userId>/<basename> layout, not just a bare token)", () => {
+    const jobId = "normalize-abc123";
+    expect(
+      validateTranscodeJob(
+        { jobId, outputFilename: "42/abc123.mp4", kind: "normalize" },
+        0,
+      ),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/abc123.mp4",
+      kind: "normalize",
+    });
+  });
+
+  test("validateTranscodeJob still rejects a traversal/absolute outputFilename under the per-user-subfolder layout", () => {
+    expect(() =>
+      validateTranscodeJob(
+        { jobId: "x", outputFilename: "../../etc/passwd", kind: "normalize" },
+        0,
+      ),
+    ).toThrow(TranscodeValidationError);
+    expect(() =>
+      validateTranscodeJob(
+        { jobId: "x", outputFilename: "not-a-userid/abc.mp4", kind: "normalize" },
+        0,
+      ),
+    ).toThrow(TranscodeValidationError);
+  });
+
+  test("validateTranscodeJob accepts an embed job with jobId + outputFilename + thumbnailFilename, no profile", () => {
+    const jobId = "embed-abc123";
+    expect(
+      validateTranscodeJob(
+        {
+          jobId,
+          outputFilename: "42/embed-abc123.mp4",
+          thumbnailFilename: "42/cover.jpg",
+          kind: "embed",
+        },
+        0,
+      ),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/embed-abc123.mp4",
+      kind: "embed",
+      thumbnailFilename: "42/cover.jpg",
+    });
+  });
+
+  test("validateTranscodeJob rejects an embed job missing thumbnailFilename", () => {
+    expect(() =>
+      validateTranscodeJob(
+        { jobId: "embed-abc123", outputFilename: "abc123.mp4", kind: "embed" },
+        0,
+      ),
+    ).toThrow(TranscodeValidationError);
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for embed jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          {
+            jobId: "embed-abc123",
+            outputFilename: "abc123.mp4",
+            thumbnailFilename: "cover.jpg",
+            kind: "embed",
+          },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("validateTranscodeBatchRequest accepts a batch with an embed job", () => {
+    const result = validateTranscodeBatchRequest({
+      filename: "clip.mp3",
+      jobs: [
+        {
+          jobId: "embed-abc123",
+          outputFilename: "42/embed-abc123.mp4",
+          thumbnailFilename: "42/cover.jpg",
+          kind: "embed",
+        },
+      ],
+    });
+    expect(result).toEqual({
+      filename: "clip.mp3",
+      jobs: [
+        {
+          jobId: "embed-abc123",
+          outputFilename: "42/embed-abc123.mp4",
+          thumbnailFilename: "42/cover.jpg",
+          kind: "embed",
+        },
+      ],
     });
   });
 
@@ -669,5 +799,54 @@ describe("buildNormalizeFfmpegArgs", () => {
     });
 
     expect(args).not.toContain("-vf");
+  });
+});
+
+describe("buildEmbedFfmpegArgs", () => {
+  test("loops the thumbnail image, muxes it with the audio, stops at -shortest", () => {
+    const args = buildEmbedFfmpegArgs({
+      imagePath: "/media/thumbnails/42/cover.jpg",
+      audioPath: "/media/original/42/clip.mp3",
+      outputPath: "/media/transcoded/42/embed-abc123.mp4",
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-loop",
+      "1",
+      "-i",
+      "/media/thumbnails/42/cover.jpg",
+      "-i",
+      "/media/original/42/clip.mp3",
+      "-vf",
+      expect.stringContaining("scale="),
+      "-c:v",
+      "libx264",
+      "-tune",
+      "stillimage",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      "-f",
+      "mp4",
+      "/media/transcoded/42/embed-abc123.mp4",
+    ]);
+  });
+
+  test("always re-encodes audio to AAC rather than copying the source codec", () => {
+    const args = buildEmbedFfmpegArgs({
+      imagePath: "/media/thumbnails/cover.jpg",
+      audioPath: "/media/original/clip.flac",
+      outputPath: "/media/transcoded/embed-abc123.mp4",
+    });
+
+    expect(args).not.toContain("copy");
+    expect(args).toContain("aac");
   });
 });

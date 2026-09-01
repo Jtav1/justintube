@@ -38,6 +38,8 @@
     "docs:preview": "npm run docs:generate && scalar document serve openapi.generated.json --watch",
     "docs:build": "npm run docs:generate && scalar document validate openapi.generated.json",
     "reindex-search": "node scripts/reindex-search.js",
+    "migrate-upload-storage": "node scripts/copy-original-upload-storage.js",
+    "cleanup-old-upload-storage": "node scripts/cleanup-original-upload-storage.js",
     "migration:generate": "sequelize-cli migration:generate --config db/config.js --migrations-path db/migrations --seeders-path db/seeders",
     "db:migrate": "sequelize-cli db:migrate --config db/config.js --migrations-path db/migrations --seeders-path db/seeders",
     "db:migrate:undo": "sequelize-cli db:migrate:undo --config db/config.js --migrations-path db/migrations --seeders-path db/seeders",

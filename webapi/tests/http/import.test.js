@@ -13,6 +13,7 @@ import {
 } from "../helpers/db.js";
 import { continueImport, originalDir } from "../../routes/uploads.js";
 import { OriginalUpload } from "../../lib/models/index.js";
+import { userStorageSegment } from "../../lib/media-meta.js";
 
 /**
  * HTTP contract + unit tests for the URL-import flow (`POST /videos/import`
@@ -274,7 +275,10 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].original_filename).toBe("1737900000.mp4");
     expect(rows[0].status).toBe("uploaded");
-    expect(existsSync(join(originalDir, `${res.body.videoId}.mp4`))).toBe(true);
+    const segment = userStorageSegment(rows[0].user_id);
+    expect(
+      existsSync(join(originalDir, segment, `${rows[0].uuid}.mp4`)),
+    ).toBe(true);
     expect(existsSync(join(originalDir, "1737900000.mp4"))).toBe(false);
   });
 
@@ -293,8 +297,9 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       expect(upload.originalFilename).toBe("1737900010.mp4");
       expect(upload.fileExtension).toBe("mp4");
       expect(upload.status).toBe("uploaded");
-      expect(upload.storagePath).toBe(`original/${upload.videoId}.mp4`);
-      expect(existsSync(join(originalDir, `${upload.videoId}.mp4`))).toBe(true);
+      const segment = userStorageSegment(upload.userId);
+      expect(upload.storagePath).toBe(`original/${segment}/${upload.uuid}.mp4`);
+      expect(existsSync(join(originalDir, segment, `${upload.uuid}.mp4`))).toBe(true);
       expect(existsSync(join(originalDir, "1737900010.mp4"))).toBe(false);
 
       // /download, then /transcode for the auto-generated thumbnail job
@@ -416,7 +421,7 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
         (call) => call[0] === "http://processing.test:3001/transcode",
       );
       const payload = JSON.parse(String(transcodeCall[1].body));
-      expect(payload.filename).toBe(`${upload.videoId}.mp4`);
+      expect(payload.filename).toBe(`${userStorageSegment(upload.userId)}/${upload.uuid}.mp4`);
       // One thumbnail job + one job for the rendition profile.
       expect(payload.jobs).toHaveLength(2);
       const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
@@ -479,9 +484,10 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       expect(await OriginalUpload.findByPk(upload.id)).toBeNull();
     });
 
-    test("unlinks the downloaded source file when storing it under the videoId fails", async () => {
+    test("unlinks the downloaded source file when storing it under the uuid fails", async () => {
       // Written under the epoch-style name processing would have used, but
-      // never renamed to <videoId>.<ext> since the target dir doesn't exist.
+      // never renamed to <segment>/<uuid>.<ext> since a directory already
+      // occupies that exact path.
       writeDownloadedFixture("1737900020.mp4");
       globalThis.fetch = jest.fn(async () => ({
         ok: true,
@@ -493,12 +499,29 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       const upload = await seedDownloadingUpload();
       // Pre-create a directory at the rename target so fs.rename fails
       // (EISDIR/EPERM), exercising the storage-failure branch.
-      mkdirSync(join(originalDir, `${upload.videoId}.mp4`), { recursive: true });
+      mkdirSync(
+        join(originalDir, userStorageSegment(upload.userId), `${upload.uuid}.mp4`),
+        { recursive: true },
+      );
 
       await continueImport(upload, "https://example.com/watch?v=abc", {});
 
       expect(await OriginalUpload.findByPk(upload.id)).toBeNull();
       expect(existsSync(join(originalDir, "1737900020.mp4"))).toBe(false);
+    });
+
+    test("stores the file under the _unowned fallback folder when userId is null", async () => {
+      writeDownloadedFixture("1737900021.mp4");
+      const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900021.mp4");
+      globalThis.fetch = fetchMock;
+
+      const upload = await seedDownloadingUpload({ userId: null });
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+      await upload.reload();
+
+      expect(upload.storagePath).toBe(`original/_unowned/${upload.uuid}.mp4`);
+      expect(existsSync(join(originalDir, "_unowned", `${upload.uuid}.mp4`))).toBe(true);
     });
   });
 });

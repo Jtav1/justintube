@@ -44,6 +44,17 @@ export const Comment = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    /**
+     * Soft-delete marker set when the comment's author, a moderator, or an
+     * admin deletes it. The row is kept (not removed) so replies retain a
+     * valid `parentCommentId` — deleted comments are excluded from responses
+     * when they have no replies, and rendered as content-redacted
+     * placeholders when they do. Null when not deleted.
+     */
+    deletedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     createdAt: timestampColumn("created_at"),
     updatedAt: timestampColumn("updated_at"),
   },

@@ -143,7 +143,10 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     });
     expect(typeof res.body.videoId).toBe("string");
     expect(res.body.videoId).toHaveLength(6);
-    expect(res.body.storagePath).toBe(`original/${res.body.videoId}.mp4`);
+    expect(res.body.storagePath).toMatch(
+      /^original\/\d+\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp4$/,
+    );
+    expect(res.body.storagePath).toContain(`/${uploaderUser.id}/`);
     expect(res.body.fileVersions).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -209,7 +212,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(payload.jobs).toHaveLength(1);
     expect(payload.jobs[0]).toMatchObject({
       jobId: res.body.videoId,
-      outputFilename: `${res.body.videoId}.webp`,
+      outputFilename: `${uploaderUser.id}/${res.body.videoId}.webp`,
       kind: "thumbnail",
       timestampSeconds: null,
     });
@@ -372,7 +375,10 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     );
 
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    expect(payload.filename).toBe(`${res.body.videoId}.mp4`);
+    expect(payload.filename).toMatch(
+      /^\d+\/[0-9a-f-]{36}\.mp4$/,
+    );
+    expect(payload.filename).toContain(`${uploaderUser.id}/`);
     // One thumbnail job + one job per rendition profile.
     expect(payload.jobs).toHaveLength(3);
     expect(payload.jobs.filter((j) => j.kind === "thumbnail")).toHaveLength(1);
@@ -385,7 +391,7 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     for (const fv of res.body.fileVersions) {
       expect(fv.status).toBe("processing");
       expect(fv.jobId).toBe(fv.uuidName);
-      expect(fv.storagePath).toBe(`transcoded/${fv.uuidName}.mp4`);
+      expect(fv.storagePath).toBe(`transcoded/${uploaderUser.id}/${fv.uuidName}.mp4`);
     }
 
     const versionRows = await queryRows(
@@ -575,14 +581,17 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
       expect(fetchMock.mock.calls[0][0]).toBe("http://processing.test:3001/transcode");
       const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-      expect(payload.filename).toBe(`${res.body.videoId}.mov`);
-      expect(payload.jobs).toEqual([
-        {
-          jobId: `normalize-${res.body.videoId}`,
-          outputFilename: `${res.body.videoId}.mp4`,
-          kind: "normalize",
-        },
-      ]);
+      expect(payload.filename).toMatch(new RegExp(`^${uploaderUser.id}/[0-9a-f-]{36}\\.mov$`));
+      expect(payload.jobs).toHaveLength(1);
+      expect(payload.jobs[0]).toMatchObject({
+        jobId: `normalize-${res.body.videoId}`,
+        kind: "normalize",
+      });
+      // Normalize output gets a fresh uuid (distinct from the raw source's),
+      // nested under the same per-user subfolder.
+      expect(payload.jobs[0].outputFilename).toMatch(
+        new RegExp(`^${uploaderUser.id}/[0-9a-f-]{36}\\.mp4$`),
+      );
 
       const rows = await queryRows(
         "SELECT * FROM ORIGINAL_UPLOADS WHERE video_id = :videoId",
@@ -607,7 +616,9 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       expect(res.body.status).toBe("converting");
 
       const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-      expect(payload.jobs[0].outputFilename).toBe(`${res.body.videoId}.m4a`);
+      expect(payload.jobs[0].outputFilename).toMatch(
+        new RegExp(`^${uploaderUser.id}/[0-9a-f-]{36}\\.m4a$`),
+      );
     });
 
     test("marks the upload failed when the normalize enqueue call itself fails", async () => {

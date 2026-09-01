@@ -455,12 +455,107 @@ describe("Video comments endpoints", () => {
       expect(res.status).toBe(204);
     });
 
-    test("cascades to delete replies when the parent comment is deleted", async () => {
+    test("notifies the comment author when a moderator deletes their comment", async () => {
+      const author = await seedUserWithRoleAndKey("viewer", "comment-del-notify-author-key");
+      await seedUserWithRoleAndKey("moderator", "comment-del-notify-mod-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { title: "Moderated Video", visibility: "public" });
+      const comment = await seedComment(upload.id, author.id);
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-notify-mod-key");
+      expect(res.status).toBe(204);
+
+      const rows = await queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", {
+        userId: author.id,
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].title).toBe("Comment Removed");
+      expect(rows[0].target).toBe(upload.videoId);
+    });
+
+    test("notifies the comment author when an admin deletes their comment", async () => {
+      const author = await seedUserWithRoleAndKey("viewer", "comment-del-notify-author2-key");
+      await seedUserWithRoleAndKey("admin", "comment-del-notify-admin-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const comment = await seedComment(upload.id, author.id);
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-notify-admin-key");
+      expect(res.status).toBe(204);
+
+      const rows = await queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", {
+        userId: author.id,
+      });
+      expect(rows).toHaveLength(1);
+    });
+
+    test("does not notify when the author deletes their own comment", async () => {
+      const author = await seedUserWithRoleAndKey("viewer", "comment-del-notify-self-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const comment = await seedComment(upload.id, author.id);
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-notify-self-key");
+      expect(res.status).toBe(204);
+
+      const rows = await queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", {
+        userId: author.id,
+      });
+      expect(rows).toHaveLength(0);
+    });
+
+    test("does not notify when a moderator/admin deletes their own comment", async () => {
+      const modAuthor = await seedUserWithRoleAndKey("moderator", "comment-del-notify-mod-self-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const comment = await seedComment(upload.id, modAuthor.id);
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-notify-mod-self-key");
+      expect(res.status).toBe(204);
+
+      const rows = await queryRows("SELECT * FROM NOTIFICATIONS WHERE user_id = :userId", {
+        userId: modAuthor.id,
+      });
+      expect(rows).toHaveLength(0);
+    });
+
+    test("soft-deletes: the row remains, with body/author redacted and deletedAt set", async () => {
+      const author = await seedUserWithRoleAndKey("viewer", "comment-del-soft-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const comment = await seedComment(upload.id, author.id, { body: "before delete" });
+
+      const deleteRes = await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-soft-key");
+      expect(deleteRes.status).toBe(204);
+
+      const listRes = await client.get(`/api/v1/videos/${upload.id}/comments`);
+      expect(listRes.body.items).toHaveLength(1);
+      const deleted = listRes.body.items[0];
+      expect(deleted.id).toBe(comment.id);
+      expect(deleted.body).toBeNull();
+      expect(deleted.author).toBeNull();
+      expect(deleted.deletedAt).not.toBeNull();
+    });
+
+    test("does not cascade-delete replies when the parent comment is deleted", async () => {
       const author = await seedUserWithRoleAndKey("viewer", "comment-del-cascade-key");
       const upload = await seedUpload();
       await seedMetadata(upload.id, { visibility: "public" });
       const parent = await seedComment(upload.id, author.id, { body: "parent" });
-      await seedComment(upload.id, author.id, { body: "child", parentCommentId: parent.id });
+      const reply = await seedComment(upload.id, author.id, {
+        body: "child",
+        parentCommentId: parent.id,
+      });
 
       const deleteRes = await client
         .delete(`/api/v1/videos/${upload.id}/comments/${parent.id}`)
@@ -468,7 +563,43 @@ describe("Video comments endpoints", () => {
       expect(deleteRes.status).toBe(204);
 
       const listRes = await client.get(`/api/v1/videos/${upload.id}/comments`);
-      expect(listRes.body.items).toHaveLength(0);
+      expect(listRes.body.items).toHaveLength(2);
+      const replyItem = listRes.body.items.find((item) => item.id === reply.id);
+      expect(replyItem.body).toBe("child");
+      expect(replyItem.deletedAt).toBeNull();
+    });
+
+    test("returns 404 when the comment was already deleted", async () => {
+      const author = await seedUserWithRoleAndKey("viewer", "comment-del-twice-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const comment = await seedComment(upload.id, author.id);
+      await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-twice-key");
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-twice-key");
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 when attempting to edit an already-deleted comment", async () => {
+      const author = await seedUserWithRoleAndKey("viewer", "comment-del-then-edit-key");
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const comment = await seedComment(upload.id, author.id);
+      await client
+        .delete(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-then-edit-key");
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}/comments/${comment.id}`)
+        .set("Authorization", "Bearer comment-del-then-edit-key")
+        .send({ body: "resurrected" });
+
+      expect(res.status).toBe(404);
     });
   });
 });

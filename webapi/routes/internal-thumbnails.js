@@ -2,6 +2,7 @@ import { Router } from "express";
 import { OriginalUpload, VideoThumbnail } from "../lib/models/index.js";
 import { syncVideoIndex } from "../lib/search.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
+import { enqueueAudioEmbedVideo } from "./uploads.js";
 
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
@@ -133,6 +134,8 @@ export function createInternalThumbnailsRouter() {
     }
 
     syncVideoIndex(upload.id);
+    const storedFilename = upload.storagePath.replace(/^original\//, "");
+    enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename);
 
     res.status(200).json({
       success: true,

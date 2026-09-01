@@ -295,6 +295,38 @@ async function ensureSqliteMissingColumns() {
       column: "email_status",
       ddl: "`email_status` VARCHAR(20) NOT NULL DEFAULT 'not_applicable'",
     },
+    {
+      table: "COMMENTS",
+      column: "deleted_at",
+      ddl: "`deleted_at` DATETIME NULL",
+    },
+    {
+      // Backfilled by `npm run migrate-upload-storage` (see webapi/scripts/)
+      // - nullable for the same reason the MySQL migration
+      // (db/migrations/20260830130000-add-uuid-to-original-uploads.js) adds
+      // it nullable: existing rows have no value yet. Was missing from this
+      // list entirely, so an existing (pre-per-user-subfolder) SQLite dev DB
+      // never got the column even though the model and MySQL migration both
+      // already expect it.
+      table: "ORIGINAL_UPLOADS",
+      column: "uuid",
+      ddl: "`uuid` VARCHAR(36) NULL",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "embed_video_storage_path",
+      ddl: "`embed_video_storage_path` VARCHAR(512) NULL",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "embed_video_width",
+      ddl: "`embed_video_width` INTEGER UNSIGNED NULL",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "embed_video_height",
+      ddl: "`embed_video_height` INTEGER UNSIGNED NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

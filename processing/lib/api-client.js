@@ -206,3 +206,37 @@ export async function notifyOriginalUploadNormalizeFailed(jobId, error) {
     { error },
   );
 }
+
+/**
+ * Notifies the API that an audio upload's link-unfurl embed video (thumbnail
+ * + audio muxed into an MP4) finished successfully.
+ *
+ * @param {string} jobId BullMQ job id (`embed-<videoId>`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.storagePath Relative storage path (under `transcoded/`).
+ * @param {number|null} metadata.videoWidth Output frame width.
+ * @param {number|null} metadata.videoHeight Output frame height.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyEmbedVideoComplete(jobId, metadata) {
+  return postInternal(`/internal/original-uploads/${encodeURIComponent(jobId)}/embed-complete`, {
+    storagePath: metadata.storagePath,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+  });
+}
+
+/**
+ * Notifies the API that an audio upload's link-unfurl embed video job failed.
+ *
+ * @param {string} jobId BullMQ job id (`embed-<videoId>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyEmbedVideoFailed(jobId, error) {
+  return postInternal(`/internal/original-uploads/${encodeURIComponent(jobId)}/embed-failed`, {
+    error,
+  });
+}

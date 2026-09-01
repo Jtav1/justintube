@@ -3,6 +3,8 @@ import { DelayedError, Queue, Worker } from "bullmq";
 import {
   notifyContentHashComplete,
   notifyContentHashFailed,
+  notifyEmbedVideoComplete,
+  notifyEmbedVideoFailed,
   notifyFileVersionComplete,
   notifyFileVersionFailed,
   notifyOriginalUploadNormalizeComplete,
@@ -12,11 +14,19 @@ import {
 import {
   resolveNormalizedOutputPath,
   resolveOriginalInputPath,
+  resolveThumbnailInputPath,
   resolveThumbnailOutputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
-import { collectOutputMetadata, computeContentHash, probeStreamCodecs } from "./probe.js";
 import {
+  collectOutputMetadata,
+  computeContentHash,
+  probeEmbeddedThumbnailStream,
+  probeStreamCodecs,
+} from "./probe.js";
+import {
+  buildEmbedFfmpegArgs,
+  buildEmbeddedThumbnailFfmpegArgs,
   buildFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildThumbnailFfmpegArgs,
@@ -54,12 +64,13 @@ export const MAX_HASH_JOB_RUNS = 7;
  * affects ordering among jobs already waiting - it does not preempt a job a
  * worker has already started.
  *
- * @type {{ thumbnail: number, normalize: number, rendition: number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
   normalize: 2,
   rendition: 3,
+  embed: 3,
   hash: 4,
 };
 
@@ -106,11 +117,16 @@ export function createTranscodeQueue(connection) {
 }
 
 /**
- * Processes a single thumbnail (frame-extraction) job: resolve paths, run
- * ffmpeg, confirm the output exists, and notify the API. Unlike rendition
- * jobs, no FILE_VERSIONS row exists for a thumbnail, so there's no
- * width/height/resolution metadata to collect — the API only needs the
- * output filename.
+ * Processes a single thumbnail job: resolve paths, run ffmpeg, confirm the
+ * output exists, and notify the API. Unlike rendition jobs, no FILE_VERSIONS
+ * row exists for a thumbnail, so there's no width/height/resolution metadata
+ * to collect — the API only needs the output filename.
+ *
+ * Prioritizes any embedded cover art / attached thumbnail already present in
+ * the source (ID3 art on audio files, MP4 `covr` atoms, Matroska attached
+ * pictures, etc. — see `probeEmbeddedThumbnailStream`) over generating one,
+ * for both video and audio-only uploads. Only falls back to a timestamped
+ * frame grab (the prior, only, behavior) when no such embedded image exists.
  *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
@@ -130,11 +146,35 @@ async function processThumbnailJob(job) {
 
   const inputPath = resolveOriginalInputPath(inputFilename);
   const outputPath = resolveThumbnailOutputPath(outputFilename);
-  const args = buildThumbnailFfmpegArgs({
-    inputPath,
-    outputPath,
-    timestampSeconds,
-  });
+
+  let embeddedStreamIndex = null;
+  try {
+    embeddedStreamIndex = await probeEmbeddedThumbnailStream(inputPath);
+  } catch (err) {
+    logger.error(
+      { err },
+      `[thumbnail ${jobId}] embedded-thumbnail probe failed; falling back to frame grab`,
+    );
+  }
+
+  const args =
+    embeddedStreamIndex != null
+      ? buildEmbeddedThumbnailFfmpegArgs({
+          inputPath,
+          outputPath,
+          streamIndex: embeddedStreamIndex,
+        })
+      : buildThumbnailFfmpegArgs({
+          inputPath,
+          outputPath,
+          timestampSeconds,
+        });
+
+  if (embeddedStreamIndex != null) {
+    logger.info(
+      `[thumbnail ${jobId}] using embedded cover art (stream 0:${embeddedStreamIndex})`,
+    );
+  }
 
   await job.updateProgress(40);
   await runFfmpeg(args);
@@ -374,6 +414,72 @@ async function processNormalizeJob(job) {
 }
 
 /**
+ * Processes a single embed job: mux an audio-only upload with its thumbnail
+ * image into a real MP4, for link-unfurl bots (Discord in particular) that
+ * only render `og:video`. Unlike rendition/normalize jobs there's no
+ * meaningful `mimeType`/`resolution` to report back — the output is always
+ * `video/mp4` by construction — so only width/height/storagePath are sent to
+ * the completion callback.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` (the audio source), `thumbnailFilename`, and `outputFilename`.
+ * @returns {Promise<{
+ *   outputFilename: string,
+ *   fileSizeBytes: number,
+ *   videoWidth: number|null,
+ *   videoHeight: number|null,
+ *   storagePath: string
+ * }>} Result payload stored on the completed job.
+ * @throws {Error} When an input is missing or ffmpeg fails.
+ */
+async function processEmbedJob(job) {
+  const { inputFilename, thumbnailFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[embed ${jobId}] processing started: ${inputFilename} + ${thumbnailFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const audioPath = resolveOriginalInputPath(inputFilename);
+  const imagePath = resolveThumbnailInputPath(thumbnailFilename);
+  const outputPath = resolveTranscodedOutputPath(outputFilename);
+  const args = buildEmbedFfmpegArgs({ imagePath, audioPath, outputPath });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await job.updateProgress(80);
+
+  const metadata = await collectOutputMetadata({
+    outputPath,
+    outputFilename,
+    outputContainer: "mp4",
+  });
+
+  const notify = await notifyEmbedVideoComplete(jobId, metadata);
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed embed video ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[embed ${jobId}] processing completed: ${outputFilename}`);
+
+  return {
+    outputFilename,
+    fileSizeBytes: metadata.fileSizeBytes,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+    storagePath: metadata.storagePath,
+  };
+}
+
+/**
  * Processes a single rendition transcode job: resolve paths, run ffmpeg,
  * collect metadata, notify the API, and return the result payload.
  *
@@ -465,6 +571,9 @@ export async function processTranscodeJob(job, token) {
   if (kind === "normalize") {
     return processNormalizeJob(job);
   }
+  if (kind === "embed") {
+    return processEmbedJob(job);
+  }
   return processRenditionJob(job);
 }
 
@@ -546,13 +655,16 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
             ? "ffmpeg-hash"
             : job.kind === "normalize"
               ? "ffmpeg-normalize"
-              : "ffmpeg-transcode",
+              : job.kind === "embed"
+                ? "ffmpeg-embed"
+                : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
         kind: job.kind,
         profile: job.profile,
         timestampSeconds: job.timestampSeconds,
+        thumbnailFilename: job.thumbnailFilename,
       },
       opts: {
         jobId: job.jobId,
@@ -732,6 +844,18 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed normalize job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "embed") {
+    logger.error({ message }, `[embed ${jobId}] processing failed`);
+    const notify = await notifyEmbedVideoFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed embed video job ${jobId}`,
       );
     }
     return;

@@ -194,6 +194,17 @@
   word-break: break-word;
 }
 
+.video-comments-item-text-deleted {
+  color: var(--text);
+  font-style: italic;
+}
+
+.video-comments-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .video-comments-reply-toggle {
   align-self: flex-start;
   border: none;
@@ -207,6 +218,17 @@
 
 .video-comments-reply-toggle:hover {
   color: var(--accent);
+}
+
+.video-comments-delete-toggle:hover {
+  color: var(--error);
+}
+
+.video-comments-edited-tag {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 300;
+  font-style: italic;
 }
 
 .video-comments-item .video-comments-composer {

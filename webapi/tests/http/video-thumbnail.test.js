@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { afterEach, beforeAll, describe, expect, test } from "@jest/globals";
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { createTestClient } from "../helpers/app.js";
 import {
   queryRows,
@@ -169,5 +169,71 @@ describe("POST /videos/:id/thumbnail", () => {
     const getRes = await client.get(`/api/v1/videos/${uploadId}/thumbnail`);
     expect(getRes.status).toBe(200);
     expect(getRes.headers["content-type"]).toBe("image/jpeg");
+  });
+
+  test("uploading a thumbnail for an audio upload enqueues an embed-video processing job", async () => {
+    const owner = await seedUser({ emailVerified: true });
+    const ownerKey = `jt_test_${owner.id}_audio_thumb_key`;
+    await seedUserApiKey(owner.id, ownerKey);
+    const upload = await seedUpload({ userId: owner.id, mediaType: "audio" });
+    await seedMetadata(upload.id, { title: "Owned podcast" });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 202,
+      json: async () => ({ success: true, jobs: [], skipped: [] }),
+    }));
+
+    try {
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/thumbnail`)
+        .set("Authorization", `Bearer ${ownerKey}`)
+        .attach("file", Buffer.from("fake-cover-art-bytes"), "cover.jpg");
+
+      expect(res.status).toBe(200);
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const [url, options] = globalThis.fetch.mock.calls[0];
+      expect(String(url)).toContain("/transcode");
+      const body = JSON.parse(String(options.body));
+      expect(body.filename).toBe(`${upload.userId}/${upload.uuid}.${upload.fileExtension}`);
+      expect(body.jobs).toHaveLength(1);
+      expect(body.jobs[0]).toMatchObject({
+        jobId: `embed-${upload.videoId}`,
+        kind: "embed",
+      });
+      expect(body.jobs[0].thumbnailFilename).toMatch(
+        new RegExp(`^${upload.userId}/.+\\.jpg$`),
+      );
+      expect(body.jobs[0].outputFilename).toMatch(
+        new RegExp(`^${upload.userId}/.+-embed\\.mp4$`),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("uploading a thumbnail for a video upload does not enqueue an embed-video job", async () => {
+    const { ownerKey, uploadId } = await seedOwnedVideo();
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 202,
+      json: async () => ({ success: true, jobs: [], skipped: [] }),
+    }));
+
+    try {
+      const res = await client
+        .post(`/api/v1/videos/${uploadId}/thumbnail`)
+        .set("Authorization", `Bearer ${ownerKey}`)
+        .attach("file", Buffer.from("fake-image-bytes"), "thumb.jpg");
+
+      expect(res.status).toBe(200);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

@@ -296,6 +296,50 @@ describe("POST /internal/original-uploads/:jobId/normalize-complete and normaliz
     expect(renditionCall).toBeDefined();
   });
 
+  test("preserves the userId subfolder segment when deriving the filename sent to processing", async () => {
+    globalThis.fetch = acceptAllJobsFetchMock();
+
+    const owner = await seedUser({ emailVerified: true });
+    const upload = await seedUpload({
+      status: "converting",
+      fileExtension: "mov",
+      userId: owner.id,
+      storagePath: `original/${generateOldStoragePathSuffix()}`,
+    });
+    await seedMetadata(upload.id);
+
+    // Regression test: newStoredFilename used to be storagePath.split("/").pop()
+    // (only the basename), which silently dropped the "<userId>/" subfolder
+    // segment and would leave finalizeUploadTranscodes/enqueueDuplicateHashCheck
+    // sending processing a filename it could no longer find under original/.
+    const newStoragePath = `original/${owner.id}/newuuid-1234.mp4`;
+    await client
+      .post(`/internal/original-uploads/normalize-${upload.videoId}/normalize-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: newStoragePath,
+        fileExtension: "mp4",
+      });
+
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.storagePath).toBe(newStoragePath);
+    expect(reloaded.uuid).toBe("newuuid-1234");
+
+    const expectedFilename = `${owner.id}/newuuid-1234.mp4`;
+    const transcodeCall = globalThis.fetch.mock.calls.find((call) => {
+      const body = JSON.parse(String(call[1].body));
+      return body.filename === expectedFilename;
+    });
+    expect(transcodeCall).toBeDefined();
+
+    // Every job in the batch (both the hash job and finalizeUploadTranscodes's
+    // jobs) must have received the full subfolder-aware filename.
+    for (const call of globalThis.fetch.mock.calls) {
+      const body = JSON.parse(String(call[1].body));
+      expect(body.filename).toBe(expectedFilename);
+    }
+  });
+
   test("honors a persisted skipThumbnail=true when finalizing", async () => {
     globalThis.fetch = acceptAllJobsFetchMock();
 
@@ -341,6 +385,123 @@ describe("POST /internal/original-uploads/:jobId/normalize-complete and normaliz
     expect(reloaded.statusMessage).toBe("ffmpeg exited with code 1");
     // The raw source file's metadata is left exactly as it was pre-normalize.
     expect(reloaded.fileExtension).toBe("mov");
+  });
+});
+
+/**
+ * HTTP tests for processing -> API link-unfurl embed-video callbacks (see
+ * `enqueueAudioEmbedVideo` in routes/uploads.js and `renderUnfurlHtml` in
+ * routes/videos.js, which prefers `embedVideoStoragePath` over the raw audio
+ * stream once it's set).
+ */
+describe("POST /internal/original-uploads/:jobId/embed-complete and embed-failed", () => {
+  /** @type {ReturnType<typeof createTestClient>} */
+  let client;
+
+  beforeAll(async () => {
+    await setupSchema();
+    client = createTestClient();
+  });
+
+  afterEach(async () => {
+    await resetTables();
+  });
+
+  test("rejects missing bearer token", async () => {
+    const upload = await seedUpload({ mediaType: "audio" });
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}/embed-complete`)
+      .send({ storagePath: `transcoded/embed-${upload.videoId}.mp4` });
+    expect(res.status).toBe(401);
+  });
+
+  test("returns 400 for a malformed jobId", async () => {
+    const res = await client
+      .post("/internal/original-uploads/not-an-embed-job/embed-complete")
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ storagePath: "transcoded/abc123-embed.mp4" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_job_id");
+  });
+
+  test("returns 400 when storagePath is missing", async () => {
+    const upload = await seedUpload({ mediaType: "audio" });
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}/embed-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("returns 404 for an unknown videoId", async () => {
+    const res = await client
+      .post("/internal/original-uploads/embed-zzzzzz/embed-complete")
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ storagePath: "transcoded/zzzzzz-embed.mp4" });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("not_found");
+  });
+
+  test("records the embed video's storage path and dimensions", async () => {
+    const upload = await seedUpload({ mediaType: "audio" });
+    await seedMetadata(upload.id);
+
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}/embed-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: `transcoded/${upload.videoId}-embed.mp4`,
+        videoWidth: 480,
+        videoHeight: 480,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, videoId: upload.videoId, status: "complete" });
+
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.embedVideoStoragePath).toBe(`transcoded/${upload.videoId}-embed.mp4`);
+    expect(reloaded.embedVideoWidth).toBe(480);
+    expect(reloaded.embedVideoHeight).toBe(480);
+  });
+
+  test("overwrites a previous embed video's storage path on regeneration", async () => {
+    const upload = await seedUpload({
+      mediaType: "audio",
+      embedVideoStoragePath: "transcoded/old-embed.mp4",
+      embedVideoWidth: 300,
+      embedVideoHeight: 300,
+    });
+    await seedMetadata(upload.id);
+
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}/embed-complete`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({
+        storagePath: `transcoded/${upload.videoId}-new-embed.mp4`,
+        videoWidth: 480,
+        videoHeight: 480,
+      });
+
+    expect(res.status).toBe(200);
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.embedVideoStoragePath).toBe(`transcoded/${upload.videoId}-new-embed.mp4`);
+  });
+
+  test("embed-failed just logs: leaves the upload's embed fields untouched", async () => {
+    const upload = await seedUpload({ mediaType: "audio" });
+    await seedMetadata(upload.id);
+
+    const res = await client
+      .post(`/internal/original-uploads/embed-${upload.videoId}/embed-failed`)
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ error: "ffmpeg crashed" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true });
+
+    const reloaded = await OriginalUpload.findByPk(upload.id);
+    expect(reloaded.embedVideoStoragePath).toBeNull();
   });
 });
 

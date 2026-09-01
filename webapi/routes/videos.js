@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { extname, join, relative } from "node:path";
 import { Router } from "express";
 import multer from "multer";
 import { Op, col, fn, literal } from "sequelize";
@@ -11,7 +11,7 @@ import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
 import { requireUploader } from "../lib/auth/require-uploader.js";
-import { mimeTypeForImage, resolveMediaPath } from "../lib/media-meta.js";
+import { mimeTypeForImage, resolveMediaPath, userStorageSegment } from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
   AccessPermission,
@@ -49,7 +49,11 @@ import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { requestTranscodeBatch } from "../lib/processing-client.js";
-import { THUMBNAIL_OUTPUT_EXT, parseThumbnailTimestampTenths } from "./uploads.js";
+import {
+  THUMBNAIL_OUTPUT_EXT,
+  enqueueAudioEmbedVideo,
+  parseThumbnailTimestampTenths,
+} from "./uploads.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -109,12 +113,35 @@ function normalizedThumbnailExtension(filename) {
 }
 
 /**
- * Multer storage engine that writes thumbnail uploads to `thumbnails/`
- * under the media root using a freshly generated UUID as the filename
- * (preserving the original extension).
+ * Multer storage engine that writes thumbnail uploads to
+ * `thumbnails/<userId>/` under the media root using a freshly generated
+ * UUID as the filename (preserving the original extension). Unlike direct
+ * video upload, the requester (`req.user`) isn't necessarily the video's
+ * owner here — an admin/moderator can update a thumbnail for someone else's
+ * video — so the owning video's `userId` is looked up directly, before the
+ * route handler's own ownership check runs. This mirrors the "async DB work
+ * inside a multer callback" pattern already used for the direct-upload
+ * `filename` callback (`generateUniqueVideoId()`); the resulting write is no
+ * riskier than today's behavior, which already writes-then-unlinks-on-403.
  */
 const thumbnailStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, thumbnailsDir),
+  destination: async (req, _file, cb) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      let segment = "_unowned";
+      if (id != null) {
+        const owner = await OriginalUpload.findByPk(id, { attributes: ["userId"] });
+        if (owner) {
+          segment = userStorageSegment(owner.userId);
+        }
+      }
+      const dir = join(thumbnailsDir, segment);
+      mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    } catch (err) {
+      cb(err);
+    }
+  },
   filename: (_req, file, cb) => {
     const ext = normalizedThumbnailExtension(file.originalname);
     cb(null, ext ? `${randomUUID()}.${ext}` : randomUUID());
@@ -641,13 +668,21 @@ const AUDIO_EMBED_HEIGHT = 80;
  * rendition yet) is a non-player page and gets a plain "Justintube - <title>"
  * description instead.
  *
- * Audio uploads deliberately reuse `og:video` (not just `og:audio`) pointing
- * at the audio stream, with `og:video:type` set to the real audio MIME type
- * — Discord has no separate audio-embed mechanism and ignores `og:audio`
- * entirely, but it *will* render a compact inline audio player from
- * `og:video` metadata once the stream's actual `Content-Type` comes back as
- * audio, which is exactly what this points it at. `og:audio` tags are also
- * included alongside for the few other unfurlers that do honor them.
+ * Audio uploads deliberately point `og:video` (not just `og:audio`) at a
+ * real playable video whenever one is available — Discord has no
+ * `og:audio`-based player at all and simply shows a plain link card for it,
+ * but it *will* render a full inline video player from `og:video`. Once
+ * `enqueueAudioEmbedVideo` (routes/uploads.js) has produced a muxed
+ * thumbnail+audio MP4 for this upload (`upload.embedVideoStoragePath`),
+ * `og:video`/`twitter:player:stream` point at that (`GET
+ * /videos/:id/embed-video`, `video/mp4`, real width/height) instead of the
+ * raw audio stream. Until then — no thumbnail yet, or the mux job hasn't
+ * finished — this falls back to the old behavior of pointing `og:video` at
+ * the raw audio stream with a fixed compact-player size
+ * (`AUDIO_EMBED_WIDTH`/`HEIGHT`); some unfurlers do render *something*
+ * playable from that even without a video stream, so it's still better than
+ * nothing. `og:audio` tags always point at the real audio stream (never the
+ * muxed video), for the few unfurlers that do honor them.
  *
  * `twitter:card` is `"player"` (full inline playback) only when
  * `publicApiOrigin()` is HTTPS — Twitter/X will not validate an `http://`
@@ -712,9 +747,16 @@ function renderUnfurlHtml(upload, metadata, renditions) {
 
   let twitterCard = "summary";
   if (embedsMedia) {
-    const mediaUrl = `${apiOrigin}${smallest.streamUrl}`;
-    const mediaType =
-      smallest.mimeType || (isVideo ? "video/mp4" : "audio/mpeg");
+    const hasEmbedVideo = !isVideo && Boolean(upload.embedVideoStoragePath);
+    const mediaUrl = hasEmbedVideo
+      ? `${apiOrigin}/api/v1/videos/${upload.id}/embed-video`
+      : `${apiOrigin}${smallest.streamUrl}`;
+    const mediaType = hasEmbedVideo
+      ? "video/mp4"
+      : smallest.mimeType || (isVideo ? "video/mp4" : "audio/mpeg");
+    const mediaWidth = hasEmbedVideo ? upload.embedVideoWidth : smallest.width;
+    const mediaHeight = hasEmbedVideo ? upload.embedVideoHeight : smallest.height;
+
     tags.push(`<meta property="og:video" content="${escapeHtml(mediaUrl)}">`);
     tags.push(
       `<meta property="og:video:secure_url" content="${escapeHtml(mediaUrl)}">`,
@@ -722,16 +764,18 @@ function renderUnfurlHtml(upload, metadata, renditions) {
     tags.push(
       `<meta property="og:video:type" content="${escapeHtml(mediaType)}">`,
     );
-    if (smallest.width != null && smallest.height != null) {
+    if (mediaWidth != null && mediaHeight != null) {
       tags.push(
-        `<meta property="og:video:width" content="${smallest.width}">`,
+        `<meta property="og:video:width" content="${mediaWidth}">`,
       );
       tags.push(
-        `<meta property="og:video:height" content="${smallest.height}">`,
+        `<meta property="og:video:height" content="${mediaHeight}">`,
       );
     } else if (!isVideo) {
-      // Audio renditions have no natural width/height, but Discord requires
-      // og:video:width/height to be present to activate the embed at all.
+      // No embed video yet (no thumbnail, or the mux job hasn't finished) —
+      // audio renditions have no natural width/height of their own, but
+      // Discord requires og:video:width/height to be present to activate the
+      // embed at all, so fall back to a fixed compact-player size.
       tags.push(
         `<meta property="og:video:width" content="${AUDIO_EMBED_WIDTH}">`,
       );
@@ -740,11 +784,14 @@ function renderUnfurlHtml(upload, metadata, renditions) {
       );
     }
     if (!isVideo) {
-      // Semantically-correct tags for the few unfurlers that do honor them,
-      // alongside the og:video Discord-compatibility tags above.
-      tags.push(`<meta property="og:audio" content="${escapeHtml(mediaUrl)}">`);
+      // Semantically-correct tags for the few unfurlers that do honor them —
+      // always the real audio stream, never the muxed embed video, alongside
+      // the og:video Discord-compatibility tags above.
+      const audioUrl = `${apiOrigin}${smallest.streamUrl}`;
+      const audioType = smallest.mimeType || "audio/mpeg";
+      tags.push(`<meta property="og:audio" content="${escapeHtml(audioUrl)}">`);
       tags.push(
-        `<meta property="og:audio:type" content="${escapeHtml(mediaType)}">`,
+        `<meta property="og:audio:type" content="${escapeHtml(audioType)}">`,
       );
     }
 
@@ -753,9 +800,9 @@ function renderUnfurlHtml(upload, metadata, renditions) {
       twitterCard = "player";
       const playerUrl = `${apiOrigin}/api/v1/videos/${upload.id}/player`;
       const width =
-        smallest.width || upload.videoWidth || (isVideo ? 480 : AUDIO_EMBED_WIDTH);
+        mediaWidth || upload.videoWidth || (isVideo ? 480 : AUDIO_EMBED_WIDTH);
       const height =
-        smallest.height || upload.videoHeight || (isVideo ? 270 : AUDIO_EMBED_HEIGHT);
+        mediaHeight || upload.videoHeight || (isVideo ? 270 : AUDIO_EMBED_HEIGHT);
       tags.push(
         `<meta name="twitter:player" content="${escapeHtml(playerUrl)}">`,
       );
@@ -803,34 +850,45 @@ function renderUnfurlHtml(upload, metadata, renditions) {
 }
 
 /**
- * Serializes a COMMENTS row for API responses.
+ * Serializes a COMMENTS row for API responses. Soft-deleted comments (see
+ * `deletedAt` on the model) have their `author` and `body` redacted to
+ * `null` and their distinguished flags forced to `false` — the frontend
+ * renders these as a "[Deleted]" placeholder when the comment still has
+ * replies, or omits it entirely when it doesn't (both replies and the
+ * childless-vs-not decision are computed client-side from the flat list,
+ * since deleting a comment never removes its row or its replies.
  *
  * @param {import('sequelize').Model} comment Comment instance (expects `User` preloaded).
  * @returns {{
  *   id: number,
  *   originalUploadId: number,
  *   parentCommentId: number|null,
- *   author: {userId: number|null, username: string|null, displayName: string|null},
- *   body: string,
+ *   author: {userId: number|null, username: string|null, displayName: string|null}|null,
+ *   body: string|null,
  *   distinguishedMod: boolean,
  *   distinguishedAdmin: boolean,
+ *   deletedAt: Date|null,
  *   createdAt: Date,
  *   updatedAt: Date
  * }} Public comment payload.
  */
 function serializeComment(comment) {
+  const isDeleted = comment.deletedAt != null;
   return {
     id: comment.id,
     originalUploadId: comment.originalUploadId,
     parentCommentId: comment.parentCommentId ?? null,
-    author: serializeUserRef(
-      comment.userId,
-      comment.User?.username,
-      comment.User?.displayName,
-    ),
-    body: comment.body,
-    distinguishedMod: Boolean(comment.distinguishedMod),
-    distinguishedAdmin: Boolean(comment.distinguishedAdmin),
+    author: isDeleted
+      ? null
+      : serializeUserRef(
+          comment.userId,
+          comment.User?.username,
+          comment.User?.displayName,
+        ),
+    body: isDeleted ? null : comment.body,
+    distinguishedMod: isDeleted ? false : Boolean(comment.distinguishedMod),
+    distinguishedAdmin: isDeleted ? false : Boolean(comment.distinguishedAdmin),
+    deletedAt: comment.deletedAt ?? null,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
   };
@@ -2315,6 +2373,80 @@ export function createVideosRouter() {
   });
 
   /**
+   * GET /videos/:id/embed-video — getVideoEmbedVideo
+   * Auth: optional. Private requires owner, grant, or admin. Streams an
+   * audio upload's thumbnail+audio MP4 (see `enqueueAudioEmbedVideo` in
+   * routes/uploads.js) with HTTP Range support — the `og:video`/
+   * `twitter:player:stream` target `renderUnfurlHtml` points link-unfurl
+   * bots at for audio uploads, since Discord has no `og:audio` player.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/embed-video:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Stream an audio upload's link-unfurl embed video (supports HTTP Range requests)
+   *     operationId: getVideoEmbedVideo
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Full file (no Range header sent)
+   *       "206":
+   *         description: Partial content (Range header honored)
+   *       "404":
+   *         description: Not found, inaccessible, or no embed video generated yet
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the streamed file or a 404/500 error.
+   */
+  router.get("/videos/:id/embed-video", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.embedVideoStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      const absolutePath = resolveMediaPath(upload.embedVideoStoragePath);
+      await streamFileWithRangeSupport(req, res, absolutePath, "video/mp4");
+    } catch (err) {
+      logger.error({ err }, "getVideoEmbedVideo failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to stream embed video.",
+        });
+      }
+    }
+  });
+
+  /**
    * GET /videos/:id/thumbnail — getVideoThumbnail
    * Auth: optional. Private requires owner, grant, or admin.
    *
@@ -2458,9 +2590,7 @@ export function createVideosRouter() {
         const id = parsePositiveInt(req.params.id);
         if (id == null) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(
-              () => {},
-            );
+            await unlink(req.file.path).catch(() => {});
           }
           res.status(400).json({
             error: "invalid_id",
@@ -2472,9 +2602,7 @@ export function createVideosRouter() {
         const loaded = await loadUploadWithMetadata(id);
         if (!loaded) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(
-              () => {},
-            );
+            await unlink(req.file.path).catch(() => {});
           }
           sendNotFound(res);
           return;
@@ -2483,9 +2611,7 @@ export function createVideosRouter() {
         const { upload } = loaded;
         if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
           if (req.file) {
-            await unlink(join(thumbnailsDir, req.file.filename)).catch(
-              () => {},
-            );
+            await unlink(req.file.path).catch(() => {});
           }
           res.status(403).json({
             error: "forbidden",
@@ -2501,28 +2627,34 @@ export function createVideosRouter() {
           return;
         }
 
+        // Relative to thumbnailsDir, e.g. "42/<uuid>.jpg" — forward slashes
+        // for cross-platform DB consistency.
+        const relativeThumbnailFilename = relative(thumbnailsDir, req.file.path).replace(/\\/g, "/");
+
         const [thumbnail, created] = await VideoThumbnail.findOrCreate({
           where: { originalUploadId: upload.id },
-          defaults: { thumbnailFilename: req.file.filename },
+          defaults: { thumbnailFilename: relativeThumbnailFilename },
         });
 
         let previousFilename = null;
-        if (!created && thumbnail.thumbnailFilename !== req.file.filename) {
+        if (!created && thumbnail.thumbnailFilename !== relativeThumbnailFilename) {
           previousFilename = thumbnail.thumbnailFilename;
-          await thumbnail.update({ thumbnailFilename: req.file.filename });
+          await thumbnail.update({ thumbnailFilename: relativeThumbnailFilename });
         }
         if (previousFilename) {
           await unlink(join(thumbnailsDir, previousFilename)).catch(() => {});
         }
 
         syncVideoIndex(upload.id);
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        enqueueAudioEmbedVideo(upload, relativeThumbnailFilename, storedFilename);
 
         res
           .status(200)
           .json({ thumbnailUrl: `/api/v1/videos/${upload.id}/thumbnail` });
       } catch (err) {
         if (req.file) {
-          await unlink(join(thumbnailsDir, req.file.filename)).catch(() => {});
+          await unlink(req.file.path).catch(() => {});
         }
         logger.error({ err }, "updateVideoThumbnail failed");
         res.status(500).json({
@@ -2640,13 +2772,17 @@ export function createVideosRouter() {
           return;
         }
 
-        const storedFilename = `${upload.videoId}.${upload.fileExtension}`;
+        // Derived from storagePath (not reconstructed from videoId+extension)
+        // since the on-disk filename is a uuid nested under a per-user
+        // subfolder, not the videoId itself — matches transcode-reconcile.js's pattern.
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const segment = userStorageSegment(upload.userId);
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
             {
               jobId: upload.videoId,
-              outputFilename: `${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+              outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
               kind: "thumbnail",
               timestampSeconds: parsedTimestamp.tenths / 10,
             },
@@ -4375,7 +4511,11 @@ export function createVideosRouter() {
         }
 
         const comment = await Comment.findByPk(commentId);
-        if (!comment || comment.originalUploadId !== upload.id) {
+        if (
+          !comment ||
+          comment.originalUploadId !== upload.id ||
+          comment.deletedAt
+        ) {
           sendNotFound(res);
           return;
         }
@@ -4435,7 +4575,15 @@ export function createVideosRouter() {
    * DELETE /videos/:id/comments/:commentId — deleteComment
    * Auth: required. The author may delete their own comment; a moderator may
    * delete any comment that isn't distinguishedAdmin; an admin may delete any
-   * comment unconditionally. Deleting a comment cascades to its replies.
+   * comment unconditionally. This is a soft delete (`deletedAt` is set, the
+   * row and its replies are kept) — `serializeComment` redacts the author and
+   * body once `deletedAt` is set, and replies are left untouched rather than
+   * cascade-deleted, since removing a comment shouldn't destroy conversation
+   * that grew on top of it. When a moderator/admin deletes someone else's
+   * comment (not a self-delete), the author gets a "moderation" notification;
+   * `createNotification` itself already no-ops on self-notifications, so an
+   * author who happens to be a moderator/admin deleting their own comment is
+   * covered without an extra check.
    *
    * @openapi
    * /api/v1/videos/{id}/comments/{commentId}:
@@ -4496,7 +4644,11 @@ export function createVideosRouter() {
         }
 
         const comment = await Comment.findByPk(commentId);
-        if (!comment || comment.originalUploadId !== upload.id) {
+        if (
+          !comment ||
+          comment.originalUploadId !== upload.id ||
+          comment.deletedAt
+        ) {
           sendNotFound(res);
           return;
         }
@@ -4514,7 +4666,18 @@ export function createVideosRouter() {
           return;
         }
 
-        await comment.destroy();
+        await comment.update({ deletedAt: new Date() });
+
+        await createNotification({
+          recipientUserId: comment.userId,
+          actorUserId: req.user.id,
+          typeName: "moderation",
+          title: "Comment Removed",
+          message: `Your comment on "${metadata.title}" was removed by a moderator.`,
+          target: upload.videoId,
+          link: buildPublicLink(`/video?v=${encodeURIComponent(upload.videoId)}`),
+        });
+
         res.status(204).send();
       } catch (err) {
         logger.error({ err }, "deleteComment failed");

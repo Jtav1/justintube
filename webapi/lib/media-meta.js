@@ -164,16 +164,34 @@ export function mediaTypeForExtension(extension) {
 }
 
 /**
- * Builds the planned relative storage path for a transcoded file version.
+ * Maps a user id to the per-user media subfolder segment used under
+ * `original/`, `transcoded/`, and `thumbnails/` — the numeric userId itself,
+ * or the reserved `_unowned` folder for the (only test-reachable today)
+ * case of a null userId.
  *
+ * @param {number|string|null|undefined} userId Owning user's id.
+ * @returns {string} Folder segment (e.g. `"42"` or `"_unowned"`).
+ */
+export function userStorageSegment(userId) {
+  return userId == null ? "_unowned" : String(userId);
+}
+
+/**
+ * Builds the planned relative storage path for a transcoded file version,
+ * nested under the owning upload's per-user subfolder.
+ *
+ * @param {number|string|null} userId Owning upload's userId (see `userStorageSegment`).
  * @param {string} uuidName File version UUID (no extension).
  * @param {string} fileExtension Container / extension without a leading dot.
- * @returns {string} Path like `transcoded/<uuid>.<ext>`.
+ * @returns {string} Path like `transcoded/<userId>/<uuid>.<ext>`.
  */
-export function plannedTranscodedStoragePath(uuidName, fileExtension) {
+export function plannedTranscodedStoragePath(userId, uuidName, fileExtension) {
   const ext = String(fileExtension || "")
     .trim()
     .toLowerCase()
     .replace(/^\./, "");
-  return ext ? `transcoded/${uuidName}.${ext}` : `transcoded/${uuidName}`;
+  const segment = userStorageSegment(userId);
+  return ext
+    ? `transcoded/${segment}/${uuidName}.${ext}`
+    : `transcoded/${segment}/${uuidName}`;
 }

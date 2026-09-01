@@ -4,6 +4,7 @@ import { hashVerificationToken } from "../../lib/auth/email-verification.js";
 import { hashResetToken } from "../../lib/auth/password-reset.js";
 import { hashStreamKey } from "../../lib/auth/stream-key.js";
 import { query } from "../../lib/db.js";
+import { userStorageSegment } from "../../lib/media-meta.js";
 import { generateVideoId } from "../../lib/video-id.js";
 import {
   AccessPermission,
@@ -142,19 +143,23 @@ function asSeedResult(instance, record) {
  * @param {string} [overrides.status] Lifecycle status label.
  * @param {string|null} [overrides.resolution] Normalized resolution label.
  * @param {number|null} [overrides.userId] Owning user id (nullable for now).
+ * @param {string} [overrides.uuid] Internal storage-filename uuid.
  * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded upload's id and values.
  */
 export async function seedUpload(overrides = {}) {
+  const userId = overrides.userId ?? null;
+  const uuid = overrides.uuid ?? randomUUID();
   const record = {
     originalFilename: "sample.mp4",
     videoId: generateVideoId(),
+    uuid,
     fileExtension: "mp4",
     mimeType: "video/mp4",
     fileSizeBytes: 2048,
-    storagePath: `${randomUUID()}.mp4`,
+    storagePath: `original/${userStorageSegment(userId)}/${uuid}.mp4`,
     status: "uploaded",
     resolution: null,
-    userId: null,
+    userId,
     ...overrides,
   };
 

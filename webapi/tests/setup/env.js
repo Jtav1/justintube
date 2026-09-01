@@ -19,6 +19,9 @@ const scratchDir = mkdtempSync(join(tmpdir(), `justintube-test-${workerId}-`));
 process.env.DB_CLIENT = "sqlite";
 process.env.SQLITE_FILE = join(scratchDir, "test.sqlite");
 process.env.MEDIA_STORAGE_DIRECTORY = join(scratchDir, "media");
+// Isolates the storage-migration scripts' resumable manifest from the real
+// scripts/state/ directory and from other parallel Jest workers.
+process.env.STORAGE_MIGRATION_STATE_DIR = join(scratchDir, "migration-state");
 process.env.SITEDATA_STORAGE_DIRECTORY = join(scratchDir, "sitedata");
 process.env.FILETYPES_ALLOWED = "mp4,webm,mkv,mp3,wav";
 process.env.FILETYPES_CONVERTIBLE = "mov,wma";

@@ -25,6 +25,16 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       unique: "uq_video_id",
     },
+    /**
+     * Internal storage filename (no extension) — the on-disk basename for
+     * this upload's original file, distinct from the public `videoId`. Never
+     * exposed in API responses.
+     */
+    uuid: {
+      type: DataTypes.STRING(36),
+      allowNull: false,
+      unique: "uq_original_uploads_uuid",
+    },
     fileExtension: {
       type: DataTypes.STRING(16),
       allowNull: false,
@@ -104,6 +114,27 @@ export const OriginalUpload = sequelize.define(
      */
     contentHash: {
       type: DataTypes.STRING(128),
+      allowNull: true,
+    },
+    /**
+     * Storage path (under `transcoded/`) of the audio-only upload's
+     * thumbnail-image + audio MP4, muxed purely so link-unfurl bots that only
+     * render `og:video` (Discord in particular, which has no `og:audio`
+     * player) have something genuinely playable to embed. Null until an
+     * `"embed"` processing job completes for this upload; always null for
+     * video uploads (they already have a real video stream to embed). See
+     * `enqueueAudioEmbedVideo` (routes/uploads.js).
+     */
+    embedVideoStoragePath: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+    },
+    embedVideoWidth: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+    embedVideoHeight: {
+      type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
     },
     uploadedAt: timestampColumn("uploaded_at"),
