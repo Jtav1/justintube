@@ -167,7 +167,9 @@ describe("copy-original-upload-storage script", () => {
   });
 
   describe("migrateThumbnails", () => {
-    test("copies the thumbnail into the parent upload's userId subfolder", async () => {
+    const UUID_BASENAME_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/i;
+
+    test("copies the thumbnail into the parent upload's userId subfolder, renamed to a UUID", async () => {
       const owner = await seedUser({ emailVerified: true });
       const upload = await seedUpload({ userId: owner.id });
       const thumbnail = await seedVideoThumbnail(upload.id, {
@@ -181,14 +183,38 @@ describe("copy-original-upload-storage script", () => {
 
       expect(result.migrated).toBe(1);
       const reloaded = await VideoThumbnail.findByPk(thumbnail.id);
-      expect(reloaded.thumbnailFilename).toBe(`${owner.id}/old-thumb.jpg`);
+      const [segment, basename] = reloaded.thumbnailFilename.split("/");
+      expect(segment).toBe(String(owner.id));
+      expect(basename).toMatch(UUID_BASENAME_RE);
+      // Old file untouched - the copy script never deletes anything.
+      expect(existsSync(oldAbsPath)).toBe(true);
+      expect(existsSync(resolveMediaPath(`thumbnails/${reloaded.thumbnailFilename}`))).toBe(true);
     });
 
-    test("skips a thumbnailFilename that already contains a subfolder", async () => {
+    test("renames the basename even when already nested under a subfolder from an old (folder-only) migration run", async () => {
+      const owner = await seedUser({ emailVerified: true });
+      const upload = await seedUpload({ userId: owner.id });
+      const thumbnail = await seedVideoThumbnail(upload.id, {
+        thumbnailFilename: `${owner.id}/already-migrated.jpg`,
+      });
+      const oldAbsPath = resolveMediaPath(`thumbnails/${owner.id}/already-migrated.jpg`);
+      await mkdir(dirname(oldAbsPath), { recursive: true });
+      await writeFile(oldAbsPath, "fake thumbnail bytes");
+
+      const result = await migrateThumbnails();
+
+      expect(result.migrated).toBe(1);
+      const reloaded = await VideoThumbnail.findByPk(thumbnail.id);
+      const [segment, basename] = reloaded.thumbnailFilename.split("/");
+      expect(segment).toBe(String(owner.id));
+      expect(basename).toMatch(UUID_BASENAME_RE);
+    });
+
+    test("skips a thumbnailFilename that's already subfoldered with a UUID basename (idempotent re-run)", async () => {
       const owner = await seedUser({ emailVerified: true });
       const upload = await seedUpload({ userId: owner.id });
       await seedVideoThumbnail(upload.id, {
-        thumbnailFilename: `${owner.id}/already-migrated.jpg`,
+        thumbnailFilename: `${owner.id}/9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d.jpg`,
       });
 
       const result = await migrateThumbnails();
@@ -285,9 +311,11 @@ describe("copy-original-upload-storage script", () => {
       expect(result.migrated).toBe(1);
       const reloaded = await VideoThumbnail.findByPk(thumbnail.id);
       expect(reloaded.thumbnailFilename).toBe("dry-run-old-thumb.jpg");
-      expect(existsSync(resolveMediaPath(`thumbnails/${owner.id}/dry-run-old-thumb.jpg`))).toBe(
-        false,
-      );
+      // The new basename is a freshly-generated UUID each run, so there's no
+      // fixed path to check for absence - assert the segment folder itself
+      // was never created instead, since only a real (non-dry-run) write
+      // would mkdir it.
+      expect(existsSync(resolveMediaPath(`thumbnails/${owner.id}`))).toBe(false);
     });
   });
 

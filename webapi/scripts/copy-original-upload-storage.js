@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FileVersion, OriginalUpload, VideoThumbnail } from "../lib/models/index.js";
 import { mediaDir, resolveMediaPath, userStorageSegment } from "../lib/media-meta.js";
@@ -225,12 +225,43 @@ export async function migrateFileVersions({ dryRun = false } = {}) {
 }
 
 /**
+ * Matches a UUID basename in the 8-4-4-4-12 hex-group shape `randomUUID()`
+ * produces (optionally followed by an extension) - used to recognize a
+ * thumbnail this migration has already renamed on a prior run, or a
+ * manually-uploaded thumbnail, which is already UUID-named at upload time
+ * (see the thumbnail-upload multer `filename` callback in routes/videos.js).
+ *
+ * @type {RegExp}
+ */
+const UUID_BASENAME_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[^/]+)?$/i;
+
+/**
+ * Whether `thumbnailFilename` is already in the fully-migrated shape: nested
+ * under exactly one `<userId|_unowned>/` subfolder segment, with a
+ * UUID-shaped basename. True for both "already migrated by this script" and
+ * "was always UUID-named" cases - either way, nothing left to do.
+ *
+ * @param {string} thumbnailFilename Current `VIDEO_THUMBNAIL.thumbnailFilename` value.
+ * @returns {boolean} True when the filename needs no further change.
+ */
+function isFullyMigratedThumbnailFilename(thumbnailFilename) {
+  const parts = thumbnailFilename.split("/");
+  return parts.length === 2 && UUID_BASENAME_PATTERN.test(parts[1]);
+}
+
+/**
  * Migrates every `VIDEO_THUMBNAIL` row: copies the thumbnail image from its
- * old flat location to `thumbnails/<userId|_unowned>/<basename>` (keyed by
- * the *parent* upload's userId) and updates `thumbnailFilename`. No new
- * column and no filename-convention change (auto-generated thumbnails keep
- * their videoId-based basename, manual uploads keep their uuid-based one) -
- * only the folder changes.
+ * old location to `thumbnails/<userId|_unowned>/<uuid>.<ext>` (keyed by the
+ * *parent* upload's userId) and updates `thumbnailFilename` to match -
+ * renaming the basename to a fresh UUID, same as `migrateOriginalUploads`
+ * does for `ORIGINAL_UPLOADS`, rather than just relocating it into a
+ * subfolder under its old name. Auto-generated thumbnails previously kept
+ * their videoId-based basename after migration; this brings them in line
+ * with every other migrated file. No new column is needed - unlike
+ * `ORIGINAL_UPLOADS.uuid`, nothing else references a thumbnail's UUID
+ * independently of `thumbnailFilename` itself, so the new name only ever
+ * needs to be written to that one column.
  *
  * @param {{ dryRun?: boolean }} [options] `dryRun: true` reports what would
  *   happen without copying any file, writing any row, or touching the manifest.
@@ -245,8 +276,9 @@ export async function migrateThumbnails({ dryRun = false } = {}) {
 
   for (const thumbnail of thumbnails) {
     try {
-      if (thumbnail.thumbnailFilename.includes("/")) {
-        // Already migrated (basename already nested under a subfolder).
+      const oldFilename = thumbnail.thumbnailFilename;
+      if (isFullyMigratedThumbnailFilename(oldFilename)) {
+        // Already migrated by a prior run, or always UUID-named.
         skipped++;
         continue;
       }
@@ -255,37 +287,21 @@ export async function migrateThumbnails({ dryRun = false } = {}) {
         attributes: ["userId"],
       });
       const segment = userStorageSegment(parent?.userId ?? null);
-      const newFilename = `${segment}/${thumbnail.thumbnailFilename}`;
-      const oldAbsPath = join(mediaDir, "thumbnails", thumbnail.thumbnailFilename);
+      const ext = extname(oldFilename).replace(/^\./, "");
+      const newFilename = `${segment}/${randomUUID()}${ext ? `.${ext}` : ""}`;
+      const oldAbsPath = join(mediaDir, "thumbnails", oldFilename);
       const newAbsPath = join(mediaDir, "thumbnails", newFilename);
-
-      if (existsSync(newAbsPath)) {
-        console.log(
-          `${prefix}[db-only] VIDEO_THUMBNAIL ${thumbnail.id}: already at ${newFilename}`,
-        );
-        if (!dryRun) {
-          await thumbnail.update({ thumbnailFilename: newFilename });
-          await appendManifestEntry({
-            table: "VIDEO_THUMBNAIL",
-            id: thumbnail.id,
-            oldAbsolutePath: oldAbsPath,
-            newAbsolutePath: newAbsPath,
-          });
-        }
-        migrated++;
-        continue;
-      }
 
       if (!existsSync(oldAbsPath)) {
         console.warn(
-          `[skip] VIDEO_THUMBNAIL ${thumbnail.id}: source missing at ${thumbnail.thumbnailFilename}`,
+          `[skip] VIDEO_THUMBNAIL ${thumbnail.id}: source missing at ${oldFilename}`,
         );
         skipped++;
         continue;
       }
 
       console.log(
-        `${prefix}[ok] VIDEO_THUMBNAIL ${thumbnail.id}: ${thumbnail.thumbnailFilename} -> ${newFilename}`,
+        `${prefix}[ok] VIDEO_THUMBNAIL ${thumbnail.id}: ${oldFilename} -> ${newFilename}`,
       );
       if (!dryRun) {
         await mkdir(dirname(newAbsPath), { recursive: true });
