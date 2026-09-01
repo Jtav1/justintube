@@ -1,3 +1,16 @@
+/* .app-layout-content (the main pane) can grow far taller than the
+   viewport, and without a bound of its own the sidebar (a flex row sibling)
+   stretches to match that same height - pushing the footer down to wherever
+   that tall column ends, off the bottom of the visible page. Pinning the
+   sidebar to the viewport instead (sticky, bounded height) keeps the footer
+   always visible; only the nav list (.sidebar-nav-wrap) scrolls internally
+   if it doesn't fit. 61px = TopBar's rendered height (36px content +
+   12px top/bottom padding + 1px border-bottom, see TopBar.css) - the sidebar
+   sticks directly below it rather than at the very top, so the two sticky
+   elements never overlap. Mobile overrides this below with its own
+   full-viewport `position: fixed` treatment, which doesn't need to account
+   for TopBar's height at all.
+*/
 .sidebar {
   width: 200px;
   flex-shrink: 0;
@@ -9,6 +22,11 @@
   background-position: center;
   box-sizing: border-box;
   transition: width 0.2s ease;
+  position: sticky;
+  top: 61px;
+  align-self: flex-start;
+  height: calc(100svh - 61px);
+  overflow: hidden;
 }
 
 .sidebar-collapsed {
@@ -37,6 +55,7 @@
   flex-direction: column;
   flex-grow: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .sidebar-nav {
