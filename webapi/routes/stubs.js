@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { livestreamEnabled } from "../lib/livestream-config.js";
 import { createAdminBroadcastRouter } from "./admin-broadcast.js";
+import { createAdminFilesRouter } from "./admin-files.js";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
@@ -104,6 +105,7 @@ export function createApiRouter() {
   router.use(createSystemConfigRouter());
   router.use(createAdminUsersRouter());
   router.use(createAdminBroadcastRouter());
+  router.use(createAdminFilesRouter());
   router.use(createTranscodeProfilesRouter());
   router.use(createThemesRouter());
   router.use(createVideosRouter());
