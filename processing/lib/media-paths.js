@@ -1,5 +1,5 @@
 import { accessSync, constants, mkdirSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const MEDIA_STORAGE_DIRECTORY = process.env.MEDIA_STORAGE_DIRECTORY || "media";
 
@@ -71,12 +71,7 @@ function validateRelativeMediaPath(value, fieldLabel) {
   }
 
   const trimmed = value.trim();
-  if (
-    trimmed.includes("..") ||
-    trimmed.includes("\\") ||
-    trimmed.includes(sep) ||
-    isAbsolute(trimmed)
-  ) {
+  if (trimmed.includes("..") || trimmed.includes("\\") || isAbsolute(trimmed)) {
     throw new TranscodeValidationError(
       `${fieldLabel} must not contain traversal or absolute paths`,
     );
