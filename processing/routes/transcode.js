@@ -12,6 +12,7 @@ import {
   retryFailedHashJobs,
 } from "../lib/queue.js";
 import {
+  probeHasVideoStream,
   probeVideoDimensions,
   probeVideoDuration,
   shouldSkipProfileForOrientation,
@@ -35,12 +36,18 @@ import { logger } from "../lib/logger.js";
  * @param {(inputPath: string) => Promise<number|null>} [options.probeDuration]
  *   Optional duration probe override (defaults to ffprobe), used to validate
  *   thumbnail-job timestamps.
+ * @param {(inputPath: string) => Promise<boolean>} [options.probeHasVideo]
+ *   Optional has-real-video-stream probe override (defaults to ffprobe),
+ *   reported back to the API as `source.hasVideoStream` so it can decide
+ *   whether an upload needs the audio-only link-unfurl embed-video treatment
+ *   regardless of its (extension-based) `mediaType` classification.
  * @returns {import('express').Router} Router handling queue and status requests.
  */
 export function createTranscodeRouter({
   queue,
   probeInput = probeVideoDimensions,
   probeDuration = probeVideoDuration,
+  probeHasVideo = probeHasVideoStream,
 }) {
   const router = Router();
 
@@ -99,6 +106,16 @@ export function createTranscodeRouter({
         durationSeconds = await probeDuration(inputPath);
       } catch (err) {
         logger.error({ err }, "ffprobe failed to read duration for transcode input");
+      }
+
+      // Disposition-aware, unlike sourceHasNoVideoStream above (which is
+      // blind to embedded cover art vs a real video stream) - reported to
+      // the API as-is, null when the probe itself failed (unknown, not "no").
+      let hasVideoStream = null;
+      try {
+        hasVideoStream = await probeHasVideo(inputPath);
+      } catch (err) {
+        logger.error({ err }, "ffprobe failed to check for a video stream for transcode input");
       }
 
       // Resolve the final thumbnail timestamp before enqueueing: null (no
@@ -196,6 +213,7 @@ export function createTranscodeRouter({
           videoWidth: source.videoWidth,
           videoHeight: source.videoHeight,
           durationSeconds,
+          hasVideoStream,
         },
       };
 

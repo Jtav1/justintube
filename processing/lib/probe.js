@@ -206,6 +206,52 @@ export async function probeEmbeddedThumbnailStream(filePath) {
 }
 
 /**
+ * Probes whether a media file has a genuine, decodable video stream —
+ * distinct from `probeVideoDimensions`'s plain `-select_streams v:0`, which
+ * (like ffprobe itself) doesn't distinguish a real video stream from an
+ * embedded cover-art / attached-thumbnail stream (see
+ * `probeEmbeddedThumbnailStream`): both report `codec_type: "video"`, so an
+ * audio file with ID3 art would otherwise look identical to an actual video
+ * file to a disposition-blind check. Used to decide whether an upload needs
+ * the audio-only link-unfurl embed-video treatment (see
+ * `enqueueAudioEmbedVideo`, webapi) regardless of what its `mediaType`
+ * happens to be classified as (extension-based, and can be wrong for e.g. an
+ * audio-only file in a `.mp4` container).
+ *
+ * @param {string} filePath Absolute path to the media file.
+ * @returns {Promise<boolean>} `true` when at least one video stream exists
+ *   that is not flagged `attached_pic`.
+ * @throws {Error} When ffprobe exits non-zero or cannot be spawned.
+ */
+export async function probeHasVideoStream(filePath) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "v",
+      "-show_entries",
+      "stream=index:stream_disposition=attached_pic",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+
+  const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+  return streams.some((s) => Number(s?.disposition?.attached_pic) !== 1);
+}
+
+/**
  * Returns true when applying `profile` would upscale the source (profile
  * height or width exceeds the source). Profiles at or below the source size
  * are eligible for downscale / same-size re-encode.

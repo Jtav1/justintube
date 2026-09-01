@@ -149,6 +149,13 @@ function asSeedResult(instance, record) {
 export async function seedUpload(overrides = {}) {
   const userId = overrides.userId ?? null;
   const uuid = overrides.uuid ?? randomUUID();
+  // Mirrors realistic probing: a genuinely audio-only upload always resolves
+  // hasVideoStream: false by the time any test exercises it (see
+  // enqueueAudioEmbedVideo, webapi/routes/uploads.js) - defaulted from
+  // mediaType here purely for test ergonomics, never consulted by app code
+  // itself. Explicit `hasVideoStream` overrides (e.g. to test a mislabeled
+  // "video" upload with no real video stream) still win via the spread below.
+  const mediaType = overrides.mediaType ?? "video";
   const record = {
     originalFilename: "sample.mp4",
     videoId: generateVideoId(),
@@ -160,6 +167,7 @@ export async function seedUpload(overrides = {}) {
     status: "uploaded",
     resolution: null,
     userId,
+    hasVideoStream: mediaType === "audio" ? false : true,
     ...overrides,
   };
 

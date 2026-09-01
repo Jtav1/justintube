@@ -10,6 +10,7 @@ import {
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
   notifyThumbnailComplete,
+  notifyThumbnailFailed,
 } from "./api-client.js";
 import {
   resolveNormalizedOutputPath,
@@ -423,7 +424,8 @@ async function processNormalizeJob(job) {
  *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
- *   `inputFilename` (the audio source), `thumbnailFilename`, and `outputFilename`.
+ *   `inputFilename` (the audio source), `thumbnailFilename`, `outputFilename`,
+ *   and `isDefault`.
  * @returns {Promise<{
  *   outputFilename: string,
  *   fileSizeBytes: number,
@@ -434,11 +436,12 @@ async function processNormalizeJob(job) {
  * @throws {Error} When an input is missing or ffmpeg fails.
  */
 async function processEmbedJob(job) {
-  const { inputFilename, thumbnailFilename, outputFilename } = job.data;
+  const { inputFilename, thumbnailFilename, outputFilename, isDefault } = job.data;
   const jobId = String(job.id);
 
   logger.info(
-    `[embed ${jobId}] processing started: ${inputFilename} + ${thumbnailFilename} -> ${outputFilename}`,
+    `[embed ${jobId}] processing started: ${inputFilename} + ${thumbnailFilename} -> ${outputFilename}` +
+      (isDefault ? " (placeholder thumbnail)" : ""),
   );
 
   await job.updateProgress(10);
@@ -458,7 +461,7 @@ async function processEmbedJob(job) {
     outputContainer: "mp4",
   });
 
-  const notify = await notifyEmbedVideoComplete(jobId, metadata);
+  const notify = await notifyEmbedVideoComplete(jobId, { ...metadata, isDefault: Boolean(isDefault) });
   if (!notify.ok) {
     logger.error(
       { error: notify.error },
@@ -665,6 +668,7 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
         profile: job.profile,
         timestampSeconds: job.timestampSeconds,
         thumbnailFilename: job.thumbnailFilename,
+        isDefault: job.isDefault,
       },
       opts: {
         jobId: job.jobId,
@@ -798,9 +802,12 @@ export async function retryFailedHashJobs(queue) {
 /**
  * Notifies the API that a BullMQ job failed (best-effort). Thumbnail jobs
  * have no pending placeholder row to roll back (unlike FILE_VERSIONS, no
- * VIDEO_THUMBNAIL row exists until success), so a failed thumbnail job just
- * logs locally rather than calling back to the API. Hash jobs also call back
- * on failure purely so the API can log it — hashing runs entirely in the
+ * VIDEO_THUMBNAIL row exists until success), but a failure here is still the
+ * signal the API's thumbnail-resolution priority order needs: neither
+ * embedded cover art nor a decoded-video-frame grab produced anything, so an
+ * eligible audio upload can fall back to the placeholder speaker icon (see
+ * `/internal/thumbnails/:uploadUuid/failed`). Hash jobs also call back on
+ * failure purely so the API can log it — hashing runs entirely in the
  * background after the upload is already live, so there is nothing to roll
  * back or release either way.
  *
@@ -822,6 +829,13 @@ export async function notifyTranscodeJobFailed(job, err) {
 
   if (job?.data?.kind === "thumbnail") {
     logger.error({ message }, `[thumbnail ${jobId}] processing failed`);
+    const notify = await notifyThumbnailFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed thumbnail job ${jobId}`,
+      );
+    }
     return;
   }
 

@@ -327,6 +327,16 @@ async function ensureSqliteMissingColumns() {
       column: "embed_video_height",
       ddl: "`embed_video_height` INTEGER UNSIGNED NULL",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "embed_video_is_default",
+      ddl: "`embed_video_is_default` TINYINT(1) NOT NULL DEFAULT 0",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "has_video_stream",
+      ddl: "`has_video_stream` TINYINT(1) NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

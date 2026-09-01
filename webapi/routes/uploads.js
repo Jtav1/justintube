@@ -379,23 +379,28 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
   }));
 
   // A thumbnail job is enqueued alongside any renditions (or on its own when
-  // there are zero transcode profiles) for video uploads — see
-  // `THUMBNAIL_OUTPUT_EXT`. Audio-only uploads never get a generated
-  // thumbnail (the frontend renders a placeholder instead) and must never
-  // enter the ffmpeg transcode pipeline at all. `skipThumbnail` opts out
-  // too, when the caller is supplying its own thumbnail image instead.
-  const thumbnailJob =
-    upload.mediaType === "video" && !skipThumbnail
-      ? {
-          jobId: upload.videoId,
-          outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
-          kind: "thumbnail",
-          timestampSeconds:
-            upload.thumbnailTimestampTenths != null
-              ? upload.thumbnailTimestampTenths / 10
-              : null,
-        }
-      : null;
+  // there are zero transcode profiles) for both video and audio uploads —
+  // see `THUMBNAIL_OUTPUT_EXT`. For audio, `processThumbnailJob` (processing)
+  // always tries extracting embedded cover art (ID3 APIC frames, MP4 `covr`
+  // atoms, etc. — see `probeEmbeddedThumbnailStream`) before falling back to
+  // a timestamped frame grab, which is impossible for audio with no
+  // video/art stream at all and simply fails the job quietly (thumbnail
+  // failures are never surfaced to the user - see `notifyTranscodeJobFailed`)
+  // - so an audio upload with no embedded art just ends up with no
+  // VIDEO_THUMBNAIL row, same as before this existed. `skipThumbnail` opts
+  // out for both media types, when the caller is supplying its own
+  // thumbnail image instead.
+  const thumbnailJob = !skipThumbnail
+    ? {
+        jobId: upload.videoId,
+        outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+        kind: "thumbnail",
+        timestampSeconds:
+          upload.thumbnailTimestampTenths != null
+            ? upload.thumbnailTimestampTenths / 10
+            : null,
+      }
+    : null;
 
   const jobs = [...(thumbnailJob ? [thumbnailJob] : []), ...renditionJobs];
 
@@ -463,6 +468,13 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
       updates.durationSeconds = source.durationSeconds;
     }
     await upload.update(updates);
+  }
+  // Persisted independently of the block above - hasVideoStream can be a
+  // meaningful `false` even when the width/height/duration probes above
+  // found nothing at all (or vice versa), since it comes from a separate,
+  // disposition-aware ffprobe call (see probeHasVideoStream, processing).
+  if (source && typeof source.hasVideoStream === "boolean") {
+    await upload.update({ hasVideoStream: source.hasVideoStream });
   }
 
   /** @type {Set<string>} */
@@ -566,38 +578,55 @@ export function enqueueDuplicateHashCheck(upload, storedFilename) {
 }
 
 /**
- * For an audio upload that now has a thumbnail, fires off an `"embed"`
- * processing job that muxes the thumbnail image with the audio into a real
- * MP4 — purely so link-unfurl bots that only render `og:video` (Discord in
- * particular; see `renderUnfurlHtml` in routes/videos.js) have something
- * genuinely playable to embed for audio uploads. Video uploads are skipped
- * entirely — they already have a real video stream to point unfurlers at.
+ * For an upload with no genuine video stream (per `upload.hasVideoStream`,
+ * not `mediaType` - an extension-based guess that can be wrong, e.g. an
+ * audio-only file in a `.mp4` container; see `probeHasVideoStream`,
+ * processing), fires off an `"embed"` processing job that muxes a thumbnail
+ * image with the audio into a real MP4 — purely so link-unfurl bots that
+ * only render `og:video` (Discord in particular; see `renderUnfurlHtml` in
+ * routes/videos.js) have something genuinely playable to embed. Uploads with
+ * a real video stream are skipped entirely — they already have one to point
+ * unfurlers at. `hasVideoStream` is null (not yet probed, or the probe
+ * failed) is treated the same as `true` here — fails open, same as the
+ * existing rendition-skip probe-failure convention in processing.
  *
- * Fire-and-forget like `enqueueDuplicateHashCheck`: the caller (the
- * thumbnail-upload route) does not await this and its response is never
- * touched by it. The completion callback
+ * Fire-and-forget like `enqueueDuplicateHashCheck`: the caller does not await
+ * this and its response is never touched by it. The completion callback
  * (`/internal/original-uploads/:jobId/embed-complete`) is what actually
- * updates `embedVideoStoragePath`/width/height and cleans up whichever
- * previous embed video this upload had, once the new one is confirmed on
- * disk — nothing is deleted here up front, so a failed regeneration never
- * leaves the upload with no working embed video at all.
+ * updates `embedVideoStoragePath`/width/height/isDefault and cleans up
+ * whichever previous embed video this upload had, once the new one is
+ * confirmed on disk — nothing is deleted here up front, so a failed
+ * regeneration never leaves the upload with no working embed video at all.
  *
- * Reuses the fixed jobId `embed-<videoId>` (like `normalize-<videoId>`
- * elsewhere in this file) - if a previous embed job for this same upload is
- * still queued/active when the thumbnail changes again, this enqueue is a
- * silent no-op (BullMQ dedupes by jobId) and the in-flight job keeps running
- * against the older thumbnail. Acceptable for v1: the same limitation
- * already exists for normalize/hash jobs, and worst case a re-upload shortly
- * after finishes the regeneration anyway.
+ * Called from three places, in the priority order a thumbnail can actually
+ * be resolved: `POST /videos/:id/thumbnail` (user-provided — always wins,
+ * `isDefault: false`); `/internal/thumbnails/:uploadUuid/complete` (embedded
+ * cover art, or failing that a decoded-video-frame grab — also
+ * `isDefault: false`); and `/internal/thumbnails/:uploadUuid/failed` (neither
+ * of those found anything, i.e. audio with no embedded art — falls back to
+ * the bundled speaker-icon placeholder, `isDefault: true`). It can therefore
+ * legitimately fire more than once for the same upload — e.g. a placeholder
+ * job completes, then a user replaces the thumbnail afterward — so, unlike
+ * `normalize-<videoId>`/`hash-<videoId>` elsewhere in this file, the jobId
+ * includes a fresh UUID each call rather than reusing a fixed
+ * `embed-<videoId>`: a fixed id would make every enqueue after the first a
+ * silent BullMQ no-op (same jobId already exists), permanently stuck on
+ * whichever thumbnail happened to enqueue first. `embed-complete` itself
+ * still guards against an out-of-order completion (a placeholder-sourced job
+ * finishing *after* a real one) downgrading a real result back to the
+ * placeholder — see `isDefault` there.
  *
  * @private
  * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
  * @param {string} thumbnailFilename Relative path under `thumbnails/` (e.g. `"42/cover.jpg"`).
  * @param {string} storedFilename Basename of the audio source file under `original/`.
+ * @param {{ isDefault?: boolean }} [options] `isDefault: true` marks this as
+ *   the eager placeholder-sourced job (see `finalizeUploadTranscodes`), so
+ *   `embed-complete` knows not to let it overwrite a real result.
  * @returns {void} Nothing — the embed job is enqueued in the background.
  */
-export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename) {
-  if (upload.mediaType !== "audio" || !transcodingEnabled()) {
+export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename, { isDefault = false } = {}) {
+  if (upload.hasVideoStream !== false || !transcodingEnabled()) {
     return;
   }
 
@@ -608,10 +637,11 @@ export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename
     filename: storedFilename,
     jobs: [
       {
-        jobId: `embed-${upload.videoId}`,
+        jobId: `embed-${upload.videoId}-${randomUUID()}`,
         outputFilename,
         kind: "embed",
         thumbnailFilename,
+        isDefault,
       },
     ],
   })

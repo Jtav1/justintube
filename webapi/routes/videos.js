@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { extname, join, relative } from "node:path";
+import { dirname, extname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import multer from "multer";
 import { Op, col, fn, literal } from "sequelize";
@@ -11,7 +12,12 @@ import { requireAdmin } from "../lib/auth/require-admin.js";
 import { optionalAuth, requireAuth } from "../lib/auth/require-auth.js";
 import { requireModerator } from "../lib/auth/require-moderator.js";
 import { requireUploader } from "../lib/auth/require-uploader.js";
-import { mimeTypeForImage, resolveMediaPath, userStorageSegment } from "../lib/media-meta.js";
+import {
+  DEFAULT_AUDIO_THUMBNAIL_FILENAME,
+  mimeTypeForImage,
+  resolveMediaPath,
+  userStorageSegment,
+} from "../lib/media-meta.js";
 import { VISIBILITY_VALUES } from "../lib/models/constants.js";
 import {
   AccessPermission,
@@ -77,6 +83,29 @@ const thumbnailsDir = resolveMediaPath(THUMBNAILS_SUBDIR);
 
 // Ensure the thumbnails directory exists before any upload is attempted.
 mkdirSync(thumbnailsDir, { recursive: true });
+
+/**
+ * Absolute path to the bundled default-audio-thumbnail source asset (shipped
+ * in the webapi image at `webapi/assets/`, alongside this routes/ directory).
+ *
+ * @type {string}
+ */
+const DEFAULT_AUDIO_THUMBNAIL_SOURCE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "assets",
+  DEFAULT_AUDIO_THUMBNAIL_FILENAME,
+);
+
+// Copies the bundled default speaker-icon thumbnail into the shared media
+// volume on every boot, so it stays in sync with whatever's shipped in the
+// image and so `processing` (which only has access to the shared volume, not
+// webapi's own container filesystem) can read it too when muxing an embed
+// video for an audio upload with no real thumbnail yet.
+copyFileSync(
+  DEFAULT_AUDIO_THUMBNAIL_SOURCE,
+  join(thumbnailsDir, DEFAULT_AUDIO_THUMBNAIL_FILENAME),
+);
 
 /**
  * Set of allowed lowercase thumbnail file extensions (without a leading
@@ -297,6 +326,7 @@ export function parsePositiveInt(raw) {
  *   mediaType: string,
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
+ *   embedVideoUrl: string|null,
  *   likeCount: number,
  *   dislikeCount: number,
  *   createdAt: Date,
@@ -322,6 +352,14 @@ export function serializeVideo(upload, metadata, options = {}) {
     durationSeconds: upload.durationSeconds ?? null,
     thumbnailUrl: upload.VideoThumbnail
       ? `/api/v1/videos/${upload.id}/thumbnail`
+      : null,
+    // Only ever set for an upload with no genuine video stream (see
+    // enqueueAudioEmbedVideo, routes/uploads.js) - its mere presence is the
+    // client-facing signal that this upload had no video stream to begin
+    // with, since the embed job is never enqueued otherwise. VideoPlayer
+    // (webview) uses this in place of the original stream when present.
+    embedVideoUrl: upload.embedVideoStoragePath
+      ? `/api/v1/videos/${upload.id}/embed-video`
       : null,
     likeCount: options.likeCount ?? 0,
     dislikeCount: options.dislikeCount ?? 0,
@@ -705,6 +743,13 @@ function renderUnfurlHtml(upload, metadata, renditions) {
   const title = metadata.title || "Justintube";
   const pageUrl = `${appOrigin}/video?v=${encodeURIComponent(upload.videoId)}`;
   const isVideo = upload.mediaType === "video";
+  // Distinct from `isVideo` (mediaType, an extension-based guess made at
+  // upload time that can be wrong) - this is the ffprobe-confirmed fact used
+  // to decide whether the muxed embed video / placeholder thumbnail is what
+  // should actually be shown here (see enqueueAudioEmbedVideo,
+  // routes/uploads.js). `hasVideoStream` null (not yet probed, or the probe
+  // failed) is treated as "has video" - fails open, same as elsewhere.
+  const hasNoVideoStream = upload.hasVideoStream === false;
   const smallest = pickSmallestRendition(renditions);
   const embedsMedia = Boolean(smallest?.streamUrl);
   const description = embedsMedia ? null : `Justintube - ${title}`;
@@ -736,7 +781,11 @@ function renderUnfurlHtml(upload, metadata, renditions) {
     tags.push(`<meta name="author" content="${escapeHtml(uploaderLabel)}">`);
   }
 
-  if (upload.VideoThumbnail) {
+  if (upload.VideoThumbnail || hasNoVideoStream) {
+    // Uploads with no real video stream always have *something* to show
+    // here, even with no real thumbnail - GET /videos/:id/thumbnail falls
+    // back to the bundled speaker-icon placeholder for them (see
+    // routes/videos.js module load).
     const imageUrl = `${apiOrigin}/api/v1/videos/${upload.id}/thumbnail`;
     tags.push(`<meta property="og:image" content="${escapeHtml(imageUrl)}">`);
     tags.push(
@@ -747,7 +796,7 @@ function renderUnfurlHtml(upload, metadata, renditions) {
 
   let twitterCard = "summary";
   if (embedsMedia) {
-    const hasEmbedVideo = !isVideo && Boolean(upload.embedVideoStoragePath);
+    const hasEmbedVideo = hasNoVideoStream && Boolean(upload.embedVideoStoragePath);
     const mediaUrl = hasEmbedVideo
       ? `${apiOrigin}/api/v1/videos/${upload.id}/embed-video`
       : `${apiOrigin}${smallest.streamUrl}`;
@@ -771,7 +820,7 @@ function renderUnfurlHtml(upload, metadata, renditions) {
       tags.push(
         `<meta property="og:video:height" content="${mediaHeight}">`,
       );
-    } else if (!isVideo) {
+    } else if (hasNoVideoStream) {
       // No embed video yet (no thumbnail, or the mux job hasn't finished) —
       // audio renditions have no natural width/height of their own, but
       // Discord requires og:video:width/height to be present to activate the
@@ -783,7 +832,7 @@ function renderUnfurlHtml(upload, metadata, renditions) {
         `<meta property="og:video:height" content="${AUDIO_EMBED_HEIGHT}">`,
       );
     }
-    if (!isVideo) {
+    if (hasNoVideoStream) {
       // Semantically-correct tags for the few unfurlers that do honor them —
       // always the real audio stream, never the muxed embed video, alongside
       // the og:video Discord-compatibility tags above.
@@ -800,9 +849,9 @@ function renderUnfurlHtml(upload, metadata, renditions) {
       twitterCard = "player";
       const playerUrl = `${apiOrigin}/api/v1/videos/${upload.id}/player`;
       const width =
-        mediaWidth || upload.videoWidth || (isVideo ? 480 : AUDIO_EMBED_WIDTH);
+        mediaWidth || upload.videoWidth || (hasNoVideoStream ? AUDIO_EMBED_WIDTH : 480);
       const height =
-        mediaHeight || upload.videoHeight || (isVideo ? 270 : AUDIO_EMBED_HEIGHT);
+        mediaHeight || upload.videoHeight || (hasNoVideoStream ? AUDIO_EMBED_HEIGHT : 270);
       tags.push(
         `<meta name="twitter:player" content="${escapeHtml(playerUrl)}">`,
       );
@@ -2493,7 +2542,7 @@ export function createVideosRouter() {
       }
 
       const thumbnail = upload.VideoThumbnail;
-      if (!thumbnail) {
+      if (!thumbnail && upload.hasVideoStream !== false) {
         sendNotFound(res);
         return;
       }
@@ -2502,7 +2551,9 @@ export function createVideosRouter() {
       // including ones that will 304), so caching must stay `private` rather
       // than `public`/shared — a CDN or proxy must never serve a cached copy
       // to a different, unauthorized viewer.
-      const etag = `"${thumbnail.id}-${thumbnail.updatedAt.getTime()}"`;
+      const etag = thumbnail
+        ? `"${thumbnail.id}-${thumbnail.updatedAt.getTime()}"`
+        : `"default-audio-thumbnail"`;
       res.setHeader("ETag", etag);
       res.setHeader("Cache-Control", "private, max-age=604800");
       if (req.headers["if-none-match"] === etag) {
@@ -2510,10 +2561,13 @@ export function createVideosRouter() {
         return;
       }
 
-      const absolutePath = resolveMediaPath(
-        join(THUMBNAILS_SUBDIR, thumbnail.thumbnailFilename),
-      );
-      const contentType = mimeTypeForImage(thumbnail.thumbnailFilename);
+      // No real thumbnail on an audio upload — fall back to the bundled
+      // speaker-icon placeholder rather than 404ing, matching what
+      // `enqueueAudioEmbedVideo`/`finalizeUploadTranscodes` already use as
+      // the embed video's visual when there's no real cover art either.
+      const thumbnailFilename = thumbnail?.thumbnailFilename ?? DEFAULT_AUDIO_THUMBNAIL_FILENAME;
+      const absolutePath = resolveMediaPath(join(THUMBNAILS_SUBDIR, thumbnailFilename));
+      const contentType = mimeTypeForImage(thumbnailFilename);
       await streamFileWithRangeSupport(req, res, absolutePath, contentType);
     } catch (err) {
       logger.error({ err }, "getVideoThumbnail failed");
@@ -2643,6 +2697,15 @@ export function createVideosRouter() {
         }
         if (previousFilename) {
           await unlink(join(thumbnailsDir, previousFilename)).catch(() => {});
+        }
+
+        // A user-provided thumbnail always wins and, once set, no
+        // auto-generation may ever overwrite it - guards the race where an
+        // auto-generation attempt from before this upload was still in
+        // flight (see the skipThumbnail check in
+        // /internal/thumbnails/:uploadUuid/complete and /failed).
+        if (!upload.skipThumbnail) {
+          await upload.update({ skipThumbnail: true });
         }
 
         syncVideoIndex(upload.id);

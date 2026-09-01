@@ -324,9 +324,54 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
       videoWidth: 1280,
       videoHeight: 720,
       durationSeconds: null,
+      hasVideoStream: null,
     });
     expect(queue.addBulk).toHaveBeenCalledTimes(1);
     expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
+  test("reports source.hasVideoStream: true when a genuine (non-attached-pic) video stream is found", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const app = createTestApp(queue, { probeHasVideo: async () => true });
+
+    const thumbnailJob = {
+      jobId: "88888888-8888-8888-8888-888888888888",
+      outputFilename: "88888888-8888-8888-8888-888888888888.webp",
+      kind: "thumbnail",
+      timestampSeconds: null,
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [thumbnailJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.source.hasVideoStream).toBe(true);
+  });
+
+  test("reports source.hasVideoStream: false for audio-only content, even with embedded cover art (attached_pic)", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const app = createTestApp(queue, { probeHasVideo: async () => false });
+
+    const thumbnailJob = {
+      jobId: "99999999-9999-9999-9999-999999999999",
+      outputFilename: "99999999-9999-9999-9999-999999999999.webp",
+      kind: "thumbnail",
+      timestampSeconds: null,
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [thumbnailJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.source.hasVideoStream).toBe(false);
   });
 
   test("skips all rendition profiles when the source has no video stream, but not thumbnail jobs", async () => {

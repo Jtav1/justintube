@@ -313,7 +313,45 @@ describe("thumbnail job validation and ffmpeg args", () => {
       outputFilename: "42/embed-abc123.mp4",
       kind: "embed",
       thumbnailFilename: "42/cover.jpg",
+      isDefault: false,
     });
+  });
+
+  test("validateTranscodeJob accepts an embed job's isDefault flag", () => {
+    const jobId = "embed-abc123";
+    expect(
+      validateTranscodeJob(
+        {
+          jobId,
+          outputFilename: "42/embed-abc123.mp4",
+          thumbnailFilename: "default-audio-thumbnail.png",
+          kind: "embed",
+          isDefault: true,
+        },
+        0,
+      ),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/embed-abc123.mp4",
+      kind: "embed",
+      thumbnailFilename: "default-audio-thumbnail.png",
+      isDefault: true,
+    });
+  });
+
+  test("validateTranscodeJob rejects an embed job with a non-boolean isDefault", () => {
+    expect(() =>
+      validateTranscodeJob(
+        {
+          jobId: "embed-abc123",
+          outputFilename: "abc123.mp4",
+          thumbnailFilename: "cover.jpg",
+          kind: "embed",
+          isDefault: "yes",
+        },
+        0,
+      ),
+    ).toThrow(TranscodeValidationError);
   });
 
   test("validateTranscodeJob rejects an embed job missing thumbnailFilename", () => {
@@ -365,6 +403,7 @@ describe("thumbnail job validation and ffmpeg args", () => {
           outputFilename: "42/embed-abc123.mp4",
           thumbnailFilename: "42/cover.jpg",
           kind: "embed",
+          isDefault: false,
         },
       ],
     });

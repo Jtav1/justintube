@@ -132,6 +132,24 @@ export async function notifyThumbnailComplete(uploadUuid, metadata) {
 }
 
 /**
+ * Notifies the API that an upload's auto-thumbnail-generation attempt failed
+ * (neither embedded cover art nor a decoded-video-frame grab produced
+ * anything) — the signal that lets the API fall back to the bundled
+ * placeholder for an eligible audio upload.
+ *
+ * @param {string} uploadUuid ORIGINAL_UPLOADS.video_id (BullMQ job id for
+ *   thumbnail jobs).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyThumbnailFailed(uploadUuid, error) {
+  return postInternal(`/internal/thumbnails/${encodeURIComponent(uploadUuid)}/failed`, {
+    error,
+  });
+}
+
+/**
  * Notifies the API that a duplicate-upload content-hash job completed
  * successfully.
  *
@@ -211,11 +229,16 @@ export async function notifyOriginalUploadNormalizeFailed(jobId, error) {
  * Notifies the API that an audio upload's link-unfurl embed video (thumbnail
  * + audio muxed into an MP4) finished successfully.
  *
- * @param {string} jobId BullMQ job id (`embed-<videoId>`).
+ * @param {string} jobId BullMQ job id (`embed-<videoId>-<uuid>` — unique per
+ *   enqueue, since an upload's embed video can legitimately be regenerated
+ *   more than once, unlike normalize/hash jobs).
  * @param {object} metadata Completion fields.
  * @param {string} metadata.storagePath Relative storage path (under `transcoded/`).
  * @param {number|null} metadata.videoWidth Output frame width.
  * @param {number|null} metadata.videoHeight Output frame height.
+ * @param {boolean} metadata.isDefault Whether this was muxed from the fixed
+ *   placeholder thumbnail rather than real cover art — lets the API refuse to
+ *   let a slower placeholder-sourced completion overwrite a real one.
  * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
  *   Callback outcome.
  */
@@ -224,13 +247,16 @@ export async function notifyEmbedVideoComplete(jobId, metadata) {
     storagePath: metadata.storagePath,
     videoWidth: metadata.videoWidth,
     videoHeight: metadata.videoHeight,
+    isDefault: metadata.isDefault,
   });
 }
 
 /**
  * Notifies the API that an audio upload's link-unfurl embed video job failed.
  *
- * @param {string} jobId BullMQ job id (`embed-<videoId>`).
+ * @param {string} jobId BullMQ job id (`embed-<videoId>-<uuid>` — unique per
+ *   enqueue, since an upload's embed video can legitimately be regenerated
+ *   more than once, unlike normalize/hash jobs).
  * @param {string} error Human-readable failure message.
  * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
  *   Callback outcome.

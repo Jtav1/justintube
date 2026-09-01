@@ -26,6 +26,20 @@ export function resolveMediaPath(relativeStoragePath) {
 }
 
 /**
+ * Basename (under `thumbnails/`, not nested in any per-user subfolder — a
+ * plain root-level basename, like the `_unowned` segment convention) of the
+ * fixed placeholder speaker-icon thumbnail served for audio uploads with no
+ * real thumbnail yet. Shipped as `webapi/assets/default-audio-thumbnail.png`
+ * and copied into the shared media volume at boot (see
+ * `routes/videos.js`) so `processing` can read it too, for muxing the
+ * link-unfurl embed video when no real cover art exists (see
+ * `enqueueAudioEmbedVideo` in `routes/uploads.js`).
+ *
+ * @type {string}
+ */
+export const DEFAULT_AUDIO_THUMBNAIL_FILENAME = "default-audio-thumbnail.png";
+
+/**
  * Infers an image MIME type from a thumbnail filename's extension.
  *
  * @param {string} filename Thumbnail filename (e.g. "abc123.jpg").

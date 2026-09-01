@@ -117,6 +117,22 @@ export const OriginalUpload = sequelize.define(
       allowNull: true,
     },
     /**
+     * Whether ffprobe found a genuine, decodable video stream — distinct
+     * from `mediaType` (an extension-based guess made at upload time that
+     * can be wrong, e.g. an audio-only file in a `.mp4` container) and from
+     * `videoWidth`/`videoHeight` being non-null (which an embedded cover-art
+     * stream on an audio file can also produce - see `probeHasVideoStream`,
+     * processing). Set from `source.hasVideoStream` in the initial
+     * `/transcode` batch response (`finalizeUploadTranscodes`). Null until
+     * that probe has run (or if it failed) - only an explicit `false` should
+     * ever be treated as "definitely no video stream"; treat null the same
+     * as `true` (fail open, matching existing probe-failure conventions).
+     */
+    hasVideoStream: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+    },
+    /**
      * Storage path (under `transcoded/`) of the audio-only upload's
      * thumbnail-image + audio MP4, muxed purely so link-unfurl bots that only
      * render `og:video` (Discord in particular, which has no `og:audio`
@@ -136,6 +152,18 @@ export const OriginalUpload = sequelize.define(
     embedVideoHeight: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
+    },
+    /**
+     * Whether `embedVideoStoragePath` was muxed from the fixed placeholder
+     * thumbnail (no real cover art/manual thumbnail exists for this upload
+     * yet) rather than genuine art. Lets the `embed-complete` callback refuse
+     * to let a slower placeholder-sourced completion overwrite a real one
+     * that already landed (see `routes/internal-original-uploads.js`).
+     */
+    embedVideoIsDefault: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     uploadedAt: timestampColumn("uploaded_at"),
   },

@@ -310,7 +310,7 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       expect(payload.url).toBe("https://example.com/watch?v=abc");
     });
 
-    test("classifies an audio-only download (hasVideo: false) as mediaType audio and skips the thumbnail job", async () => {
+    test("classifies an audio-only download (hasVideo: false) as mediaType audio and still enqueues a thumbnail job", async () => {
       writeDownloadedFixture("1737900011.m4a");
       const fetchMock = downloadThenAcceptAllJobsFetchMock("1737900011.m4a", false);
       globalThis.fetch = fetchMock;
@@ -322,9 +322,15 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       await upload.reload();
 
       expect(upload.mediaType).toBe("audio");
-      // No audio transcode profiles configured by default, and audio uploads
-      // never get a thumbnail job, so there's nothing left to send at all.
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // No audio transcode profiles configured by default, but a thumbnail
+      // job (embedded-art extraction) is still sent alongside /download.
+      // Nothing embed-related is enqueued eagerly - only a reported failure
+      // from that thumbnail job (see /internal/thumbnails/:uploadUuid/failed)
+      // would fall back to the placeholder embed video.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const payload = JSON.parse(String(fetchMock.mock.calls[1][1].body));
+      expect(payload.jobs).toHaveLength(1);
+      expect(payload.jobs[0].kind).toBe("thumbnail");
     });
 
     test("trusts hasVideo: true over an ambiguous container extension", async () => {

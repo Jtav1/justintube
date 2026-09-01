@@ -102,6 +102,29 @@ describe("Video discovery and metadata endpoints", () => {
       });
     });
 
+    test("returns embedVideoUrl: null when no embed video has been generated", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.embedVideoUrl).toBeNull();
+    });
+
+    test("returns embedVideoUrl pointing at GET /videos/:id/embed-video once one exists", async () => {
+      const upload = await seedUpload({
+        mediaType: "audio",
+        embedVideoStoragePath: "transcoded/abc-embed.mp4",
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.embedVideoUrl).toBe(`/api/v1/videos/${upload.id}/embed-video`);
+    });
+
     test("includes featured only for admin callers", async () => {
       await seedUserWithRoleAndKey("admin", "admin-getvideo-featured-key");
       const upload = await seedUpload();
@@ -617,6 +640,43 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
 
       expect(res.status).toBe(404);
+    });
+
+    test("falls back to the bundled speaker-icon placeholder for an audio upload with no thumbnail", async () => {
+      const upload = await seedUpload({ mediaType: "audio" });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/thumbnail`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("image/png");
+      expect(res.body.length).toBeGreaterThan(0);
+    });
+
+    test("still returns 404 for a video upload with no thumbnail (no placeholder fallback)", async () => {
+      const upload = await seedUpload({ mediaType: "video" });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("falls back to the placeholder for a mediaType:video upload the probe confirmed has no real video stream", async () => {
+      const upload = await seedUpload({ mediaType: "video", hasVideoStream: false });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/thumbnail`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("image/png");
     });
 
     test("returns 404 for a private video without access", async () => {

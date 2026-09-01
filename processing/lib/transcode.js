@@ -81,6 +81,11 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  * @property {string} [thumbnailFilename] Present when `kind === "embed"` — relative
  *   path under `/media/thumbnails` to loop as the muxed output's video stream.
+ * @property {boolean} [isDefault] Present when `kind === "embed"` — whether
+ *   `thumbnailFilename` is the fixed placeholder asset (no real thumbnail
+ *   exists for this upload yet) rather than genuine cover art. Echoed back
+ *   through the completion callback so the API can refuse to let a slower
+ *   placeholder-sourced completion overwrite a real one that already landed.
  */
 
 /**
@@ -395,7 +400,8 @@ export function validateTranscodeJob(job, index) {
       body.thumbnailFilename,
       `jobs[${index}].thumbnailFilename`,
     );
-    return { jobId, outputFilename, kind: "embed", thumbnailFilename };
+    const isDefault = requireBoolean(body.isDefault, `jobs[${index}].isDefault`);
+    return { jobId, outputFilename, kind: "embed", thumbnailFilename, isDefault };
   }
 
   const kind = body.kind === "thumbnail" ? "thumbnail" : "rendition";

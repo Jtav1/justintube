@@ -22,9 +22,15 @@ module.exports = {
       type: Sequelize.INTEGER.UNSIGNED,
       allowNull: true,
     });
+    await queryInterface.addColumn("ORIGINAL_UPLOADS", "embed_video_is_default", {
+      type: Sequelize.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    });
   },
 
   async down(queryInterface) {
+    await queryInterface.removeColumn("ORIGINAL_UPLOADS", "embed_video_is_default");
     await queryInterface.removeColumn("ORIGINAL_UPLOADS", "embed_video_height");
     await queryInterface.removeColumn("ORIGINAL_UPLOADS", "embed_video_width");
     await queryInterface.removeColumn("ORIGINAL_UPLOADS", "embed_video_storage_path");
