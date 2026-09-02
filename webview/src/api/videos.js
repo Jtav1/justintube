@@ -271,6 +271,25 @@ export async function getImportStatus() {
 }
 
 /**
+ * Gets an upload's download/transcode progress, including outstanding
+ * "core" processing jobs (rendition, thumbnail, normalize) still in flight.
+ * Owner or admin only. Used by VideoCard's processing-status overlay.
+ * @param {number} id
+ * @returns {Promise<{
+ *   status: string,
+ *   statusMessage: string|null,
+ *   fileVersions: object[],
+ *   outstandingJobs: Array<{kind: string, state: string, resolution?: string|null}>,
+ *   jobsRemaining: number,
+ *   jobsStatusUnknown: boolean,
+ * }>}
+ */
+export async function getVideoProcessingStatus(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/processing-status`)
+  return res.data
+}
+
+/**
  * Uploads (or replaces) a video's thumbnail image. Usable by the video
  * owner or a moderator/admin.
  * @param {number} id

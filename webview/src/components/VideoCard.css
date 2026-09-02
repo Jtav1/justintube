@@ -78,6 +78,25 @@
   font-family: var(--mono);
 }
 
+.video-card-processing-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 33%;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.video-card-processing-overlay .segmented-progress-bar-track {
+  width: 100%;
+  height: 6px;
+  border: none;
+  background: rgba(255, 255, 255, 0.25);
+}
+
 .video-card-body {
   display: flex;
   align-items: flex-start;

@@ -9,6 +9,7 @@ const notifyThumbnailComplete = jest.fn();
 const notifyThumbnailFailed = jest.fn();
 const notifyEmbedVideoComplete = jest.fn();
 const probeEmbeddedThumbnailStream = jest.fn();
+const probeHasVideoStream = jest.fn();
 const resolveThumbnailOutputPath = jest.fn();
 const resolveThumbnailInputPath = jest.fn();
 const resolveTranscodedOutputPath = jest.fn();
@@ -26,6 +27,7 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   collectOutputMetadata,
   probeStreamCodecs: jest.fn(),
   probeEmbeddedThumbnailStream,
+  probeHasVideoStream,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -58,9 +60,13 @@ jest.unstable_mockModule("node:fs/promises", () => ({
   stat,
 }));
 
-const { processTranscodeJob, notifyTranscodeJobFailed, MAX_HASH_JOB_RUNS } = await import(
-  "../lib/queue.js"
-);
+const {
+  processTranscodeJob,
+  notifyTranscodeJobFailed,
+  getQueueJobs,
+  getQueueHistory,
+  MAX_HASH_JOB_RUNS,
+} = await import("../lib/queue.js");
 
 /**
  * Builds a fake BullMQ job for a "thumbnail" kind job.
@@ -85,12 +91,14 @@ function makeThumbnailJob(dataOverrides = {}) {
 describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
   beforeEach(() => {
     probeEmbeddedThumbnailStream.mockReset();
+    probeHasVideoStream.mockReset().mockResolvedValue(true);
     resolveThumbnailOutputPath.mockReset().mockImplementation((f) => `/media/thumbnails/${f}`);
     buildThumbnailFfmpegArgs.mockReset().mockReturnValue(["frame-grab-args"]);
     buildEmbeddedThumbnailFfmpegArgs.mockReset().mockReturnValue(["embedded-art-args"]);
     runFfmpeg.mockReset().mockResolvedValue(undefined);
     stat.mockReset().mockResolvedValue({ size: 1234 });
     notifyThumbnailComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+    notifyThumbnailFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
   });
 
   test("extracts embedded cover art instead of grabbing a frame when present", async () => {
@@ -133,6 +141,46 @@ describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
     expect(buildThumbnailFfmpegArgs).toHaveBeenCalled();
     expect(buildEmbeddedThumbnailFfmpegArgs).not.toHaveBeenCalled();
     expect(runFfmpeg).toHaveBeenCalledWith(["frame-grab-args"]);
+  });
+
+  test("skips the frame grab and resolves gracefully when the source has no video stream", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(null);
+    probeHasVideoStream.mockResolvedValue(false);
+    const job = makeThumbnailJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(probeHasVideoStream).toHaveBeenCalledWith("/media/original/clip.mp3");
+    expect(buildThumbnailFfmpegArgs).not.toHaveBeenCalled();
+    expect(buildEmbeddedThumbnailFfmpegArgs).not.toHaveBeenCalled();
+    expect(runFfmpeg).not.toHaveBeenCalled();
+    expect(notifyThumbnailFailed).toHaveBeenCalledWith(
+      "thumb-abc123",
+      "source has no video stream",
+    );
+    expect(notifyThumbnailComplete).not.toHaveBeenCalled();
+    expect(result).toEqual({ outputFilename: null, skipped: "no_video_stream" });
+  });
+
+  test("still attempts the frame grab when the video-stream probe itself fails", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(null);
+    probeHasVideoStream.mockRejectedValue(new Error("ffprobe exited with code 1"));
+    const job = makeThumbnailJob();
+
+    await processTranscodeJob(job);
+
+    expect(buildThumbnailFfmpegArgs).toHaveBeenCalled();
+    expect(runFfmpeg).toHaveBeenCalledWith(["frame-grab-args"]);
+    expect(notifyThumbnailFailed).not.toHaveBeenCalled();
+  });
+
+  test("does not probe for a video stream when embedded art was already found", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(2);
+    const job = makeThumbnailJob();
+
+    await processTranscodeJob(job);
+
+    expect(probeHasVideoStream).not.toHaveBeenCalled();
   });
 });
 
@@ -362,5 +410,147 @@ describe("processTranscodeJob (kind: hash) HASH_GENERATION_WINDOW", () => {
 
     expect(computeContentHash).toHaveBeenCalled();
     expect(job.moveToDelayed).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Builds a fake non-terminal BullMQ job as returned by `queue.getJobs`.
+ *
+ * @param {string} id BullMQ job id.
+ * @param {string} kind `job.data.kind`.
+ * @param {string} [name] BullMQ job name.
+ * @returns {object} Fake job.
+ */
+function makeQueuedJob(id, kind, name = `ffmpeg-${kind}`) {
+  return { id, name, data: { kind } };
+}
+
+describe("getQueueJobs", () => {
+  test("tags each job with the state its fetch came from, without calling getState()", async () => {
+    const getState = jest.fn();
+    const queue = {
+      getJobs: jest.fn((states) => {
+        if (states[0] === "waiting") return Promise.resolve([makeQueuedJob("w1", "rendition")]);
+        if (states[0] === "active") return Promise.resolve([makeQueuedJob("a1", "thumbnail")]);
+        if (states[0] === "delayed") return Promise.resolve([makeQueuedJob("d1", "hash")]);
+        return Promise.resolve([]);
+      }),
+    };
+
+    const jobs = await getQueueJobs(queue);
+
+    expect(jobs).toEqual([
+      { jobId: "w1", kind: "rendition", name: "ffmpeg-rendition", state: "waiting", truncated: false },
+      { jobId: "a1", kind: "thumbnail", name: "ffmpeg-thumbnail", state: "active", truncated: false },
+      { jobId: "d1", kind: "hash", name: "ffmpeg-hash", state: "delayed", truncated: false },
+    ]);
+    expect(getState).not.toHaveBeenCalled();
+  });
+
+  test("defaults kind to 'rendition' when job.data.kind is unset", async () => {
+    const queue = {
+      getJobs: jest.fn((states) =>
+        states[0] === "waiting"
+          ? Promise.resolve([{ id: "legacy-1", name: "ffmpeg-transcode", data: {} }])
+          : Promise.resolve([]),
+      ),
+    };
+
+    const jobs = await getQueueJobs(queue);
+
+    expect(jobs).toEqual([
+      { jobId: "legacy-1", kind: "rendition", name: "ffmpeg-transcode", state: "waiting", truncated: false },
+    ]);
+  });
+
+  test("marks a state truncated once it hits the per-state cap", async () => {
+    const queue = {
+      getJobs: jest.fn((states) =>
+        states[0] === "waiting"
+          ? Promise.resolve([makeQueuedJob("w1", "rendition"), makeQueuedJob("w2", "rendition")])
+          : Promise.resolve([]),
+      ),
+    };
+
+    const jobs = await getQueueJobs(queue, { capPerState: 2 });
+
+    expect(jobs.filter((j) => j.state === "waiting").every((j) => j.truncated)).toBe(true);
+  });
+});
+
+describe("getQueueHistory", () => {
+  test("merges completed and failed jobs, newest first, deriving state from failedReason", async () => {
+    const queue = {
+      getJobs: jest.fn((states) => {
+        if (states[0] === "completed") {
+          return Promise.resolve([
+            { id: "c-old", name: "ffmpeg-transcode", data: { kind: "rendition" }, finishedOn: 1000, processedOn: 900, failedReason: null },
+            { id: "c-new", name: "ffmpeg-thumbnail", data: { kind: "thumbnail" }, finishedOn: 3000, processedOn: 2900, failedReason: null },
+          ]);
+        }
+        if (states[0] === "failed") {
+          return Promise.resolve([
+            { id: "f-mid", name: "ffmpeg-hash", data: { kind: "hash" }, finishedOn: 2000, processedOn: 1900, failedReason: "ffmpeg exited with code 1" },
+          ]);
+        }
+        return Promise.resolve([]);
+      }),
+      getJobCounts: jest.fn().mockResolvedValue({ completed: 2, failed: 1 }),
+    };
+
+    const { items, total, page, limit } = await getQueueHistory(queue, { page: 1, limit: 5 });
+
+    expect(items.map((i) => i.jobId)).toEqual(["c-new", "f-mid", "c-old"]);
+    expect(items[1]).toMatchObject({ state: "failed", failedReason: "ffmpeg exited with code 1" });
+    expect(items[0]).toMatchObject({ state: "completed", failedReason: null });
+    expect(total).toBe(3);
+    expect(page).toBe(1);
+    expect(limit).toBe(5);
+  });
+
+  test("uses queue.getJobCounts for total rather than the length of the fetched window", async () => {
+    const queue = {
+      getJobs: jest.fn().mockResolvedValue([]),
+      getJobCounts: jest.fn().mockResolvedValue({ completed: 500, failed: 25 }),
+    };
+
+    const { total, items } = await getQueueHistory(queue, { page: 1, limit: 5 });
+
+    expect(total).toBe(525);
+    expect(items).toEqual([]);
+  });
+
+  test("paginates via page/limit over the merged list", async () => {
+    const completedJobs = Array.from({ length: 7 }, (_, i) => ({
+      id: `c${i}`,
+      name: "ffmpeg-transcode",
+      data: { kind: "rendition" },
+      finishedOn: 7000 - i * 100,
+      processedOn: null,
+      failedReason: null,
+    }));
+    const queue = {
+      getJobs: jest.fn((states) =>
+        Promise.resolve(states[0] === "completed" ? completedJobs : []),
+      ),
+      getJobCounts: jest.fn().mockResolvedValue({ completed: 7, failed: 0 }),
+    };
+
+    const page2 = await getQueueHistory(queue, { page: 2, limit: 3 });
+
+    expect(page2.items.map((i) => i.jobId)).toEqual(["c3", "c4", "c5"]);
+    expect(page2.total).toBe(7);
+  });
+
+  test("returns an empty page (not an error) past the fetch window", async () => {
+    const queue = {
+      getJobs: jest.fn().mockResolvedValue([]),
+      getJobCounts: jest.fn().mockResolvedValue({ completed: 0, failed: 0 }),
+    };
+
+    const { items, total } = await getQueueHistory(queue, { page: 500, limit: 5 });
+
+    expect(items).toEqual([]);
+    expect(total).toBe(0);
   });
 });

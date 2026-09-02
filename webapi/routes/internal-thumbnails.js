@@ -4,7 +4,26 @@ import { OriginalUpload, VideoThumbnail } from "../lib/models/index.js";
 import { syncVideoIndex } from "../lib/search.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
 import { logger } from "../lib/logger.js";
+import { VIDEO_ID_LENGTH } from "../lib/video-id.js";
 import { enqueueAudioEmbedVideo } from "./uploads.js";
+
+/**
+ * Recovers the `videoId` a `thumbnail-<videoId>-<uuid>` BullMQ job id was
+ * built from. Mirrors `videoIdFromEmbedJobId` in `internal-original-uploads.js`
+ * — the trailing UUID (appended so a regenerated thumbnail gets a fresh
+ * jobId instead of silently no-opping against the first, already-completed
+ * job with the same id) means this can't just take everything after the
+ * prefix, so it takes exactly `VIDEO_ID_LENGTH` characters instead.
+ *
+ * @private
+ * @param {string} jobId Raw `:uploadUuid` route param (actually the full jobId).
+ * @returns {string} The video id, or an empty string when the prefix doesn't match.
+ */
+function videoIdFromThumbnailJobId(jobId) {
+  return jobId.startsWith("thumbnail-")
+    ? jobId.slice("thumbnail-".length, "thumbnail-".length + VIDEO_ID_LENGTH)
+    : "";
+}
 
 /**
  * Express middleware that requires `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
@@ -80,7 +99,10 @@ export function createInternalThumbnailsRouter() {
    *         in: path
    *         required: true
    *         schema: { type: string }
-   *         description: The upload's public videoId.
+   *         description: >
+   *           The thumbnail job's id, `thumbnail-<videoId>-<uuid>` (the
+   *           upload's public videoId is embedded as a fixed-width prefix,
+   *           not the whole value).
    *     requestBody:
    *       content:
    *         application/json:
@@ -102,12 +124,12 @@ export function createInternalThumbnailsRouter() {
    * @returns {Promise<void>} Sends 200 `{ success, videoId, status }`, 400, 404, or error.
    */
   router.post("/thumbnails/:uploadUuid/complete", async (req, res) => {
-    const uploadUuid = String(req.params.uploadUuid || "").trim();
-    if (!uploadUuid) {
+    const videoId = videoIdFromThumbnailJobId(String(req.params.uploadUuid || "").trim());
+    if (!videoId) {
       res.status(400).json({
         success: false,
         error: "missing_uuid",
-        message: "uploadUuid is required.",
+        message: "jobId must be of the form thumbnail-<videoId>-<uuid>.",
       });
       return;
     }
@@ -125,7 +147,7 @@ export function createInternalThumbnailsRouter() {
       return;
     }
 
-    const upload = await OriginalUpload.findOne({ where: { videoId: uploadUuid } });
+    const upload = await OriginalUpload.findOne({ where: { videoId } });
     if (!upload) {
       res.status(404).json({
         success: false,
@@ -193,7 +215,10 @@ export function createInternalThumbnailsRouter() {
    *         in: path
    *         required: true
    *         schema: { type: string }
-   *         description: The upload's public videoId.
+   *         description: >
+   *           The thumbnail job's id, `thumbnail-<videoId>-<uuid>` (the
+   *           upload's public videoId is embedded as a fixed-width prefix,
+   *           not the whole value).
    *     requestBody:
    *       content:
    *         application/json:
@@ -214,17 +239,17 @@ export function createInternalThumbnailsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/thumbnails/:uploadUuid/failed", async (req, res) => {
-    const uploadUuid = String(req.params.uploadUuid || "").trim();
-    if (!uploadUuid) {
+    const videoId = videoIdFromThumbnailJobId(String(req.params.uploadUuid || "").trim());
+    if (!videoId) {
       res.status(400).json({
         success: false,
         error: "missing_uuid",
-        message: "uploadUuid is required.",
+        message: "jobId must be of the form thumbnail-<videoId>-<uuid>.",
       });
       return;
     }
 
-    const upload = await OriginalUpload.findOne({ where: { videoId: uploadUuid } });
+    const upload = await OriginalUpload.findOne({ where: { videoId } });
     if (!upload) {
       res.status(404).json({
         success: false,

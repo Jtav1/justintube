@@ -238,6 +238,62 @@ export async function retryFailedHashJobs() {
 }
 
 /**
+ * One non-terminal (waiting/active/delayed) BullMQ job, as reported by
+ * `GET /queue/jobs`.
+ *
+ * @typedef {object} QueueJob
+ * @property {string} jobId BullMQ job id.
+ * @property {string} kind Job kind (`"thumbnail"|"normalize"|"rendition"|"embed"|"hash"`).
+ * @property {string} name BullMQ job name (e.g. `"ffmpeg-transcode"`).
+ * @property {"waiting"|"active"|"delayed"} state Current BullMQ state.
+ * @property {boolean} truncated Whether this job's state bucket hit processing's per-state fetch cap.
+ */
+
+/**
+ * Lists every currently non-terminal job across all job kinds.
+ *
+ * @returns {Promise<TranscodeBatchRequestResult & { body: { jobs: QueueJob[] } | null }>}
+ *   Outcome of the processing call.
+ */
+export async function getQueueJobs() {
+  return processingFetch("/queue/jobs", {
+    method: "GET",
+    body: null,
+  });
+}
+
+/**
+ * One completed or failed BullMQ job, as reported by `GET /queue/history`.
+ *
+ * @typedef {object} QueueHistoryItem
+ * @property {string} jobId BullMQ job id.
+ * @property {string} kind Job kind (`"thumbnail"|"normalize"|"rendition"|"embed"|"hash"`).
+ * @property {string} name BullMQ job name.
+ * @property {"completed"|"failed"} state Terminal state.
+ * @property {number} finishedOn Epoch ms the job reached its terminal state.
+ * @property {number|null} processedOn Epoch ms the job started running.
+ * @property {string|null} failedReason Failure message, only set when `state` is `"failed"`.
+ */
+
+/**
+ * Lists the most recently completed/failed jobs across all job kinds,
+ * newest first, paginated.
+ *
+ * @param {object} options Pagination.
+ * @param {number} options.page 1-based page number.
+ * @param {number} options.limit Page size.
+ * @returns {Promise<TranscodeBatchRequestResult & { body: { items: QueueHistoryItem[], total: number, page: number, limit: number } | null }>}
+ *   Outcome of the processing call.
+ */
+export async function getQueueHistory({ page, limit }) {
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  return processingFetch(`/queue/history?${params}`, {
+    method: "GET",
+    body: null,
+  });
+}
+
+/**
  * Checks whether the processing service is reachable and reports itself
  * healthy. Used to gate features that depend on it (e.g. URL import).
  *

@@ -23,6 +23,7 @@ import {
   collectOutputMetadata,
   computeContentHash,
   probeEmbeddedThumbnailStream,
+  probeHasVideoStream,
   probeStreamCodecs,
 } from "./probe.js";
 import {
@@ -129,11 +130,22 @@ export function createTranscodeQueue(connection) {
  * for both video and audio-only uploads. Only falls back to a timestamped
  * frame grab (the prior, only, behavior) when no such embedded image exists.
  *
+ * Before attempting that frame grab, probes whether the source has a genuine
+ * decoded video stream at all (`probeHasVideoStream`). An audio-only source
+ * with no embedded art has none, and ffmpeg's `-frames:v 1` frame grab
+ * against it deterministically fails ("Output file does not contain any
+ * stream" et al.) — not a transient error worth BullMQ's retry/backoff, and
+ * not worth surfacing as a job failure. In that case this resolves the job
+ * successfully (no thumbnail produced) and calls `notifyThumbnailFailed`
+ * directly so the API's placeholder fallback (see
+ * `/internal/thumbnails/:uploadUuid/failed`) still runs, once, immediately.
+ *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
  *   `inputFilename`, `outputFilename`, and `timestampSeconds`.
- * @returns {Promise<{ outputFilename: string }>} Result payload stored on the completed job.
- * @throws {Error} When the input is missing or ffmpeg fails.
+ * @returns {Promise<{ outputFilename: string|null, skipped?: string }>}
+ *   Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails unexpectedly.
  */
 async function processThumbnailJob(job) {
   const { inputFilename, outputFilename, timestampSeconds } = job.data;
@@ -156,6 +168,33 @@ async function processThumbnailJob(job) {
       { err },
       `[thumbnail ${jobId}] embedded-thumbnail probe failed; falling back to frame grab`,
     );
+  }
+
+  if (embeddedStreamIndex == null) {
+    let hasVideoStream = true;
+    try {
+      hasVideoStream = await probeHasVideoStream(inputPath);
+    } catch (err) {
+      logger.error(
+        { err },
+        `[thumbnail ${jobId}] video-stream probe failed; attempting frame grab anyway`,
+      );
+    }
+
+    if (!hasVideoStream) {
+      logger.info(
+        `[thumbnail ${jobId}] source has no video stream and no embedded art; skipping frame grab`,
+      );
+      const notify = await notifyThumbnailFailed(jobId, "source has no video stream");
+      if (!notify.ok) {
+        logger.error(
+          { error: notify.error },
+          `failed to notify API of skipped thumbnail ${jobId}`,
+        );
+      }
+      await job.updateProgress(100);
+      return { outputFilename: null, skipped: "no_video_stream" };
+    }
   }
 
   const args =
@@ -797,6 +836,120 @@ export async function retryFailedHashJobs(queue) {
   }
 
   return { retried, discarded, failed };
+}
+
+/**
+ * Maximum number of jobs fetched per non-terminal state (waiting/active/
+ * delayed) by {@link getQueueJobs}, guarding against unbounded memory use if
+ * the queue somehow grows very large. Self-hosted deployments run a single
+ * worker at low concurrency, so real queue depth is expected to stay far
+ * below this.
+ *
+ * @type {number}
+ */
+export const QUEUE_JOBS_CAP_PER_STATE = 500;
+
+/**
+ * Lists every currently non-terminal job (waiting, active, or delayed)
+ * across all job kinds, each tagged with its state. Fetches each state
+ * separately rather than one combined call plus a per-job `job.getState()`
+ * round trip - the state is already known from which fetch returned the job.
+ * A job mid-retry-backoff (BullMQ moves a failed-but-retryable job to
+ * "delayed" until `attemptsMade` reaches the configured `attempts`) or a
+ * hash job deferred by `HASH_GENERATION_WINDOW` both correctly surface here
+ * as "delayed" - both are legitimately still in flight, not terminal.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {{ capPerState?: number }} [options] Per-state fetch cap override (tests only).
+ * @returns {Promise<Array<{
+ *   jobId: string,
+ *   kind: string,
+ *   name: string,
+ *   state: "waiting"|"active"|"delayed",
+ *   truncated: boolean
+ * }>>} Non-terminal jobs across all states.
+ */
+export async function getQueueJobs(queue, { capPerState = QUEUE_JOBS_CAP_PER_STATE } = {}) {
+  const [waiting, active, delayed] = await Promise.all([
+    queue.getJobs(["waiting"], 0, capPerState - 1),
+    queue.getJobs(["active"], 0, capPerState - 1),
+    queue.getJobs(["delayed"], 0, capPerState - 1),
+  ]);
+
+  const tag = (jobs, state) =>
+    jobs.map((job) => ({
+      jobId: String(job.id),
+      kind: job.data?.kind || "rendition",
+      name: job.name,
+      state,
+      truncated: jobs.length >= capPerState,
+    }));
+
+  return [...tag(waiting, "waiting"), ...tag(active, "active"), ...tag(delayed, "delayed")];
+}
+
+/**
+ * Number of most-recent completed/failed jobs fetched (per state) by
+ * {@link getQueueHistory} before sorting/paginating in memory. Bounds how far
+ * back "history" can page - `total` (from `queue.getJobCounts`) stays exact
+ * even when the real count exceeds this window, but pages past it return an
+ * empty `items` array rather than erroring.
+ *
+ * @type {number}
+ */
+export const QUEUE_HISTORY_FETCH_WINDOW = 200;
+
+/**
+ * Lists the most recently completed/failed jobs across all job kinds,
+ * newest-first, paginated. Completed and failed jobs live in two separate
+ * BullMQ sorted sets; fetching each with `asc: false` already returns each
+ * one newest-first, so this only needs to merge the two already-sorted lists
+ * by `finishedOn` rather than re-sorting from scratch.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {{ page: number, limit: number }} options 1-based page number and page size.
+ * @returns {Promise<{
+ *   items: Array<{
+ *     jobId: string,
+ *     kind: string,
+ *     name: string,
+ *     state: "completed"|"failed",
+ *     finishedOn: number,
+ *     processedOn: number|null,
+ *     failedReason: string|null
+ *   }>,
+ *   total: number,
+ *   page: number,
+ *   limit: number
+ * }>} Page of history items plus the exact total job count (which may exceed
+ *   what's actually paginatable within `QUEUE_HISTORY_FETCH_WINDOW`).
+ */
+export async function getQueueHistory(queue, { page, limit }) {
+  const [completed, failed, counts] = await Promise.all([
+    queue.getJobs(["completed"], 0, QUEUE_HISTORY_FETCH_WINDOW - 1, false),
+    queue.getJobs(["failed"], 0, QUEUE_HISTORY_FETCH_WINDOW - 1, false),
+    queue.getJobCounts("completed", "failed"),
+  ]);
+
+  const merged = [...completed, ...failed]
+    .map((job) => ({
+      jobId: String(job.id),
+      kind: job.data?.kind || "rendition",
+      name: job.name,
+      // Failed jobs always carry a failedReason; completed jobs never do -
+      // more direct than re-deriving it from finishedOn/returnvalue.
+      state: job.failedReason ? "failed" : "completed",
+      finishedOn: job.finishedOn ?? 0,
+      processedOn: job.processedOn ?? null,
+      failedReason: job.failedReason || null,
+    }))
+    .sort((a, b) => b.finishedOn - a.finishedOn);
+
+  const total = (counts.completed || 0) + (counts.failed || 0);
+  const start = (page - 1) * limit;
+  const items = start < merged.length ? merged.slice(start, start + limit) : [];
+
+  return { items, total, page, limit };
 }
 
 /**

@@ -54,7 +54,7 @@ import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
-import { requestTranscodeBatch } from "../lib/processing-client.js";
+import { getQueueJobs, requestTranscodeBatch } from "../lib/processing-client.js";
 import {
   THUMBNAIL_OUTPUT_EXT,
   enqueueAudioEmbedVideo,
@@ -349,6 +349,11 @@ export function serializeVideo(upload, metadata, options = {}) {
     ),
     tags: options.tags ?? [],
     mediaType: upload.mediaType,
+    // Upload/transcode lifecycle status ("uploaded", "downloading",
+    // "converting", "processing", "ready", "partial", "failed") - lets
+    // VideoCard (webview) decide whether to even poll for outstanding
+    // processing jobs, skipping it entirely once a video reaches "ready".
+    status: upload.status,
     durationSeconds: upload.durationSeconds ?? null,
     thumbnailUrl: upload.VideoThumbnail
       ? `/api/v1/videos/${upload.id}/thumbnail`
@@ -2848,8 +2853,14 @@ export function createVideosRouter() {
           filename: storedFilename,
           jobs: [
             {
-              jobId: upload.videoId,
-              outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+              // A fresh jobId/outputFilename per call, not a fixed
+              // `upload.videoId` — reusing the videoId as the jobId across
+              // multiple regenerations would collide with BullMQ's own
+              // dedup (a completed job with that id already exists) and
+              // silently no-op every regeneration after the first; see
+              // `enqueueAudioEmbedVideo` (uploads.js) for the same rationale.
+              jobId: `thumbnail-${upload.videoId}-${randomUUID()}`,
+              outputFilename: `${segment}/${randomUUID()}.${THUMBNAIL_OUTPUT_EXT}`,
               kind: "thumbnail",
               timestampSeconds: parsedTimestamp.tenths / 10,
             },
@@ -3683,11 +3694,105 @@ export function createVideosRouter() {
   });
 
   /**
+   * Computes outstanding "core" processing jobs (rendition, thumbnail,
+   * normalize) for a video. Short-circuits to a DB-only answer - no
+   * processing call at all - whenever nothing could plausibly still be in
+   * flight, since a rendition job is the only kind with its own persisted
+   * "pending" DB row; thumbnail and normalize jobs have no such row, so
+   * their in-flight state can only be confirmed by asking processing
+   * directly (normalize is the exception: its two in-flight phases,
+   * "downloading" and "converting", are already fully tracked as
+   * `upload.status`, so no processing round trip is needed for it either).
+   *
+   * @private
+   * @param {import('sequelize').Model} upload Loaded OriginalUpload instance.
+   * @param {import('sequelize').Model[]} versions This upload's FILE_VERSIONS rows.
+   * @returns {Promise<{
+   *   outstandingJobs: Array<{kind: "rendition"|"thumbnail"|"normalize", state: string, resolution?: string|null}>,
+   *   jobsRemaining: number,
+   *   jobsStatusUnknown: boolean,
+   * }>} Outstanding-jobs summary. `jobsStatusUnknown: true` means a
+   *   processing-fetch failure prevented confirming rendition/thumbnail
+   *   state - callers must not treat that the same as "confirmed empty".
+   */
+  async function computeOutstandingCoreJobs(upload, versions) {
+    // A failed upload is definitively terminal - nothing legitimately stays
+    // in flight for it, regardless of whether a thumbnail ever landed.
+    // Short-circuits ahead of the thumbnail-existence check below so a
+    // permanently-failed upload never triggers a processing round trip.
+    if (upload.status === "failed") {
+      return { outstandingJobs: [], jobsRemaining: 0, jobsStatusUnknown: false };
+    }
+
+    const pendingVersions = versions.filter((v) => v.status === "pending");
+    const normalizing = upload.status === "downloading" || upload.status === "converting";
+
+    let hasThumbnail = upload.skipThumbnail;
+    if (!hasThumbnail) {
+      const thumbnail = await VideoThumbnail.findOne({
+        where: { originalUploadId: upload.id },
+        attributes: ["id"],
+      });
+      hasThumbnail = Boolean(thumbnail);
+    }
+
+    if (pendingVersions.length === 0 && hasThumbnail && !normalizing) {
+      return { outstandingJobs: [], jobsRemaining: 0, jobsStatusUnknown: false };
+    }
+
+    const outstandingJobs = [];
+    if (normalizing) {
+      outstandingJobs.push({ kind: "normalize", state: "active" });
+    }
+
+    if (pendingVersions.length > 0 || !hasThumbnail) {
+      const jobsResult = await getQueueJobs();
+      if (!jobsResult.ok) {
+        logger.warn(
+          { error: jobsResult.error },
+          "getVideoProcessingStatus: processing unreachable while checking outstanding jobs",
+        );
+        return {
+          outstandingJobs,
+          jobsRemaining: outstandingJobs.length,
+          jobsStatusUnknown: true,
+        };
+      }
+
+      const liveJobsByJobId = new Map((jobsResult.body?.jobs ?? []).map((job) => [job.jobId, job]));
+
+      for (const version of pendingVersions) {
+        const live = liveJobsByJobId.get(version.uuidName);
+        outstandingJobs.push({
+          kind: "rendition",
+          resolution: version.resolution,
+          // A pending FILE_VERSIONS row with no matching live job is
+          // orphaned (e.g. a partially-failed batch enqueue) - surfaced as
+          // "unknown" rather than silently dropped, so a genuinely stuck
+          // row stays visible/debuggable.
+          state: live && live.kind === "rendition" ? live.state : "unknown",
+        });
+      }
+
+      if (!hasThumbnail) {
+        const live = liveJobsByJobId.get(upload.videoId);
+        if (live && live.kind === "thumbnail") {
+          outstandingJobs.push({ kind: "thumbnail", state: live.state });
+        }
+      }
+    }
+
+    return { outstandingJobs, jobsRemaining: outstandingJobs.length, jobsStatusUnknown: false };
+  }
+
+  /**
    * GET /videos/:id/processing-status — getVideoProcessingStatus
-   * Auth: required. Owner or admin. Lightweight polling endpoint the upload
-   * page uses to drive the upload/import progress bar (download phase via
-   * `status`, transcode phase via complete-vs-total `fileVersions`) without
-   * re-fetching the full video payload.
+   * Auth: required. Owner or admin. Lightweight polling endpoint backing
+   * VideoCard's (webview) per-video processing-progress overlay - reports
+   * the download/import phase (`status`/`statusMessage`), per-rendition
+   * transcode status (`fileVersions`), and a combined view of outstanding
+   * "core" jobs (rendition, thumbnail, normalize) still in flight for this
+   * upload (`outstandingJobs`/`jobsRemaining`).
    *
    * @openapi
    * /api/v1/videos/{id}/processing-status:
@@ -3706,7 +3811,7 @@ export function createVideosRouter() {
    *           type: integer
    *     responses:
    *       "200":
-   *         description: Upload status plus per-file-version transcode status
+   *         description: Upload status, per-file-version transcode status, and outstanding core jobs
    *       "403":
    *         description: Not the owner or an admin
    *       "404":
@@ -3741,6 +3846,9 @@ export function createVideosRouter() {
         order: [["id", "ASC"]],
       });
 
+      const { outstandingJobs, jobsRemaining, jobsStatusUnknown } =
+        await computeOutstandingCoreJobs(upload, versions);
+
       res.status(200).json({
         status: upload.status,
         statusMessage: upload.statusMessage ?? null,
@@ -3749,6 +3857,9 @@ export function createVideosRouter() {
           resolution: v.resolution,
           status: v.status,
         })),
+        outstandingJobs,
+        jobsRemaining,
+        jobsStatusUnknown,
       });
     } catch (err) {
       logger.error({ err }, "getVideoProcessingStatus failed");

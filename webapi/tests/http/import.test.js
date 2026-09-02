@@ -570,6 +570,9 @@ describe("GET /videos/:id/processing-status", () => {
       status: "failed",
       statusMessage: "The processing service rejected the URL.",
       fileVersions: [],
+      outstandingJobs: [],
+      jobsRemaining: 0,
+      jobsStatusUnknown: false,
     });
   });
 
