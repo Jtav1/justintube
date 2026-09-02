@@ -1,4 +1,7 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import { mediaDir } from "../../lib/media-meta.js";
 import { createTestClient } from "../helpers/app.js";
 import {
   resetTables,
@@ -6,9 +9,26 @@ import {
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedVideoThumbnail,
   setupSchema,
 } from "../helpers/db.js";
-import { OriginalUpload } from "../../lib/models/index.js";
+import { OriginalUpload, VideoThumbnail } from "../../lib/models/index.js";
+
+/**
+ * Writes a fixture file under the test media root at a given relative storage
+ * path (e.g. "thumbnails/foo.jpg"), creating parent directories as needed.
+ * Mirrors the identical helper in `videos.test.js`.
+ *
+ * @param {string} relativeStoragePath Path relative to `mediaDir`.
+ * @param {Buffer} contents File contents to write.
+ * @returns {string} The absolute path the file was written to.
+ */
+function writeMediaFixture(relativeStoragePath, contents) {
+  const absolutePath = join(mediaDir, relativeStoragePath);
+  mkdirSync(join(absolutePath, ".."), { recursive: true });
+  writeFileSync(absolutePath, contents);
+  return absolutePath;
+}
 
 /**
  * HTTP contract tests for `POST /videos/:id/thumbnail/regenerate` — lets the
@@ -185,6 +205,44 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
     expect(row.thumbnailTimestampTenths).toBe(125);
   });
 
+  test("deletes the existing thumbnail row and file once regeneration is queued", async () => {
+    const { ownerKey, uploadId } = await seedOwnedVideo({ skipThumbnail: true });
+    const thumbnail = await seedVideoThumbnail(uploadId);
+    const thumbnailPath = writeMediaFixture(
+      `thumbnails/${thumbnail.thumbnailFilename}`,
+      Buffer.from("thumb"),
+    );
+    globalThis.fetch = acceptJobFetchMock();
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/thumbnail/regenerate`)
+      .set("Authorization", `Bearer ${ownerKey}`)
+      .send({ thumbnailTimestamp: 5 });
+
+    expect(res.status).toBe(202);
+    expect(existsSync(thumbnailPath)).toBe(false);
+    expect(await VideoThumbnail.findOne({ where: { originalUploadId: uploadId } })).toBeNull();
+
+    // A manually-uploaded thumbnail sets skipThumbnail so no auto-generation
+    // could ever overwrite it - regeneration must clear that flag, or the
+    // completion callback would silently drop the newly-generated frame.
+    const row = await OriginalUpload.findByPk(uploadId);
+    expect(row.skipThumbnail).toBe(false);
+  });
+
+  test("succeeds with no existing thumbnail to delete", async () => {
+    const { ownerKey, uploadId } = await seedOwnedVideo();
+    globalThis.fetch = acceptJobFetchMock();
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/thumbnail/regenerate`)
+      .set("Authorization", `Bearer ${ownerKey}`)
+      .send({ thumbnailTimestamp: 5 });
+
+    expect(res.status).toBe(202);
+    expect(await VideoThumbnail.findOne({ where: { originalUploadId: uploadId } })).toBeNull();
+  });
+
   test("returns 502 when the processing service is unreachable", async () => {
     const { ownerKey, uploadId } = await seedOwnedVideo();
     globalThis.fetch = jest.fn(async () => {
@@ -198,5 +256,26 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
 
     expect(res.status).toBe(502);
     expect(res.body.error).toBe("processing_unavailable");
+  });
+
+  test("leaves the existing thumbnail in place when enqueueing fails", async () => {
+    const { ownerKey, uploadId } = await seedOwnedVideo();
+    const thumbnail = await seedVideoThumbnail(uploadId);
+    const thumbnailPath = writeMediaFixture(
+      `thumbnails/${thumbnail.thumbnailFilename}`,
+      Buffer.from("thumb"),
+    );
+    globalThis.fetch = jest.fn(async () => {
+      throw new Error("network down");
+    });
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/thumbnail/regenerate`)
+      .set("Authorization", `Bearer ${ownerKey}`)
+      .send({ thumbnailTimestamp: 5 });
+
+    expect(res.status).toBe(502);
+    expect(existsSync(thumbnailPath)).toBe(true);
+    expect(await VideoThumbnail.findOne({ where: { originalUploadId: uploadId } })).not.toBeNull();
   });
 });

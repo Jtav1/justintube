@@ -2730,15 +2730,19 @@ export function createVideosRouter() {
   router.use(thumbnailUploadErrorHandler);
 
   /**
-   * Regenerates a video's auto-generated thumbnail at a specific timestamp,
-   * queuing a single processing "thumbnail" job that overwrites whatever
-   * thumbnail (auto-generated or manually uploaded) currently exists — the
-   * job's output filename is always `<videoId>.<THUMBNAIL_OUTPUT_EXT>`, and
-   * `POST /internal/thumbnails/:uploadUuid/complete` (called back by
-   * processing once the frame is extracted) updates the existing
-   * VIDEO_THUMBNAIL row in place rather than creating a new one. Owner/admin
-   * only, matching POST /videos/:id/thumbnail. Video-only — audio uploads
-   * never get an auto-generated thumbnail.
+   * Regenerates a video's thumbnail at a specific timestamp: once the
+   * processing job is successfully queued, immediately deletes whatever
+   * thumbnail (auto-generated or manually uploaded) currently exists — both
+   * its VIDEO_THUMBNAIL row and its file on disk — and clears
+   * `skipThumbnail` so the video goes back to auto-generation. Without
+   * clearing that flag, a manually-uploaded thumbnail would permanently
+   * block `POST /internal/thumbnails/:uploadUuid/complete` (called back by
+   * processing once the new frame is extracted) from ever recording the
+   * regenerated frame — see the `skipThumbnail` guard there. The deletion
+   * happens after a successful enqueue (not before) so a processing-service
+   * outage can't leave the video with no thumbnail at all. Owner/admin only,
+   * matching POST /videos/:id/thumbnail. Video-only — audio uploads never
+   * get an auto-generated thumbnail.
    * POST /videos/:id/thumbnail/regenerate — { thumbnailTimestamp: number }.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *
@@ -2861,7 +2865,22 @@ export function createVideosRouter() {
           return;
         }
 
-        await upload.update({ thumbnailTimestampTenths: parsedTimestamp.tenths });
+        // Delete the existing thumbnail (row + file) now that regeneration
+        // is actually queued, rather than waiting for the completion
+        // callback to overwrite in place — the previous thumbnail may live
+        // at a different path (e.g. a manually-uploaded one), which would
+        // otherwise be orphaned on disk forever.
+        const existingThumbnail = upload.VideoThumbnail;
+        if (existingThumbnail) {
+          const previousPath = join(thumbnailsDir, existingThumbnail.thumbnailFilename);
+          await existingThumbnail.destroy();
+          await unlink(previousPath).catch(() => {});
+        }
+
+        await upload.update({
+          thumbnailTimestampTenths: parsedTimestamp.tenths,
+          skipThumbnail: false,
+        });
 
         res.status(202).json({ success: true });
       } catch (err) {
