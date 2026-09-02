@@ -23,6 +23,7 @@ import {
   collectOutputMetadata,
   computeContentHash,
   probeEmbeddedThumbnailStream,
+  probeHasVideoStream,
   probeStreamCodecs,
 } from "./probe.js";
 import {
@@ -129,11 +130,22 @@ export function createTranscodeQueue(connection) {
  * for both video and audio-only uploads. Only falls back to a timestamped
  * frame grab (the prior, only, behavior) when no such embedded image exists.
  *
+ * Before attempting that frame grab, probes whether the source has a genuine
+ * decoded video stream at all (`probeHasVideoStream`). An audio-only source
+ * with no embedded art has none, and ffmpeg's `-frames:v 1` frame grab
+ * against it deterministically fails ("Output file does not contain any
+ * stream" et al.) — not a transient error worth BullMQ's retry/backoff, and
+ * not worth surfacing as a job failure. In that case this resolves the job
+ * successfully (no thumbnail produced) and calls `notifyThumbnailFailed`
+ * directly so the API's placeholder fallback (see
+ * `/internal/thumbnails/:uploadUuid/failed`) still runs, once, immediately.
+ *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
  *   `inputFilename`, `outputFilename`, and `timestampSeconds`.
- * @returns {Promise<{ outputFilename: string }>} Result payload stored on the completed job.
- * @throws {Error} When the input is missing or ffmpeg fails.
+ * @returns {Promise<{ outputFilename: string|null, skipped?: string }>}
+ *   Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails unexpectedly.
  */
 async function processThumbnailJob(job) {
   const { inputFilename, outputFilename, timestampSeconds } = job.data;
@@ -156,6 +168,33 @@ async function processThumbnailJob(job) {
       { err },
       `[thumbnail ${jobId}] embedded-thumbnail probe failed; falling back to frame grab`,
     );
+  }
+
+  if (embeddedStreamIndex == null) {
+    let hasVideoStream = true;
+    try {
+      hasVideoStream = await probeHasVideoStream(inputPath);
+    } catch (err) {
+      logger.error(
+        { err },
+        `[thumbnail ${jobId}] video-stream probe failed; attempting frame grab anyway`,
+      );
+    }
+
+    if (!hasVideoStream) {
+      logger.info(
+        `[thumbnail ${jobId}] source has no video stream and no embedded art; skipping frame grab`,
+      );
+      const notify = await notifyThumbnailFailed(jobId, "source has no video stream");
+      if (!notify.ok) {
+        logger.error(
+          { error: notify.error },
+          `failed to notify API of skipped thumbnail ${jobId}`,
+        );
+      }
+      await job.updateProgress(100);
+      return { outputFilename: null, skipped: "no_video_stream" };
+    }
   }
 
   const args =

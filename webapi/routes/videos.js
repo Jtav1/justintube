@@ -2853,8 +2853,14 @@ export function createVideosRouter() {
           filename: storedFilename,
           jobs: [
             {
-              jobId: upload.videoId,
-              outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+              // A fresh jobId/outputFilename per call, not a fixed
+              // `upload.videoId` — reusing the videoId as the jobId across
+              // multiple regenerations would collide with BullMQ's own
+              // dedup (a completed job with that id already exists) and
+              // silently no-op every regeneration after the first; see
+              // `enqueueAudioEmbedVideo` (uploads.js) for the same rationale.
+              jobId: `thumbnail-${upload.videoId}-${randomUUID()}`,
+              outputFilename: `${segment}/${randomUUID()}.${THUMBNAIL_OUTPUT_EXT}`,
               kind: "thumbnail",
               timestampSeconds: parsedTimestamp.tenths / 10,
             },

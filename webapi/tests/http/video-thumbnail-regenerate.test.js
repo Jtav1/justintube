@@ -192,14 +192,17 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     // Derived from storagePath (uuid-based), not reconstructed from videoId.
     expect(payload.filename).toBe(seededRow.storagePath.replace(/^original\//, ""));
-    expect(payload.jobs).toEqual([
-      {
-        jobId: "regenvid1",
-        outputFilename: `${ownerId}/regenvid1.webp`,
-        kind: "thumbnail",
-        timestampSeconds: 12.5,
-      },
-    ]);
+    expect(payload.jobs).toHaveLength(1);
+    // jobId/outputFilename each embed a fresh random UUID (not the fixed
+    // videoId) so a second regeneration doesn't silently no-op against
+    // BullMQ's dedup on the first, already-completed job with the same id -
+    // see the rationale comment above the enqueue call in routes/videos.js.
+    expect(payload.jobs[0].jobId).toMatch(/^thumbnail-regenvid1-/);
+    expect(payload.jobs[0]).toMatchObject({
+      outputFilename: expect.stringMatching(new RegExp(`^${ownerId}/[0-9a-f-]{36}\\.webp$`)),
+      kind: "thumbnail",
+      timestampSeconds: 12.5,
+    });
 
     const row = await OriginalUpload.findByPk(uploadId);
     expect(row.thumbnailTimestampTenths).toBe(125);

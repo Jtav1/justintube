@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, jest, test } from "@jest/globals";
 import { createTestClient } from "../helpers/app.js";
 import {
@@ -9,6 +10,18 @@ import {
 } from "../helpers/db.js";
 
 const TOKEN = "test-internal-token";
+
+/**
+ * Builds a `thumbnail-<videoId>-<uuid>` BullMQ jobId, matching what
+ * `routes/uploads.js`/`routes/videos.js` actually enqueue thumbnail jobs
+ * with, for use as the `:uploadUuid` route param in these callback tests.
+ *
+ * @param {import('sequelize').Model} upload Seeded upload.
+ * @returns {string} A well-formed thumbnail jobId for `upload`.
+ */
+function thumbnailJobId(upload) {
+  return `thumbnail-${upload.videoId}-${randomUUID()}`;
+}
 
 /**
  * HTTP tests for the processing → API thumbnail-generation callback.
@@ -30,7 +43,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const upload = await seedUpload();
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .send({ thumbnailFilename: `${upload.videoId}.webp` });
 
     expect(res.status).toBe(401);
@@ -40,7 +53,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const upload = await seedUpload();
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({});
 
@@ -48,9 +61,19 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     expect(res.body.error).toBe("invalid_body");
   });
 
+  test("returns 400 when the jobId isn't a well-formed thumbnail-<videoId>-<uuid>", async () => {
+    const res = await client
+      .post("/internal/thumbnails/not-a-thumbnail-job/complete")
+      .set("Authorization", `Bearer ${TOKEN}`)
+      .send({ thumbnailFilename: "whatever.webp" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("missing_uuid");
+  });
+
   test("returns 404 for an unknown upload videoId", async () => {
     const res = await client
-      .post("/internal/thumbnails/000000/complete")
+      .post(`/internal/thumbnails/thumbnail-000000-${randomUUID()}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: "whatever.webp" });
 
@@ -63,7 +86,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const thumbnailFilename = `${upload.videoId}.webp`;
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename });
 
@@ -88,13 +111,13 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const secondFilename = `${upload.videoId}-2.webp`;
 
     const first = await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: firstFilename });
     expect(first.status).toBe(200);
 
     const second = await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: secondFilename });
     expect(second.status).toBe(200);
@@ -113,7 +136,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const thumbnailFilename = `${upload.videoId}.webp`;
 
     const complete = await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename });
     expect(complete.status).toBe(200);
@@ -136,7 +159,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
 
     try {
       const res = await client
-        .post(`/internal/thumbnails/${upload.videoId}/complete`)
+        .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
         .set("Authorization", `Bearer ${TOKEN}`)
         .send({ thumbnailFilename });
 
@@ -172,7 +195,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
 
     try {
       const res = await client
-        .post(`/internal/thumbnails/${upload.videoId}/complete`)
+        .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
         .set("Authorization", `Bearer ${TOKEN}`)
         .send({ thumbnailFilename: `${upload.videoId}.webp` });
 
@@ -187,7 +210,7 @@ describe("POST /internal/thumbnails/:uploadUuid/complete", () => {
     const upload = await seedUpload({ skipThumbnail: true });
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: "late-auto-generated.webp" });
 
@@ -225,7 +248,7 @@ describe("POST /internal/thumbnails/:uploadUuid/failed", () => {
     const upload = await seedUpload();
 
     const res = await client
-      .post(`/internal/thumbnails/${upload.videoId}/failed`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/failed`)
       .send({ error: "ffmpeg exited with code 1" });
 
     expect(res.status).toBe(401);
@@ -233,7 +256,7 @@ describe("POST /internal/thumbnails/:uploadUuid/failed", () => {
 
   test("returns 404 for an unknown upload videoId", async () => {
     const res = await client
-      .post("/internal/thumbnails/000000/failed")
+      .post(`/internal/thumbnails/thumbnail-000000-${randomUUID()}/failed`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ error: "ffmpeg exited with code 1" });
 
@@ -259,7 +282,7 @@ describe("POST /internal/thumbnails/:uploadUuid/failed", () => {
     globalThis.fetch = fetchMock;
     try {
       const res = await client
-        .post(`/internal/thumbnails/${upload.videoId}/failed`)
+        .post(`/internal/thumbnails/${thumbnailJobId(upload)}/failed`)
         .set("Authorization", `Bearer ${TOKEN}`)
         .send({ error: "no video/art stream to grab a frame from" });
       expect(res.status).toBe(200);
@@ -328,7 +351,7 @@ describe("POST /internal/thumbnails/:uploadUuid/failed", () => {
   test("does not fall back when a real thumbnail was already recorded (stale/duplicate failure signal)", async () => {
     const upload = await seedUpload({ mediaType: "audio" });
     await client
-      .post(`/internal/thumbnails/${upload.videoId}/complete`)
+      .post(`/internal/thumbnails/${thumbnailJobId(upload)}/complete`)
       .set("Authorization", `Bearer ${TOKEN}`)
       .send({ thumbnailFilename: `${upload.videoId}.webp` });
 

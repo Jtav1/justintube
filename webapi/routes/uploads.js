@@ -392,8 +392,8 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
   // thumbnail image instead.
   const thumbnailJob = !skipThumbnail
     ? {
-        jobId: upload.videoId,
-        outputFilename: `${segment}/${upload.videoId}.${THUMBNAIL_OUTPUT_EXT}`,
+        jobId: `thumbnail-${upload.videoId}-${randomUUID()}`,
+        outputFilename: `${segment}/${randomUUID()}.${THUMBNAIL_OUTPUT_EXT}`,
         kind: "thumbnail",
         timestampSeconds:
           upload.thumbnailTimestampTenths != null
