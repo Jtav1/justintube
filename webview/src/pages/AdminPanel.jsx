@@ -11,7 +11,7 @@ import {
   getAdminJobQueue,
   getUploadFileTree,
 } from '../api/admin.js'
-import { deleteTheme } from '../api/themes.js'
+import { deleteTheme, updateTheme, PUBLIC_THEME_OWNER } from '../api/themes.js'
 import { getTranscodeProfiles, deleteTranscodeProfile } from '../api/transcode-profiles.js'
 import { searchUsers } from '../api/users.js'
 import { formatRelativeDate } from '../lib/format.js'
@@ -127,6 +127,7 @@ function AdminPanel() {
   const [recipients, setRecipients] = useState([])
 
   const [deletingThemeId, setDeletingThemeId] = useState(null)
+  const [publishingThemeId, setPublishingThemeId] = useState(null)
 
   const [profiles, setProfiles] = useState([])
   const [profilesLoading, setProfilesLoading] = useState(true)
@@ -282,6 +283,29 @@ function AdminPanel() {
       toastError(err.response?.data?.message || 'Failed to delete theme.')
     } finally {
       setDeletingThemeId(null)
+    }
+  }
+
+  async function handleMakeThemePublic(item) {
+    if (publishingThemeId) {
+      return
+    }
+    if (
+      !window.confirm(
+        `Make "${item.name}" publicly usable for everyone? You can make it private again later from the theme's edit page.`,
+      )
+    ) {
+      return
+    }
+    setPublishingThemeId(item.id)
+    try {
+      await updateTheme(item.id, { system: true })
+      await refreshThemes()
+      success('Theme is now publicly usable.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to make theme public.')
+    } finally {
+      setPublishingThemeId(null)
     }
   }
 
@@ -475,36 +499,56 @@ function AdminPanel() {
 
         <div className="settings-card">
           <h2>Manage Themes</h2>
+          <p className="settings-status">
+            Every theme is listed here, including users&apos; private ones — everywhere else
+            (the theme selector, each user&apos;s own theme list) only shows site-wide themes plus
+            whatever a user created themselves.
+          </p>
           <Link to="/control-panel/themes/new" className="settings-submit admin-themes-create-link">
             Create Theme
           </Link>
           <div className="admin-themes-list">
             {themesLoading && <p className="settings-status">Loading themes...</p>}
-            {!themesLoading && themes.map((item) => (
-              <div className="admin-themes-row" key={item.id}>
-                <div className="admin-themes-swatches">
-                  {['color2', 'color3', 'color4', 'color5'].map((key) => (
-                    <span
-                      key={key}
-                      className="admin-themes-swatch"
-                      style={{ backgroundColor: `#${item.colors[key]}` }}
-                    />
-                  ))}
+            {!themesLoading && themes.map((item) => {
+              const isPublic = item.themeOwner === PUBLIC_THEME_OWNER
+              return (
+                <div className="admin-themes-row" key={item.id}>
+                  <div className="admin-themes-swatches">
+                    {['color2', 'color3', 'color4', 'color5'].map((key) => (
+                      <span
+                        key={key}
+                        className="admin-themes-swatch"
+                        style={{ backgroundColor: `#${item.colors[key]}` }}
+                      />
+                    ))}
+                  </div>
+                  <span className="admin-themes-name">{item.name}</span>
+                  <span className="admin-themes-badge">
+                    {isPublic ? 'Site-wide' : `Private · user #${item.themeOwner}`}
+                  </span>
+                  {item.isDefault && <span className="admin-themes-badge">Default</span>}
+                  <div className="admin-themes-actions">
+                    {!isPublic && (
+                      <button
+                        type="button"
+                        onClick={() => handleMakeThemePublic(item)}
+                        disabled={publishingThemeId === item.id}
+                      >
+                        {publishingThemeId === item.id ? 'Publishing...' : 'Make Public'}
+                      </button>
+                    )}
+                    <Link to={`/control-panel/themes/${item.id}/edit`}>Edit</Link>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTheme(item)}
+                      disabled={deletingThemeId === item.id}
+                    >
+                      {deletingThemeId === item.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
                 </div>
-                <span className="admin-themes-name">{item.name}</span>
-                {item.isDefault && <span className="admin-themes-badge">Default</span>}
-                <div className="admin-themes-actions">
-                  <Link to={`/control-panel/themes/${item.id}/edit`}>Edit</Link>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteTheme(item)}
-                    disabled={deletingThemeId === item.id}
-                  >
-                    {deletingThemeId === item.id ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
 

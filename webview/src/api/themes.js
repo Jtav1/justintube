@@ -1,6 +1,14 @@
 import apiClient from './client.js'
 
 /**
+ * The `themeOwner` value webapi uses for a site-wide/system theme (as opposed
+ * to a per-user theme, whose `themeOwner` is `String(userId)`). Mirrors
+ * `PUBLIC_THEME_OWNER` in webapi/lib/models/theme.js.
+ * @type {string}
+ */
+export const PUBLIC_THEME_OWNER = 'public'
+
+/**
  * Lists available themes, plus the caller's selected theme id if authenticated.
  * @returns {Promise<{items: object[], selectedThemeId?: number|null}>}
  */

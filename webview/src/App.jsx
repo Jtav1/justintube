@@ -26,6 +26,8 @@ import UsersListPage from './pages/UsersList.jsx'
 import SearchResultsPage from './pages/SearchResults.jsx'
 import AccountSettingsPage from './pages/AccountSettings.jsx'
 import ApiKeysPage from './pages/ApiKeysPage.jsx'
+import MyThemesPage from './pages/MyThemes.jsx'
+import MyThemeEditorPage from './pages/MyThemeEditor.jsx'
 import SubscriptionsPage from './pages/UserSubscriptions.jsx'
 import MySubscriptionsPage from './pages/MySubscriptions.jsx'
 import SubscribersPage from './pages/Subscribers.jsx'
@@ -82,6 +84,9 @@ function App() {
         <Route path="/search" element={<SearchResultsPage />} />
         <Route path="/settings" element={<AccountSettingsPage />} />
         <Route path="/settings/api-keys" element={<ApiKeysPage />} />
+        <Route path="/settings/themes" element={<MyThemesPage />} />
+        <Route path="/settings/themes/new" element={<MyThemeEditorPage />} />
+        <Route path="/settings/themes/:id/edit" element={<MyThemeEditorPage />} />
         <Route path="/subscriptions" element={<SubscriptionsPage />} />
         <Route path="/subscriptions/mine" element={<MySubscriptionsPage />} />
         <Route path="/subscribers" element={<SubscribersPage />} />

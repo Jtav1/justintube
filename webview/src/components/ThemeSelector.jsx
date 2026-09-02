@@ -2,6 +2,7 @@ import { Check } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useTheme } from '../context/useTheme.js'
 import { useAuth } from '../context/useAuth.js'
+import { PUBLIC_THEME_OWNER } from '../api/themes.js'
 import './ThemeSelector.css'
 
 function ThemeSwatches({ colors }) {
@@ -30,12 +31,20 @@ function ThemeSwatches({ colors }) {
 function ThemeSelector() {
   const { theme, themes, selectTheme } = useTheme()
   const { user } = useAuth()
-  const scrollable = themes.length > 2
+  // GET /themes returns every theme (including other users' private ones)
+  // to an admin viewer, so admins get the same public-plus-own filtering
+  // here as everyone else - "visible only to the creator/editor" applies to
+  // this selector regardless of role. The unfiltered admin list is what the
+  // Admin Panel's theme management view is for.
+  const selectableThemes = themes.filter(
+    (item) => item.themeOwner === PUBLIC_THEME_OWNER || (user && item.themeOwner === String(user.id)),
+  )
+  const scrollable = selectableThemes.length > 2
 
   return (
     <div className="theme-selector">
       <div className={`theme-selector-list${scrollable ? ' theme-selector-scrollable' : ''}`}>
-        {themes.map((item) => (
+        {selectableThemes.map((item) => (
           <button
             type="button"
             className="theme-selector-row"
@@ -50,6 +59,11 @@ function ThemeSelector() {
           </button>
         ))}
       </div>
+      {user && (
+        <Link to="/settings/themes" className="theme-selector-edit-link">
+          My Themes
+        </Link>
+      )}
       {user?.role === 'admin' && (
         <Link to="/control-panel/themes/new" className="theme-selector-edit-link">
           Manage Themes

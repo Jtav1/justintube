@@ -337,6 +337,59 @@ describe("themes routes", () => {
       expect(res.status).toBe(403);
       expect(res.body.error).toBe("forbidden");
     });
+
+    test("an admin can reverse a public theme back to private, owned by that admin", async () => {
+      const admin = await seedUserWithRoleAndKey("admin", "unpublish-admin-key");
+      const theme = await seedTheme({ themeOwner: "public", name: "Was public" });
+
+      const res = await withMultipart(
+        client.patch(`/api/v1/themes/${theme.id}`).set("Authorization", "Bearer unpublish-admin-key"),
+        { system: "false" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.themeOwner).toBe(String(admin.id));
+    });
+
+    test("reversing a public default theme clears isDefault along with it", async () => {
+      await seedUserWithRoleAndKey("admin", "unpublish-admin-key-2");
+      const theme = await seedTheme({ themeOwner: "public", name: "Was default", isDefault: true });
+
+      const res = await withMultipart(
+        client.patch(`/api/v1/themes/${theme.id}`).set("Authorization", "Bearer unpublish-admin-key-2"),
+        { system: "false" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.isDefault).toBe(false);
+    });
+
+    test("a non-admin sending system=false is rejected with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "unpublish-nonadmin-key");
+      const theme = await seedTheme({ themeOwner: String(owner.id), name: "Mine" });
+
+      const res = await withMultipart(
+        client.patch(`/api/v1/themes/${theme.id}`).set("Authorization", "Bearer unpublish-nonadmin-key"),
+        { system: "false" },
+      );
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+    });
+
+    test("sending system=false on an already-private theme is a harmless no-op", async () => {
+      await seedUserWithRoleAndKey("admin", "unpublish-admin-key-3");
+      const theme = await seedTheme({ themeOwner: "42", name: "Already private" });
+
+      const res = await withMultipart(
+        client.patch(`/api/v1/themes/${theme.id}`).set("Authorization", "Bearer unpublish-admin-key-3"),
+        { system: "false", name: "Still private" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.themeOwner).toBe("42");
+      expect(res.body.name).toBe("Still private");
+    });
   });
 
   describe("DELETE /api/v1/themes/:id (deleteTheme)", () => {

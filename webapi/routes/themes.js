@@ -618,7 +618,11 @@ export function createThemesRouter() {
    * PATCH /themes/:id — updateTheme
    * Auth: required. Owner or admin. `"public"` themes may only be updated
    * by an admin. `system: true` (admin-only) converts the theme to
-   * `"public"`; there is no reverse conversion. `isDefault: true`
+   * `"public"`. `system: false` (admin-only) reverses that: a currently-
+   * `"public"` theme becomes privately owned by the admin performing the
+   * reversal (the original creator isn't tracked separately, since
+   * `themeOwner` is overwritten in place on promotion) and, if it was the
+   * sitewide default, `isDefault` is cleared along with it. `isDefault: true`
    * (admin-only) requires the theme to be (or become, via `system`)
    * `"public"`, and clears any prior default. For each image slot, a truthy
    * `remove<Field>` (e.g. `removeHeaderBackground`) clears a previously-saved
@@ -655,7 +659,12 @@ export function createThemesRouter() {
    *               color3: { type: string }
    *               color4: { type: string }
    *               color5: { type: string }
-   *               system: { type: string }
+   *               system:
+   *                 type: string
+   *                 description: >
+   *                   Admin-only. `true` converts this theme to public
+   *                   (sitewide). `false` reverses a public theme back to
+   *                   private, owned by the admin performing the reversal.
    *               isDefault: { type: string }
    *               headerBackground: { type: string, format: binary }
    *               sidebarBackground: { type: string, format: binary }
@@ -712,16 +721,30 @@ export function createThemesRouter() {
 
       if (Object.prototype.hasOwnProperty.call(req.body || {}, "system")) {
         const wantsSystem = parseBooleanish(req.body.system);
+        if (!isAdmin(req.authRole)) {
+          await cleanupUploadedFiles(req);
+          res.status(403).json({
+            error: "forbidden",
+            message: wantsSystem
+              ? "Only an admin can convert a theme to public."
+              : "Only an admin can convert a theme back to private.",
+          });
+          return;
+        }
         if (wantsSystem) {
-          if (!isAdmin(req.authRole)) {
-            await cleanupUploadedFiles(req);
-            res.status(403).json({
-              error: "forbidden",
-              message: "Only an admin can convert a theme to public.",
-            });
-            return;
-          }
           patch.themeOwner = PUBLIC_THEME_OWNER;
+        } else if (row.themeOwner === PUBLIC_THEME_OWNER) {
+          // Reversing a public theme back to private. The original creator
+          // isn't tracked separately - themeOwner is overwritten in place
+          // when a theme is promoted to "public" - so ownership transfers to
+          // the admin performing this reversal instead. A public theme can
+          // never be the sitewide default's *source* once private, so clear
+          // isDefault too unless this same request is explicitly setting it
+          // (handled, and re-validated, by the isDefault block below).
+          patch.themeOwner = String(req.user.id);
+          if (row.isDefault) {
+            patch.isDefault = false;
+          }
         }
       }
 
