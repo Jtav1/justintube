@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
+  Captions,
   EyeOff,
   EyeClosed,
   Link as LinkIcon,
@@ -103,6 +104,9 @@ function VideoPlayer({
     ? `${apiClient.defaults.baseURL}${video.embedVideoUrl}`
     : null
   const isAudio = video.mediaType === 'audio' && !embedVideoUrl
+  const subtitlesUrl = video.subtitlesUrl
+    ? `${apiClient.defaults.baseURL}${video.subtitlesUrl}`
+    : null
   const [selectedRendition, setSelectedRendition] = useState(() => pickDefaultRendition(renditions))
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false)
   const [loop, setLoop] = useState(false)
@@ -152,6 +156,8 @@ function VideoPlayer({
       setAutoplayCountdown(null)
     }
   }
+
+  const [captionsOn, setCaptionsOn] = useState(false)
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -513,6 +519,30 @@ function VideoPlayer({
     }
   }
 
+  // The media element (and its <track> child, if any) remounts fresh on
+  // every video change and every quality switch (key={memoizedSrc}) - a
+  // freshly mounted track's .mode isn't reliably "hidden" by default across
+  // browsers, so pin it explicitly and reset the button's own state to
+  // match, rather than letting them drift apart across a remount.
+  useEffect(() => {
+    const el = videoRef.current
+    if (el && el.textTracks[0]) {
+      el.textTracks[0].mode = 'hidden'
+    }
+    setCaptionsOn(false)
+  }, [memoizedSrc])
+
+  function handleToggleCaptions() {
+    const el = videoRef.current
+    const track = el && el.textTracks[0]
+    if (!track) {
+      return
+    }
+    const next = track.mode !== 'showing'
+    el.textTracks[0].mode = next ? 'showing' : 'hidden'
+    setCaptionsOn(next)
+  }
+
   function handleFirstPlay() {
     if (viewRecordedRef.current) {
       return
@@ -666,12 +696,17 @@ function VideoPlayer({
             src={memoizedSrc}
             controls
             loop={loop}
+            crossOrigin={subtitlesUrl ? 'use-credentials' : undefined}
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
             onEnded={handleEnded}
             onVolumeChange={handleVolumeChange}
             onError={handlePlaybackError}
-          />
+          >
+            {subtitlesUrl && (
+              <track kind="subtitles" label="English" srcLang="en" src={subtitlesUrl} />
+            )}
+          </video>
         )}
         {autoplayCountdown !== null && (
           <div className="video-player-autoplay-overlay">
@@ -740,6 +775,18 @@ function VideoPlayer({
           >
             <Repeat size={18} />
           </button>
+          {!isAudio && subtitlesUrl && (
+            <button
+              type="button"
+              className={`video-player-icon-btn${captionsOn ? ' video-player-icon-btn-active' : ''}`}
+              aria-label={captionsOn ? 'Hide captions' : 'Show captions'}
+              title={captionsOn ? 'Hide captions' : 'Show captions'}
+              aria-pressed={captionsOn}
+              onClick={handleToggleCaptions}
+            >
+              <Captions size={18} />
+            </button>
+          )}
           {onToggleExpand && (
             <button
               type="button"

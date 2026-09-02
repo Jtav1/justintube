@@ -15,6 +15,8 @@ import {
   getImportStatus,
   updateVideoThumbnail,
   regenerateVideoThumbnail,
+  updateVideoSubtitles,
+  regenerateVideoSubtitles,
   getVideo,
 } from '../api/videos.js'
 import { searchUsers } from '../api/users.js'
@@ -130,6 +132,7 @@ function UploadPage() {
   const [searchParams] = useSearchParams()
   const fileInputRef = useRef(null)
   const thumbnailInputRef = useRef(null)
+  const subtitleInputRef = useRef(null)
 
   const editVideoId = searchParams.get('v')
   const isEditMode = Boolean(editVideoId)
@@ -147,6 +150,8 @@ function UploadPage() {
   const [bulkCards, setBulkCards] = useState(() => [createEmptyBulkCard()])
   const [thumbnailFile, setThumbnailFile] = useState(null)
   const [thumbnailTimestamp, setThumbnailTimestamp] = useState('')
+  const [subtitleFile, setSubtitleFile] = useState(null)
+  const [subtitleRegenerating, setSubtitleRegenerating] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState('public')
@@ -412,6 +417,36 @@ function UploadPage() {
     }
   }
 
+  function handleSubtitleInputChange(event) {
+    const selected = event.target.files?.[0]
+    event.target.value = ''
+    if (!selected) {
+      return
+    }
+    // Defense-in-depth - the server also validates the extension.
+    if (!/\.(srt|vtt)$/i.test(selected.name)) {
+      toastError('Subtitles must be a .srt or .vtt file.')
+      return
+    }
+    setSubtitleFile(selected)
+  }
+
+  async function handleRegenerateSubtitles() {
+    if (subtitleRegenerating || !editUpload) {
+      return
+    }
+    setSubtitleRegenerating(true)
+    try {
+      await regenerateVideoSubtitles(editUpload.id)
+      success('Captions are regenerating — this may take a moment.')
+    } catch (err) {
+      console.error('Failed to regenerate captions:', err)
+      toastError('Failed to regenerate captions.')
+    } finally {
+      setSubtitleRegenerating(false)
+    }
+  }
+
   function handleDragOver(event) {
     event.preventDefault()
     if (!fileLocked) {
@@ -612,6 +647,7 @@ function UploadPage() {
           ? await uploadVideoFile(file, {
               skipThumbnail: Boolean(thumbnailFile),
               thumbnailTimestamp: thumbnailTimestampToSend,
+              skipAutoSubtitles: Boolean(subtitleFile),
               onUploadProgress: (event) => {
                 if (event.total) {
                   setUploadPercent(Math.round((event.loaded / event.total) * 100))
@@ -621,6 +657,7 @@ function UploadPage() {
           : await importVideoUrl(url.trim(), {
               skipThumbnail: Boolean(thumbnailFile),
               thumbnailTimestamp: thumbnailTimestampToSend,
+              skipAutoSubtitles: Boolean(subtitleFile),
             })
         createdId = uploaded.id
       } catch {
@@ -674,6 +711,19 @@ function UploadPage() {
         toastError(
           'Your changes were saved, but the thumbnail could not be regenerated. ' +
             'You can try again from the edit page.',
+        )
+        setSubmitting(false)
+        return
+      }
+    }
+
+    if (subtitleFile) {
+      try {
+        await updateVideoSubtitles(createdId, subtitleFile)
+      } catch {
+        toastError(
+          'Your video was uploaded and configured, but the subtitle file could not be saved. ' +
+            'You can try uploading it again from the edit page.',
         )
         setSubmitting(false)
         return
@@ -906,6 +956,54 @@ function UploadPage() {
               <p className="upload-hint">
                 Setting a frame here generates a new thumbnail from that point in the video,
                 replacing the current one, once you save.
+              </p>
+            )}
+          </div>
+
+          <div className="upload-field-group">
+            <label htmlFor="upload-subtitle-input">Subtitles</label>
+            <div className="upload-thumbnail-row">
+              <label htmlFor="upload-subtitle-input" className="upload-thumbnail-picker">
+                <UploadCloud size={20} />
+                <span>{subtitleFile ? subtitleFile.name : 'Add subtitles (.srt or .vtt)'}</span>
+                <input
+                  id="upload-subtitle-input"
+                  ref={subtitleInputRef}
+                  type="file"
+                  accept=".srt,.vtt"
+                  className="upload-dropzone-input"
+                  onChange={handleSubtitleInputChange}
+                />
+                {subtitleFile && (
+                  <button
+                    type="button"
+                    className="upload-dropzone-clear"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setSubtitleFile(null)
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </label>
+              {isEditMode && (
+                <button
+                  type="button"
+                  className="upload-link-button"
+                  style={{ alignSelf: 'center' }}
+                  onClick={handleRegenerateSubtitles}
+                  disabled={subtitleRegenerating}
+                >
+                  {subtitleRegenerating ? 'Regenerating…' : 'Generate automatically'}
+                </button>
+              )}
+            </div>
+            {isEditMode && (
+              <p className="upload-hint">
+                Automatically extracts a subtitle track from the video's original file, if one is
+                embedded. Replaces the current captions only if a track is actually found —
+                otherwise your existing captions are left as they are.
               </p>
             )}
           </div>

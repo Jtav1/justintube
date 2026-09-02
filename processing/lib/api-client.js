@@ -150,6 +150,41 @@ export async function notifyThumbnailFailed(uploadUuid, error) {
 }
 
 /**
+ * Notifies the API that an upload's subtitle track was extracted
+ * successfully.
+ *
+ * @param {string} jobId BullMQ job id for the subtitle job
+ *   (`subtitle-<videoId>-<uuid>`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.subtitleFilename Basename written under `/media/subtitles`.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifySubtitleComplete(jobId, metadata) {
+  return postInternal(`/internal/subtitles/${encodeURIComponent(jobId)}/complete`, {
+    subtitleFilename: metadata.subtitleFilename,
+  });
+}
+
+/**
+ * Notifies the API that an upload's subtitle-extraction attempt failed (or
+ * was gracefully skipped because no text-based subtitle stream exists) —
+ * the API takes no action on this signal beyond logging, since there's no
+ * placeholder subtitle to fall back to (see `/internal/subtitles/:jobId/failed`).
+ *
+ * @param {string} jobId BullMQ job id for the subtitle job
+ *   (`subtitle-<videoId>-<uuid>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifySubtitleFailed(jobId, error) {
+  return postInternal(`/internal/subtitles/${encodeURIComponent(jobId)}/failed`, {
+    error,
+  });
+}
+
+/**
  * Notifies the API that a duplicate-upload content-hash job completed
  * successfully.
  *

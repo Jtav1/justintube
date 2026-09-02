@@ -99,6 +99,19 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    /**
+     * Mirrors the request-time `skipAutoSubtitles` option, same rationale and
+     * persistence pattern as `skipThumbnail` above. Also set to `true`
+     * whenever the owner/admin uploads their own subtitle file directly
+     * (`POST /videos/:id/subtitles`), and cleared back to `false` by
+     * `POST /videos/:id/subtitles/regenerate` to allow one more
+     * auto-extraction attempt.
+     */
+    skipAutoSubtitles: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     userId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,

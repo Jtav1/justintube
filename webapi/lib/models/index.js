@@ -35,6 +35,7 @@ import { VideoAccess } from "./video-access.js";
 import { VideoLike } from "./video-like.js";
 import { VideoMetadata } from "./video-metadata.js";
 import { VideoThumbnail } from "./video-thumbnail.js";
+import { VideoSubtitle } from "./video-subtitle.js";
 import { VideoTransferHistory } from "./video-transfer-history.js";
 import { VideoTransferMapping } from "./video-transfer-mapping.js";
 
@@ -175,6 +176,15 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
   VideoThumbnail.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  OriginalUpload.hasOne(VideoSubtitle, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  VideoSubtitle.belongsTo(OriginalUpload, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });
@@ -577,6 +587,7 @@ export const models = {
   OriginalUpload,
   VideoMetadata,
   VideoThumbnail,
+  VideoSubtitle,
   TranscodeProfile,
   FileVersion,
   UserPlaylist,
@@ -640,6 +651,7 @@ export {
   VideoAccess,
   VideoLike,
   VideoMetadata,
+  VideoSubtitle,
   VideoThumbnail,
   VideoTransferHistory,
   VideoTransferMapping,

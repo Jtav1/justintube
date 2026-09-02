@@ -279,6 +279,28 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
     });
   });
 
+  test("returns 409 when the job is active and can't be removed", async () => {
+    const remove = jest
+      .fn()
+      .mockRejectedValue(new Error("Job job-1 could not be removed because it is locked by another worker"));
+    const queue = {
+      addBulk: jest.fn(),
+      getJob: jest.fn().mockResolvedValue({
+        id: "job-1",
+        remove,
+      }),
+    };
+    const app = createTestApp(queue);
+
+    const res = await request(app).delete("/transcode/job-1");
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      success: false,
+      error: "job active",
+    });
+  });
+
   test("skips profiles larger than the probed source resolution", async () => {
     const queue = {
       addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
@@ -683,7 +705,7 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
             profile: undefined,
             timestampSeconds: undefined,
           },
-          opts: { jobId: hashJob.jobId, priority: 4 },
+          opts: { jobId: hashJob.jobId, priority: 5 },
         },
       ]);
     });
