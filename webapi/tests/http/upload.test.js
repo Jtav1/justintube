@@ -216,9 +216,16 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(payload.jobs).toHaveLength(1);
+    // jobId/outputFilename each embed a random UUID (see
+    // `enqueueAudioEmbedVideo`'s rationale for why a fixed
+    // `thumbnail-<videoId>` id would silently no-op a later regeneration) -
+    // only the fixed `thumbnail-<videoId>-` jobId prefix is stable, and the
+    // output filename is a fresh UUID rather than the videoId itself.
+    expect(payload.jobs[0].jobId).toMatch(new RegExp(`^thumbnail-${res.body.videoId}-`));
     expect(payload.jobs[0]).toMatchObject({
-      jobId: res.body.videoId,
-      outputFilename: `${uploaderUser.id}/${res.body.videoId}.webp`,
+      outputFilename: expect.stringMatching(
+        new RegExp(`^${uploaderUser.id}/[0-9a-f-]{36}\\.webp$`),
+      ),
       kind: "thumbnail",
       timestampSeconds: null,
     });
@@ -246,8 +253,8 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
 
     const batchPayload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(batchPayload.jobs).toHaveLength(1);
+    expect(batchPayload.jobs[0].jobId).toMatch(new RegExp(`^thumbnail-${res.body.videoId}-`));
     expect(batchPayload.jobs[0]).toMatchObject({
-      jobId: res.body.videoId,
       kind: "thumbnail",
     });
 
