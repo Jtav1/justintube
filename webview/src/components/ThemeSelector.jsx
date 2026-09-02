@@ -65,7 +65,7 @@ function ThemeSelector() {
         </Link>
       )}
       {user?.role === 'admin' && (
-        <Link to="/control-panel/themes/new" className="theme-selector-edit-link">
+        <Link to="/control-panel" className="theme-selector-edit-link">
           Manage Themes
         </Link>
       )}
