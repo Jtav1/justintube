@@ -3,18 +3,24 @@ import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { ImageOff, MoreVertical, VideoOff } from 'lucide-react'
 import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/format.js'
+import { CORE_JOB_KINDS, colorForJobKind, labelForJobKind } from '../lib/jobKinds.js'
 import { useAuth } from '../context/useAuth.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
-import { hideVideo } from '../api/videos.js'
+import { getVideoProcessingStatus, hideVideo } from '../api/videos.js'
 import apiClient from '../api/client.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import ReactionScore from './ReactionScore.jsx'
+import SegmentedProgressBar from './SegmentedProgressBar.jsx'
 import './VideoCard.css'
 
 // Must match .video-card-title's font-size/font-weight in VideoCard.css.
 const TITLE_FONT_SIZE = 18
 const TITLE_FONT_WEIGHT = 500
 const TITLE_SHRINK_PX = 4
+const PROCESSING_POLL_MS = 5000
+// Spreads out the first poll across many owned cards on one page (e.g.
+// after a bulk import) so they don't all hit the API in the same tick.
+const PROCESSING_POLL_MAX_JITTER_MS = 2000
 
 function VideoCard({
   video,
@@ -83,6 +89,58 @@ function VideoCard({
   const isOwner = Boolean(user) && user.id === video.uploader?.userId
   const isModerator = user?.role === 'moderator' || user?.role === 'admin'
   const videoPath = linkTo ?? `/video?v=${video.videoId}`
+
+  const [outstandingJobs, setOutstandingJobs] = useState([])
+  // Owner-only: only the uploader sees processing status on their own
+  // upload's card. Skipped entirely once the upload reaches "ready" (or has
+  // no status at all) so an already-finished video never polls.
+  const shouldTrackProcessing = isOwner && Boolean(video.status) && video.status !== 'ready'
+
+  useEffect(() => {
+    if (!shouldTrackProcessing) {
+      // Nothing to reset: the render below gates on `shouldTrackProcessing`
+      // directly, so stale `outstandingJobs` from a prior tracked state
+      // simply never gets shown once this flips false.
+      return undefined
+    }
+
+    let cancelled = false
+    let interval
+
+    async function checkProcessingStatus() {
+      try {
+        const data = await getVideoProcessingStatus(video.id)
+        if (cancelled) {
+          return
+        }
+        // A processing-fetch failure on the API side means "couldn't
+        // confirm", not "confirmed empty" - leave whatever was last shown
+        // rather than snapping the bar away.
+        if (data.jobsStatusUnknown) {
+          return
+        }
+        const jobs = data.outstandingJobs ?? []
+        setOutstandingJobs(jobs)
+        if (jobs.length === 0) {
+          clearInterval(interval)
+        }
+      } catch {
+        // Network/auth error - same "leave it as-is" handling as above.
+      }
+    }
+
+    const jitterMs = Math.random() * PROCESSING_POLL_MAX_JITTER_MS
+    const timeout = setTimeout(() => {
+      checkProcessingStatus()
+      interval = setInterval(checkProcessingStatus, PROCESSING_POLL_MS)
+    }, jitterMs)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+      clearInterval(interval)
+    }
+  }, [video.id, shouldTrackProcessing])
 
   async function handleCopyLink() {
     setMenuOpen(false)
@@ -211,6 +269,19 @@ function VideoCard({
         )}
         {video.durationSeconds != null && (
           <span className="video-card-duration">{formatDuration(video.durationSeconds)}</span>
+        )}
+        {shouldTrackProcessing && outstandingJobs.length > 0 && (
+          <div className="video-card-processing-overlay">
+            <SegmentedProgressBar
+              segments={CORE_JOB_KINDS.map((kind) => ({
+                key: kind,
+                value: outstandingJobs.filter((job) => job.kind === kind).length,
+                color: colorForJobKind(kind),
+                label: labelForJobKind(kind),
+              }))}
+              showLegend={false}
+            />
+          </div>
         )}
       </Link>
       <div className="video-card-body">

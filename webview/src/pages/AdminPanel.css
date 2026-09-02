@@ -126,3 +126,109 @@
   color: var(--text);
   list-style: none;
 }
+
+.admin-jobs-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.admin-jobs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-jobs-subheading {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.admin-jobs-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-jobs-history-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.admin-jobs-kind-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--accent-bg);
+}
+
+.admin-jobs-state-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.admin-jobs-state-completed {
+  color: #1a9c3f;
+}
+
+.admin-jobs-state-failed {
+  color: #d33;
+}
+
+.admin-jobs-history-time {
+  color: var(--text);
+  margin-left: auto;
+}
+
+.admin-jobs-history-reason {
+  flex-basis: 100%;
+  color: #d33;
+  font-size: 12px;
+}
+
+.admin-jobs-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-jobs-pagination button {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.admin-jobs-pagination button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.admin-jobs-pagination button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.admin-jobs-pagination-label {
+  font-size: 13px;
+  color: var(--text);
+}

@@ -4,16 +4,27 @@ import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useTheme } from '../context/useTheme.js'
 import { useSiteConfig } from '../context/useSiteConfig.js'
-import { adminBroadcastNotification, adminModerationNotification, getUploadFileTree } from '../api/admin.js'
+import {
+  adminBroadcastNotification,
+  adminModerationNotification,
+  getAdminJobHistory,
+  getAdminJobQueue,
+  getUploadFileTree,
+} from '../api/admin.js'
 import { deleteTheme } from '../api/themes.js'
 import { getTranscodeProfiles, deleteTranscodeProfile } from '../api/transcode-profiles.js'
 import { searchUsers } from '../api/users.js'
+import { formatRelativeDate } from '../lib/format.js'
+import { JOB_KINDS, colorForJobKind, labelForJobKind } from '../lib/jobKinds.js'
 import ChipInput from '../components/ChipInput.jsx'
+import SegmentedProgressBar from '../components/SegmentedProgressBar.jsx'
 import './AdminPanel.css'
 import './AdminThemes.css'
 import './AdminTranscodeProfiles.css'
 
 const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
+const JOB_QUEUE_POLL_MS = 10000
+const JOB_HISTORY_PAGE_SIZE = 5
 
 function recipientLabel(user) {
   return user.displayName ? `${user.displayName} (${user.username})` : user.username
@@ -126,6 +137,13 @@ function AdminPanel() {
   const [fileTreeError, setFileTreeError] = useState(null)
   const [fileTreeResult, setFileTreeResult] = useState(null)
 
+  const [jobQueue, setJobQueue] = useState(null)
+  const [jobQueueLoading, setJobQueueLoading] = useState(true)
+  const [jobHistory, setJobHistory] = useState(null)
+  const [jobHistoryLoading, setJobHistoryLoading] = useState(true)
+  const [jobHistoryPage, setJobHistoryPage] = useState(1)
+  const [jobHistoryError, setJobHistoryError] = useState(null)
+
   useEffect(() => {
     let cancelled = false
     async function loadProfiles() {
@@ -150,6 +168,62 @@ function AdminPanel() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadJobQueue() {
+      try {
+        const data = await getAdminJobQueue()
+        if (!cancelled) {
+          setJobQueue(data)
+        }
+      } catch {
+        // Best-effort - leave whatever was last shown rather than flashing
+        // an error on a transient processing hiccup during a 10s poll.
+      } finally {
+        if (!cancelled) {
+          setJobQueueLoading(false)
+        }
+      }
+    }
+
+    loadJobQueue()
+    const interval = setInterval(loadJobQueue, JOB_QUEUE_POLL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadJobHistory() {
+      setJobHistoryLoading(true)
+      try {
+        const data = await getAdminJobHistory({ page: jobHistoryPage, limit: JOB_HISTORY_PAGE_SIZE })
+        if (!cancelled) {
+          setJobHistory(data)
+          setJobHistoryError(null)
+        }
+      } catch {
+        if (!cancelled) {
+          setJobHistoryError('Failed to load job history.')
+        }
+      } finally {
+        if (!cancelled) {
+          setJobHistoryLoading(false)
+        }
+      }
+    }
+
+    loadJobHistory()
+    return () => {
+      cancelled = true
+    }
+  }, [jobHistoryPage])
 
   const recipientSearchActive = audience === 'specific' && recipientQuery.trim().length > 0
 
@@ -279,6 +353,15 @@ function AdminPanel() {
   const notifySubmitDisabled =
     sending || title.trim().length === 0 || message.trim().length === 0 ||
     (audience === 'specific' && recipients.length === 0)
+
+  const jobQueueSegments = JOB_KINDS.map((kind) => {
+    const counts = jobQueue?.counts?.[kind]
+    const value = counts ? counts.waiting + counts.active + counts.delayed : 0
+    return { key: kind, value, color: colorForJobKind(kind), label: labelForJobKind(kind) }
+  })
+  const jobHistoryTotalPages = jobHistory
+    ? Math.max(1, Math.ceil(jobHistory.total / JOB_HISTORY_PAGE_SIZE))
+    : 1
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -523,6 +606,85 @@ function AdminPanel() {
               </ul>
             </div>
           )}
+        </div>
+
+        <div className="settings-card">
+          <h2>Processing Queue</h2>
+          {!transcodingEnabled && (
+            <p className="admin-jobs-hint">
+              Transcoding is disabled on this server (ENABLE_TRANSCODING=false) — the
+              processing queue is expected to stay empty.
+            </p>
+          )}
+
+          <div className="admin-jobs-section">
+            <h3 className="admin-jobs-subheading">Live queue</h3>
+            {jobQueueLoading && !jobQueue ? (
+              <p className="settings-status">Loading queue...</p>
+            ) : (
+              <SegmentedProgressBar segments={jobQueueSegments} emptyLabel="Queue is empty." />
+            )}
+          </div>
+
+          <div className="admin-jobs-section">
+            <h3 className="admin-jobs-subheading">Recent activity</h3>
+            {jobHistoryLoading && !jobHistory && (
+              <p className="settings-status">Loading history...</p>
+            )}
+            {jobHistoryError && (
+              <p className="settings-status settings-status-error">{jobHistoryError}</p>
+            )}
+            {jobHistory && jobHistory.items.length === 0 && (
+              <p className="settings-status">No completed jobs yet.</p>
+            )}
+            {jobHistory && jobHistory.items.length > 0 && (
+              <ul className="admin-jobs-history-list">
+                {jobHistory.items.map((item) => (
+                  <li key={item.jobId} className="admin-jobs-history-item">
+                    <span className="admin-jobs-kind-badge" style={{ color: colorForJobKind(item.kind) }}>
+                      {labelForJobKind(item.kind)}
+                    </span>
+                    <span
+                      className={
+                        item.state === 'failed'
+                          ? 'admin-jobs-state-badge admin-jobs-state-failed'
+                          : 'admin-jobs-state-badge admin-jobs-state-completed'
+                      }
+                    >
+                      {item.state}
+                    </span>
+                    <span className="admin-jobs-history-time">
+                      {formatRelativeDate(item.finishedOn)}
+                    </span>
+                    {item.failedReason && (
+                      <span className="admin-jobs-history-reason">{item.failedReason}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {jobHistory && jobHistory.total > JOB_HISTORY_PAGE_SIZE && (
+              <div className="admin-jobs-pagination">
+                <button
+                  type="button"
+                  onClick={() => setJobHistoryPage((page) => Math.max(1, page - 1))}
+                  disabled={jobHistoryPage <= 1 || jobHistoryLoading}
+                >
+                  Previous
+                </button>
+                <span className="admin-jobs-pagination-label">
+                  Page {jobHistoryPage} of {jobHistoryTotalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setJobHistoryPage((page) => page + 1)}
+                  disabled={jobHistoryPage >= jobHistoryTotalPages || jobHistoryLoading}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </section>

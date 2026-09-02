@@ -37,3 +37,24 @@ export async function getUploadFileTree(identifier) {
   const res = await apiClient.get(`/api/v1/admin/files/uploads/${encodeURIComponent(identifier)}`)
   return res.data
 }
+
+/**
+ * Summarizes the live processing queue's currently non-terminal jobs,
+ * bucketed by job kind and BullMQ state.
+ * @returns {Promise<{counts: object, total: number}>}
+ */
+export async function getAdminJobQueue() {
+  const res = await apiClient.get('/api/v1/admin/jobs/queue')
+  return res.data
+}
+
+/**
+ * Lists the most recently completed/failed processing jobs, newest first,
+ * paginated (5 per page by default).
+ * @param {{page?: number, limit?: number}} [options]
+ * @returns {Promise<{items: object[], total: number, page: number, limit: number}>}
+ */
+export async function getAdminJobHistory({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/admin/jobs/history', { params: { page, limit } })
+  return res.data
+}

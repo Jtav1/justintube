@@ -4,6 +4,7 @@ import { logger } from "./lib/logger.js";
 import { requireInternalToken } from "./lib/require-internal-token.js";
 import { getTranscodeConfig } from "./lib/transcode.js";
 import { createDownloadRouter } from "./routes/download.js";
+import { createQueueRouter } from "./routes/queue.js";
 import { createTranscodeRouter } from "./routes/transcode.js";
 import {
   closeTranscodeResources,
@@ -21,7 +22,7 @@ const PORT = Number(process.env.PORT) || 3001;
  *
  * @param {object} [options] Optional dependencies for tests / wiring.
  * @param {import('bullmq').Queue | null} [options.transcodeQueue] BullMQ queue
- *   used by `/transcode` routes. When omitted, those routes are not mounted.
+ *   used by the `/transcode` and `/queue` routes. When omitted, neither is mounted.
  * @returns {import('express').Express} Ready-to-listen Express app.
  */
 export function createApp(options = {}) {
@@ -60,6 +61,11 @@ export function createApp(options = {}) {
       "/transcode",
       requireInternalToken,
       createTranscodeRouter({ queue: transcodeQueue }),
+    );
+    app.use(
+      "/queue",
+      requireInternalToken,
+      createQueueRouter({ queue: transcodeQueue }),
     );
   }
 

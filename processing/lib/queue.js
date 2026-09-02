@@ -800,6 +800,120 @@ export async function retryFailedHashJobs(queue) {
 }
 
 /**
+ * Maximum number of jobs fetched per non-terminal state (waiting/active/
+ * delayed) by {@link getQueueJobs}, guarding against unbounded memory use if
+ * the queue somehow grows very large. Self-hosted deployments run a single
+ * worker at low concurrency, so real queue depth is expected to stay far
+ * below this.
+ *
+ * @type {number}
+ */
+export const QUEUE_JOBS_CAP_PER_STATE = 500;
+
+/**
+ * Lists every currently non-terminal job (waiting, active, or delayed)
+ * across all job kinds, each tagged with its state. Fetches each state
+ * separately rather than one combined call plus a per-job `job.getState()`
+ * round trip - the state is already known from which fetch returned the job.
+ * A job mid-retry-backoff (BullMQ moves a failed-but-retryable job to
+ * "delayed" until `attemptsMade` reaches the configured `attempts`) or a
+ * hash job deferred by `HASH_GENERATION_WINDOW` both correctly surface here
+ * as "delayed" - both are legitimately still in flight, not terminal.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {{ capPerState?: number }} [options] Per-state fetch cap override (tests only).
+ * @returns {Promise<Array<{
+ *   jobId: string,
+ *   kind: string,
+ *   name: string,
+ *   state: "waiting"|"active"|"delayed",
+ *   truncated: boolean
+ * }>>} Non-terminal jobs across all states.
+ */
+export async function getQueueJobs(queue, { capPerState = QUEUE_JOBS_CAP_PER_STATE } = {}) {
+  const [waiting, active, delayed] = await Promise.all([
+    queue.getJobs(["waiting"], 0, capPerState - 1),
+    queue.getJobs(["active"], 0, capPerState - 1),
+    queue.getJobs(["delayed"], 0, capPerState - 1),
+  ]);
+
+  const tag = (jobs, state) =>
+    jobs.map((job) => ({
+      jobId: String(job.id),
+      kind: job.data?.kind || "rendition",
+      name: job.name,
+      state,
+      truncated: jobs.length >= capPerState,
+    }));
+
+  return [...tag(waiting, "waiting"), ...tag(active, "active"), ...tag(delayed, "delayed")];
+}
+
+/**
+ * Number of most-recent completed/failed jobs fetched (per state) by
+ * {@link getQueueHistory} before sorting/paginating in memory. Bounds how far
+ * back "history" can page - `total` (from `queue.getJobCounts`) stays exact
+ * even when the real count exceeds this window, but pages past it return an
+ * empty `items` array rather than erroring.
+ *
+ * @type {number}
+ */
+export const QUEUE_HISTORY_FETCH_WINDOW = 200;
+
+/**
+ * Lists the most recently completed/failed jobs across all job kinds,
+ * newest-first, paginated. Completed and failed jobs live in two separate
+ * BullMQ sorted sets; fetching each with `asc: false` already returns each
+ * one newest-first, so this only needs to merge the two already-sorted lists
+ * by `finishedOn` rather than re-sorting from scratch.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {{ page: number, limit: number }} options 1-based page number and page size.
+ * @returns {Promise<{
+ *   items: Array<{
+ *     jobId: string,
+ *     kind: string,
+ *     name: string,
+ *     state: "completed"|"failed",
+ *     finishedOn: number,
+ *     processedOn: number|null,
+ *     failedReason: string|null
+ *   }>,
+ *   total: number,
+ *   page: number,
+ *   limit: number
+ * }>} Page of history items plus the exact total job count (which may exceed
+ *   what's actually paginatable within `QUEUE_HISTORY_FETCH_WINDOW`).
+ */
+export async function getQueueHistory(queue, { page, limit }) {
+  const [completed, failed, counts] = await Promise.all([
+    queue.getJobs(["completed"], 0, QUEUE_HISTORY_FETCH_WINDOW - 1, false),
+    queue.getJobs(["failed"], 0, QUEUE_HISTORY_FETCH_WINDOW - 1, false),
+    queue.getJobCounts("completed", "failed"),
+  ]);
+
+  const merged = [...completed, ...failed]
+    .map((job) => ({
+      jobId: String(job.id),
+      kind: job.data?.kind || "rendition",
+      name: job.name,
+      // Failed jobs always carry a failedReason; completed jobs never do -
+      // more direct than re-deriving it from finishedOn/returnvalue.
+      state: job.failedReason ? "failed" : "completed",
+      finishedOn: job.finishedOn ?? 0,
+      processedOn: job.processedOn ?? null,
+      failedReason: job.failedReason || null,
+    }))
+    .sort((a, b) => b.finishedOn - a.finishedOn);
+
+  const total = (counts.completed || 0) + (counts.failed || 0);
+  const start = (page - 1) * limit;
+  const items = start < merged.length ? merged.slice(start, start + limit) : [];
+
+  return { items, total, page, limit };
+}
+
+/**
  * Notifies the API that a BullMQ job failed (best-effort). Thumbnail jobs
  * have no pending placeholder row to roll back (unlike FILE_VERSIONS, no
  * VIDEO_THUMBNAIL row exists until success), but a failure here is still the
