@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
@@ -33,6 +33,7 @@ import {
   VideoAccess,
   VideoLike,
   VideoMetadata,
+  VideoSubtitle,
   VideoThumbnail,
   sequelize,
 } from "../lib/models/index.js";
@@ -54,9 +55,11 @@ import { createNotification } from "../lib/notifications.js";
 import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
+import { srtToVtt } from "../lib/subtitle-convert.js";
 import { getQueueJobs, requestTranscodeBatch } from "../lib/processing-client.js";
 import {
   THUMBNAIL_OUTPUT_EXT,
+  cancelQueuedTranscodeJobs,
   enqueueAudioEmbedVideo,
   parseThumbnailTimestampTenths,
 } from "./uploads.js";
@@ -236,6 +239,148 @@ function thumbnailUploadErrorHandler(err, _req, res, next) {
 }
 
 /**
+ * Relative media subfolder where subtitle tracks live, always as WebVTT
+ * (`.vtt`) regardless of whether they were auto-extracted or uploaded
+ * directly (an uploaded `.srt` is converted on the way in — see
+ * `srtToVtt`).
+ *
+ * @type {string}
+ */
+const SUBTITLES_SUBDIR = "subtitles";
+
+/**
+ * Absolute path to the directory where subtitle tracks live
+ * (`MEDIA_STORAGE_DIRECTORY/subtitles`). Shared with the processing
+ * service's auto-extracted subtitles — exported so `internal-subtitles.js`
+ * can resolve/clean up files from the completion callback.
+ *
+ * @type {string}
+ */
+export const subtitlesDir = resolveMediaPath(SUBTITLES_SUBDIR);
+
+// Ensure the subtitles directory exists before any upload is attempted.
+mkdirSync(subtitlesDir, { recursive: true });
+
+/**
+ * Set of allowed lowercase subtitle file extensions (without a leading
+ * dot). Unlike thumbnails, this isn't env-configurable — exactly `.srt` and
+ * `.vtt` are supported, since those are the only two formats the upload
+ * handler knows how to turn into a servable `.vtt` file.
+ *
+ * @type {Set<string>}
+ */
+const allowedSubtitleExtensions = new Set(["srt", "vtt"]);
+
+/**
+ * Maximum accepted subtitle upload size in bytes. Defaults to 2 MiB (plenty
+ * for a plain-text subtitle file); override with the MAX_SUBTITLE_SIZE_BYTES
+ * env var.
+ *
+ * @type {number}
+ */
+const maxSubtitleSizeBytes = Number(process.env.MAX_SUBTITLE_SIZE_BYTES) || 2 * 1024 * 1024;
+
+/**
+ * Normalizes a file's extension to a lowercase value without the leading dot.
+ *
+ * @private
+ * @param {string} filename Original client-provided filename.
+ * @returns {string} Lowercase extension without a dot (empty string if none).
+ */
+function normalizedSubtitleExtension(filename) {
+  return extname(filename).toLowerCase().replace(/^\./, "");
+}
+
+/**
+ * Multer storage engine that writes subtitle uploads to
+ * `subtitles/<userId>/` under the media root, preserving the original
+ * `.srt`/`.vtt` extension so the route handler knows post-write whether a
+ * conversion step is needed. Same "look up the video's actual owner, not
+ * `req.user`" rationale as `thumbnailStorage` — an admin can edit someone
+ * else's video.
+ */
+const subtitleStorage = multer.diskStorage({
+  destination: async (req, _file, cb) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      let segment = "_unowned";
+      if (id != null) {
+        const owner = await OriginalUpload.findByPk(id, { attributes: ["userId"] });
+        if (owner) {
+          segment = userStorageSegment(owner.userId);
+        }
+      }
+      const dir = join(subtitlesDir, segment);
+      mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  filename: (_req, file, cb) => {
+    const ext = normalizedSubtitleExtension(file.originalname);
+    cb(null, `${randomUUID()}.${ext}`);
+  },
+});
+
+/**
+ * Multer file filter that rejects any file whose extension isn't `.srt` or
+ * `.vtt`.
+ *
+ * @private
+ * @param {import('express').Request} _req Incoming request (unused).
+ * @param {Express.Multer.File} file File metadata provided by multer.
+ * @param {multer.FileFilterCallback} cb Callback signaling acceptance/rejection.
+ * @returns {void} Invokes `cb` with the filter decision.
+ */
+function subtitleFileFilter(_req, file, cb) {
+  const ext = normalizedSubtitleExtension(file.originalname);
+  if (!allowedSubtitleExtensions.has(ext)) {
+    const error = new Error(`File type ".${ext}" is not allowed.`);
+    error.code = "UNSUPPORTED_FILE_TYPE";
+    cb(error);
+    return;
+  }
+  cb(null, true);
+}
+
+const subtitleUpload = multer({
+  storage: subtitleStorage,
+  fileFilter: subtitleFileFilter,
+  limits: { fileSize: maxSubtitleSizeBytes },
+});
+
+/**
+ * Express error-handling middleware that maps subtitle-upload multer errors
+ * to JSON responses, mirroring `thumbnailUploadErrorHandler`.
+ *
+ * @param {Error} err Error thrown during subtitle upload handling.
+ * @param {import('express').Request} _req Incoming request (unused).
+ * @param {import('express').Response} res Express response.
+ * @param {import('express').NextFunction} next Passes non-upload errors along.
+ * @returns {void} Sends an error JSON response or delegates via `next`.
+ */
+function subtitleUploadErrorHandler(err, _req, res, next) {
+  if (err?.code === "UNSUPPORTED_FILE_TYPE") {
+    res.status(400).json({
+      error: "unsupported_file_type",
+      message: err.message,
+      allowed: [...allowedSubtitleExtensions],
+    });
+    return;
+  }
+  if (err instanceof multer.MulterError) {
+    const isTooLarge = err.code === "LIMIT_FILE_SIZE";
+    res.status(isTooLarge ? 413 : 400).json({
+      error: isTooLarge ? "file_too_large" : "upload_error",
+      message: err.message,
+    });
+    return;
+  }
+  next(err);
+}
+
+/**
  * Maximum length for video title.
  *
  * @type {number}
@@ -327,6 +472,7 @@ export function parsePositiveInt(raw) {
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
  *   embedVideoUrl: string|null,
+ *   subtitlesUrl: string|null,
  *   likeCount: number,
  *   dislikeCount: number,
  *   createdAt: Date,
@@ -365,6 +511,9 @@ export function serializeVideo(upload, metadata, options = {}) {
     // (webview) uses this in place of the original stream when present.
     embedVideoUrl: upload.embedVideoStoragePath
       ? `/api/v1/videos/${upload.id}/embed-video`
+      : null,
+    subtitlesUrl: upload.VideoSubtitle
+      ? `/api/v1/videos/${upload.id}/subtitles`
       : null,
     likeCount: options.likeCount ?? 0,
     dislikeCount: options.dislikeCount ?? 0,
@@ -960,6 +1109,7 @@ async function loadUploadWithMetadata(id) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
+      { model: VideoSubtitle, required: false },
       { model: User, required: false },
     ],
   });
@@ -1024,6 +1174,7 @@ async function loadUploadWithMetadataByVideoId(videoId) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
+      { model: VideoSubtitle, required: false },
       { model: User, required: false },
     ],
   });
@@ -1227,6 +1378,7 @@ async function buildDiscoveryFindOptions(options = {}) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
+      { model: VideoSubtitle, required: false },
       { model: User, required: false },
       ...(options.includes || []),
     ],
@@ -2735,6 +2887,368 @@ export function createVideosRouter() {
   router.use(thumbnailUploadErrorHandler);
 
   /**
+   * GET /videos/:id/subtitles — getVideoSubtitles
+   * Auth: optional. Private requires owner, grant, or admin.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/subtitles:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Get a video's subtitle track (WebVTT)
+   *     operationId: getVideoSubtitles
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: WebVTT subtitle file
+   *       "404":
+   *         description: Not found, inaccessible, or no subtitle track available
+   */
+  router.get("/videos/:id/subtitles", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const subtitle = upload.VideoSubtitle;
+      if (!subtitle) {
+        // No placeholder fallback, unlike thumbnails - there's no default
+        // subtitle track to serve.
+        sendNotFound(res);
+        return;
+      }
+
+      // Content varies by viewer permission (checked above on every request,
+      // including ones that will 304), so caching must stay `private` rather
+      // than `public`/shared — a CDN or proxy must never serve a cached copy
+      // to a different, unauthorized viewer.
+      const etag = `"${subtitle.id}-${subtitle.updatedAt.getTime()}"`;
+      res.setHeader("ETag", etag);
+      res.setHeader("Cache-Control", "private, max-age=604800");
+      if (req.headers["if-none-match"] === etag) {
+        res.status(304).end();
+        return;
+      }
+
+      const absolutePath = join(subtitlesDir, subtitle.subtitleFilename);
+      await streamFileWithRangeSupport(req, res, absolutePath, "text/vtt");
+    } catch (err) {
+      logger.error({ err }, "getVideoSubtitles failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to load subtitles.",
+        });
+      }
+    }
+  });
+
+  /**
+   * Uploads (or replaces) a video's subtitle track. Usable by the video
+   * owner or an admin — an alternative to waiting for (or in addition to)
+   * processing's auto-extraction. Accepts `.srt` or `.vtt`; an uploaded
+   * `.srt` is converted to WebVTT on the way in (see `srtToVtt`), since
+   * that's the only format the browser's native `<track>` element
+   * understands. Deletes the previous subtitle file from disk, if any,
+   * after the new one is persisted.
+   * POST /videos/:id/subtitles — multipart `file`.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/subtitles:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Upload or replace a video's subtitle track
+   *     operationId: updateVideoSubtitles
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         multipart/form-data:
+   *           schema:
+   *             type: object
+   *             required: [file]
+   *             properties:
+   *               file:
+   *                 type: string
+   *                 format: binary
+   *                 description: A `.srt` or `.vtt` subtitle file.
+   *     responses:
+   *       "200":
+   *         description: Subtitles updated
+   *       "400":
+   *         description: Invalid id, missing file, or unsupported file type
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not the video owner and not an admin
+   *       "404":
+   *         description: Unknown video id
+   *       "413":
+   *         description: File too large
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the subtitles URL or an error response.
+   */
+  router.post(
+    "/videos/:id/subtitles",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    subtitleUpload.single("file"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          if (req.file) {
+            await unlink(req.file.path).catch(() => {});
+          }
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          if (req.file) {
+            await unlink(req.file.path).catch(() => {});
+          }
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload } = loaded;
+        if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+          if (req.file) {
+            await unlink(req.file.path).catch(() => {});
+          }
+          res.status(403).json({
+            error: "forbidden",
+            message:
+              "Only the owner or an admin can update this video's subtitles.",
+          });
+          return;
+        }
+        if (!req.file) {
+          res
+            .status(400)
+            .json({ error: "invalid_body", message: "file is required." });
+          return;
+        }
+
+        // Uploaded as either .srt or .vtt (filename callback preserved the
+        // original extension) - normalize to a stored .vtt file, converting
+        // in place when needed.
+        let storedPath = req.file.path;
+        if (storedPath.toLowerCase().endsWith(".srt")) {
+          const srtText = await readFile(storedPath, "utf8");
+          const vttPath = storedPath.replace(/\.srt$/i, ".vtt");
+          await writeFile(vttPath, srtToVtt(srtText), "utf8");
+          await unlink(storedPath).catch(() => {});
+          storedPath = vttPath;
+        }
+
+        // Relative to subtitlesDir, e.g. "42/<uuid>.vtt" — forward slashes
+        // for cross-platform DB consistency.
+        const relativeSubtitleFilename = relative(subtitlesDir, storedPath).replace(/\\/g, "/");
+
+        const existing = await VideoSubtitle.findOne({ where: { originalUploadId: upload.id } });
+        let previousFilename = null;
+        if (existing) {
+          if (existing.subtitleFilename !== relativeSubtitleFilename) {
+            previousFilename = existing.subtitleFilename;
+          }
+          await existing.update({ subtitleFilename: relativeSubtitleFilename, source: "user" });
+        } else {
+          await VideoSubtitle.create({
+            originalUploadId: upload.id,
+            subtitleFilename: relativeSubtitleFilename,
+            source: "user",
+          });
+        }
+        if (previousFilename) {
+          await unlink(join(subtitlesDir, previousFilename)).catch(() => {});
+        }
+
+        // A user-provided subtitle always wins and, once set, no
+        // auto-extraction may overwrite it unless the user explicitly
+        // requests a regeneration (POST /videos/:id/subtitles/regenerate,
+        // which clears this flag first) - guards the race where an
+        // auto-extraction attempt from before this upload was still in
+        // flight (see the skipAutoSubtitles check in
+        // /internal/subtitles/:jobId/complete).
+        if (!upload.skipAutoSubtitles) {
+          await upload.update({ skipAutoSubtitles: true });
+        }
+
+        res
+          .status(200)
+          .json({ subtitlesUrl: `/api/v1/videos/${upload.id}/subtitles` });
+      } catch (err) {
+        if (req.file) {
+          await unlink(req.file.path).catch(() => {});
+        }
+        logger.error({ err }, "updateVideoSubtitles failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to update subtitles.",
+        });
+      }
+    },
+  );
+  router.use(subtitleUploadErrorHandler);
+
+  /**
+   * Requests a fresh auto-extraction of a video's subtitle track from its
+   * original file's embedded subtitle stream (if any). Unlike
+   * `POST /videos/:id/thumbnail/regenerate`, this does NOT delete the
+   * existing subtitle (user-provided or auto-extracted) up front — a
+   * subtitle-extraction attempt routinely finds nothing (most sources have
+   * no embedded subtitle stream at all), so eager deletion would leave the
+   * video with no captions at all for a regeneration that was always likely
+   * to fail. Instead, the existing subtitle stays fully intact and servable
+   * until (and unless) the new extraction actually succeeds — see
+   * `POST /internal/subtitles/:jobId/complete`, which is the only place a
+   * replacement actually happens. Clears `skipAutoSubtitles` so that
+   * callback is allowed to write. No `mediaType` gate — an audio source can
+   * carry a subtitle/lyrics track too. Owner/admin only, matching
+   * POST /videos/:id/subtitles.
+   * POST /videos/:id/subtitles/regenerate.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/subtitles/regenerate:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Request a fresh auto-extraction of a video's subtitle track
+   *     operationId: regenerateVideoSubtitles
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       "202":
+   *         description: Subtitle regeneration queued
+   *       "400":
+   *         description: Invalid id
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not the video owner and not an admin
+   *       "404":
+   *         description: Unknown video id
+   *       "502":
+   *         description: Processing service unavailable
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 202 on success or an error response.
+   */
+  router.post(
+    "/videos/:id/subtitles/regenerate",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload } = loaded;
+        if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only the owner or an admin can update this video's subtitles.",
+          });
+          return;
+        }
+
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const segment = userStorageSegment(upload.userId);
+        const enqueue = await requestTranscodeBatch({
+          filename: storedFilename,
+          jobs: [
+            {
+              jobId: `subtitle-${upload.videoId}-${randomUUID()}`,
+              outputFilename: `${segment}/${randomUUID()}.vtt`,
+              kind: "subtitle",
+            },
+          ],
+        });
+
+        if (!enqueue.ok) {
+          logger.error({ error: enqueue.error }, "regenerateVideoSubtitles enqueue failed");
+          res.status(502).json({
+            error: "processing_unavailable",
+            message: "Failed to queue subtitle regeneration.",
+          });
+          return;
+        }
+
+        await upload.update({ skipAutoSubtitles: false });
+
+        res.status(202).json({ success: true });
+      } catch (err) {
+        logger.error({ err }, "regenerateVideoSubtitles failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to regenerate subtitles.",
+        });
+      }
+    },
+  );
+
+  /**
    * Regenerates a video's thumbnail at a specific timestamp: once the
    * processing job is successfully queued, immediately deletes whatever
    * thumbnail (auto-generated or manually uploaded) currently exists — both
@@ -3421,9 +3935,10 @@ export function createVideosRouter() {
         return;
       }
 
-      const [fileVersions, thumbnail] = await Promise.all([
+      const [fileVersions, thumbnail, subtitle] = await Promise.all([
         FileVersion.findAll({ where: { originalUploadId: id } }),
         VideoThumbnail.findOne({ where: { originalUploadId: id } }),
+        VideoSubtitle.findOne({ where: { originalUploadId: id } }),
       ]);
       const mediaFilesToDelete = [resolveMediaPath(upload.storagePath)];
       for (const version of fileVersions) {
@@ -3432,10 +3947,16 @@ export function createVideosRouter() {
       if (thumbnail) {
         mediaFilesToDelete.push(join(thumbnailsDir, thumbnail.thumbnailFilename));
       }
+      if (subtitle) {
+        mediaFilesToDelete.push(join(subtitlesDir, subtitle.subtitleFilename));
+      }
 
       await upload.destroy();
       removeVideoDocument(id);
-      await Promise.all(mediaFilesToDelete.map((path) => unlink(path).catch(() => {})));
+      await Promise.all([
+        ...mediaFilesToDelete.map((path) => unlink(path).catch(() => {})),
+        cancelQueuedTranscodeJobs(upload, fileVersions),
+      ]);
 
       res.status(200).json({ success: true });
     } catch (err) {

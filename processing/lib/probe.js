@@ -252,6 +252,60 @@ export async function probeHasVideoStream(filePath) {
 }
 
 /**
+ * Subtitle codecs ffmpeg's `webvtt` encoder can convert from directly.
+ * Bitmap-based codecs (`dvd_subtitle`, `hdmv_pgs_subtitle`, `dvb_subtitle` —
+ * common on DVD/Blu-ray rips) render subtitles as images, not text, and
+ * cannot become WebVTT without OCR — out of scope, so they're deliberately
+ * excluded here rather than attempted and left to fail in ffmpeg.
+ *
+ * @type {Set<string>}
+ */
+const TEXT_SUBTITLE_CODECS = new Set(["subrip", "ass", "ssa", "mov_text", "webvtt"]);
+
+/**
+ * Probes a media file for its first text-based subtitle stream (see
+ * `TEXT_SUBTITLE_CODECS`), for extraction into a `.vtt` file (see
+ * `processSubtitleJob` / `buildSubtitleFfmpegArgs`).
+ *
+ * @param {string} filePath Absolute path to the media file.
+ * @returns {Promise<{streamIndex: number, subtitleCodec: string}|null>} The
+ *   first eligible subtitle stream's ffmpeg stream index and codec name, or
+ *   `null` when none is present.
+ * @throws {Error} When ffprobe exits non-zero or cannot be spawned.
+ */
+export async function probeSubtitleStreams(filePath) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "s",
+      "-show_entries",
+      "stream=index,codec_name:stream_tags=language",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+
+  const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+  const match = streams.find((s) => TEXT_SUBTITLE_CODECS.has(s?.codec_name));
+
+  return Number.isInteger(match?.index)
+    ? { streamIndex: match.index, subtitleCodec: match.codec_name }
+    : null;
+}
+
+/**
  * Returns true when applying `profile` would upscale the source (profile
  * height or width exceeds the source). Profiles at or below the source size
  * are eligible for downscale / same-size re-encode.

@@ -109,20 +109,22 @@ export async function clearMyHistory() {
  * default, with a default title derived from the filename). Callers should
  * follow up with updateVideo to set the real title/description/visibility/tags.
  * @param {File} file
- * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number, onUploadProgress?: (event: ProgressEvent) => void }} [options]
+ * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number, skipAutoSubtitles?: boolean, onUploadProgress?: (event: ProgressEvent) => void }} [options]
  *   `skipThumbnail` skips the processing service's auto-generated thumbnail
  *   — pass this when the caller is about to upload a custom one via
  *   updateVideoThumbnail, so it can't be overwritten by a later-arriving
  *   auto-generated thumbnail. `thumbnailTimestamp` requests a specific frame
  *   (seconds, fractional) for the auto-generated thumbnail instead of a
- *   random one — ignored if `skipThumbnail` is set. `onUploadProgress` is
- *   forwarded to axios for real byte-level upload progress
- *   (`event.loaded`/`event.total`).
+ *   random one — ignored if `skipThumbnail` is set. `skipAutoSubtitles` is
+ *   the same idea for the auto-extracted subtitle track — pass this when the
+ *   caller is about to upload their own via updateVideoSubtitles.
+ *   `onUploadProgress` is forwarded to axios for real byte-level upload
+ *   progress (`event.loaded`/`event.total`).
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
  */
 export async function uploadVideoFile(
   file,
-  { skipThumbnail = false, thumbnailTimestamp, onUploadProgress } = {},
+  { skipThumbnail = false, thumbnailTimestamp, skipAutoSubtitles = false, onUploadProgress } = {},
 ) {
   const formData = new FormData()
   formData.append('file', file)
@@ -130,6 +132,9 @@ export async function uploadVideoFile(
     formData.append('skipThumbnail', 'true')
   } else if (thumbnailTimestamp != null) {
     formData.append('thumbnailTimestamp', String(thumbnailTimestamp))
+  }
+  if (skipAutoSubtitles) {
+    formData.append('skipAutoSubtitles', 'true')
   }
   const res = await apiClient.post('/api/v1/videos/upload', formData, { onUploadProgress })
   return res.data
@@ -242,17 +247,21 @@ export async function deleteVideo(id) {
  * Imports a video from a remote URL via the processing service, creating an
  * ORIGINAL_UPLOADS row the same way uploadVideoFile does.
  * @param {string} url
- * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number }} [options]
+ * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number, skipAutoSubtitles?: boolean }} [options]
  *   `skipThumbnail` skips the processing service's auto-generated thumbnail
  *   — pass this when the caller is about to upload a custom one via
  *   updateVideoThumbnail, so it can't be overwritten by a later-arriving
  *   auto-generated thumbnail. `thumbnailTimestamp` requests a specific frame
  *   (seconds, fractional) for the auto-generated thumbnail instead of a
- *   random one — ignored if `skipThumbnail` is set.
+ *   random one — ignored if `skipThumbnail` is set. `skipAutoSubtitles` is
+ *   the same idea for the auto-extracted subtitle track.
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
  */
-export async function importVideoUrl(url, { skipThumbnail = false, thumbnailTimestamp } = {}) {
-  const body = { url, skipThumbnail }
+export async function importVideoUrl(
+  url,
+  { skipThumbnail = false, thumbnailTimestamp, skipAutoSubtitles = false } = {},
+) {
+  const body = { url, skipThumbnail, skipAutoSubtitles }
   if (!skipThumbnail && thumbnailTimestamp != null) {
     body.thumbnailTimestamp = thumbnailTimestamp
   }
@@ -316,6 +325,35 @@ export async function regenerateVideoThumbnail(id, thumbnailTimestamp) {
   const res = await apiClient.post(`/api/v1/videos/${id}/thumbnail/regenerate`, {
     thumbnailTimestamp,
   })
+  return res.data
+}
+
+/**
+ * Uploads (or replaces) a video's subtitle track. Accepts `.srt` or `.vtt`
+ * — an uploaded `.srt` is converted to WebVTT server-side. Usable by the
+ * video owner or a moderator/admin.
+ * @param {number} id
+ * @param {File} file
+ * @returns {Promise<{subtitlesUrl: string}>}
+ */
+export async function updateVideoSubtitles(id, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await apiClient.post(`/api/v1/videos/${id}/subtitles`, formData)
+  return res.data
+}
+
+/**
+ * Requests a fresh auto-extraction of a video's subtitle track from its
+ * original file's embedded subtitle stream, if any. Does not delete the
+ * existing subtitle up front — it's only replaced once (and if) the new
+ * extraction actually succeeds, so a regeneration that finds nothing leaves
+ * captions exactly as they were. Owner or admin.
+ * @param {number} id
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function regenerateVideoSubtitles(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/subtitles/regenerate`)
   return res.data
 }
 

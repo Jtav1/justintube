@@ -28,6 +28,7 @@ import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, sequelize
 import { generateUniqueVideoId } from "../lib/video-id.js";
 import {
   getProcessingHealth,
+  removeTranscodeJob,
   requestDownload,
   requestTranscodeBatch,
 } from "../lib/processing-client.js";
@@ -297,13 +298,18 @@ function fileVersionResponseBody(version) {
  * @private
  * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
  * @param {string} storedFilename Basename of the source file under `original/`.
- * @param {{ skipThumbnail?: boolean }} [options] `skipThumbnail` omits the
- *   auto-generated thumbnail job — set when the caller is about to upload a
- *   custom thumbnail, to avoid the processing service's result racing with
- *   (and overwriting) it.
+ * @param {{ skipThumbnail?: boolean, skipAutoSubtitles?: boolean }} [options]
+ *   `skipThumbnail` omits the auto-generated thumbnail job — set when the
+ *   caller is about to upload a custom thumbnail, to avoid the processing
+ *   service's result racing with (and overwriting) it. `skipAutoSubtitles`
+ *   is the same idea for the auto-extracted subtitle track.
  * @returns {Promise<{ status: number, body: object }>} HTTP status + JSON body to send.
  */
-export async function finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail = false } = {}) {
+export async function finalizeUploadTranscodes(
+  upload,
+  storedFilename,
+  { skipThumbnail = false, skipAutoSubtitles = false } = {},
+) {
   if (!transcodingEnabled()) {
     // Transcoding is disabled deployment-wide: never contact the processing
     // service (it may not even be running). The original file stays
@@ -402,7 +408,26 @@ export async function finalizeUploadTranscodes(upload, storedFilename, { skipThu
       }
     : null;
 
-  const jobs = [...(thumbnailJob ? [thumbnailJob] : []), ...renditionJobs];
+  // A subtitle-extraction job is enqueued alongside the thumbnail/rendition
+  // jobs for both video and audio uploads (a source can carry a text
+  // subtitle track regardless of media type) unless `skipAutoSubtitles` is
+  // set — the caller is about to upload their own subtitle file instead.
+  // Like the thumbnail job, extraction is always attempted and gracefully
+  // no-ops (see `processSubtitleJob`, processing) when the source has no
+  // text-based subtitle stream, rather than being pre-filtered here.
+  const subtitleJob = !skipAutoSubtitles
+    ? {
+        jobId: `subtitle-${upload.videoId}-${randomUUID()}`,
+        outputFilename: `${segment}/${randomUUID()}.vtt`,
+        kind: "subtitle",
+      }
+    : null;
+
+  const jobs = [
+    ...(thumbnailJob ? [thumbnailJob] : []),
+    ...(subtitleJob ? [subtitleJob] : []),
+    ...renditionJobs,
+  ];
 
   if (jobs.length === 0) {
     // Nothing to transcode (audio upload with no matching audio profiles) -
@@ -730,6 +755,63 @@ async function startUploadConversion(upload, storedFilename) {
 }
 
 /**
+ * Best-effort cancellation of every still-queued processing job that targets
+ * `upload`'s files, called from `DELETE /videos/:id` before the upload (and
+ * its FILE_VERSIONS rows) are gone for good — so a deleted upload doesn't
+ * keep tying up a transcode worker for minutes on a rendition nobody will
+ * ever see complete.
+ *
+ * Only job kinds whose id is deterministic can be targeted by BullMQ's
+ * exact-id removal (`DELETE /transcode/:jobId` on processing, see
+ * `removeTranscodeJob`): rendition (`FileVersion.uuidName`), `hash-<videoId>`,
+ * and `normalize-<videoId>`. Thumbnail (`thumbnail-<videoId>-<uuid>`),
+ * embed (`embed-<videoId>-<uuid>`), and subtitle (`subtitle-<videoId>-<uuid>`)
+ * jobs embed a random UUID suffix that's never persisted anywhere (see the
+ * rationale comment on `enqueueAudioEmbedVideo` — subtitle jobs need the same
+ * treatment because, unlike hash/normalize, a subtitle job can be re-enqueued
+ * for the same upload via `POST /videos/:id/subtitles/regenerate`, and a
+ * fixed id would silently no-op every re-enqueue after the first), so their
+ * exact jobId can't be reconstructed after the enqueue call returns and they
+ * aren't cancelled here. That's an acceptable gap: they're cheap, fast jobs,
+ * and their completion callbacks (`/internal/thumbnails/...`,
+ * `/internal/original-uploads/:jobId/embed-*`, `/internal/subtitles/...`)
+ * already look up the upload by videoId and no-op harmlessly (404) once it's
+ * gone — a stray one finishing after delete is wasted work, not a bug.
+ *
+ * A job already "active" (locked by a worker) can't be removed either —
+ * processing reports that back as `409`/not-ok rather than throwing (see
+ * `removeTranscodeJob` in processing) — so this only logs a warning for any
+ * non-404 failure rather than treating it as fatal: the upload is deleted
+ * either way, and that job's own completion callback will 404 harmlessly
+ * once it does finish, same as the thumbnail/embed gap above.
+ *
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row,
+ *   not yet destroyed.
+ * @param {import('sequelize').Model[]} fileVersions FILE_VERSIONS rows for
+ *   `upload`, not yet destroyed.
+ * @returns {Promise<void>} Resolves once every cancellation attempt settles.
+ */
+export async function cancelQueuedTranscodeJobs(upload, fileVersions) {
+  const jobIds = [
+    ...fileVersions.map((version) => version.uuidName),
+    `hash-${upload.videoId}`,
+    `normalize-${upload.videoId}`,
+  ];
+
+  await Promise.all(
+    jobIds.map(async (jobId) => {
+      const removed = await removeTranscodeJob(jobId);
+      if (!removed.ok && removed.status !== 404) {
+        logger.warn(
+          { error: removed.error },
+          `[upload] failed to cancel queued job ${jobId} for deleted upload ${upload.videoId}`,
+        );
+      }
+    }),
+  );
+}
+
+/**
  * Parses an optional thumbnail-timestamp field (seconds, possibly fractional)
  * into tenths-of-a-second for storage on `ORIGINAL_UPLOADS`. Multipart form
  * fields arrive as strings; JSON bodies may send a number directly. Omitted
@@ -761,6 +843,17 @@ export function parseThumbnailTimestampTenths(raw) {
  * @returns {boolean} Whether the auto-generated thumbnail job should be skipped.
  */
 function parseSkipThumbnail(raw) {
+  return raw === true || raw === "true" || raw === "1";
+}
+
+/**
+ * Parses the optional `skipAutoSubtitles` field. Multipart requests deliver
+ * it as a string ("true"/"1"); JSON requests may send a real boolean.
+ *
+ * @param {unknown} raw Raw `skipAutoSubtitles` value from the request.
+ * @returns {boolean} Whether the auto-extracted subtitle job should be skipped.
+ */
+function parseSkipAutoSubtitles(raw) {
   return raw === true || raw === "true" || raw === "1";
 }
 
@@ -800,6 +893,7 @@ async function uploadVideo(req, res) {
   }
 
   const skipThumbnail = parseSkipThumbnail(req.body?.skipThumbnail);
+  const skipAutoSubtitles = parseSkipAutoSubtitles(req.body?.skipAutoSubtitles);
 
   const videoId = file.generatedVideoId;
   const uuid = file.generatedUuid;
@@ -825,6 +919,7 @@ async function uploadVideo(req, res) {
           userId: req.user.id,
           thumbnailTimestampTenths: thumbnailTimestamp.tenths,
           skipThumbnail,
+          skipAutoSubtitles,
         },
         { transaction },
       );
@@ -856,7 +951,7 @@ async function uploadVideo(req, res) {
     result = await startUploadConversion(upload, storedFilename);
   } else {
     enqueueDuplicateHashCheck(upload, storedFilename);
-    result = await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
+    result = await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail, skipAutoSubtitles });
   }
   res.status(result.status).json(result.body);
 }
@@ -935,6 +1030,7 @@ async function importVideo(req, res) {
   }
 
   const skipThumbnail = parseSkipThumbnail(req.body?.skipThumbnail);
+  const skipAutoSubtitles = parseSkipAutoSubtitles(req.body?.skipAutoSubtitles);
   const videoId = await generateUniqueVideoId();
   // Generated now (like the direct-upload path's multer filename callback)
   // rather than waiting for the download to complete — continueImport reuses
@@ -991,7 +1087,7 @@ async function importVideo(req, res) {
   // existing un-awaited syncVideoIndex()/syncUserIndex() convention for
   // post-response side effects. The frontend polls
   // GET /videos/:id/processing-status to observe how this turns out.
-  continueImport(upload, url, { skipThumbnail });
+  continueImport(upload, url, { skipThumbnail, skipAutoSubtitles });
 }
 
 /**
@@ -1041,10 +1137,15 @@ async function rollbackFailedImport(upload, statusMessage, extraFiles = []) {
  * @param {import('sequelize').Model} upload Placeholder ORIGINAL_UPLOADS row
  *   (status "downloading"; originalFilename/fileExtension/storagePath "").
  * @param {string} url Already-validated absolute http(s) URL.
- * @param {{ skipThumbnail?: boolean }} [options] Forwarded to `finalizeUploadTranscodes`.
+ * @param {{ skipThumbnail?: boolean, skipAutoSubtitles?: boolean }} [options]
+ *   Forwarded to `finalizeUploadTranscodes`.
  * @returns {Promise<void>} Resolves once the import either finalizes or fails.
  */
-export async function continueImport(upload, url, { skipThumbnail = false } = {}) {
+export async function continueImport(
+  upload,
+  url,
+  { skipThumbnail = false, skipAutoSubtitles = false } = {},
+) {
   try {
     const download = await requestDownload(url);
     if (!download.ok) {
@@ -1113,7 +1214,7 @@ export async function continueImport(upload, url, { skipThumbnail = false } = {}
 
     enqueueDuplicateHashCheck(upload, storedFilename);
 
-    await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail });
+    await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail, skipAutoSubtitles });
   } catch (err) {
     logger.error({ err }, "[import] continueImport failed unexpectedly");
     await rollbackFailedImport(
@@ -1203,6 +1304,13 @@ export function createUploadRouter() {
    *                   thumbnail. Set this when the caller is about to upload
    *                   a custom thumbnail via POST /videos/{id}/thumbnail, to
    *                   avoid the auto-generated one overwriting it.
+   *               skipAutoSubtitles:
+   *                 type: boolean
+   *                 description: >
+   *                   When true, don't enqueue a processing-extracted
+   *                   subtitle track. Set this when the caller is about to
+   *                   upload a subtitle file via POST /videos/{id}/subtitles,
+   *                   to avoid the auto-extracted one overwriting it.
    *     responses:
    *       201:
    *         description: Upload recorded
@@ -1270,6 +1378,13 @@ export function createUploadRouter() {
    *                   thumbnail. Set this when the caller is about to upload
    *                   a custom thumbnail via POST /videos/{id}/thumbnail, to
    *                   avoid the auto-generated one overwriting it.
+   *               skipAutoSubtitles:
+   *                 type: boolean
+   *                 description: >
+   *                   When true, don't enqueue a processing-extracted
+   *                   subtitle track. Set this when the caller is about to
+   *                   upload a subtitle file via POST /videos/{id}/subtitles,
+   *                   to avoid the auto-extracted one overwriting it.
    *     responses:
    *       201:
    *         description: >

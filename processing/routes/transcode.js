@@ -286,11 +286,16 @@ export function createTranscodeRouter({
   });
 
   /**
-   * Removes a transcode job from Redis by id.
+   * Removes a transcode job from Redis by id. A job currently being
+   * processed by a worker ("active") can't be removed — see
+   * `removeTranscodeJob` — and gets its own `409` rather than a `404`, so a
+   * caller (e.g. webapi cancelling every queued job for a deleted upload)
+   * can tell "already running, will finish and its callback will just no-op"
+   * apart from "nothing to cancel."
    *
    * @param {import('express').Request} req Incoming request with `jobId` param.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends JSON success, 404, or error payload.
+   * @returns {Promise<void>} Sends JSON success, 404, 409, or error payload.
    */
   router.delete("/:jobId", async (req, res) => {
     try {
@@ -303,8 +308,15 @@ export function createTranscodeRouter({
         return;
       }
 
-      const removed = await removeTranscodeJob(queue, jobId);
-      if (!removed) {
+      const result = await removeTranscodeJob(queue, jobId);
+      if (result.active) {
+        res.status(409).json({
+          success: false,
+          error: "job active",
+        });
+        return;
+      }
+      if (!result.removed) {
         res.status(404).json({
           success: false,
           error: "job not found",

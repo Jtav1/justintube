@@ -76,7 +76,7 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} jobId Stable BullMQ job id.
  * @property {string} [outputFilename] Basename under the job kind's output
  *   directory. Absent when `kind === "hash"` (no output file is written).
- * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"} kind Job kind.
+ * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  * @property {string} [thumbnailFilename] Present when `kind === "embed"` — relative
@@ -393,6 +393,10 @@ export function validateTranscodeJob(job, index) {
 
   if (body.kind === "normalize") {
     return { jobId, outputFilename, kind: "normalize" };
+  }
+
+  if (body.kind === "subtitle") {
+    return { jobId, outputFilename, kind: "subtitle" };
   }
 
   if (body.kind === "embed") {
@@ -840,6 +844,23 @@ export function buildEmbeddedThumbnailFfmpegArgs({
     "70",
     outputPath,
   ];
+}
+
+/**
+ * Builds the ffmpeg argument list for extracting a subtitle stream (see
+ * `probeSubtitleStreams`) into a standalone `.vtt` file. ffmpeg's `webvtt`
+ * subtitle encoder converts directly from any of the supported text-based
+ * source codecs, so this always produces valid WebVTT regardless of the
+ * source's own subtitle codec — no separate conversion step needed.
+ *
+ * @param {object} options Subtitle extraction options.
+ * @param {string} options.inputPath Absolute path to the source media file.
+ * @param {string} options.outputPath Absolute path for the output `.vtt` file.
+ * @param {number} options.streamIndex ffmpeg stream index of the subtitle track.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildSubtitleFfmpegArgs({ inputPath, outputPath, streamIndex }) {
+  return ["-y", "-i", inputPath, "-map", `0:${streamIndex}`, "-c:s", "webvtt", outputPath];
 }
 
 /**

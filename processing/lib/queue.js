@@ -9,12 +9,15 @@ import {
   notifyFileVersionFailed,
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
+  notifySubtitleComplete,
+  notifySubtitleFailed,
   notifyThumbnailComplete,
   notifyThumbnailFailed,
 } from "./api-client.js";
 import {
   resolveNormalizedOutputPath,
   resolveOriginalInputPath,
+  resolveSubtitleOutputPath,
   resolveThumbnailInputPath,
   resolveThumbnailOutputPath,
   resolveTranscodedOutputPath,
@@ -25,12 +28,14 @@ import {
   probeEmbeddedThumbnailStream,
   probeHasVideoStream,
   probeStreamCodecs,
+  probeSubtitleStreams,
 } from "./probe.js";
 import {
   buildEmbedFfmpegArgs,
   buildEmbeddedThumbnailFfmpegArgs,
   buildFfmpegArgs,
   buildNormalizeFfmpegArgs,
+  buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
   runFfmpeg,
 } from "./transcode.js";
@@ -61,19 +66,23 @@ export const MAX_HASH_JOB_RUNS = 7;
  * highest-priority kind after thumbnails because every other job for that
  * same upload (renditions, thumbnail, duplicate-hash) is blocked behind one
  * finishing, so letting it queue behind unrelated rendition/hash jobs from
- * other uploads would stall that whole upload. Rendition transcodes and
- * duplicate-upload hash probes sort last, in that order. Priority only
- * affects ordering among jobs already waiting - it does not preempt a job a
- * worker has already started.
+ * other uploads would stall that whole upload. Rendition and embed
+ * transcodes come next. Subtitle extraction is deliberately the
+ * second-to-lowest priority — cheap, but not urgent, and never something a
+ * user is actively waiting on the way they are a thumbnail/rendition — and
+ * duplicate-upload hash probes always sort dead last. Priority only affects
+ * ordering among jobs already waiting - it does not preempt a job a worker
+ * has already started.
  *
- * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
   normalize: 2,
   rendition: 3,
   embed: 3,
-  hash: 4,
+  subtitle: 4,
+  hash: 5,
 };
 
 /**
@@ -234,6 +243,95 @@ async function processThumbnailJob(job) {
   await job.updateProgress(100);
 
   logger.info(`[thumbnail ${jobId}] processing completed: ${outputFilename}`);
+
+  return { outputFilename };
+}
+
+/**
+ * Processes a single subtitle-extraction job: probe the original upload for
+ * an embedded text-based subtitle stream and, if one exists, extract it into
+ * a standalone `.vtt` file.
+ *
+ * Follows `processThumbnailJob`'s graceful-skip pattern (probe first, skip
+ * cleanly rather than let a doomed ffmpeg run fail and retry) with one
+ * deliberate difference: `processThumbnailJob`'s probe-error case falls
+ * through to attempt a frame grab anyway, because a frame grab needs no
+ * stream index. Subtitle extraction has no such fallback — without a known
+ * `streamIndex` there's nothing to `-map` — so here a probe *error* is
+ * treated the same as a probe that *succeeded but found nothing*: both skip
+ * gracefully rather than attempt a guessed `-map 0:s:0`.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` and `outputFilename`.
+ * @returns {Promise<{ outputFilename: string|null, skipped?: string }>}
+ *   Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails unexpectedly.
+ */
+async function processSubtitleJob(job) {
+  const { inputFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[subtitle ${jobId}] processing started: ${inputFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const outputPath = resolveSubtitleOutputPath(outputFilename);
+
+  let found = null;
+  try {
+    found = await probeSubtitleStreams(inputPath);
+  } catch (err) {
+    logger.error(
+      { err },
+      `[subtitle ${jobId}] subtitle-stream probe failed; skipping extraction`,
+    );
+  }
+
+  if (found == null) {
+    logger.info(`[subtitle ${jobId}] source has no text-based subtitle stream; skipping`);
+    const notify = await notifySubtitleFailed(jobId, "no text-based subtitle stream found");
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of skipped subtitle ${jobId}`,
+      );
+    }
+    await job.updateProgress(100);
+    return { outputFilename: null, skipped: "no_subtitle_stream" };
+  }
+
+  logger.info(
+    `[subtitle ${jobId}] extracting subtitle stream 0:${found.streamIndex} (${found.subtitleCodec})`,
+  );
+
+  const args = buildSubtitleFfmpegArgs({
+    inputPath,
+    outputPath,
+    streamIndex: found.streamIndex,
+  });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await stat(outputPath);
+  await job.updateProgress(80);
+
+  const notify = await notifySubtitleComplete(jobId, {
+    subtitleFilename: outputFilename,
+  });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed subtitle ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[subtitle ${jobId}] processing completed: ${outputFilename}`);
 
   return { outputFilename };
 }
@@ -613,6 +711,9 @@ export async function processTranscodeJob(job, token) {
   if (kind === "normalize") {
     return processNormalizeJob(job);
   }
+  if (kind === "subtitle") {
+    return processSubtitleJob(job);
+  }
   if (kind === "embed") {
     return processEmbedJob(job);
   }
@@ -697,9 +798,11 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
             ? "ffmpeg-hash"
             : job.kind === "normalize"
               ? "ffmpeg-normalize"
-              : job.kind === "embed"
-                ? "ffmpeg-embed"
-                : "ffmpeg-transcode",
+              : job.kind === "subtitle"
+                ? "ffmpeg-subtitle"
+                : job.kind === "embed"
+                  ? "ffmpeg-embed"
+                  : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -753,21 +856,35 @@ export async function getTranscodeJobStatus(queue, jobId) {
 }
 
 /**
- * Removes a transcode job from Redis by id (any state).
+ * Removes a transcode job from Redis by id (waiting, delayed, completed, or
+ * failed). A job currently "active" (locked by a worker) cannot be removed —
+ * BullMQ's `Job.remove()` throws rather than removing it - so that case is
+ * caught and reported back distinctly (`active: true`) instead of throwing,
+ * letting callers (e.g. the `DELETE /:jobId` route, or webapi cancelling
+ * every queued job for a deleted upload) treat "can't cancel, it's already
+ * running" differently from "nothing to cancel."
  *
  * @param {import('bullmq').Queue} queue Transcode queue instance.
  * @param {string} jobId Job identifier to remove.
- * @returns {Promise<boolean>} `true` when a job was found and removed.
+ * @returns {Promise<{ removed: boolean, active: boolean }>} `removed: true`
+ *   when the job was found and removed; otherwise `active: true` when it
+ *   exists but is currently locked by a worker, or both `false` when no job
+ *   with that id exists at all.
  */
 export async function removeTranscodeJob(queue, jobId) {
   const job = await queue.getJob(jobId);
   if (!job) {
     logger.info(`[job ${jobId}] remove requested: not found`);
-    return false;
+    return { removed: false, active: false };
   }
-  await job.remove();
+  try {
+    await job.remove();
+  } catch (err) {
+    logger.warn({ err }, `[job ${jobId}] remove failed (likely active/locked)`);
+    return { removed: false, active: true };
+  }
   logger.info(`[job ${jobId}] removed`);
-  return true;
+  return { removed: true, active: false };
 }
 
 /**
@@ -1011,6 +1128,18 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed normalize job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "subtitle") {
+    logger.error({ message }, `[subtitle ${jobId}] processing failed`);
+    const notify = await notifySubtitleFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed subtitle job ${jobId}`,
       );
     }
     return;

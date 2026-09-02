@@ -42,6 +42,7 @@ import {
   VideoAccess,
   VideoLike,
   VideoMetadata,
+  VideoSubtitle,
   VideoThumbnail,
   VideoTransferHistory,
   VideoTransferMapping,
@@ -65,6 +66,7 @@ const RESET_MODELS = [
   FileVersion,
   VideoMetadata,
   VideoThumbnail,
+  VideoSubtitle,
   VideoLike,
   UserViewHistory,
   VideoAccess,
@@ -321,6 +323,28 @@ export async function seedVideoThumbnail(originalUploadId, overrides = {}) {
   };
 
   const row = await VideoThumbnail.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a VIDEO_SUBTITLE row for an existing upload, applying defaults for
+ * any omitted field.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.subtitleFilename] On-disk subtitle filename.
+ * @param {string} [overrides.source] 'user' or 'auto'.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded subtitle's id and values.
+ */
+export async function seedVideoSubtitle(originalUploadId, overrides = {}) {
+  const record = {
+    originalUploadId,
+    subtitleFilename: `${randomUUID()}.vtt`,
+    source: "auto",
+    ...overrides,
+  };
+
+  const row = await VideoSubtitle.create(record);
   return asSeedResult(row, record);
 }
 

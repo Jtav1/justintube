@@ -7,6 +7,7 @@ import {
   buildFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildOutputFilename,
+  buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
   getTranscodeConfig,
   parseHardwareEncoders,
@@ -256,6 +257,17 @@ describe("thumbnail job validation and ffmpeg args", () => {
     }
   });
 
+  test("validateTranscodeJob accepts a subtitle job with only jobId + outputFilename, no profile", () => {
+    const jobId = "subtitle-abc123-uuid";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "abc123.vtt", kind: "subtitle" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "abc123.vtt",
+      kind: "subtitle",
+    });
+  });
+
   test("validateTranscodeBatchRequest accepts a batch with a normalize job", () => {
     const result = validateTranscodeBatchRequest({
       filename: "clip.mov",
@@ -433,6 +445,25 @@ describe("thumbnail job validation and ffmpeg args", () => {
       "-quality",
       "70",
       "/media/thumbnails/out.webp",
+    ]);
+  });
+
+  test("buildSubtitleFfmpegArgs maps the given stream and encodes to webvtt", () => {
+    const args = buildSubtitleFfmpegArgs({
+      inputPath: "/media/original/in.mkv",
+      outputPath: "/media/subtitles/out.vtt",
+      streamIndex: 3,
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/in.mkv",
+      "-map",
+      "0:3",
+      "-c:s",
+      "webvtt",
+      "/media/subtitles/out.vtt",
     ]);
   });
 

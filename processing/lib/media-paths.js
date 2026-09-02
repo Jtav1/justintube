@@ -34,9 +34,18 @@ export const transcodedDir = join(mediaDir, "transcoded");
  */
 export const thumbnailsDir = join(mediaDir, "thumbnails");
 
+/**
+ * Absolute path where extracted/converted subtitle tracks are written
+ * (`media/subtitles`), always as WebVTT (`.vtt`).
+ *
+ * @type {string}
+ */
+export const subtitlesDir = join(mediaDir, "subtitles");
+
 mkdirSync(originalDir, { recursive: true });
 mkdirSync(transcodedDir, { recursive: true });
 mkdirSync(thumbnailsDir, { recursive: true });
+mkdirSync(subtitlesDir, { recursive: true });
 
 /**
  * Error thrown for invalid client input (maps to HTTP 400).
@@ -220,4 +229,15 @@ export function resolveNormalizedOutputPath(outputFilename) {
  */
 export function resolveThumbnailOutputPath(outputFilename) {
   return resolveOutputPath(thumbnailsDir, outputFilename, "outputFilename");
+}
+
+/**
+ * Builds the absolute output path for an extracted subtitle track under
+ * `subtitlesDir`, e.g. `<userId>/<basename>.vtt`.
+ *
+ * @param {string} outputFilename Relative path to write under `/media/subtitles`.
+ * @returns {string} Absolute path for the output file.
+ */
+export function resolveSubtitleOutputPath(outputFilename) {
+  return resolveOutputPath(subtitlesDir, outputFilename, "outputFilename");
 }

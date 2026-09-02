@@ -8,14 +8,19 @@ const notifyContentHashFailed = jest.fn();
 const notifyThumbnailComplete = jest.fn();
 const notifyThumbnailFailed = jest.fn();
 const notifyEmbedVideoComplete = jest.fn();
+const notifySubtitleComplete = jest.fn();
+const notifySubtitleFailed = jest.fn();
 const probeEmbeddedThumbnailStream = jest.fn();
 const probeHasVideoStream = jest.fn();
+const probeSubtitleStreams = jest.fn();
 const resolveThumbnailOutputPath = jest.fn();
 const resolveThumbnailInputPath = jest.fn();
 const resolveTranscodedOutputPath = jest.fn();
+const resolveSubtitleOutputPath = jest.fn();
 const buildThumbnailFfmpegArgs = jest.fn();
 const buildEmbeddedThumbnailFfmpegArgs = jest.fn();
 const buildEmbedFfmpegArgs = jest.fn();
+const buildSubtitleFfmpegArgs = jest.fn();
 const runFfmpeg = jest.fn();
 const stat = jest.fn();
 
@@ -28,6 +33,7 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   probeStreamCodecs: jest.fn(),
   probeEmbeddedThumbnailStream,
   probeHasVideoStream,
+  probeSubtitleStreams,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -38,6 +44,8 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyThumbnailFailed,
   notifyOriginalUploadNormalizeComplete: jest.fn(),
   notifyOriginalUploadNormalizeFailed: jest.fn(),
+  notifySubtitleComplete,
+  notifySubtitleFailed,
   notifyEmbedVideoComplete,
   notifyEmbedVideoFailed: jest.fn(),
 }));
@@ -47,6 +55,7 @@ jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveThumbnailInputPath,
   resolveTranscodedOutputPath,
   resolveNormalizedOutputPath: jest.fn(),
+  resolveSubtitleOutputPath,
 }));
 jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildFfmpegArgs: jest.fn(),
@@ -54,6 +63,7 @@ jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildEmbeddedThumbnailFfmpegArgs,
   buildEmbedFfmpegArgs,
   buildNormalizeFfmpegArgs: jest.fn(),
+  buildSubtitleFfmpegArgs,
   runFfmpeg,
 }));
 jest.unstable_mockModule("node:fs/promises", () => ({
@@ -65,6 +75,8 @@ const {
   notifyTranscodeJobFailed,
   getQueueJobs,
   getQueueHistory,
+  removeTranscodeJob,
+  JOB_PRIORITY_BY_KIND,
   MAX_HASH_JOB_RUNS,
 } = await import("../lib/queue.js");
 
@@ -185,6 +197,86 @@ describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
 });
 
 /**
+ * Builds a fake BullMQ job for a "subtitle" kind job.
+ *
+ * @param {object} [dataOverrides] Initial job.data overrides.
+ * @returns {object} Fake job.
+ */
+function makeSubtitleJob(dataOverrides = {}) {
+  return {
+    id: "subtitle-abc123-uuid",
+    data: {
+      kind: "subtitle",
+      inputFilename: "clip.mp4",
+      outputFilename: "subtitle-abc123-uuid.vtt",
+      ...dataOverrides,
+    },
+    updateProgress: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe("processTranscodeJob (kind: subtitle)", () => {
+  beforeEach(() => {
+    probeSubtitleStreams.mockReset();
+    resolveSubtitleOutputPath.mockReset().mockImplementation((f) => `/media/subtitles/${f}`);
+    buildSubtitleFfmpegArgs.mockReset().mockReturnValue(["subtitle-args"]);
+    runFfmpeg.mockReset().mockResolvedValue(undefined);
+    stat.mockReset().mockResolvedValue({ size: 123 });
+    notifySubtitleComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+    notifySubtitleFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("extracts the first text-based subtitle stream found", async () => {
+    probeSubtitleStreams.mockResolvedValue({ streamIndex: 3, subtitleCodec: "subrip" });
+    const job = makeSubtitleJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(buildSubtitleFfmpegArgs).toHaveBeenCalledWith({
+      inputPath: "/media/original/clip.mp4",
+      outputPath: "/media/subtitles/subtitle-abc123-uuid.vtt",
+      streamIndex: 3,
+    });
+    expect(runFfmpeg).toHaveBeenCalledWith(["subtitle-args"]);
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", {
+      subtitleFilename: "subtitle-abc123-uuid.vtt",
+    });
+    expect(result).toEqual({ outputFilename: "subtitle-abc123-uuid.vtt" });
+  });
+
+  test("skips gracefully and resolves when no subtitle stream is found", async () => {
+    probeSubtitleStreams.mockResolvedValue(null);
+    const job = makeSubtitleJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(buildSubtitleFfmpegArgs).not.toHaveBeenCalled();
+    expect(runFfmpeg).not.toHaveBeenCalled();
+    expect(notifySubtitleFailed).toHaveBeenCalledWith(
+      "subtitle-abc123-uuid",
+      "no text-based subtitle stream found",
+    );
+    expect(notifySubtitleComplete).not.toHaveBeenCalled();
+    expect(result).toEqual({ outputFilename: null, skipped: "no_subtitle_stream" });
+  });
+
+  test("skips gracefully (does not attempt a guessed extraction) when the probe itself fails", async () => {
+    probeSubtitleStreams.mockRejectedValue(new Error("ffprobe exited with code 1"));
+    const job = makeSubtitleJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(buildSubtitleFfmpegArgs).not.toHaveBeenCalled();
+    expect(runFfmpeg).not.toHaveBeenCalled();
+    expect(notifySubtitleFailed).toHaveBeenCalledWith(
+      "subtitle-abc123-uuid",
+      "no text-based subtitle stream found",
+    );
+    expect(result).toEqual({ outputFilename: null, skipped: "no_subtitle_stream" });
+  });
+});
+
+/**
  * Builds a fake BullMQ job for an "embed" kind job.
  *
  * @param {object} [dataOverrides] Initial job.data overrides.
@@ -281,6 +373,36 @@ describe("notifyTranscodeJobFailed (kind: thumbnail)", () => {
       "thumb-abc123",
       "no video/art stream to grab a frame from",
     );
+  });
+});
+
+describe("notifyTranscodeJobFailed (kind: subtitle)", () => {
+  beforeEach(() => {
+    notifySubtitleFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("calls back to the API on a genuine (non-graceful-skip) subtitle job failure", async () => {
+    const job = { id: "subtitle-abc123-uuid", data: { kind: "subtitle" } };
+
+    await notifyTranscodeJobFailed(job, new Error("ffmpeg exited with code 1"));
+
+    expect(notifySubtitleFailed).toHaveBeenCalledWith(
+      "subtitle-abc123-uuid",
+      "ffmpeg exited with code 1",
+    );
+  });
+});
+
+describe("JOB_PRIORITY_BY_KIND", () => {
+  test("subtitle runs after every other kind but hash always runs last", () => {
+    expect(JOB_PRIORITY_BY_KIND.subtitle).toBe(4);
+    expect(JOB_PRIORITY_BY_KIND.hash).toBe(5);
+    expect(JOB_PRIORITY_BY_KIND.hash).toBeGreaterThan(JOB_PRIORITY_BY_KIND.subtitle);
+    for (const [kind, priority] of Object.entries(JOB_PRIORITY_BY_KIND)) {
+      if (kind !== "hash") {
+        expect(JOB_PRIORITY_BY_KIND.hash).toBeGreaterThanOrEqual(priority);
+      }
+    }
   });
 });
 
@@ -552,5 +674,36 @@ describe("getQueueHistory", () => {
 
     expect(items).toEqual([]);
     expect(total).toBe(0);
+  });
+});
+
+describe("removeTranscodeJob", () => {
+  test("returns { removed: false, active: false } when no job with that id exists", async () => {
+    const queue = { getJob: jest.fn().mockResolvedValue(null) };
+
+    const result = await removeTranscodeJob(queue, "missing-id");
+
+    expect(result).toEqual({ removed: false, active: false });
+  });
+
+  test("returns { removed: true, active: false } and removes a non-active job", async () => {
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const queue = { getJob: jest.fn().mockResolvedValue({ id: "job-1", remove }) };
+
+    const result = await removeTranscodeJob(queue, "job-1");
+
+    expect(result).toEqual({ removed: true, active: false });
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns { removed: false, active: true } instead of throwing when the job is locked by a worker", async () => {
+    const remove = jest
+      .fn()
+      .mockRejectedValue(new Error("Job job-1 could not be removed because it is locked by another worker"));
+    const queue = { getJob: jest.fn().mockResolvedValue({ id: "job-1", remove }) };
+
+    const result = await removeTranscodeJob(queue, "job-1");
+
+    expect(result).toEqual({ removed: false, active: true });
   });
 });

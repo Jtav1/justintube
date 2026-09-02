@@ -411,6 +411,7 @@ export function createInternalOriginalUploadsRouter() {
 
     await finalizeUploadTranscodes(upload, newStoredFilename, {
       skipThumbnail: upload.skipThumbnail,
+      skipAutoSubtitles: upload.skipAutoSubtitles,
     });
     enqueueDuplicateHashCheck(upload, newStoredFilename);
 

@@ -329,8 +329,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       // would fall back to the placeholder embed video.
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const payload = JSON.parse(String(fetchMock.mock.calls[1][1].body));
-      expect(payload.jobs).toHaveLength(1);
-      expect(payload.jobs[0].kind).toBe("thumbnail");
+      expect(payload.jobs).toHaveLength(2);
+      expect(payload.jobs.map((j) => j.kind).sort()).toEqual(["subtitle", "thumbnail"]);
     });
 
     test("trusts hasVideo: true over an ambiguous container extension", async () => {
@@ -398,7 +398,10 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       );
       const payload = JSON.parse(String(transcodeCall[1].body));
       expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
-      expect(payload.jobs).toHaveLength(1);
+      // skipThumbnail only omits the thumbnail job - the subtitle job (no
+      // equivalent skip flag was sent) and the rendition job both remain.
+      expect(payload.jobs).toHaveLength(2);
+      expect(payload.jobs.map((job) => job.kind).sort()).toEqual(["rendition", "subtitle"]);
     });
 
     test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
@@ -428,8 +431,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       );
       const payload = JSON.parse(String(transcodeCall[1].body));
       expect(payload.filename).toBe(`${userStorageSegment(upload.userId)}/${upload.uuid}.mp4`);
-      // One thumbnail job + one job for the rendition profile.
-      expect(payload.jobs).toHaveLength(2);
+      // One thumbnail job + one subtitle job + one job for the rendition profile.
+      expect(payload.jobs).toHaveLength(3);
       const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
       expect(renditionJob.profile.id).toBe(profile.id);
 
