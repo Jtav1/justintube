@@ -26,3 +26,14 @@ export async function adminModerationNotification(title, message, userIds) {
   })
   return res.data
 }
+
+/**
+ * Fetches every file associated with an upload (original, embed video,
+ * thumbnail, transcoded variants), verified against the filesystem.
+ * @param {string} identifier Upload pkid, internal uuid, or public videoId.
+ * @returns {Promise<{upload: object, files: object}>}
+ */
+export async function getUploadFileTree(identifier) {
+  const res = await apiClient.get(`/api/v1/admin/files/uploads/${encodeURIComponent(identifier)}`)
+  return res.data
+}

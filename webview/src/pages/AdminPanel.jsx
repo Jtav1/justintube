@@ -4,7 +4,7 @@ import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useTheme } from '../context/useTheme.js'
 import { useSiteConfig } from '../context/useSiteConfig.js'
-import { adminBroadcastNotification, adminModerationNotification } from '../api/admin.js'
+import { adminBroadcastNotification, adminModerationNotification, getUploadFileTree } from '../api/admin.js'
 import { deleteTheme } from '../api/themes.js'
 import { getTranscodeProfiles, deleteTranscodeProfile } from '../api/transcode-profiles.js'
 import { searchUsers } from '../api/users.js'
@@ -17,6 +17,87 @@ const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
 
 function recipientLabel(user) {
   return user.displayName ? `${user.displayName} (${user.username})` : user.username
+}
+
+/**
+ * Formats a byte count as a human-readable size, e.g. 1536 -> "1.5 KB".
+ * @param {number|null|undefined} bytes
+ * @returns {string}
+ */
+function formatFileSize(bytes) {
+  if (bytes == null || !Number.isFinite(bytes)) {
+    return 'unknown'
+  }
+  if (bytes === 0) {
+    return '0 B'
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const value = bytes / 1024 ** exponent
+  return `${value.toFixed(exponent === 0 ? 0 : 1)} ${units[exponent]}`
+}
+
+/**
+ * If `raw` is a link to a page on this same server carrying a `v` query
+ * param (the video-watch URL shape, `/video?v=<videoId>`), returns just that
+ * videoId so it can be searched directly. Otherwise returns `raw` trimmed,
+ * unchanged — including links to other origins, which are deliberately left
+ * alone rather than guessed at.
+ * @param {string} raw
+ * @returns {string}
+ */
+function extractVideoIdentifierFromPastedLink(raw) {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return trimmed
+  }
+  let url
+  try {
+    url = new URL(trimmed, window.location.origin)
+  } catch {
+    return trimmed
+  }
+  if (url.origin !== window.location.origin) {
+    return trimmed
+  }
+  return url.searchParams.get('v') || trimmed
+}
+
+/**
+ * One leaf row in the admin file-tree explorer: a single file's on-disk
+ * status, path, and size, alongside whatever DB metadata was included.
+ * @param {{label: string, file: object|null}} props
+ */
+function FileTreeEntry({ label, file }) {
+  if (!file) {
+    return null
+  }
+  return (
+    <li className="admin-file-tree-entry">
+      <div className="admin-file-tree-entry-header">
+        <span className="admin-file-tree-entry-label">{label}</span>
+        <span
+          className={`admin-file-tree-badge ${
+            file.existsOnDisk ? 'admin-file-tree-badge-ok' : 'admin-file-tree-badge-missing'
+          }`}
+        >
+          {file.existsOnDisk ? 'on disk' : 'missing'}
+        </span>
+        {file.status && <span className="admin-file-tree-badge">{file.status}</span>}
+        {file.resolution && <span className="admin-file-tree-badge">{file.resolution}</span>}
+      </div>
+      <code className="admin-file-tree-path">{file.absolutePath}</code>
+      <span className="admin-file-tree-meta">
+        {[
+          file.mimeType || file.fileExtension || null,
+          file.fileSizeBytes != null ? `${formatFileSize(file.fileSizeBytes)} recorded` : null,
+          file.sizeBytesOnDisk != null ? `${formatFileSize(file.sizeBytesOnDisk)} on disk` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </span>
+    </li>
+  )
 }
 
 function AdminPanel() {
@@ -39,6 +120,11 @@ function AdminPanel() {
   const [profiles, setProfiles] = useState([])
   const [profilesLoading, setProfilesLoading] = useState(true)
   const [deletingProfileId, setDeletingProfileId] = useState(null)
+
+  const [fileTreeQuery, setFileTreeQuery] = useState('')
+  const [fileTreeLoading, setFileTreeLoading] = useState(false)
+  const [fileTreeError, setFileTreeError] = useState(null)
+  const [fileTreeResult, setFileTreeResult] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -141,6 +227,38 @@ function AdminPanel() {
       toastError(err.response?.data?.message || 'Failed to delete transcoding profile.')
     } finally {
       setDeletingProfileId(null)
+    }
+  }
+
+  async function handleFileTreeLookup(event) {
+    event.preventDefault()
+    const identifier = fileTreeQuery.trim()
+    if (!identifier || fileTreeLoading) {
+      return
+    }
+    setFileTreeLoading(true)
+    setFileTreeError(null)
+    setFileTreeResult(null)
+    try {
+      const data = await getUploadFileTree(identifier)
+      setFileTreeResult(data)
+    } catch (err) {
+      setFileTreeError(
+        err.response?.status === 404
+          ? 'No upload found for that identifier.'
+          : err.response?.data?.message || 'Failed to look up files.',
+      )
+    } finally {
+      setFileTreeLoading(false)
+    }
+  }
+
+  function handleFileTreeQueryPaste(event) {
+    const pasted = event.clipboardData.getData('text')
+    const isolated = extractVideoIdentifierFromPastedLink(pasted)
+    if (isolated !== pasted.trim()) {
+      event.preventDefault()
+      setFileTreeQuery(isolated)
     }
   }
 
@@ -347,6 +465,64 @@ function AdminPanel() {
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="settings-card">
+          <h2>Video File Explorer</h2>
+          <p className="admin-file-tree-hint">
+            Look up every file stored for an upload — pkid, internal uuid, or public video id
+            all work, or paste a link to a video on this site to auto-fill its id.
+          </p>
+          <form className="settings-form admin-file-tree-form" onSubmit={handleFileTreeLookup}>
+            <label htmlFor="admin-file-tree-query">Video identifier</label>
+            <div className="admin-file-tree-search-row">
+              <input
+                id="admin-file-tree-query"
+                type="text"
+                value={fileTreeQuery}
+                onChange={(event) => setFileTreeQuery(event.target.value)}
+                onPaste={handleFileTreeQueryPaste}
+                placeholder="pkid, uuid, video id, or a link"
+                disabled={fileTreeLoading}
+              />
+              <button
+                type="submit"
+                className="settings-submit"
+                disabled={fileTreeLoading || !fileTreeQuery.trim()}
+              >
+                {fileTreeLoading ? 'Looking up...' : 'Look up'}
+              </button>
+            </div>
+          </form>
+
+          {fileTreeError && <p className="settings-status settings-status-error">{fileTreeError}</p>}
+
+          {fileTreeResult && (
+            <div className="admin-file-tree">
+              <div className="admin-file-tree-upload-meta">
+                <span><strong>ID:</strong> {fileTreeResult.upload.id}</span>
+                <span><strong>Video ID:</strong> {fileTreeResult.upload.videoId}</span>
+                <span><strong>UUID:</strong> {fileTreeResult.upload.uuid}</span>
+                <span><strong>Type:</strong> {fileTreeResult.upload.mediaType}</span>
+                <span><strong>Status:</strong> {fileTreeResult.upload.status}</span>
+              </div>
+              <ul className="admin-file-tree-list">
+                <FileTreeEntry label="Original" file={fileTreeResult.files.original} />
+                <FileTreeEntry label="Embed video" file={fileTreeResult.files.embedVideo} />
+                <FileTreeEntry label="Thumbnail" file={fileTreeResult.files.thumbnail} />
+                {fileTreeResult.files.transcoded.map((variant) => (
+                  <FileTreeEntry
+                    key={variant.id}
+                    label={`Transcoded — ${variant.resolution || variant.uuidName}`}
+                    file={variant}
+                  />
+                ))}
+                {fileTreeResult.files.transcoded.length === 0 && (
+                  <li className="admin-file-tree-empty">No transcoded variants.</li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </section>
