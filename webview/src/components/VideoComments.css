@@ -199,6 +199,15 @@
   font-style: italic;
 }
 
+.video-comments-item-link {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.video-comments-item-link:hover {
+  text-decoration: underline;
+}
+
 .video-comments-item-actions {
   display: flex;
   align-items: center;

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { UserRound } from 'lucide-react'
 import { createComment, deleteComment, listComments, updateComment } from '../api/videos.js'
 import { formatRelativeDate } from '../lib/format.js'
+import { linkifyCommentText } from '../lib/linkify-comment.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import apiClient from '../api/client.js'
@@ -440,7 +441,7 @@ function VideoComments({ video }) {
                   </p>
                 ) : (
                   <p className="video-comments-item-text">
-                    {comment.body}
+                    {linkifyCommentText(comment.body)}
                     {comment.updatedAt !== comment.createdAt && (
                       <span className="video-comments-edited-tag"> (edited)</span>
                     )}
