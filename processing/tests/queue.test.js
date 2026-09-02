@@ -9,6 +9,7 @@ const notifyThumbnailComplete = jest.fn();
 const notifyThumbnailFailed = jest.fn();
 const notifyEmbedVideoComplete = jest.fn();
 const probeEmbeddedThumbnailStream = jest.fn();
+const probeHasVideoStream = jest.fn();
 const resolveThumbnailOutputPath = jest.fn();
 const resolveThumbnailInputPath = jest.fn();
 const resolveTranscodedOutputPath = jest.fn();
@@ -26,6 +27,7 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   collectOutputMetadata,
   probeStreamCodecs: jest.fn(),
   probeEmbeddedThumbnailStream,
+  probeHasVideoStream,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -85,12 +87,14 @@ function makeThumbnailJob(dataOverrides = {}) {
 describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
   beforeEach(() => {
     probeEmbeddedThumbnailStream.mockReset();
+    probeHasVideoStream.mockReset().mockResolvedValue(true);
     resolveThumbnailOutputPath.mockReset().mockImplementation((f) => `/media/thumbnails/${f}`);
     buildThumbnailFfmpegArgs.mockReset().mockReturnValue(["frame-grab-args"]);
     buildEmbeddedThumbnailFfmpegArgs.mockReset().mockReturnValue(["embedded-art-args"]);
     runFfmpeg.mockReset().mockResolvedValue(undefined);
     stat.mockReset().mockResolvedValue({ size: 1234 });
     notifyThumbnailComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+    notifyThumbnailFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
   });
 
   test("extracts embedded cover art instead of grabbing a frame when present", async () => {
@@ -133,6 +137,46 @@ describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
     expect(buildThumbnailFfmpegArgs).toHaveBeenCalled();
     expect(buildEmbeddedThumbnailFfmpegArgs).not.toHaveBeenCalled();
     expect(runFfmpeg).toHaveBeenCalledWith(["frame-grab-args"]);
+  });
+
+  test("skips the frame grab and resolves gracefully when the source has no video stream", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(null);
+    probeHasVideoStream.mockResolvedValue(false);
+    const job = makeThumbnailJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(probeHasVideoStream).toHaveBeenCalledWith("/media/original/clip.mp3");
+    expect(buildThumbnailFfmpegArgs).not.toHaveBeenCalled();
+    expect(buildEmbeddedThumbnailFfmpegArgs).not.toHaveBeenCalled();
+    expect(runFfmpeg).not.toHaveBeenCalled();
+    expect(notifyThumbnailFailed).toHaveBeenCalledWith(
+      "thumb-abc123",
+      "source has no video stream",
+    );
+    expect(notifyThumbnailComplete).not.toHaveBeenCalled();
+    expect(result).toEqual({ outputFilename: null, skipped: "no_video_stream" });
+  });
+
+  test("still attempts the frame grab when the video-stream probe itself fails", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(null);
+    probeHasVideoStream.mockRejectedValue(new Error("ffprobe exited with code 1"));
+    const job = makeThumbnailJob();
+
+    await processTranscodeJob(job);
+
+    expect(buildThumbnailFfmpegArgs).toHaveBeenCalled();
+    expect(runFfmpeg).toHaveBeenCalledWith(["frame-grab-args"]);
+    expect(notifyThumbnailFailed).not.toHaveBeenCalled();
+  });
+
+  test("does not probe for a video stream when embedded art was already found", async () => {
+    probeEmbeddedThumbnailStream.mockResolvedValue(2);
+    const job = makeThumbnailJob();
+
+    await processTranscodeJob(job);
+
+    expect(probeHasVideoStream).not.toHaveBeenCalled();
   });
 });
 
