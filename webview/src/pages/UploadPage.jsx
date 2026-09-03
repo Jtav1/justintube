@@ -901,7 +901,7 @@ function UploadPage() {
             <label htmlFor="upload-thumbnail-input">Thumbnail</label>
             {!isEditMode && !importAvailable && (
               <p className="upload-hint">
-                Automatic thumbnail generation is unavailable right now — you can upload one
+                Automatic thumbnail generation is unavailable right now. You can upload one
                 manually instead.
               </p>
             )}
@@ -941,7 +941,7 @@ function UploadPage() {
                     value={thumbnailTimestamp}
                     onChange={(event) => setThumbnailTimestamp(event.target.value)}
                     disabled={Boolean(thumbnailFile)}
-                    placeholder={isEditMode ? 'Leave blank to keep current thumbnail' : 'Random'}
+                    placeholder={isEditMode ? 'e.g."1.5"' : 'Random'}
                     aria-invalid={thumbnailTimestampInvalid}
                   />
                   {thumbnailTimestampInvalid && (
@@ -954,8 +954,7 @@ function UploadPage() {
             </div>
             {isEditMode && !isEditingAudio && (
               <p className="upload-hint">
-                Setting a frame here generates a new thumbnail from that point in the video,
-                replacing the current one, once you save.
+                Specifying a timestamp (in seconds) to replace thumbnail with that frame
               </p>
             )}
           </div>
