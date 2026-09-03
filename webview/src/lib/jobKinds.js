@@ -3,7 +3,7 @@
  * Matches the kinds processing (BullMQ) actually dispatches on.
  * @type {string[]}
  */
-export const JOB_KINDS = ['thumbnail', 'normalize', 'rendition', 'embed', 'hash']
+export const JOB_KINDS = ['thumbnail', 'normalize', 'rendition', 'embed', 'hash', 'subtitle']
 
 /**
  * The subset of job kinds that block a video from being fully usable and
@@ -24,6 +24,7 @@ const JOB_KIND_LABELS = {
   rendition: 'Rendition',
   embed: 'Embed video',
   hash: 'Duplicate hash',
+  subtitle: 'Subtitle extraction',
 }
 
 /**
@@ -42,6 +43,7 @@ const JOB_KIND_COLORS = {
   rendition: '#199e70',
   embed: '#c98500',
   hash: '#d55181',
+  subtitle: '#7b61ff',
 }
 
 /**

@@ -379,7 +379,10 @@ function AdminPanel() {
 
   const jobQueueSegments = JOB_KINDS.map((kind) => {
     const counts = jobQueue?.counts?.[kind]
-    const value = counts ? counts.waiting + counts.active + counts.delayed : 0
+    // "prioritized" is BullMQ's own state for a not-yet-running job that was
+    // enqueued with a priority (every job here is) - distinct from "waiting"
+    // but just as much a real queued job, so it counts toward the total too.
+    const value = counts ? counts.waiting + counts.prioritized + counts.active + counts.delayed : 0
     return { key: kind, value, color: colorForJobKind(kind), label: labelForJobKind(kind) }
   })
   const jobHistoryTotalPages = jobHistory
@@ -653,6 +656,12 @@ function AdminPanel() {
           {!transcodingEnabled && (
             <p className="admin-jobs-hint">
               Transcoding is disabled on this server (ENABLE_TRANSCODING=false)
+            </p>
+          )}
+          {jobQueue && jobQueue.healthy === false && (
+            <p className="settings-status settings-status-error">
+              The processing service is unreachable or unhealthy. Queue data below may be stale,
+              and uploads/imports/regenerations will not process until it recovers.
             </p>
           )}
 
