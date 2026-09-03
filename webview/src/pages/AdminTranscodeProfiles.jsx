@@ -31,7 +31,6 @@ const DEFAULT_CONTAINER_OPTIONS = ['mp4', 'webm']
 // stay in sync with what admins commonly pick.
 const CONFIGURED_CONTAINER_OPTIONS = (
   window.__RUNTIME_CONFIG__?.TRANSCODE_CONTAINER_OPTIONS ||
-  import.meta.env.VITE_TRANSCODE_CONTAINER_OPTIONS ||
   ''
 )
   .split(',')
