@@ -71,21 +71,21 @@ export function createInternalSubtitlesRouter() {
   router.use(requireInternalToken);
 
   /**
-   * Marks a video's subtitle track complete, creating (on first success) or
-   * replacing (on a "regenerate captions" re-run — see
-   * `POST /videos/:id/subtitles/regenerate`) the VIDEO_SUBTITLE row. Unlike
-   * thumbnails, this can legitimately run more than once against an upload
-   * that already has a subtitle: a regenerate call clears
-   * `skipAutoSubtitles` right before enqueueing, and this handler is what
-   * actually replaces the file+row once (and only once) the new extraction
-   * succeeds — never eagerly, so a regeneration that finds nothing leaves
-   * the existing subtitle completely untouched (see the `/failed` handler).
+   * Marks a video's subtitle extraction complete, replacing the full set of
+   * `source: "auto"` VIDEO_SUBTITLE rows with whatever text streams
+   * processing found this run (possibly none, possibly several — one per
+   * embedded language/track). This handler serves both first-time
+   * auto-extraction (no prior auto rows to delete) and a "regenerate
+   * captions" re-run (`POST /videos/:id/subtitles/regenerate`) — it never
+   * touches `source: "user"` rows, which are a caller's own uploads and
+   * independent of auto-extraction.
    *
-   * Skipped entirely (still 200, but no row written) when
+   * Skipped entirely (still 200, but no rows written) when
    * `upload.skipAutoSubtitles` is set — a user-provided subtitle always wins
-   * and, once set, no further auto-extraction may overwrite it unless the
-   * user explicitly requests a regeneration (which clears the flag first).
-   * POST /internal/subtitles/:jobId/complete with { subtitleFilename }.
+   * and, once set, no further auto-extraction may overwrite the auto set
+   * unless the user explicitly requests a regeneration (which clears the
+   * flag first).
+   * POST /internal/subtitles/:jobId/complete with { subtitles: [{ outputFilename, language?, title? }] }.
    * Auth: Bearer INTERNAL_SERVICE_TOKEN (router-level).
    *
    * @openapi
@@ -110,18 +110,27 @@ export function createInternalSubtitlesRouter() {
    *         application/json:
    *           schema:
    *             type: object
-   *             required: [subtitleFilename]
+   *             required: [subtitles]
    *             properties:
-   *               subtitleFilename: { type: string }
+   *               subtitles:
+   *                 type: array
+   *                 description: One entry per extracted text stream (may be empty).
+   *                 items:
+   *                   type: object
+   *                   required: [outputFilename]
+   *                   properties:
+   *                     outputFilename: { type: string }
+   *                     language: { type: string }
+   *                     title: { type: string }
    *     responses:
    *       200:
-   *         description: Subtitle recorded
+   *         description: Subtitles recorded
    *       400:
-   *         description: Missing/malformed jobId or subtitleFilename
+   *         description: Missing/malformed jobId or subtitles
    *       404:
    *         description: Upload not found
    *
-   * @param {import('express').Request} req Request with `jobId` param + `{ subtitleFilename }` body.
+   * @param {import('express').Request} req Request with `jobId` param + `{ subtitles }` body.
    * @param {import('express').Response} res Express response.
    * @returns {Promise<void>} Sends 200 `{ success, videoId, status }`, 400, 404, or error.
    */
@@ -136,15 +145,26 @@ export function createInternalSubtitlesRouter() {
       return;
     }
 
-    const subtitleFilename =
-      req.body && typeof req.body.subtitleFilename === "string"
-        ? req.body.subtitleFilename.trim()
-        : "";
-    if (!subtitleFilename) {
+    const subtitles = Array.isArray(req.body?.subtitles) ? req.body.subtitles : null;
+    if (!subtitles) {
       res.status(400).json({
         success: false,
         error: "invalid_body",
-        message: "subtitleFilename is required.",
+        message: "subtitles (array) is required.",
+      });
+      return;
+    }
+    const entries = subtitles.map((entry) => ({
+      outputFilename:
+        entry && typeof entry.outputFilename === "string" ? entry.outputFilename.trim() : "",
+      language: entry && typeof entry.language === "string" ? entry.language.trim() : "",
+      title: entry && typeof entry.title === "string" ? entry.title.trim() : "",
+    }));
+    if (entries.some((entry) => !entry.outputFilename)) {
+      res.status(400).json({
+        success: false,
+        error: "invalid_body",
+        message: "Every subtitles entry requires an outputFilename.",
       });
       return;
     }
@@ -168,27 +188,29 @@ export function createInternalSubtitlesRouter() {
       return;
     }
 
-    const existing = await VideoSubtitle.findOne({ where: { originalUploadId: upload.id } });
-    if (existing) {
-      if (existing.subtitleFilename !== subtitleFilename) {
-        const previousPath = join(subtitlesDir, existing.subtitleFilename);
-        await existing.update({ subtitleFilename, source: "auto" });
-        await unlink(previousPath).catch(() => {});
-      } else if (existing.source !== "auto") {
-        await existing.update({ source: "auto" });
-      }
-    } else {
-      await VideoSubtitle.create({
-        originalUploadId: upload.id,
-        subtitleFilename,
-        source: "auto",
-      });
+    const staleAuto = await VideoSubtitle.findAll({
+      where: { originalUploadId: upload.id, source: "auto" },
+    });
+    await VideoSubtitle.destroy({ where: { originalUploadId: upload.id, source: "auto" } });
+    await Promise.all(
+      staleAuto.map((row) => unlink(join(subtitlesDir, row.subtitleFilename)).catch(() => {})),
+    );
+
+    if (entries.length > 0) {
+      await VideoSubtitle.bulkCreate(
+        entries.map((entry, index) => ({
+          originalUploadId: upload.id,
+          subtitleFilename: entry.outputFilename,
+          source: "auto",
+          label: entry.title || entry.language || `Subtitle ${index + 1}`,
+        })),
+      );
     }
 
     res.status(200).json({
       success: true,
       videoId: upload.videoId,
-      status: "complete",
+      status: entries.length > 0 ? "complete" : "no_subtitle_streams",
     });
   });
 

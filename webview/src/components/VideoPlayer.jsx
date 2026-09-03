@@ -26,6 +26,7 @@ import {
   delistVideo,
   dislikeVideo,
   likeVideo,
+  listVideoSubtitles,
   recordView,
   hideVideo,
 } from '../api/videos.js'
@@ -104,9 +105,6 @@ function VideoPlayer({
     ? `${apiClient.defaults.baseURL}${video.embedVideoUrl}`
     : null
   const isAudio = video.mediaType === 'audio' && !embedVideoUrl
-  const subtitlesUrl = video.subtitlesUrl
-    ? `${apiClient.defaults.baseURL}${video.subtitlesUrl}`
-    : null
   const [selectedRendition, setSelectedRendition] = useState(() => pickDefaultRendition(renditions))
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false)
   const [loop, setLoop] = useState(false)
@@ -157,7 +155,9 @@ function VideoPlayer({
     }
   }
 
-  const [captionsOn, setCaptionsOn] = useState(false)
+  const [subtitles, setSubtitles] = useState([])
+  const [selectedSubtitleId, setSelectedSubtitleId] = useState(null)
+  const [captionsMenuOpen, setCaptionsMenuOpen] = useState(false)
 
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -168,6 +168,8 @@ function VideoPlayer({
   const videoRef = useRef(null)
   const qualityMenuRef = useRef(null)
   const qualityToggleRef = useRef(null)
+  const captionsMenuRef = useRef(null)
+  const captionsToggleRef = useRef(null)
   const playlistMenuRef = useRef(null)
   const playlistToggleRef = useRef(null)
   const playlistDropdownRef = useRef(null)
@@ -284,6 +286,45 @@ function VideoPlayer({
   }, [qualityMenuOpen])
 
   useDismissablePopover(qualityMenuOpen, () => setQualityMenuOpen(false), qualityToggleRef)
+
+  // Refetches whenever the video itself changes (not on a quality switch -
+  // the subtitle list is the same across renditions of the same video).
+  useEffect(() => {
+    let cancelled = false
+    setSubtitles([])
+    setSelectedSubtitleId(null)
+    listVideoSubtitles(video.id)
+      .then((data) => {
+        if (!cancelled) {
+          setSubtitles(data.items ?? [])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSubtitles([])
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [video.id])
+
+  useEffect(() => {
+    if (!captionsMenuOpen) {
+      return undefined
+    }
+
+    function handleClickOutside(event) {
+      if (captionsMenuRef.current && !captionsMenuRef.current.contains(event.target)) {
+        setCaptionsMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [captionsMenuOpen])
+
+  useDismissablePopover(captionsMenuOpen, () => setCaptionsMenuOpen(false), captionsToggleRef)
 
   useEffect(() => {
     if (!playlistMenuOpen) {
@@ -519,28 +560,31 @@ function VideoPlayer({
     }
   }
 
-  // The media element (and its <track> child, if any) remounts fresh on
+  // The media element (and its <track> children, if any) remounts fresh on
   // every video change and every quality switch (key={memoizedSrc}) - a
   // freshly mounted track's .mode isn't reliably "hidden" by default across
-  // browsers, so pin it explicitly and reset the button's own state to
-  // match, rather than letting them drift apart across a remount.
+  // browsers, so pin every one explicitly and reset the selection to match,
+  // rather than letting them drift apart across a remount.
   useEffect(() => {
     const el = videoRef.current
-    if (el && el.textTracks[0]) {
-      el.textTracks[0].mode = 'hidden'
+    if (el) {
+      for (const track of el.textTracks) {
+        track.mode = 'hidden'
+      }
     }
-    setCaptionsOn(false)
+    setSelectedSubtitleId(null)
   }, [memoizedSrc])
 
-  function handleToggleCaptions() {
+  function handleSelectSubtitle(subtitleId) {
     const el = videoRef.current
-    const track = el && el.textTracks[0]
-    if (!track) {
-      return
+    if (el) {
+      const activeIndex = subtitles.findIndex((s) => s.id === subtitleId)
+      Array.from(el.textTracks).forEach((track, index) => {
+        track.mode = index === activeIndex ? 'showing' : 'hidden'
+      })
     }
-    const next = track.mode !== 'showing'
-    el.textTracks[0].mode = next ? 'showing' : 'hidden'
-    setCaptionsOn(next)
+    setSelectedSubtitleId(subtitleId)
+    setCaptionsMenuOpen(false)
   }
 
   function handleFirstPlay() {
@@ -696,16 +740,21 @@ function VideoPlayer({
             src={memoizedSrc}
             controls
             loop={loop}
-            crossOrigin={subtitlesUrl ? 'use-credentials' : undefined}
+            crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
             onEnded={handleEnded}
             onVolumeChange={handleVolumeChange}
             onError={handlePlaybackError}
           >
-            {subtitlesUrl && (
-              <track kind="subtitles" label="English" srcLang="en" src={subtitlesUrl} />
-            )}
+            {subtitles.map((subtitle) => (
+              <track
+                key={subtitle.id}
+                kind="subtitles"
+                label={subtitle.label}
+                src={`${apiClient.defaults.baseURL}${subtitle.url}`}
+              />
+            ))}
           </video>
         )}
         {autoplayCountdown !== null && (
@@ -775,17 +824,47 @@ function VideoPlayer({
           >
             <Repeat size={18} />
           </button>
-          {!isAudio && subtitlesUrl && (
-            <button
-              type="button"
-              className={`video-player-icon-btn${captionsOn ? ' video-player-icon-btn-active' : ''}`}
-              aria-label={captionsOn ? 'Hide captions' : 'Show captions'}
-              title={captionsOn ? 'Hide captions' : 'Show captions'}
-              aria-pressed={captionsOn}
-              onClick={handleToggleCaptions}
-            >
-              <Captions size={18} />
-            </button>
+          {!isAudio && subtitles.length > 0 && (
+            <div className="video-player-captions" ref={captionsMenuRef}>
+              <button
+                type="button"
+                className={`video-player-icon-btn${
+                  captionsMenuOpen || selectedSubtitleId != null ? ' video-player-icon-btn-active' : ''
+                }`}
+                aria-label="Select captions"
+                title="Select captions"
+                aria-pressed={selectedSubtitleId != null}
+                onClick={() => setCaptionsMenuOpen((prev) => !prev)}
+                ref={captionsToggleRef}
+              >
+                <Captions size={18} />
+              </button>
+              {captionsMenuOpen && (
+                <div className="video-player-captions-dropdown">
+                  <button
+                    type="button"
+                    className={`video-player-captions-item${
+                      selectedSubtitleId == null ? ' video-player-captions-item-active' : ''
+                    }`}
+                    onClick={() => handleSelectSubtitle(null)}
+                  >
+                    Off
+                  </button>
+                  {subtitles.map((subtitle) => (
+                    <button
+                      key={subtitle.id}
+                      type="button"
+                      className={`video-player-captions-item${
+                        subtitle.id === selectedSubtitleId ? ' video-player-captions-item-active' : ''
+                      }`}
+                      onClick={() => handleSelectSubtitle(subtitle.id)}
+                    >
+                      {subtitle.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           {onToggleExpand && (
             <button

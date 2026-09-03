@@ -760,7 +760,55 @@ describe("Video discovery and metadata endpoints", () => {
     });
   });
 
-  describe("GET /videos/{id}/subtitles (getVideoSubtitles)", () => {
+  describe("GET /videos/{id}/subtitles (listVideoSubtitles)", () => {
+    test("returns an empty list when no subtitles exist", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ items: [] });
+    });
+
+    test("lists every subtitle for a public video", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const english = await seedVideoSubtitle(upload.id, { label: "English", source: "auto" });
+      const spanish = await seedVideoSubtitle(upload.id, { label: "Spanish", source: "user" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toEqual([
+        {
+          id: english.id,
+          label: "English",
+          source: "auto",
+          url: `/api/v1/videos/${upload.id}/subtitles/${english.id}`,
+        },
+        {
+          id: spanish.id,
+          label: "Spanish",
+          source: "user",
+          url: `/api/v1/videos/${upload.id}/subtitles/${spanish.id}`,
+        },
+      ]);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subtitle-owner-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      await seedVideoSubtitle(upload.id);
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /videos/{id}/subtitles/{subtitleId} (getVideoSubtitle)", () => {
     test("serves the subtitle track for a public video", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, { visibility: "public" });
@@ -770,18 +818,18 @@ describe("Video discovery and metadata endpoints", () => {
       const contents = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHi\n";
       writeMediaFixture(`subtitles/${subtitle.subtitleFilename}`, contents);
 
-      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`);
 
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toBe("text/vtt");
       expect(res.text).toBe(contents);
     });
 
-    test("returns 404 when no subtitle track exists (no placeholder fallback)", async () => {
+    test("returns 404 for an unknown subtitle id", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, { visibility: "public" });
 
-      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles/999999`);
 
       expect(res.status).toBe(404);
     });
@@ -793,7 +841,7 @@ describe("Video discovery and metadata endpoints", () => {
       const subtitle = await seedVideoSubtitle(upload.id);
       writeMediaFixture(`subtitles/${subtitle.subtitleFilename}`, "WEBVTT\n\nx");
 
-      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`);
 
       expect(res.status).toBe(404);
     });
@@ -804,7 +852,7 @@ describe("Video discovery and metadata endpoints", () => {
       const subtitle = await seedVideoSubtitle(upload.id);
       writeMediaFixture(`subtitles/${subtitle.subtitleFilename}`, "WEBVTT\n\nx");
 
-      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      const res = await client.get(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`);
 
       expect(res.status).toBe(200);
       expect(res.headers["cache-control"]).toBe("private, max-age=604800");
@@ -817,11 +865,11 @@ describe("Video discovery and metadata endpoints", () => {
       const subtitle = await seedVideoSubtitle(upload.id);
       writeMediaFixture(`subtitles/${subtitle.subtitleFilename}`, "WEBVTT\n\nx");
 
-      const first = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      const first = await client.get(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`);
       const etag = first.headers.etag;
 
       const second = await client
-        .get(`/api/v1/videos/${upload.id}/subtitles`)
+        .get(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
         .set("If-None-Match", etag);
 
       expect(second.status).toBe(304);
@@ -829,7 +877,7 @@ describe("Video discovery and metadata endpoints", () => {
     });
   });
 
-  describe("POST /videos/{id}/subtitles (updateVideoSubtitles)", () => {
+  describe("POST /videos/{id}/subtitles (createVideoSubtitle)", () => {
     test("rejects unauthenticated requests", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id);
@@ -837,6 +885,7 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client
         .post(`/api/v1/videos/${upload.id}/subtitles`)
         .set("Authorization", "Bearer jt_not_a_real_key")
+        .field("label", "English")
         .attach("file", Buffer.from("WEBVTT\n\nhi"), "subs.vtt");
 
       expect(res.status).toBe(401);
@@ -851,6 +900,7 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client
         .post(`/api/v1/videos/${upload.id}/subtitles`)
         .set("Authorization", "Bearer subs-stranger-key")
+        .field("label", "English")
         .attach("file", Buffer.from("WEBVTT\n\nhi"), "subs.vtt");
 
       expect(res.status).toBe(403);
@@ -864,13 +914,28 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client
         .post(`/api/v1/videos/${upload.id}/subtitles`)
         .set("Authorization", "Bearer subs-badext-key")
+        .field("label", "English")
         .attach("file", Buffer.from("not a subtitle"), "notes.txt");
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("unsupported_file_type");
     });
 
-    test("accepts a .vtt file, stores it as-is, and sets skipAutoSubtitles", async () => {
+    test("rejects a missing label", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-nolabel-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+
+      const res = await client
+        .post(`/api/v1/videos/${upload.id}/subtitles`)
+        .set("Authorization", "Bearer subs-nolabel-key")
+        .attach("file", Buffer.from("WEBVTT\n\nhi"), "subs.vtt");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+
+    test("accepts a .vtt file with a label, creates a subtitle, and sets skipAutoSubtitles", async () => {
       const owner = await seedUserWithRoleAndKey("viewer", "subs-vtt-key");
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id);
@@ -879,10 +944,13 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client
         .post(`/api/v1/videos/${upload.id}/subtitles`)
         .set("Authorization", "Bearer subs-vtt-key")
+        .field("label", "English")
         .attach("file", Buffer.from(vttContents), "subs.vtt");
 
-      expect(res.status).toBe(200);
-      expect(res.body).toEqual({ subtitlesUrl: `/api/v1/videos/${upload.id}/subtitles` });
+      expect(res.status).toBe(201);
+      expect(res.body.label).toBe("English");
+      expect(res.body.source).toBe("user");
+      expect(res.body.url).toBe(`/api/v1/videos/${upload.id}/subtitles/${res.body.id}`);
 
       const rows = await queryRows(
         "SELECT * FROM VIDEO_SUBTITLE WHERE original_upload_id = :id",
@@ -890,12 +958,13 @@ describe("Video discovery and metadata endpoints", () => {
       );
       expect(rows).toHaveLength(1);
       expect(rows[0].source).toBe("user");
+      expect(rows[0].label).toBe("English");
       expect(rows[0].subtitle_filename.endsWith(".vtt")).toBe(true);
 
       const reloaded = await OriginalUpload.findByPk(upload.id);
       expect(reloaded.skipAutoSubtitles).toBe(true);
 
-      const getRes = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      const getRes = await client.get(`/api/v1/videos/${upload.id}/subtitles/${res.body.id}`);
       expect(getRes.text).toBe(vttContents);
     });
 
@@ -908,9 +977,10 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client
         .post(`/api/v1/videos/${upload.id}/subtitles`)
         .set("Authorization", "Bearer subs-srt-key")
+        .field("label", "English")
         .attach("file", Buffer.from(srtContents), "subs.srt");
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(201);
 
       const rows = await queryRows(
         "SELECT * FROM VIDEO_SUBTITLE WHERE original_upload_id = :id",
@@ -918,44 +988,166 @@ describe("Video discovery and metadata endpoints", () => {
       );
       expect(rows[0].subtitle_filename.endsWith(".vtt")).toBe(true);
 
-      const getRes = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      const getRes = await client.get(`/api/v1/videos/${upload.id}/subtitles/${res.body.id}`);
       expect(getRes.text.startsWith("WEBVTT\n\n")).toBe(true);
       expect(getRes.text).toContain("00:00:01.000 --> 00:00:02.000");
       expect(getRes.text).not.toContain(",000");
     });
 
-    test("replacing an existing subtitle deletes the previous file", async () => {
-      const owner = await seedUserWithRoleAndKey("viewer", "subs-replace-key");
+    test("uploading a second subtitle adds a new row instead of replacing the first", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-multi-key");
       const upload = await seedUpload({ userId: owner.id });
       await seedMetadata(upload.id);
 
       const first = await client
         .post(`/api/v1/videos/${upload.id}/subtitles`)
-        .set("Authorization", "Bearer subs-replace-key")
+        .set("Authorization", "Bearer subs-multi-key")
+        .field("label", "English")
         .attach("file", Buffer.from("WEBVTT\n\nfirst"), "first.vtt");
-      expect(first.status).toBe(200);
-
-      const rowsAfterFirst = await queryRows(
-        "SELECT * FROM VIDEO_SUBTITLE WHERE original_upload_id = :id",
-        { id: upload.id },
-      );
-      const firstPath = join(mediaDir, "subtitles", rowsAfterFirst[0].subtitle_filename);
+      expect(first.status).toBe(201);
 
       const second = await client
         .post(`/api/v1/videos/${upload.id}/subtitles`)
-        .set("Authorization", "Bearer subs-replace-key")
+        .set("Authorization", "Bearer subs-multi-key")
+        .field("label", "Spanish")
         .attach("file", Buffer.from("WEBVTT\n\nsecond"), "second.vtt");
-      expect(second.status).toBe(200);
+      expect(second.status).toBe(201);
 
-      const rowsAfterSecond = await queryRows(
-        "SELECT * FROM VIDEO_SUBTITLE WHERE original_upload_id = :id",
+      const rows = await queryRows(
+        "SELECT * FROM VIDEO_SUBTITLE WHERE original_upload_id = :id ORDER BY id ASC",
         { id: upload.id },
       );
-      expect(rowsAfterSecond).toHaveLength(1);
-      expect(existsSync(firstPath)).toBe(false);
+      expect(rows).toHaveLength(2);
+      expect(rows[0].label).toBe("English");
+      expect(rows[1].label).toBe("Spanish");
 
-      const getRes = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
-      expect(getRes.text).toBe("WEBVTT\n\nsecond");
+      const listRes = await client.get(`/api/v1/videos/${upload.id}/subtitles`);
+      expect(listRes.body.items).toHaveLength(2);
+    });
+  });
+
+  describe("PATCH /videos/{id}/subtitles/{subtitleId} (updateVideoSubtitleLabel)", () => {
+    test("rejects unauthenticated requests", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id);
+      const subtitle = await seedVideoSubtitle(upload.id);
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
+        .set("Authorization", "Bearer jt_not_a_real_key")
+        .send({ label: "Renamed" });
+
+      expect(res.status).toBe(401);
+    });
+
+    test("rejects a non-owner, non-admin", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-patch-owner-key");
+      await seedUserWithRoleAndKey("viewer", "subs-patch-stranger-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+      const subtitle = await seedVideoSubtitle(upload.id);
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
+        .set("Authorization", "Bearer subs-patch-stranger-key")
+        .send({ label: "Renamed" });
+
+      expect(res.status).toBe(403);
+    });
+
+    test("rejects an empty label", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-patch-empty-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+      const subtitle = await seedVideoSubtitle(upload.id);
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
+        .set("Authorization", "Bearer subs-patch-empty-key")
+        .send({ label: "  " });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+
+    test("renames a subtitle track", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-patch-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+      const subtitle = await seedVideoSubtitle(upload.id, { label: "English" });
+
+      const res = await client
+        .patch(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
+        .set("Authorization", "Bearer subs-patch-key")
+        .send({ label: "British English" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.label).toBe("British English");
+
+      const rows = await queryRows("SELECT * FROM VIDEO_SUBTITLE WHERE id = :id", {
+        id: subtitle.id,
+      });
+      expect(rows[0].label).toBe("British English");
+    });
+  });
+
+  describe("DELETE /videos/{id}/subtitles/{subtitleId} (deleteVideoSubtitle)", () => {
+    test("rejects unauthenticated requests", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id);
+      const subtitle = await seedVideoSubtitle(upload.id);
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
+        .set("Authorization", "Bearer jt_not_a_real_key");
+
+      expect(res.status).toBe(401);
+    });
+
+    test("rejects a non-owner, non-admin", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-delete-owner-key");
+      await seedUserWithRoleAndKey("viewer", "subs-delete-stranger-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+      const subtitle = await seedVideoSubtitle(upload.id);
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
+        .set("Authorization", "Bearer subs-delete-stranger-key");
+
+      expect(res.status).toBe(403);
+    });
+
+    test("returns 404 for an unknown subtitle id", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-delete-404-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/subtitles/999999`)
+        .set("Authorization", "Bearer subs-delete-404-key");
+
+      expect(res.status).toBe(404);
+    });
+
+    test("deletes the row and the underlying file", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "subs-delete-key");
+      const upload = await seedUpload({ userId: owner.id });
+      await seedMetadata(upload.id);
+      const subtitle = await seedVideoSubtitle(upload.id);
+      const filePath = writeMediaFixture(`subtitles/${subtitle.subtitleFilename}`, "WEBVTT\n\nx");
+
+      const res = await client
+        .delete(`/api/v1/videos/${upload.id}/subtitles/${subtitle.id}`)
+        .set("Authorization", "Bearer subs-delete-key");
+
+      expect(res.status).toBe(204);
+      expect(existsSync(filePath)).toBe(false);
+
+      const rows = await queryRows("SELECT * FROM VIDEO_SUBTITLE WHERE id = :id", {
+        id: subtitle.id,
+      });
+      expect(rows).toHaveLength(0);
     });
   });
 
@@ -1027,6 +1219,9 @@ describe("Video discovery and metadata endpoints", () => {
       // Not simply "subtitle-<videoId>" - a stable id would silently no-op a
       // later regeneration against BullMQ's own dedup.
       expect(capturedJob.jobId).not.toBe(`subtitle-${upload.videoId}`);
+      // A prefix, not a final filename - processing may extract more than
+      // one stream and appends "-<index>.vtt" itself.
+      expect(capturedJob.outputFilename.endsWith(".vtt")).toBe(false);
 
       const reloaded = await OriginalUpload.findByPk(upload.id);
       expect(reloaded.skipAutoSubtitles).toBe(false);

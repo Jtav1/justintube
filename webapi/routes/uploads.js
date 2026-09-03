@@ -418,7 +418,9 @@ export async function finalizeUploadTranscodes(
   const subtitleJob = !skipAutoSubtitles
     ? {
         jobId: `subtitle-${upload.videoId}-${randomUUID()}`,
-        outputFilename: `${segment}/${randomUUID()}.vtt`,
+        // A prefix, not a final filename - processing may extract more than
+        // one text stream and writes each to `${outputFilename}-${i}.vtt`.
+        outputFilename: `${segment}/${randomUUID()}`,
         kind: "subtitle",
       }
     : null;

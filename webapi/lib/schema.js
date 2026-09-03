@@ -836,6 +836,55 @@ async function migrateNotificationTypeForeignKeys() {
 }
 
 /**
+ * Migrates `VIDEO_SUBTITLE` from "one row per upload" to "many rows per
+ * upload" (e.g. one per language): adds the `label` column (backfilling
+ * existing rows with a generic label derived from `source`, since the
+ * column is new and had no prior value), then drops the
+ * `uq_video_subtitle_upload` unique index that previously enforced at most
+ * one subtitle per upload. Guarded/idempotent like the other `migrate*`
+ * helpers - safe to run on every boot regardless of migration state.
+ *
+ * @returns {Promise<void>} Resolves once the table matches the current model.
+ */
+async function migrateVideoSubtitleLabels() {
+  const TABLE = "VIDEO_SUBTITLE";
+  if (!(await tableExists(TABLE))) {
+    return;
+  }
+
+  if (!(await columnExists(TABLE, "label"))) {
+    const ddl =
+      DB_CLIENT === "sqlite" ? "`label` VARCHAR(100)" : "`label` VARCHAR(100) NULL";
+    await sequelize.query(`ALTER TABLE \`${TABLE}\` ADD COLUMN ${ddl}`);
+    logger.info(`[api]: added ${DB_CLIENT} column ${TABLE}.label`);
+
+    await sequelize.query(`
+      UPDATE \`${TABLE}\`
+         SET \`label\` = CASE WHEN \`source\` = 'user' THEN 'Uploaded subtitle' ELSE 'Subtitle' END
+       WHERE \`label\` IS NULL
+    `);
+
+    if (DB_CLIENT === "mysql") {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` MODIFY COLUMN \`label\` VARCHAR(100) NOT NULL`,
+      );
+    }
+    logger.info(`[api]: backfilled ${TABLE}.label for existing rows`);
+  }
+
+  if (await indexExists(TABLE, "uq_video_subtitle_upload")) {
+    if (DB_CLIENT === "sqlite") {
+      await sequelize.query("DROP INDEX `uq_video_subtitle_upload`");
+    } else {
+      await sequelize.query(
+        `ALTER TABLE \`${TABLE}\` DROP INDEX \`uq_video_subtitle_upload\``,
+      );
+    }
+    logger.info(`[api]: dropped index uq_video_subtitle_upload on ${TABLE}`);
+  }
+}
+
+/**
  * Ensures all application tables and columns exist via Sequelize model sync,
  * then seeds reference data. Safe to run on every startup: MySQL uses
  * `sync({ alter: true })` for missing tables/columns; SQLite creates only
@@ -853,6 +902,7 @@ export async function ensureSchema() {
   await migrateUserViewHistoryDedup();
   await migrateNotificationTypeForeignKeys();
   await migrateAccessPermissionForeignKeys();
+  await migrateVideoSubtitleLabels();
 
   if (DB_CLIENT === "sqlite") {
     await ensureSqliteSchema();
