@@ -4,7 +4,7 @@ import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { parsePagination } from "../lib/pagination.js";
-import { getQueueHistory, getQueueJobs } from "../lib/processing-client.js";
+import { getProcessingHealth, getQueueHistory, getQueueJobs } from "../lib/processing-client.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -13,7 +13,7 @@ import { logger } from "../lib/logger.js";
  *
  * @type {string[]}
  */
-const JOB_KINDS = ["thumbnail", "normalize", "rendition", "embed", "hash"];
+const JOB_KINDS = ["thumbnail", "normalize", "rendition", "embed", "hash", "subtitle"];
 
 /**
  * Default page size for `GET /admin/jobs/history` when `limit` is omitted.
@@ -23,24 +23,27 @@ const JOB_KINDS = ["thumbnail", "normalize", "rendition", "embed", "hash"];
 const DEFAULT_JOB_HISTORY_LIMIT = 5;
 
 /**
- * Builds an empty `{ waiting, active, delayed }` bucket.
+ * Builds an empty `{ waiting, prioritized, active, delayed }` bucket.
  *
  * @private
- * @returns {{ waiting: number, active: number, delayed: number }} Zeroed bucket.
+ * @returns {{ waiting: number, prioritized: number, active: number, delayed: number }} Zeroed bucket.
  */
 function emptyStateBucket() {
-  return { waiting: 0, active: 0, delayed: 0 };
+  return { waiting: 0, prioritized: 0, active: 0, delayed: 0 };
 }
 
 /**
  * Buckets the flat non-terminal job list from `GET /queue/jobs` into
- * per-kind waiting/active/delayed counts, seeding every known job kind so
- * the response always has a stable shape even when a kind currently has no
- * jobs at all.
+ * per-kind waiting/prioritized/active/delayed counts, seeding every known
+ * job kind so the response always has a stable shape even when a kind
+ * currently has no jobs at all. Every job here is enqueued with an explicit
+ * priority (see processing's `JOB_PRIORITY_BY_KIND`), so in practice most
+ * not-yet-running jobs land in "prioritized" rather than "waiting" - both
+ * still mean "queued, not started."
  *
  * @private
  * @param {Array<{ kind: string, state: string }>} jobs Non-terminal jobs from processing.
- * @returns {{ counts: Record<string, {waiting: number, active: number, delayed: number}>, total: number }}
+ * @returns {{ counts: Record<string, {waiting: number, prioritized: number, active: number, delayed: number}>, total: number }}
  *   Per-kind counts plus the overall total.
  */
 function summarizeQueueJobs(jobs) {
@@ -72,7 +75,17 @@ export function createAdminJobsRouter() {
 
   /**
    * Summarizes the processing queue's currently non-terminal jobs, bucketed
-   * by job kind and BullMQ state.
+   * by job kind and BullMQ state, alongside whether the processing service
+   * itself is reachable/healthy (`GET /health`, the same endpoint Docker's
+   * own container healthcheck polls). The two calls run in parallel; when
+   * processing is unreachable, `getQueueJobs()` fails too (same HTTP target),
+   * so rather than returning a bare 502 (which the admin panel would have no
+   * clean way to distinguish from "you're not authorized" or a transient
+   * blip), this responds 200 with `healthy: false` and an all-zero queue
+   * snapshot — the admin panel renders a persistent "processing is
+   * unhealthy" indicator from that flag instead of guessing from a fetch
+   * failure. A queue-jobs failure with processing still reporting healthy
+   * (an unusual, genuinely unexpected combination) still surfaces as a 502.
    * GET /api/v1/admin/jobs/queue
    * Auth: session cookie or Bearer API key; admin role required.
    *
@@ -87,17 +100,20 @@ export function createAdminJobsRouter() {
    *       - bearerApiKey: []
    *     responses:
    *       200:
-   *         description: Per-job-kind waiting/active/delayed counts, plus the overall total
+   *         description: >
+   *           Per-job-kind waiting/prioritized/active/delayed counts, the
+   *           overall total, and whether the processing service is currently
+   *           healthy
    *       401:
    *         description: Not authenticated
    *       403:
    *         description: Not an admin
    *       502:
-   *         description: Processing service unavailable
+   *         description: Processing service reachable but the queue-jobs call itself failed
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends 200 with `{ counts, total }`, or error.
+   * @returns {Promise<void>} Sends 200 with `{ counts, total, healthy }`, or error.
    */
   router.get(
     "/admin/jobs/queue",
@@ -106,9 +122,18 @@ export function createAdminJobsRouter() {
     requireApiKeyScope("full_access"),
     async (req, res) => {
       try {
-        const result = await getQueueJobs();
-        if (!result.ok) {
-          logger.error({ error: result.error }, "getAdminJobQueue failed");
+        const [queueResult, healthResult] = await Promise.all([
+          getQueueJobs(),
+          getProcessingHealth(),
+        ]);
+        const healthy = healthResult.ok;
+
+        if (!queueResult.ok) {
+          if (!healthy) {
+            res.status(200).json({ ...summarizeQueueJobs([]), healthy: false });
+            return;
+          }
+          logger.error({ error: queueResult.error }, "getAdminJobQueue failed");
           res.status(502).json({
             error: "processing_unavailable",
             message: "Failed to load the processing queue.",
@@ -116,7 +141,7 @@ export function createAdminJobsRouter() {
           return;
         }
 
-        res.status(200).json(summarizeQueueJobs(result.body?.jobs ?? []));
+        res.status(200).json({ ...summarizeQueueJobs(queueResult.body?.jobs ?? []), healthy });
       } catch (err) {
         logger.error({ err }, "getAdminJobQueue failed");
         res.status(500).json({

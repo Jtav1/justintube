@@ -978,25 +978,34 @@ export async function retryFailedHashJobs(queue) {
 }
 
 /**
- * Maximum number of jobs fetched per non-terminal state (waiting/active/
- * delayed) by {@link getQueueJobs}, guarding against unbounded memory use if
- * the queue somehow grows very large. Self-hosted deployments run a single
- * worker at low concurrency, so real queue depth is expected to stay far
- * below this.
+ * Maximum number of jobs fetched per non-terminal state (waiting/prioritized/
+ * active/delayed) by {@link getQueueJobs}, guarding against unbounded memory
+ * use if the queue somehow grows very large. Self-hosted deployments run a
+ * single worker at low concurrency, so real queue depth is expected to stay
+ * far below this.
  *
  * @type {number}
  */
 export const QUEUE_JOBS_CAP_PER_STATE = 500;
 
 /**
- * Lists every currently non-terminal job (waiting, active, or delayed)
- * across all job kinds, each tagged with its state. Fetches each state
- * separately rather than one combined call plus a per-job `job.getState()`
- * round trip - the state is already known from which fetch returned the job.
- * A job mid-retry-backoff (BullMQ moves a failed-but-retryable job to
- * "delayed" until `attemptsMade` reaches the configured `attempts`) or a
- * hash job deferred by `HASH_GENERATION_WINDOW` both correctly surface here
+ * Lists every currently non-terminal job (waiting, prioritized, active, or
+ * delayed) across all job kinds, each tagged with its state. Fetches each
+ * state separately rather than one combined call plus a per-job
+ * `job.getState()` round trip - the state is already known from which fetch
+ * returned the job. A job mid-retry-backoff (BullMQ moves a failed-but-retryable
+ * job to "delayed" until `attemptsMade` reaches the configured `attempts`) or
+ * a hash job deferred by `HASH_GENERATION_WINDOW` both correctly surface here
  * as "delayed" - both are legitimately still in flight, not terminal.
+ *
+ * "prioritized" is its own BullMQ v5 job state, distinct from "waiting" -
+ * every job here is enqueued with an explicit `priority` (see
+ * `JOB_PRIORITY_BY_KIND`), and BullMQ holds any job added with a priority in
+ * a separate prioritized set until a worker slot actually opens up, only
+ * then promoting it to "waiting" for the instant it takes to be picked up.
+ * With this app's low worker concurrency, that means nearly every not-yet-
+ * running job sits in "prioritized", not "waiting" - omitting it here would
+ * make the admin queue view look like only the handful of active jobs exist.
  *
  * @param {import('bullmq').Queue} queue Transcode queue instance.
  * @param {{ capPerState?: number }} [options] Per-state fetch cap override (tests only).
@@ -1004,13 +1013,14 @@ export const QUEUE_JOBS_CAP_PER_STATE = 500;
  *   jobId: string,
  *   kind: string,
  *   name: string,
- *   state: "waiting"|"active"|"delayed",
+ *   state: "waiting"|"prioritized"|"active"|"delayed",
  *   truncated: boolean
  * }>>} Non-terminal jobs across all states.
  */
 export async function getQueueJobs(queue, { capPerState = QUEUE_JOBS_CAP_PER_STATE } = {}) {
-  const [waiting, active, delayed] = await Promise.all([
+  const [waiting, prioritized, active, delayed] = await Promise.all([
     queue.getJobs(["waiting"], 0, capPerState - 1),
+    queue.getJobs(["prioritized"], 0, capPerState - 1),
     queue.getJobs(["active"], 0, capPerState - 1),
     queue.getJobs(["delayed"], 0, capPerState - 1),
   ]);
@@ -1024,7 +1034,12 @@ export async function getQueueJobs(queue, { capPerState = QUEUE_JOBS_CAP_PER_STA
       truncated: jobs.length >= capPerState,
     }));
 
-  return [...tag(waiting, "waiting"), ...tag(active, "active"), ...tag(delayed, "delayed")];
+  return [
+    ...tag(waiting, "waiting"),
+    ...tag(prioritized, "prioritized"),
+    ...tag(active, "active"),
+    ...tag(delayed, "delayed"),
+  ];
 }
 
 /**

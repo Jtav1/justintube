@@ -577,6 +577,7 @@ describe("getQueueJobs", () => {
     const queue = {
       getJobs: jest.fn((states) => {
         if (states[0] === "waiting") return Promise.resolve([makeQueuedJob("w1", "rendition")]);
+        if (states[0] === "prioritized") return Promise.resolve([makeQueuedJob("p1", "subtitle")]);
         if (states[0] === "active") return Promise.resolve([makeQueuedJob("a1", "thumbnail")]);
         if (states[0] === "delayed") return Promise.resolve([makeQueuedJob("d1", "hash")]);
         return Promise.resolve([]);
@@ -587,10 +588,34 @@ describe("getQueueJobs", () => {
 
     expect(jobs).toEqual([
       { jobId: "w1", kind: "rendition", name: "ffmpeg-rendition", state: "waiting", truncated: false },
+      { jobId: "p1", kind: "subtitle", name: "ffmpeg-subtitle", state: "prioritized", truncated: false },
       { jobId: "a1", kind: "thumbnail", name: "ffmpeg-thumbnail", state: "active", truncated: false },
       { jobId: "d1", kind: "hash", name: "ffmpeg-hash", state: "delayed", truncated: false },
     ]);
     expect(getState).not.toHaveBeenCalled();
+  });
+
+  test("counts a job added with a priority (the common case here) as 'prioritized', not 'waiting'", async () => {
+    // Mirrors real BullMQ v5 behavior: every job in this app is enqueued
+    // with an explicit priority (JOB_PRIORITY_BY_KIND), so it lands in the
+    // separate "prioritized" set until a worker slot opens up - "waiting"
+    // stays empty except for the instant BullMQ promotes a job right before
+    // dispatch. This is what previously made the admin queue view look like
+    // only the active jobs existed.
+    const queue = {
+      getJobs: jest.fn((states) =>
+        states[0] === "prioritized"
+          ? Promise.resolve([makeQueuedJob("p1", "rendition"), makeQueuedJob("p2", "rendition")])
+          : Promise.resolve([]),
+      ),
+    };
+
+    const jobs = await getQueueJobs(queue);
+
+    expect(jobs).toEqual([
+      { jobId: "p1", kind: "rendition", name: "ffmpeg-rendition", state: "prioritized", truncated: false },
+      { jobId: "p2", kind: "rendition", name: "ffmpeg-rendition", state: "prioritized", truncated: false },
+    ]);
   });
 
   test("defaults kind to 'rendition' when job.data.kind is unset", async () => {

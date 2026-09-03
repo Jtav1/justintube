@@ -238,14 +238,14 @@ export async function retryFailedHashJobs() {
 }
 
 /**
- * One non-terminal (waiting/active/delayed) BullMQ job, as reported by
- * `GET /queue/jobs`.
+ * One non-terminal (waiting/prioritized/active/delayed) BullMQ job, as
+ * reported by `GET /queue/jobs`.
  *
  * @typedef {object} QueueJob
  * @property {string} jobId BullMQ job id.
- * @property {string} kind Job kind (`"thumbnail"|"normalize"|"rendition"|"embed"|"hash"`).
+ * @property {string} kind Job kind (`"thumbnail"|"normalize"|"rendition"|"embed"|"hash"|"subtitle"`).
  * @property {string} name BullMQ job name (e.g. `"ffmpeg-transcode"`).
- * @property {"waiting"|"active"|"delayed"} state Current BullMQ state.
+ * @property {"waiting"|"prioritized"|"active"|"delayed"} state Current BullMQ state.
  * @property {boolean} truncated Whether this job's state bucket hit processing's per-state fetch cap.
  */
 
@@ -267,7 +267,7 @@ export async function getQueueJobs() {
  *
  * @typedef {object} QueueHistoryItem
  * @property {string} jobId BullMQ job id.
- * @property {string} kind Job kind (`"thumbnail"|"normalize"|"rendition"|"embed"|"hash"`).
+ * @property {string} kind Job kind (`"thumbnail"|"normalize"|"rendition"|"embed"|"hash"|"subtitle"`).
  * @property {string} name BullMQ job name.
  * @property {"completed"|"failed"} state Terminal state.
  * @property {number} finishedOn Epoch ms the job reached its terminal state.

@@ -95,14 +95,38 @@ describe("GET /api/v1/admin/jobs/queue", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       counts: {
-        thumbnail: { waiting: 0, active: 1, delayed: 0 },
-        normalize: { waiting: 0, active: 0, delayed: 0 },
-        rendition: { waiting: 1, active: 1, delayed: 0 },
-        embed: { waiting: 0, active: 0, delayed: 0 },
-        hash: { waiting: 0, active: 0, delayed: 1 },
+        thumbnail: { waiting: 0, prioritized: 0, active: 1, delayed: 0 },
+        normalize: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
+        rendition: { waiting: 1, prioritized: 0, active: 1, delayed: 0 },
+        embed: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
+        hash: { waiting: 0, prioritized: 0, active: 0, delayed: 1 },
+        subtitle: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
       },
       total: 4,
+      healthy: true,
     });
+  });
+
+  test("buckets a prioritized job (the common case - every job is enqueued with a priority)", async () => {
+    const rawKey = "jt_test_admin_jobs_prioritized";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    globalThis.fetch = fetchMockFor(() => ({
+      status: 200,
+      body: {
+        success: true,
+        jobs: [
+          { jobId: "s1", kind: "subtitle", name: "ffmpeg-subtitle", state: "prioritized", truncated: false },
+        ],
+      },
+    }));
+
+    const res = await client
+      .get("/api/v1/admin/jobs/queue")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.counts.subtitle).toEqual({ waiting: 0, prioritized: 1, active: 0, delayed: 0 });
+    expect(res.body.total).toBe(1);
   });
 
   test("returns an all-zero summary when the queue is empty", async () => {
@@ -116,14 +140,35 @@ describe("GET /api/v1/admin/jobs/queue", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(0);
-    expect(res.body.counts.rendition).toEqual({ waiting: 0, active: 0, delayed: 0 });
+    expect(res.body.healthy).toBe(true);
+    expect(res.body.counts.rendition).toEqual({ waiting: 0, prioritized: 0, active: 0, delayed: 0 });
   });
 
-  test("returns 502 when the processing service is unreachable", async () => {
+  test("returns healthy:false with an all-zero queue when processing is unreachable", async () => {
     const rawKey = "jt_test_admin_jobs_down";
     await seedUserWithRoleAndKey("admin", rawKey);
     globalThis.fetch = jest.fn(async () => {
       throw new Error("network down");
+    });
+
+    const res = await client
+      .get("/api/v1/admin/jobs/queue")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.healthy).toBe(false);
+    expect(res.body.total).toBe(0);
+    expect(res.body.counts.rendition).toEqual({ waiting: 0, prioritized: 0, active: 0, delayed: 0 });
+  });
+
+  test("returns 502 when the queue-jobs call fails but processing still reports healthy", async () => {
+    const rawKey = "jt_test_admin_jobs_queue_error";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    globalThis.fetch = jest.fn(async (url) => {
+      if (String(url).endsWith("/health")) {
+        return { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+      }
+      return { ok: false, status: 500, json: async () => ({ error: "boom" }) };
     });
 
     const res = await client
