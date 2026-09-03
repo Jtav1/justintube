@@ -6,7 +6,7 @@ import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { resolveMediaPath } from "../lib/media-meta.js";
-import { FileVersion, OriginalUpload, VideoThumbnail } from "../lib/models/index.js";
+import { FileVersion, OriginalUpload, VideoSubtitle, VideoThumbnail } from "../lib/models/index.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -18,8 +18,16 @@ import { logger } from "../lib/logger.js";
 const THUMBNAILS_SUBDIR = "thumbnails";
 
 /**
- * Maps the three top-level media directory categories to their absolute
- * paths, mirroring `originalDir`/`transcodedDir`/`thumbnailsDir` in
+ * Subfolder name (under `mediaDir`) holding subtitle tracks, mirroring the
+ * `SUBTITLES_SUBDIR` convention in `routes/videos.js`.
+ *
+ * @type {string}
+ */
+const SUBTITLES_SUBDIR = "subtitles";
+
+/**
+ * Maps the top-level media directory categories to their absolute paths,
+ * mirroring `originalDir`/`transcodedDir`/`thumbnailsDir`/`subtitlesDir` in
  * `processing/lib/media-paths.js`.
  *
  * @type {Record<string, string>}
@@ -28,6 +36,7 @@ const CATEGORY_DIRS = {
   original: resolveMediaPath("original"),
   transcoded: resolveMediaPath("transcoded"),
   thumbnails: resolveMediaPath(THUMBNAILS_SUBDIR),
+  subtitles: resolveMediaPath(SUBTITLES_SUBDIR),
 };
 
 /**
@@ -117,8 +126,8 @@ async function resolveUploadByIdentifier(raw) {
 /**
  * Resolves the owning OriginalUpload for a file-level uuid, checking both
  * uuid-bearing tables (an original upload's own `uuid`, or a transcoded
- * FILE_VERSIONS row's `uuidName`). Thumbnails have no uuid column, so they
- * cannot be looked up this way.
+ * FILE_VERSIONS row's `uuidName`). Thumbnails and subtitle tracks have no
+ * uuid column, so they cannot be looked up this way.
  *
  * @private
  * @param {string} uuid File uuid to resolve.
@@ -144,17 +153,18 @@ async function resolveUploadByFileUuid(uuid) {
 
 /**
  * Builds the full filesystem-verified file tree for an upload: its original
- * source file, optional embed video, optional thumbnail, and every
- * transcoded FILE_VERSIONS variant.
+ * source file, optional embed video, optional thumbnail, optional subtitle
+ * track, and every transcoded FILE_VERSIONS variant.
  *
  * @private
  * @param {import('sequelize').Model} upload Loaded OriginalUpload instance.
  * @returns {Promise<object>} `{ upload, files }` payload for JSON responses.
  */
 async function buildUploadFileTree(upload) {
-  const [fileVersions, thumbnail] = await Promise.all([
+  const [fileVersions, thumbnail, subtitle] = await Promise.all([
     FileVersion.findAll({ where: { originalUploadId: upload.id }, order: [["id", "ASC"]] }),
     VideoThumbnail.findOne({ where: { originalUploadId: upload.id } }),
+    VideoSubtitle.findOne({ where: { originalUploadId: upload.id } }),
   ]);
 
   const original = {
@@ -178,6 +188,15 @@ async function buildUploadFileTree(upload) {
         id: thumbnail.id,
         kind: "thumbnail",
         ...(await describeStoredFile(join(THUMBNAILS_SUBDIR, thumbnail.thumbnailFilename))),
+      }
+    : null;
+
+  const subtitleEntry = subtitle
+    ? {
+        id: subtitle.id,
+        kind: "subtitle",
+        source: subtitle.source,
+        ...(await describeStoredFile(join(SUBTITLES_SUBDIR, subtitle.subtitleFilename))),
       }
     : null;
 
@@ -209,6 +228,7 @@ async function buildUploadFileTree(upload) {
       original,
       embedVideo,
       thumbnail: thumbnailEntry,
+      subtitle: subtitleEntry,
       transcoded,
     },
   };
@@ -411,7 +431,7 @@ export function createAdminFilesRouter() {
    * Lists the full directory structure of one top-level media category,
    * verified directly against the filesystem (not the database).
    * GET /api/v1/admin/files/tree/:category
-   * `:category` is one of `original`, `transcoded`, `thumbnails`.
+   * `:category` is one of `original`, `transcoded`, `thumbnails`, `subtitles`.
    * Auth: session cookie or Bearer API key; admin role required.
    *
    * @openapi
@@ -424,7 +444,7 @@ export function createAdminFilesRouter() {
    *       - name: category
    *         in: path
    *         required: true
-   *         schema: { type: string, enum: [original, transcoded, thumbnails] }
+   *         schema: { type: string, enum: [original, transcoded, thumbnails, subtitles] }
    *     security:
    *       - cookieAuth: []
    *       - bearerApiKey: []

@@ -145,6 +145,15 @@
   max-width: 480px;
 }
 
+.video-player-audio-caption {
+  margin: 0;
+  max-width: 480px;
+  text-align: center;
+  color: #fff;
+  font-size: 14px;
+  white-space: pre-line;
+}
+
 .video-player-controls-overlay {
   position: absolute;
   top: 8px;

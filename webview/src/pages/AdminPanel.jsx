@@ -636,6 +636,14 @@ function AdminPanel() {
                 <FileTreeEntry label="Original" file={fileTreeResult.files.original} />
                 <FileTreeEntry label="Embed video" file={fileTreeResult.files.embedVideo} />
                 <FileTreeEntry label="Thumbnail" file={fileTreeResult.files.thumbnail} />
+                <FileTreeEntry
+                  label={
+                    fileTreeResult.files.subtitle?.source === "user"
+                      ? "Subtitles (user-provided)"
+                      : "Subtitles (auto-extracted)"
+                  }
+                  file={fileTreeResult.files.subtitle}
+                />
                 {fileTreeResult.files.transcoded.map((variant) => (
                   <FileTreeEntry
                     key={variant.id}
