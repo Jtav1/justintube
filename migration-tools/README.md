@@ -18,7 +18,7 @@ documented API.
 | MediaCMS (`files_media`) | justintube |
 | --- | --- |
 | `media_file` | uploaded as the video/audio file |
-| `uploaded_thumbnail` (falls back to `thumbnail`) | uploaded as the video thumbnail, if the file exists on disk |
+| `uploaded_thumbnail` (falls back to `thumbnail`) | uploaded as the video thumbnail, if the file exists on disk — otherwise justintube auto-generates one from the video itself, same as a normal upload with no thumbnail attached |
 | `title` | `title` (falls back to `"Untitled"`) |
 | `description` | `description` |
 | `state` (`public`/`unlisted`/`friends`/`private`) | `visibility` (`public`/`unlisted`/`private`/`private`) — MediaCMS's `friends` has no justintube equivalent and maps to the more restrictive `private` |
