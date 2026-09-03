@@ -1,20 +1,13 @@
 services:
-  # Bundled MySQL used when running the full stack with Docker Compose.
-  # (Local development instead uses SQLite via `npm run dev` in ./webapi.)
   db:
     image: justintube-db:latest
     container_name: justintube-db
     restart: unless-stopped
     environment:
-      # Root credentials used only for container init / administration.
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set - see .env.example}
-      # Passed through to the init script (see webapi/db/init/01-init-justintube.sh).
       JUSTINTUBE_DB: ${MYSQL_DATABASE:-justintube}
       JUSTINTUBE_USER: ${MYSQL_USER:-justintube}
       JUSTINTUBE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set - see .env.example}
-    # No default host port publishing - db is reachable at db:3306 on the
-    # compose network. For local DB-GUI access, add a docker-compose.override.yml
-    # (see docs/deployment.md).
     volumes:
       - db-data:/var/lib/mysql
     healthcheck:
@@ -36,7 +29,6 @@ services:
     container_name: justintube-redis
     restart: unless-stopped
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set - see .env.example}"]
-    # No default host port publishing - see the `db` service comment above.
     volumes:
       - redis-data:/data
     healthcheck:
@@ -45,8 +37,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Optional advanced search backend. Only needed when ENABLE_ADVANCED_SEARCH=true
-  # on the api service below; otherwise this whole block can be commented out.
+# Optional - see .env.example - If adv search is disabled you can remove or comment out this service
   search:
     image: getmeili/meilisearch:v1.15.1
     container_name: justintube-search
@@ -55,7 +46,6 @@ services:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY must be set - see .env.example}
       MEILI_NO_ANALYTICS: "true"
       MEILI_ENV: ${MEILI_ENV:-production}
-    # No default host port publishing - see the `db` service comment above.
     volumes:
       - search-data:/meili_data
     healthcheck:
@@ -77,16 +67,14 @@ services:
     environment:
       PORT: ${PORT:-3000}
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
-      # The composed stack always uses the bundled MySQL service.
       DB_CLIENT: mysql
+      # You can use your own MYSQL but you have to adjust these yourself should be pretty ez lol
       MYSQL_HOST: db
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE:-justintube}
       MYSQL_USER: ${MYSQL_USER:-justintube}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set - see .env.example}
       MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
-      # Ownership of files written into the host data directories - see
-      # docker-entrypoint.sh and the root .env.example comment.
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       MEDIA_STORAGE_DIRECTORY: /media
@@ -94,17 +82,9 @@ services:
       PROCESSING_API_URL: http://processing:3001
       DOWNLOAD_REQUEST_TIMEOUT_MS: ${DOWNLOAD_REQUEST_TIMEOUT_MS:-900000}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
-      # Set either of these to false to stop webapi from ever contacting the
-      # `processing` service below. Note this alone doesn't let you drop the
-      # `processing` block from this file: webapi's `depends_on` above still
-      # waits on it at startup - remove that dependency too (and the
-      # `processing` service block) if you want to run without it entirely.
       ENABLE_TRANSCODING: ${ENABLE_TRANSCODING:-true}
       ENABLE_VIDEO_IMPORTS: ${ENABLE_VIDEO_IMPORTS:-true}
-      # Livestreaming feature flag - leave false unless the `streaming`
-      # service (below) is actually deployed and reachable.
       ENABLE_LIVESTREAM: ${ENABLE_LIVESTREAM:-false}
-      # RTMP ingest server (streaming service, below) and its HLS output.
       RTMP_INGEST_URL: ${RTMP_INGEST_URL:-rtmp://localhost:1935/live}
       HLS_BASE_URL: ${HLS_BASE_URL:-http://localhost:8888}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set - see .env.example}
@@ -112,52 +92,27 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-1}
       TRANSCODE_RECONCILE_CRON: ${TRANSCODE_RECONCILE_CRON:-*/5 * * * *}
       TRANSCODE_RECONCILE_STALE_MINUTES: ${TRANSCODE_RECONCILE_STALE_MINUTES:-15}
-      # Nightly Meilisearch reindex (API-side cron). Only relevant when
-      # ENABLE_ADVANCED_SEARCH=true above; the default in-process search
-      # backend stays instantly consistent and ignores these.
       SEARCH_REINDEX_ENABLED: ${SEARCH_REINDEX_ENABLED:-true}
       SEARCH_REINDEX_CRON: ${SEARCH_REINDEX_CRON:-0 3 * * *}
-      # Periodic notification email digest (API-side cron). "like"/"comment"/
-      # "subscription" notifications are queued instead of emailed one-by-one;
-      # this cron batches each user's outstanding queued notifications (max
-      # 20 per email, with a link to the rest) into a single email per run.
-      # Requires SMTP_HOST/MAIL_FROM_ADDRESS below to be set; otherwise a no-op.
       NOTIFICATION_EMAIL_DIGEST_ENABLED: ${NOTIFICATION_EMAIL_DIGEST_ENABLED:-true}
       NOTIFICATION_EMAIL_DIGEST_CRON: ${NOTIFICATION_EMAIL_DIGEST_CRON:-0 * * * *}
-      # Advanced search (Meilisearch) is optional. Leave ENABLE_ADVANCED_SEARCH
-      # unset/false to run without the search service.
       ENABLE_ADVANCED_SEARCH: ${ENABLE_ADVANCED_SEARCH:-true}
       MEILI_HOST: http://search:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_INDEX_NAME: ${MEILI_INDEX_NAME:-videos}
-      # Seeded admin user - optional, leave both blank in root .env to skip
-      # creating an admin account entirely.
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      # Demo accounts (User1/User2/Mod1, all password "password") - must stay
-      # false in any real deployment; defaults false since the image sets
-      # NODE_ENV=production regardless, but set explicitly for auditability.
       SEED_DEMO_USERS: ${SEED_DEMO_USERS:-false}
-      # Exposes GET /docs and GET /openapi.json publicly when true.
       ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
-      # Public registration and email verification are opt-in; unset in root
-      # .env leaves both disabled, matching webapi/.env.example defaults.
       ENABLE_ACCOUNT_REGISTRATION: ${ENABLE_ACCOUNT_REGISTRATION:-true}
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
-      # ENABLE_ACCOUNT_REGISTRATION: ${ENABLE_ACCOUNT_REGISTRATION:-false}
-      # REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
-      # Emails every admin with an email address set when a user completes
-      # email verification. Also requires SMTP_HOST/MAIL_FROM_ADDRESS below.
       ENABLE_ADMIN_NEW_USER_NOTIFICATIONS: ${ENABLE_ADMIN_NEW_USER_NOTIFICATIONS:-false}
-      # Outbound email (verification links). Email is enabled only when
-      # SMTP_HOST and MAIL_FROM_ADDRESS are both non-empty in root .env.
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-465}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_SECURE: ${SMTP_SECURE:-true}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
-      # Comma-separated allowed extensions per upload type.
       FILETYPES_ALLOWED: ${FILETYPES_ALLOWED:-mp4,mkv,webm,wav,mp3,m4a,aac,flac,ogg}
       FILETYPES_CONVERTIBLE: ${FILETYPES_CONVERTIBLE:-mov,avi,wmv,flv,mpg,mpeg,m4v,3gp,ts,wma,aiff,aif,amr}
       THUMBNAIL_FILETYPES_ALLOWED: ${THUMBNAIL_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
@@ -166,17 +121,10 @@ services:
       THEME_IMAGE_FILETYPES_ALLOWED: ${THEME_IMAGE_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:${WEBVIEW_PORT:-5173}}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:${PORT:-3000}}
-      # Allows the webview SPA's browser-side requests through CORS. Required
-      # because the webapi image sets NODE_ENV=production, which disables
-      # cross-origin requests entirely when this is unset (see
-      # webapi/lib/auth/cors.js).
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEBVIEW_PORT:-5173}}
       ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
-      # Nightly retry of failed duplicate-upload content-hash jobs (API-side
-      # cron). Only relevant when ENABLE_DUPLICATE_UPLOAD_DETECTION=true above.
       DUPLICATE_HASH_RECONCILE_ENABLED: ${DUPLICATE_HASH_RECONCILE_ENABLED:-true}
       DUPLICATE_HASH_RECONCILE_CRON: ${DUPLICATE_HASH_RECONCILE_CRON:-0 3 * * *}
-
     ports:
       - "${PORT:-3000}:3000"
     volumes:
@@ -189,6 +137,7 @@ services:
       retries: 5
       start_period: 15s
 
+  # Optional - see .env.example - If processing features are disabled you can remove or comment out this service
   processing:
     build:
       context: ./processing
@@ -202,8 +151,6 @@ services:
     environment:
       PORT: ${PROCESSING_PORT:-3001}
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
-      # Must match webapi's PUID/PGID above - both containers write into the
-      # shared media-data volume. See docker-entrypoint.sh.
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       MEDIA_STORAGE_DIRECTORY: /media
@@ -213,20 +160,8 @@ services:
       API_BASE_URL: http://webapi:3000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
       ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
-      # Optional off-hours window for duplicate-upload content-hash jobs -
-      # see the root .env.example comment above ENABLE_DUPLICATE_UPLOAD_DETECTION.
       HASH_GENERATION_WINDOW: ${HASH_GENERATION_WINDOW:-}
-    # Deliberately no `ports:` mapping — processing is internal-only and must
-    # be reached solely by `api` over the compose network (`http://processing:3001`).
-    # Also gated by INTERNAL_SERVICE_TOKEN (see processing/lib/require-internal-token.js)
-    # as defense-in-depth. Uncomment below only for local debugging.
-    # ports:
-    #   - "${PROCESSING_PORT:-3001}:3001"
-    # Passes the host's GPU render node through for hardware-accelerated
-    # transcoding (see ENABLE_HW_ACCELERATED_TRANSCODING/GPU_ACCELERATION_DEVICE
-    # in processing/.env). Commented out by default since most dev machines
-    # don't have this device - uncomment and adjust the path to match your
-    # GPU (`ls /dev/dri/` to find it) to test hardware transcoding locally.
+    # REQUIRED for hw accel transcoding
     # devices:
     #   - /dev/dri/renderD128:/dev/dri/renderD128
     volumes:
@@ -238,33 +173,31 @@ services:
       retries: 5
       start_period: 15s
 
-  streaming:
-    build:
-      context: ./streaming
-    container_name: justintube-streaming
-    restart: unless-stopped
-    depends_on:
-      webapi:
-        condition: service_healthy
-    environment:
-      API_BASE_URL: http://webapi:3000
-      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
-      # MediaMTX has no ${VAR} substitution inside mediamtx.yml, so the
-      # auth webhook URL (with the token baked into its query string, since
-      # authHTTPAddress can't send an Authorization header) is supplied as a
-      # config override via MediaMTX's MTX_<KEY> environment convention.
-      MTX_AUTHHTTPADDRESS: http://webapi:3000/internal/livestreams/mediamtx-auth?token=${INTERNAL_SERVICE_TOKEN}
-    ports:
-      # RTMP ingest (OBS) and HLS playback both need to be reachable
-      # directly by external clients, unlike processing's internal-only API.
-      - "1935:1935"
-      - "8888:8888"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9997/v3/config/global/get"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+  # Streaming is completely experimental. See .env.example - uncomment this if you turn it on
+  # No guarntees itll work tho lol
+  # streaming:
+  #   build:
+  #     context: ./streaming
+  #   container_name: justintube-streaming
+  #   restart: unless-stopped
+  #   depends_on:
+  #     webapi:
+  #       condition: service_healthy
+  #   environment:
+  #     API_BASE_URL: http://webapi:3000
+  #     INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
+  #     MTX_AUTHHTTPADDRESS: http://webapi:3000/internal/livestreams/mediamtx-auth?token=${INTERNAL_SERVICE_TOKEN}
+  #   ports:
+  #     # RTMP ingest (OBS) and HLS playback both need to be reachable
+  #     # directly by external clients
+  #     - "1935:1935"
+  #     - "8888:8888"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://127.0.0.1:9997/v3/config/global/get"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 10s
 
   webview:
     build:
@@ -275,17 +208,9 @@ services:
       webapi:
         condition: service_healthy
     environment:
-      # Runtime-injected at container start (see webview/docker-entrypoint.sh)
-      # - no image rebuild needed to change this or to promote the same image
-      # across environments.
       API_BASE_URL: ${API_BASE_URL:-http://localhost:3000}
-      # Doesn't need to match webapi/processing above - webview isn't on the
-      # media-data volume. See webview/docker-entrypoint.sh.
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
-      # Curated defaults for the admin "Output Container" dropdown - see the
-      # root .env.example comment for detail. UI convenience only, not a
-      # server-side allowlist.
       TRANSCODE_CONTAINER_OPTIONS: ${TRANSCODE_CONTAINER_OPTIONS:-mp4,webm}
     ports:
       - "${WEBVIEW_PORT:-5173}:8080"
