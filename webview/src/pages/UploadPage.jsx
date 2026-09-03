@@ -995,15 +995,13 @@ function UploadPage() {
                   onClick={handleRegenerateSubtitles}
                   disabled={subtitleRegenerating}
                 >
-                  {subtitleRegenerating ? 'Regenerating…' : 'Generate automatically'}
+                  {subtitleRegenerating ? 'Regenerating…' : 'Extract from File'}
                 </button>
               )}
             </div>
             {isEditMode && (
               <p className="upload-hint">
-                Automatically extracts a subtitle track from the video's original file, if one is
-                embedded. Replaces the current captions only if a track is actually found —
-                otherwise your existing captions are left as they are.
+                Add subtitles or attempt to auto-extract/generate (WIP) subtitles from the video file
               </p>
             )}
           </div>
