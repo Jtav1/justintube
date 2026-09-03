@@ -876,6 +876,16 @@ async function migrateVideoSubtitleLabels() {
     if (DB_CLIENT === "sqlite") {
       await sequelize.query("DROP INDEX `uq_video_subtitle_upload`");
     } else {
+      // MySQL refuses to drop an index that's still backing a foreign key
+      // (original_upload_id -> ORIGINAL_UPLOADS.id) with
+      // "Cannot drop index ... needed in a foreign key constraint" - add a
+      // plain, non-unique index on the same column first so the FK has
+      // something else to rely on, then the old unique one can go.
+      if (!(await indexExists(TABLE, "idx_video_subtitle_upload"))) {
+        await sequelize.query(
+          `ALTER TABLE \`${TABLE}\` ADD INDEX \`idx_video_subtitle_upload\` (\`original_upload_id\`)`,
+        );
+      }
       await sequelize.query(
         `ALTER TABLE \`${TABLE}\` DROP INDEX \`uq_video_subtitle_upload\``,
       );

@@ -22,6 +22,14 @@ module.exports = {
       allowNull: false,
     });
 
+    // uq_video_subtitle_upload also backs the original_upload_id foreign key
+    // (VIDEO_SUBTITLE -> ORIGINAL_UPLOADS) on MySQL - it refuses to drop an
+    // index still needed by a FK constraint ("Cannot drop index ... needed
+    // in a foreign key constraint"), so add a plain, non-unique index on the
+    // same column first for the FK to fall back on.
+    await queryInterface.addIndex("VIDEO_SUBTITLE", ["original_upload_id"], {
+      name: "idx_video_subtitle_upload",
+    });
     await queryInterface.removeConstraint("VIDEO_SUBTITLE", "uq_video_subtitle_upload");
   },
 
@@ -31,6 +39,7 @@ module.exports = {
       type: "unique",
       name: "uq_video_subtitle_upload",
     });
+    await queryInterface.removeIndex("VIDEO_SUBTITLE", "idx_video_subtitle_upload");
     await queryInterface.removeColumn("VIDEO_SUBTITLE", "label");
   },
 };
