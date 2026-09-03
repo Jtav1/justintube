@@ -215,6 +215,7 @@ services:
     ports:
       - "${WEBVIEW_PORT:-5173}:8080"
 
+# You probably definitely want to set these to be persistent. Vars are available in .env
 volumes:
   db-data:
   media-data:

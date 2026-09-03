@@ -6,7 +6,7 @@ for local (non-compose) dev instructions.
 
 ## 1. Overview / architecture
 
-Seven services, one Docker network:
+Six services start by default, one Docker network:
 
 | Service | Role | Reachable at |
 | --- | --- | --- |
@@ -15,20 +15,27 @@ Seven services, one Docker network:
 | `search` | Meilisearch, used when `ENABLE_ADVANCED_SEARCH=true` | `search:7700` (internal only) |
 | `webapi` | Public API (`/api/v1`), internal callback API (`/internal`) | published on `PORT` (default 3000) |
 | `processing` | yt-dlp downloads + ffmpeg transcodes, BullMQ worker | internal only, called by `webapi` |
-| `streaming` | RTMP ingest + HLS output for livestreaming (MediaMTX); only functional when `ENABLE_LIVESTREAM=true` on `webapi` | published on `1935` (RTMP) and `8888` (HLS) |
 | `webview` | React SPA served by nginx | published on `WEBVIEW_PORT` (default 5173) |
 
-`webapi` and `processing` authenticate each other's callbacks with a shared
-`INTERNAL_SERVICE_TOKEN` Bearer token (`streaming` uses the same token for its
-own callbacks — see §4). `webview` talks to `webapi` directly from the
-browser (cross-origin), not through an nginx proxy.
+A seventh service, `streaming` (RTMP ingest + HLS output for livestreaming
+via MediaMTX; would publish on `1935` (RTMP) and `8888` (HLS)), ships as a
+fully commented-out block in `docker-compose.yml` and does **not** start
+alongside the six above. Enabling livestreaming takes two separate steps:
+(1) uncomment the `streaming` service block in `docker-compose.yml`, and (2)
+set `ENABLE_LIVESTREAM=true` in `.env` so `webapi` exposes the stream-key/
+livestream routes. Setting the env var alone does nothing without also
+uncommenting the block — treat this feature as experimental/opt-in.
 
-All seven services start on `docker compose up`, regardless of feature flags
-— `ENABLE_LIVESTREAM=false` and `ENABLE_ADVANCED_SEARCH=false` disable the
-corresponding *app-level* features but don't stop `streaming`/`search` from
-running and (for `streaming`) publishing ports `1935`/`8888`. If you don't
-want a container running at all, comment out its service block (and remove
-any `depends_on` entry pointing at it — see §12 for `processing` specifically).
+`webapi` and `processing` authenticate each other's callbacks with a shared
+`INTERNAL_SERVICE_TOKEN` Bearer token (`streaming`, once enabled, uses the
+same token for its own callbacks — see §4). `webview` talks to `webapi`
+directly from the browser (cross-origin), not through an nginx proxy.
+
+All six default services start on `docker compose up` regardless of feature
+flags — `ENABLE_ADVANCED_SEARCH=false` disables the app-level search feature
+but doesn't stop `search` itself from running. If you don't want a container
+running at all, comment out its service block (and remove any `depends_on`
+entry pointing at it — see §12 for `processing` specifically).
 
 ## 2. TLS (external, not included in this stack)
 
@@ -49,7 +56,7 @@ cp .env.example .env
 # edit .env: fill in every REQUIRED secret, set PUBLIC_APP_URL/PUBLIC_API_URL/
 # CORS_ORIGIN/API_BASE_URL to your real hostname(s)
 docker compose up -d --build
-docker compose ps   # wait for db/redis/search/webapi/processing/streaming to show healthy (see §13)
+docker compose ps   # wait for db/redis/search/webapi/processing to show healthy (see §14)
 ```
 
 `docker compose up` fails immediately with a clear error naming the missing
@@ -63,7 +70,7 @@ no silent fallback to a weak default secret.
 | `MYSQL_ROOT_PASSWORD` | `db` | `openssl rand -hex 32` |
 | `MYSQL_PASSWORD` | `db`, `webapi` | `openssl rand -hex 32` |
 | `MEILI_MASTER_KEY` | `search`, `webapi` | `openssl rand -hex 32` |
-| `INTERNAL_SERVICE_TOKEN` | `webapi`, `processing`, `streaming` | `openssl rand -hex 32` |
+| `INTERNAL_SERVICE_TOKEN` | `webapi`, `processing`, `streaming` (if enabled — see §1) | `openssl rand -hex 32` |
 | `REDIS_PASSWORD` | `redis`, `processing` | `openssl rand -hex 32` |
 | `SESSION_SECRET` | `webapi` (cookie signing) | `openssl rand -hex 32` |
 
@@ -98,9 +105,9 @@ services:
 Note `redis` requires `--requirepass` (wired from `REDIS_PASSWORD`) and
 `AUTH`; most Redis GUIs will prompt for a password.
 
-Unlike `db`/`redis`/`search`, the `streaming` service (only relevant when
-`ENABLE_LIVESTREAM=true`) publishes ports `1935` (RTMP ingest) and `8888`
-(HLS playback) **by design** — OBS (or any RTMP encoder) and viewers'
+Unlike `db`/`redis`/`search`, the `streaming` service — commented out by
+default, see §1 — publishes ports `1935` (RTMP ingest) and `8888` (HLS
+playback) **by design** once enabled: OBS (or any RTMP encoder) and viewers'
 browsers both need to reach it directly from outside the Docker host, unlike
 `processing`'s internal-only API. Set `RTMP_INGEST_URL`/`HLS_BASE_URL` in
 `.env` to this host's real public hostname/IP (not `localhost`) and make sure
@@ -206,9 +213,14 @@ stack, comment out (or delete) both the `processing` service block and that
 
 ## 13. Storage directory provisioning
 
-`webapi` and `processing` both run as a non-root `app` user (uid/gid 1001 by
-default, reconciled to `PUID`/`PGID` env vars at container start — see each
-`docker-entrypoint.sh`). On first boot against a fresh named volume or a
+`webapi` and `processing` both run as a non-root `app` user. Each image
+bakes uid/gid 1001 at build time, but `docker-compose.yml` sets `PUID`/`PGID`
+to `1000`/`1000` by default (matching root `.env.example`), and each
+`docker-entrypoint.sh` reconciles the `app` user to whatever `PUID`/`PGID` it
+receives at container start — so under `docker compose up` the effective
+default is uid/gid 1000, not the baked-in 1001. Set `PUID`/`PGID` explicitly
+in `.env` if you need files owned by a specific existing host user/group. On
+first boot against a fresh named volume or a
 bind-mounted host path that doesn't exist yet, Docker creates the mount point
 as `root`; each entrypoint then `chown -R`s its writable mount points
 (`/media`, `/sitedata`, `/data/shared`) to the `app` user before dropping
@@ -219,12 +231,16 @@ any of these paths, including on a completely fresh deployment.
 
 ## 14. Health checks & startup ordering
 
-`db`, `redis`, `search`, `webapi`, `processing`, and `streaming` all have
-Docker `healthcheck:` blocks (`webview` is the only service without one).
+`db`, `redis`, `search`, `webapi`, and `processing` each declare a
+`healthcheck:` block directly in `docker-compose.yml`; `streaming` (once
+enabled — see §1) declares one too. `webview` doesn't declare one in
+`docker-compose.yml`, but its image bakes in its own `HEALTHCHECK`
+instruction (`webview/Dockerfile`), which Compose picks up the same way —
+so every service ends up reporting a health status, `webview` included.
 `webapi` waits for `db` and `processing` to report healthy before starting;
-`streaming` and `webview` both wait for `webapi`. `docker compose ps` shows
-each service's health status — expect a `starting` → `healthy` transition
-over the first ~15-30 seconds per service.
+`webview` (and `streaming`, once enabled) wait for `webapi`. `docker compose
+ps` shows each service's health status — expect a `starting` → `healthy`
+transition over the first ~15-30 seconds per service.
 
 ## 15. Explicitly out of scope
 
