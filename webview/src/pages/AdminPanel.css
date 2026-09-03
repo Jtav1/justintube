@@ -197,6 +197,16 @@
   margin-left: auto;
 }
 
+.admin-jobs-history-video-link {
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-jobs-history-video-link:hover {
+  text-decoration: underline;
+}
+
 .admin-jobs-history-reason {
   flex-basis: 100%;
   color: #d33;

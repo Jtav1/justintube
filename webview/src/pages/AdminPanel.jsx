@@ -712,6 +712,15 @@ function AdminPanel() {
                     <span className="admin-jobs-history-time">
                       {formatRelativeDate(item.finishedOn)}
                     </span>
+                    {item.videoId != null && (
+                      <Link
+                        to={`/video?v=${encodeURIComponent(item.videoId)}`}
+                        className="admin-jobs-history-video-link"
+                        title={`Upload #${item.uploadId}`}
+                      >
+                        #{item.uploadId} &middot; {item.videoId}
+                      </Link>
+                    )}
                     {item.failedReason && (
                       <span className="admin-jobs-history-reason">{item.failedReason}</span>
                     )}
