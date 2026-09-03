@@ -587,6 +587,36 @@ function VideoPlayer({
     setCaptionsMenuOpen(false)
   }
 
+  // <audio> has no visual surface for a <track>'s cues to render onto (only
+  // <video> gets the browser's built-in burned-in caption rendering), so for
+  // the audio-only player, the active cue's text is tracked here and shown
+  // as a plain text row instead (video-player-audio-caption below).
+  const [activeCueText, setActiveCueText] = useState('')
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!isAudio || !el || selectedSubtitleId == null) {
+      setActiveCueText('')
+      return undefined
+    }
+    const activeIndex = subtitles.findIndex((s) => s.id === selectedSubtitleId)
+    const track = el.textTracks[activeIndex]
+    if (!track) {
+      return undefined
+    }
+
+    function updateActiveCue() {
+      const cue = track.activeCues && track.activeCues[0]
+      setActiveCueText(cue ? String(cue.text).replace(/<[^>]*>/g, '') : '')
+    }
+
+    track.addEventListener('cuechange', updateActiveCue)
+    updateActiveCue()
+    return () => {
+      track.removeEventListener('cuechange', updateActiveCue)
+    }
+  }, [isAudio, selectedSubtitleId, subtitles, memoizedSrc])
+
   function handleFirstPlay() {
     if (viewRecordedRef.current) {
       return
@@ -725,13 +755,26 @@ function VideoPlayer({
               src={memoizedSrc}
               controls
               loop={loop}
+              crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
               className="video-player-audio-element"
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handleFirstPlay}
               onEnded={handleEnded}
               onVolumeChange={handleVolumeChange}
               onError={handlePlaybackError}
-            />
+            >
+              {subtitles.map((subtitle) => (
+                <track
+                  key={subtitle.id}
+                  kind="subtitles"
+                  label={subtitle.label}
+                  src={`${apiClient.defaults.baseURL}${subtitle.url}`}
+                />
+              ))}
+            </audio>
+            {selectedSubtitleId != null && activeCueText && (
+              <p className="video-player-audio-caption">{activeCueText}</p>
+            )}
           </div>
         ) : (
           <video
@@ -824,7 +867,7 @@ function VideoPlayer({
           >
             <Repeat size={18} />
           </button>
-          {!isAudio && subtitles.length > 0 && (
+          {subtitles.length > 0 && (
             <div className="video-player-captions" ref={captionsMenuRef}>
               <button
                 type="button"
