@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { listMyReports, listReports } from '../api/reports.js'
@@ -72,14 +71,6 @@ function ReportsPage() {
     <section className="reports-page">
       <div className="reports-page-header">
         <h1>Reports</h1>
-        <button
-          type="button"
-          className="reports-page-new"
-          onClick={() => navigate('/reports/new', { state: { link: window.location.href } })}
-        >
-          <Plus size={16} />
-          New Report
-        </button>
       </div>
 
       {!loading && items.length === 0 && <p className="reports-page-empty">No reports yet.</p>}

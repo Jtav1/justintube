@@ -200,8 +200,7 @@
 }
 
 .profile-banner-edit,
-.profile-banner-remove,
-.profile-banner-report {
+.profile-banner-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -215,8 +214,7 @@
 }
 
 .profile-banner-edit:hover,
-.profile-banner-remove:hover,
-.profile-banner-report:hover {
+.profile-banner-remove:hover {
   background: var(--accent-bg);
 }
 

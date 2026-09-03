@@ -82,7 +82,6 @@ function pickDefaultRendition(renditions) {
 function VideoPlayer({
   video,
   onRemoveFromPlaylist,
-  onReport,
   autoplayEnabled = false,
   onAutoplayNext,
   onAutoplayChange,
@@ -1151,17 +1150,6 @@ function VideoPlayer({
               onClick={onRemoveFromPlaylist}
             >
               <ListMinus size={18} />
-            </button>
-          )}
-          {onReport && (
-            <button
-              type="button"
-              className="video-player-icon-btn"
-              aria-label="Report"
-              title="Report"
-              onClick={onReport}
-            >
-              <TriangleAlert size={18} />
             </button>
           )}
           <div className="video-player-reaction-group">

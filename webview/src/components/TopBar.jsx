@@ -12,6 +12,36 @@ import ThemeSelector from './ThemeSelector.jsx'
 import NotificationBell from './NotificationBell.jsx'
 import './TopBar.css'
 
+/**
+ * Picks a default report category (and, where resolvable from the URL
+ * alone, a target reference) for the given location - Video on a video
+ * watch page, User on a profile page, Playlist on a playlist page,
+ * otherwise Site. TopBar renders once inside AppLayout rather than under a
+ * route scoped to any one of these paths, so this reads `pathname`/
+ * `searchParams` directly instead of `useParams()` (which would be empty
+ * here).
+ *
+ * @param {string} pathname Current `location.pathname`.
+ * @param {URLSearchParams} searchParams Current `location.search`, parsed.
+ * @returns {{reportType: string, videoPublicId?: string, username?: string, playlistId?: string}}
+ *   Report-form prefill fields; only `reportType` is present for `'website'`.
+ */
+function reportContextFor(pathname, searchParams) {
+  if (pathname === '/video') {
+    const videoPublicId = searchParams.get('v')
+    return videoPublicId ? { reportType: 'video', videoPublicId } : { reportType: 'website' }
+  }
+  const userMatch = /^\/users\/([^/]+)$/.exec(pathname)
+  if (userMatch) {
+    return { reportType: 'user', username: decodeURIComponent(userMatch[1]) }
+  }
+  const playlistMatch = /^\/playlists\/([^/]+)$/.exec(pathname)
+  if (playlistMatch && playlistMatch[1] !== 'new') {
+    return { reportType: 'playlist', playlistId: playlistMatch[1] }
+  }
+  return { reportType: 'website' }
+}
+
 function TopBar({ onToggleSidebar, backgroundUrl }) {
   const { user, logout } = useAuth()
   const { livestreamEnabled } = useSiteConfig()
@@ -254,7 +284,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             title="Report an issue"
             onClick={() =>
               navigate('/reports/new', {
-                state: { reportType: 'website', link: window.location.href },
+                state: { ...reportContextFor(location.pathname, searchParams), link: window.location.href },
               })
             }
           >

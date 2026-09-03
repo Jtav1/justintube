@@ -74,6 +74,10 @@
   color: var(--text);
 }
 
+.report-form-target-error {
+  color: #d33;
+}
+
 .report-form-meta {
   display: flex;
   align-items: center;
