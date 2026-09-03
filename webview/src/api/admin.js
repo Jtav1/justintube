@@ -40,8 +40,9 @@ export async function getUploadFileTree(identifier) {
 
 /**
  * Summarizes the live processing queue's currently non-terminal jobs,
- * bucketed by job kind and BullMQ state.
- * @returns {Promise<{counts: object, total: number}>}
+ * bucketed by job kind and BullMQ state, alongside whether the processing
+ * service itself is currently healthy/reachable.
+ * @returns {Promise<{counts: object, total: number, healthy: boolean}>}
  */
 export async function getAdminJobQueue() {
   const res = await apiClient.get('/api/v1/admin/jobs/queue')

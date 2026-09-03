@@ -12,7 +12,7 @@ const notifySubtitleComplete = jest.fn();
 const notifySubtitleFailed = jest.fn();
 const probeEmbeddedThumbnailStream = jest.fn();
 const probeHasVideoStream = jest.fn();
-const probeSubtitleStreams = jest.fn();
+const probeAllSubtitleStreams = jest.fn();
 const resolveThumbnailOutputPath = jest.fn();
 const resolveThumbnailInputPath = jest.fn();
 const resolveTranscodedOutputPath = jest.fn();
@@ -33,7 +33,7 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   probeStreamCodecs: jest.fn(),
   probeEmbeddedThumbnailStream,
   probeHasVideoStream,
-  probeSubtitleStreams,
+  probeAllSubtitleStreams,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -208,7 +208,9 @@ function makeSubtitleJob(dataOverrides = {}) {
     data: {
       kind: "subtitle",
       inputFilename: "clip.mp4",
-      outputFilename: "subtitle-abc123-uuid.vtt",
+      // A prefix, not a final filename - processSubtitleJob appends
+      // "-<index>.vtt" per extracted stream.
+      outputFilename: "subtitle-abc123-uuid",
       ...dataOverrides,
     },
     updateProgress: jest.fn().mockResolvedValue(undefined),
@@ -217,7 +219,7 @@ function makeSubtitleJob(dataOverrides = {}) {
 
 describe("processTranscodeJob (kind: subtitle)", () => {
   beforeEach(() => {
-    probeSubtitleStreams.mockReset();
+    probeAllSubtitleStreams.mockReset();
     resolveSubtitleOutputPath.mockReset().mockImplementation((f) => `/media/subtitles/${f}`);
     buildSubtitleFfmpegArgs.mockReset().mockReturnValue(["subtitle-args"]);
     runFfmpeg.mockReset().mockResolvedValue(undefined);
@@ -226,53 +228,75 @@ describe("processTranscodeJob (kind: subtitle)", () => {
     notifySubtitleFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
   });
 
-  test("extracts the first text-based subtitle stream found", async () => {
-    probeSubtitleStreams.mockResolvedValue({ streamIndex: 3, subtitleCodec: "subrip" });
+  test("extracts every text-based subtitle stream found, one .vtt per stream", async () => {
+    probeAllSubtitleStreams.mockResolvedValue([
+      { streamIndex: 3, subtitleCodec: "subrip", language: "eng", title: "" },
+      { streamIndex: 4, subtitleCodec: "mov_text", language: "spa", title: "Spanish" },
+    ]);
     const job = makeSubtitleJob();
 
     const result = await processTranscodeJob(job);
 
-    expect(buildSubtitleFfmpegArgs).toHaveBeenCalledWith({
+    expect(buildSubtitleFfmpegArgs).toHaveBeenNthCalledWith(1, {
       inputPath: "/media/original/clip.mp4",
-      outputPath: "/media/subtitles/subtitle-abc123-uuid.vtt",
+      outputPath: "/media/subtitles/subtitle-abc123-uuid-0.vtt",
       streamIndex: 3,
     });
-    expect(runFfmpeg).toHaveBeenCalledWith(["subtitle-args"]);
-    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", {
-      subtitleFilename: "subtitle-abc123-uuid.vtt",
+    expect(buildSubtitleFfmpegArgs).toHaveBeenNthCalledWith(2, {
+      inputPath: "/media/original/clip.mp4",
+      outputPath: "/media/subtitles/subtitle-abc123-uuid-1.vtt",
+      streamIndex: 4,
     });
-    expect(result).toEqual({ outputFilename: "subtitle-abc123-uuid.vtt" });
+    expect(runFfmpeg).toHaveBeenCalledTimes(2);
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", {
+      subtitles: [
+        { outputFilename: "subtitle-abc123-uuid-0.vtt", language: "eng", title: "" },
+        { outputFilename: "subtitle-abc123-uuid-1.vtt", language: "spa", title: "Spanish" },
+      ],
+    });
+    expect(result).toEqual({ outputFilename: "subtitle-abc123-uuid", extracted: 2 });
   });
 
-  test("skips gracefully and resolves when no subtitle stream is found", async () => {
-    probeSubtitleStreams.mockResolvedValue(null);
+  test("reports an empty subtitles array (not a failure) when no stream is found", async () => {
+    probeAllSubtitleStreams.mockResolvedValue([]);
     const job = makeSubtitleJob();
 
     const result = await processTranscodeJob(job);
 
     expect(buildSubtitleFfmpegArgs).not.toHaveBeenCalled();
     expect(runFfmpeg).not.toHaveBeenCalled();
-    expect(notifySubtitleFailed).toHaveBeenCalledWith(
-      "subtitle-abc123-uuid",
-      "no text-based subtitle stream found",
-    );
-    expect(notifySubtitleComplete).not.toHaveBeenCalled();
+    expect(notifySubtitleFailed).not.toHaveBeenCalled();
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", { subtitles: [] });
     expect(result).toEqual({ outputFilename: null, skipped: "no_subtitle_stream" });
   });
 
-  test("skips gracefully (does not attempt a guessed extraction) when the probe itself fails", async () => {
-    probeSubtitleStreams.mockRejectedValue(new Error("ffprobe exited with code 1"));
+  test("reports an empty subtitles array (does not attempt a guessed extraction) when the probe itself fails", async () => {
+    probeAllSubtitleStreams.mockRejectedValue(new Error("ffprobe exited with code 1"));
     const job = makeSubtitleJob();
 
     const result = await processTranscodeJob(job);
 
     expect(buildSubtitleFfmpegArgs).not.toHaveBeenCalled();
     expect(runFfmpeg).not.toHaveBeenCalled();
-    expect(notifySubtitleFailed).toHaveBeenCalledWith(
-      "subtitle-abc123-uuid",
-      "no text-based subtitle stream found",
-    );
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", { subtitles: [] });
     expect(result).toEqual({ outputFilename: null, skipped: "no_subtitle_stream" });
+  });
+
+  test("skips a stream whose ffmpeg conversion fails, still reporting the others", async () => {
+    probeAllSubtitleStreams.mockResolvedValue([
+      { streamIndex: 3, subtitleCodec: "subrip", language: "eng", title: "" },
+      { streamIndex: 4, subtitleCodec: "mov_text", language: "spa", title: "" },
+    ]);
+    runFfmpeg.mockReset().mockRejectedValueOnce(new Error("ffmpeg exploded")).mockResolvedValueOnce(undefined);
+    const job = makeSubtitleJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(runFfmpeg).toHaveBeenCalledTimes(2);
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", {
+      subtitles: [{ outputFilename: "subtitle-abc123-uuid-1.vtt", language: "spa", title: "" }],
+    });
+    expect(result).toEqual({ outputFilename: "subtitle-abc123-uuid", extracted: 1 });
   });
 });
 
@@ -553,6 +577,7 @@ describe("getQueueJobs", () => {
     const queue = {
       getJobs: jest.fn((states) => {
         if (states[0] === "waiting") return Promise.resolve([makeQueuedJob("w1", "rendition")]);
+        if (states[0] === "prioritized") return Promise.resolve([makeQueuedJob("p1", "subtitle")]);
         if (states[0] === "active") return Promise.resolve([makeQueuedJob("a1", "thumbnail")]);
         if (states[0] === "delayed") return Promise.resolve([makeQueuedJob("d1", "hash")]);
         return Promise.resolve([]);
@@ -563,10 +588,34 @@ describe("getQueueJobs", () => {
 
     expect(jobs).toEqual([
       { jobId: "w1", kind: "rendition", name: "ffmpeg-rendition", state: "waiting", truncated: false },
+      { jobId: "p1", kind: "subtitle", name: "ffmpeg-subtitle", state: "prioritized", truncated: false },
       { jobId: "a1", kind: "thumbnail", name: "ffmpeg-thumbnail", state: "active", truncated: false },
       { jobId: "d1", kind: "hash", name: "ffmpeg-hash", state: "delayed", truncated: false },
     ]);
     expect(getState).not.toHaveBeenCalled();
+  });
+
+  test("counts a job added with a priority (the common case here) as 'prioritized', not 'waiting'", async () => {
+    // Mirrors real BullMQ v5 behavior: every job in this app is enqueued
+    // with an explicit priority (JOB_PRIORITY_BY_KIND), so it lands in the
+    // separate "prioritized" set until a worker slot opens up - "waiting"
+    // stays empty except for the instant BullMQ promotes a job right before
+    // dispatch. This is what previously made the admin queue view look like
+    // only the active jobs existed.
+    const queue = {
+      getJobs: jest.fn((states) =>
+        states[0] === "prioritized"
+          ? Promise.resolve([makeQueuedJob("p1", "rendition"), makeQueuedJob("p2", "rendition")])
+          : Promise.resolve([]),
+      ),
+    };
+
+    const jobs = await getQueueJobs(queue);
+
+    expect(jobs).toEqual([
+      { jobId: "p1", kind: "rendition", name: "ffmpeg-rendition", state: "prioritized", truncated: false },
+      { jobId: "p2", kind: "rendition", name: "ffmpeg-rendition", state: "prioritized", truncated: false },
+    ]);
   });
 
   test("defaults kind to 'rendition' when job.data.kind is unset", async () => {

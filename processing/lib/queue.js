@@ -25,10 +25,10 @@ import {
 import {
   collectOutputMetadata,
   computeContentHash,
+  probeAllSubtitleStreams,
   probeEmbeddedThumbnailStream,
   probeHasVideoStream,
   probeStreamCodecs,
-  probeSubtitleStreams,
 } from "./probe.js";
 import {
   buildEmbedFfmpegArgs,
@@ -261,10 +261,17 @@ async function processThumbnailJob(job) {
  * treated the same as a probe that *succeeded but found nothing*: both skip
  * gracefully rather than attempt a guessed `-map 0:s:0`.
  *
+ * A source may embed more than one text stream (e.g. one per language), so
+ * every stream the probe finds is extracted into its own `.vtt` file
+ * (`${outputFilename}-<index>.vtt`, `outputFilename` here being a job-scoped
+ * prefix rather than a final filename) and reported in a single completion
+ * callback. One stream failing to convert doesn't fail the whole job — it's
+ * logged and skipped so the others still get extracted.
+ *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
  *   `inputFilename` and `outputFilename`.
- * @returns {Promise<{ outputFilename: string|null, skipped?: string }>}
+ * @returns {Promise<{ outputFilename: string|null, extracted?: number, skipped?: string }>}
  *   Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails unexpectedly.
  */
@@ -279,11 +286,10 @@ async function processSubtitleJob(job) {
   await job.updateProgress(10);
 
   const inputPath = resolveOriginalInputPath(inputFilename);
-  const outputPath = resolveSubtitleOutputPath(outputFilename);
 
-  let found = null;
+  let found = [];
   try {
-    found = await probeSubtitleStreams(inputPath);
+    found = await probeAllSubtitleStreams(inputPath);
   } catch (err) {
     logger.error(
       { err },
@@ -291,37 +297,51 @@ async function processSubtitleJob(job) {
     );
   }
 
-  if (found == null) {
+  if (found.length === 0) {
     logger.info(`[subtitle ${jobId}] source has no text-based subtitle stream; skipping`);
-    const notify = await notifySubtitleFailed(jobId, "no text-based subtitle stream found");
+    const notify = await notifySubtitleComplete(jobId, { subtitles: [] });
     if (!notify.ok) {
       logger.error(
         { error: notify.error },
-        `failed to notify API of skipped subtitle ${jobId}`,
+        `failed to notify API of empty subtitle extraction ${jobId}`,
       );
     }
     await job.updateProgress(100);
     return { outputFilename: null, skipped: "no_subtitle_stream" };
   }
 
-  logger.info(
-    `[subtitle ${jobId}] extracting subtitle stream 0:${found.streamIndex} (${found.subtitleCodec})`,
-  );
+  await job.updateProgress(20);
 
-  const args = buildSubtitleFfmpegArgs({
-    inputPath,
-    outputPath,
-    streamIndex: found.streamIndex,
-  });
+  const extracted = [];
+  for (const [index, stream] of found.entries()) {
+    const streamOutputFilename = `${outputFilename}-${index}.vtt`;
+    const outputPath = resolveSubtitleOutputPath(streamOutputFilename);
+    try {
+      logger.info(
+        `[subtitle ${jobId}] extracting subtitle stream 0:${stream.streamIndex} (${stream.subtitleCodec})`,
+      );
+      const args = buildSubtitleFfmpegArgs({
+        inputPath,
+        outputPath,
+        streamIndex: stream.streamIndex,
+      });
+      await runFfmpeg(args);
+      await stat(outputPath);
+      extracted.push({
+        outputFilename: streamOutputFilename,
+        language: stream.language,
+        title: stream.title,
+      });
+    } catch (err) {
+      logger.error(
+        { err },
+        `[subtitle ${jobId}] failed to extract stream 0:${stream.streamIndex}; skipping it`,
+      );
+    }
+    await job.updateProgress(20 + Math.round(((index + 1) / found.length) * 60));
+  }
 
-  await job.updateProgress(40);
-  await runFfmpeg(args);
-  await stat(outputPath);
-  await job.updateProgress(80);
-
-  const notify = await notifySubtitleComplete(jobId, {
-    subtitleFilename: outputFilename,
-  });
+  const notify = await notifySubtitleComplete(jobId, { subtitles: extracted });
   if (!notify.ok) {
     logger.error(
       { error: notify.error },
@@ -331,9 +351,11 @@ async function processSubtitleJob(job) {
 
   await job.updateProgress(100);
 
-  logger.info(`[subtitle ${jobId}] processing completed: ${outputFilename}`);
+  logger.info(
+    `[subtitle ${jobId}] processing completed: ${extracted.length}/${found.length} stream(s) extracted`,
+  );
 
-  return { outputFilename };
+  return { outputFilename, extracted: extracted.length };
 }
 
 /**
@@ -956,25 +978,34 @@ export async function retryFailedHashJobs(queue) {
 }
 
 /**
- * Maximum number of jobs fetched per non-terminal state (waiting/active/
- * delayed) by {@link getQueueJobs}, guarding against unbounded memory use if
- * the queue somehow grows very large. Self-hosted deployments run a single
- * worker at low concurrency, so real queue depth is expected to stay far
- * below this.
+ * Maximum number of jobs fetched per non-terminal state (waiting/prioritized/
+ * active/delayed) by {@link getQueueJobs}, guarding against unbounded memory
+ * use if the queue somehow grows very large. Self-hosted deployments run a
+ * single worker at low concurrency, so real queue depth is expected to stay
+ * far below this.
  *
  * @type {number}
  */
 export const QUEUE_JOBS_CAP_PER_STATE = 500;
 
 /**
- * Lists every currently non-terminal job (waiting, active, or delayed)
- * across all job kinds, each tagged with its state. Fetches each state
- * separately rather than one combined call plus a per-job `job.getState()`
- * round trip - the state is already known from which fetch returned the job.
- * A job mid-retry-backoff (BullMQ moves a failed-but-retryable job to
- * "delayed" until `attemptsMade` reaches the configured `attempts`) or a
- * hash job deferred by `HASH_GENERATION_WINDOW` both correctly surface here
+ * Lists every currently non-terminal job (waiting, prioritized, active, or
+ * delayed) across all job kinds, each tagged with its state. Fetches each
+ * state separately rather than one combined call plus a per-job
+ * `job.getState()` round trip - the state is already known from which fetch
+ * returned the job. A job mid-retry-backoff (BullMQ moves a failed-but-retryable
+ * job to "delayed" until `attemptsMade` reaches the configured `attempts`) or
+ * a hash job deferred by `HASH_GENERATION_WINDOW` both correctly surface here
  * as "delayed" - both are legitimately still in flight, not terminal.
+ *
+ * "prioritized" is its own BullMQ v5 job state, distinct from "waiting" -
+ * every job here is enqueued with an explicit `priority` (see
+ * `JOB_PRIORITY_BY_KIND`), and BullMQ holds any job added with a priority in
+ * a separate prioritized set until a worker slot actually opens up, only
+ * then promoting it to "waiting" for the instant it takes to be picked up.
+ * With this app's low worker concurrency, that means nearly every not-yet-
+ * running job sits in "prioritized", not "waiting" - omitting it here would
+ * make the admin queue view look like only the handful of active jobs exist.
  *
  * @param {import('bullmq').Queue} queue Transcode queue instance.
  * @param {{ capPerState?: number }} [options] Per-state fetch cap override (tests only).
@@ -982,13 +1013,14 @@ export const QUEUE_JOBS_CAP_PER_STATE = 500;
  *   jobId: string,
  *   kind: string,
  *   name: string,
- *   state: "waiting"|"active"|"delayed",
+ *   state: "waiting"|"prioritized"|"active"|"delayed",
  *   truncated: boolean
  * }>>} Non-terminal jobs across all states.
  */
 export async function getQueueJobs(queue, { capPerState = QUEUE_JOBS_CAP_PER_STATE } = {}) {
-  const [waiting, active, delayed] = await Promise.all([
+  const [waiting, prioritized, active, delayed] = await Promise.all([
     queue.getJobs(["waiting"], 0, capPerState - 1),
+    queue.getJobs(["prioritized"], 0, capPerState - 1),
     queue.getJobs(["active"], 0, capPerState - 1),
     queue.getJobs(["delayed"], 0, capPerState - 1),
   ]);
@@ -1002,7 +1034,12 @@ export async function getQueueJobs(queue, { capPerState = QUEUE_JOBS_CAP_PER_STA
       truncated: jobs.length >= capPerState,
     }));
 
-  return [...tag(waiting, "waiting"), ...tag(active, "active"), ...tag(delayed, "delayed")];
+  return [
+    ...tag(waiting, "waiting"),
+    ...tag(prioritized, "prioritized"),
+    ...tag(active, "active"),
+    ...tag(delayed, "delayed"),
+  ];
 }
 
 /**

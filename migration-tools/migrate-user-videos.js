@@ -284,10 +284,23 @@ async function migrateVideo(row, ctx, entry) {
     return;
   }
 
+  // Resolved up front (not just inside the "uploaded" step below) so the
+  // upload call itself knows whether a MediaCMS thumbnail is actually
+  // available to reuse. `skipThumbnail` must only be sent when one is -
+  // sending it unconditionally (as this previously did) suppressed
+  // justintube's own auto-generated-frame fallback too, so any row missing
+  // (or with a moved/renamed) MediaCMS thumbnail ended up with no thumbnail
+  // at all and no job ever queued to fix that.
+  const thumbPath =
+    resolveMediaPath(ctx.mediaRoot, row.uploaded_thumbnail) ||
+    resolveMediaPath(ctx.mediaRoot, row.thumbnail);
+
   if (entry.status === "pending" || !entry.justintubeVideoId) {
     const form = new FormData();
     form.append("file", await openAsBlob(originalPath), path.basename(row.media_file));
-    form.append("skipThumbnail", "true");
+    if (thumbPath) {
+      form.append("skipThumbnail", "true");
+    }
     const uploadBody = await apiRequest(
       `${ctx.apiBaseUrl}/videos/upload`,
       { method: "POST", headers: authHeaders, body: form },
@@ -300,9 +313,6 @@ async function migrateVideo(row, ctx, entry) {
   const videoId = entry.justintubeVideoId;
 
   if (entry.status === "uploaded") {
-    const thumbPath =
-      resolveMediaPath(ctx.mediaRoot, row.uploaded_thumbnail) ||
-      resolveMediaPath(ctx.mediaRoot, row.thumbnail);
     if (thumbPath) {
       const form = new FormData();
       form.append("file", await openAsBlob(thumbPath), path.basename(thumbPath));
@@ -312,6 +322,10 @@ async function migrateVideo(row, ctx, entry) {
         "thumbnail",
       );
     }
+    // No MediaCMS thumbnail to reuse - since skipThumbnail wasn't sent
+    // above, justintube already queued its own auto-generated-frame
+    // thumbnail job as part of the normal upload flow; nothing further to
+    // do here.
     entry.status = "thumbnail_set";
   }
 

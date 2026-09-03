@@ -259,11 +259,13 @@ describe("thumbnail job validation and ffmpeg args", () => {
 
   test("validateTranscodeJob accepts a subtitle job with only jobId + outputFilename, no profile", () => {
     const jobId = "subtitle-abc123-uuid";
+    // outputFilename is a prefix here, not a final filename - processing
+    // appends "-<index>.vtt" per extracted stream.
     expect(
-      validateTranscodeJob({ jobId, outputFilename: "abc123.vtt", kind: "subtitle" }, 0),
+      validateTranscodeJob({ jobId, outputFilename: "abc123", kind: "subtitle" }, 0),
     ).toEqual({
       jobId,
-      outputFilename: "abc123.vtt",
+      outputFilename: "abc123",
       kind: "subtitle",
     });
   });

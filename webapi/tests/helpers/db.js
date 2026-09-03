@@ -341,6 +341,7 @@ export async function seedVideoSubtitle(originalUploadId, overrides = {}) {
     originalUploadId,
     subtitleFilename: `${randomUUID()}.vtt`,
     source: "auto",
+    label: "Subtitle",
     ...overrides,
   };
 

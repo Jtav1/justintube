@@ -25,6 +25,10 @@ Requires **Node.js 20.6+** for `webapi/` and `webview/`, and `processing/`. The 
 
 ### Running the entire project
 
+Copy the .env.example to .env and then customize it to your liking. REQUIRED stuff must be set, OPTIONAL is up to you, DEFAULTS can be left, and then EXPERIMENTAL do what you want man see what happens
+
+Once you do that, you can run the docker-compose.yml. Make sure you completely read the .env and docker-compose first. Make sure you know whats going on. 
+
 ```bash
 cp .env.example .env   # fill in required secrets - see docs/deployment.md
 docker compose up -d --build
@@ -77,6 +81,7 @@ More detail: [webapi/README.md](webapi/README.md).
 | [`webview/`](webview/) | Web frontend (React + Vite) |
 | [`docs/`](docs/) | Product notes, API checklist, [code standards](docs/code-standards.md), [deployment](docs/deployment.md) |
 | [`docker-compose.yml`](docker-compose.yml) | Full stack: MySQL, Redis, Meilisearch, API, processing, web view |
+| [`migration-tools`](migration-tools/) | Tools for migrating from other systems to justintube (incl Mediacms) |
 
 If you're going to contribute, reference the code standards doc linked above. Or like tell your AI tool to read it and make sure your changes comply. Which is what I do. 
 

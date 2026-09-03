@@ -21,7 +21,9 @@ jest.unstable_mockModule("node:child_process", () => ({
   },
 }));
 
-const { computeContentHash, probeStreamCodecs } = await import("../lib/probe.js");
+const { computeContentHash, probeStreamCodecs, probeAllSubtitleStreams } = await import(
+  "../lib/probe.js"
+);
 
 /**
  * Default ffprobe response reporting a video stream present, so tests that
@@ -243,6 +245,66 @@ describe("probeStreamCodecs", () => {
     nextResults = { ffprobe: { error: new Error("ffprobe exited with code 1") } };
 
     await expect(probeStreamCodecs("/media/original/clip.mp4")).rejects.toThrow(
+      "ffprobe exited with code 1",
+    );
+  });
+});
+
+describe("probeAllSubtitleStreams", () => {
+  afterEach(() => {
+    nextResults = {};
+    execFileCalls.length = 0;
+  });
+
+  test("returns every text-based subtitle stream with its language/title tags", async () => {
+    nextResults = {
+      ffprobe: {
+        stdout: JSON.stringify({
+          streams: [
+            { index: 2, codec_name: "subrip", tags: { language: "eng" } },
+            { index: 3, codec_name: "mov_text", tags: { language: "spa", title: "Spanish" } },
+          ],
+        }),
+      },
+    };
+
+    await expect(probeAllSubtitleStreams("/media/original/clip.mkv")).resolves.toEqual([
+      { streamIndex: 2, subtitleCodec: "subrip", language: "eng", title: "" },
+      { streamIndex: 3, subtitleCodec: "mov_text", language: "spa", title: "Spanish" },
+    ]);
+  });
+
+  test("excludes bitmap-based subtitle codecs and streams missing an index", async () => {
+    nextResults = {
+      ffprobe: {
+        stdout: JSON.stringify({
+          streams: [
+            { index: 2, codec_name: "dvd_subtitle", tags: { language: "eng" } },
+            { codec_name: "subrip", tags: { language: "fre" } },
+          ],
+        }),
+      },
+    };
+
+    await expect(probeAllSubtitleStreams("/media/original/clip.mkv")).resolves.toEqual([]);
+  });
+
+  test("returns an empty array when no subtitle stream is present", async () => {
+    nextResults = { ffprobe: { stdout: JSON.stringify({ streams: [] }) } };
+
+    await expect(probeAllSubtitleStreams("/media/original/clip.mp4")).resolves.toEqual([]);
+  });
+
+  test("returns an empty array when ffprobe's output isn't parseable JSON", async () => {
+    nextResults = { ffprobe: { stdout: "not json" } };
+
+    await expect(probeAllSubtitleStreams("/media/original/clip.mp4")).resolves.toEqual([]);
+  });
+
+  test("propagates an ffprobe spawn/exit failure", async () => {
+    nextResults = { ffprobe: { error: new Error("ffprobe exited with code 1") } };
+
+    await expect(probeAllSubtitleStreams("/media/original/clip.mp4")).rejects.toThrow(
       "ffprobe exited with code 1",
     );
   });

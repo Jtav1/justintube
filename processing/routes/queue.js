@@ -53,9 +53,9 @@ export function createQueueRouter({ queue }) {
   const router = Router();
 
   /**
-   * Lists every currently non-terminal (waiting/active/delayed) job across
-   * all job kinds. Used by webapi to build the admin queue-summary view and
-   * to check a specific video's outstanding jobs.
+   * Lists every currently non-terminal (waiting/prioritized/active/delayed)
+   * job across all job kinds. Used by webapi to build the admin queue-summary
+   * view and to check a specific video's outstanding jobs.
    *
    * @param {import('express').Request} _req Incoming request (unused).
    * @param {import('express').Response} res Express response.

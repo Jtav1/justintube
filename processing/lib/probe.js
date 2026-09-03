@@ -263,17 +263,20 @@ export async function probeHasVideoStream(filePath) {
 const TEXT_SUBTITLE_CODECS = new Set(["subrip", "ass", "ssa", "mov_text", "webvtt"]);
 
 /**
- * Probes a media file for its first text-based subtitle stream (see
- * `TEXT_SUBTITLE_CODECS`), for extraction into a `.vtt` file (see
- * `processSubtitleJob` / `buildSubtitleFfmpegArgs`).
+ * Probes a media file for every text-based subtitle stream (see
+ * `TEXT_SUBTITLE_CODECS`), for extraction into one `.vtt` file per stream
+ * (see `processSubtitleJob` / `buildSubtitleFfmpegArgs`). A source may embed
+ * more than one (e.g. one per language), so every match is returned rather
+ * than just the first.
  *
  * @param {string} filePath Absolute path to the media file.
- * @returns {Promise<{streamIndex: number, subtitleCodec: string}|null>} The
- *   first eligible subtitle stream's ffmpeg stream index and codec name, or
- *   `null` when none is present.
+ * @returns {Promise<{streamIndex: number, subtitleCodec: string, language: string, title: string}[]>}
+ *   Every eligible subtitle stream's ffmpeg stream index, codec name, and
+ *   `language`/`title` tags (empty string when a tag is absent). `[]` when
+ *   none is present.
  * @throws {Error} When ffprobe exits non-zero or cannot be spawned.
  */
-export async function probeSubtitleStreams(filePath) {
+export async function probeAllSubtitleStreams(filePath) {
   const { stdout } = await execFileAsync(
     "ffprobe",
     [
@@ -282,7 +285,7 @@ export async function probeSubtitleStreams(filePath) {
       "-select_streams",
       "s",
       "-show_entries",
-      "stream=index,codec_name:stream_tags=language",
+      "stream=index,codec_name:stream_tags=language,title",
       "-of",
       "json",
       filePath,
@@ -294,15 +297,18 @@ export async function probeSubtitleStreams(filePath) {
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return null;
+    return [];
   }
 
   const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
-  const match = streams.find((s) => TEXT_SUBTITLE_CODECS.has(s?.codec_name));
-
-  return Number.isInteger(match?.index)
-    ? { streamIndex: match.index, subtitleCodec: match.codec_name }
-    : null;
+  return streams
+    .filter((s) => TEXT_SUBTITLE_CODECS.has(s?.codec_name) && Number.isInteger(s?.index))
+    .map((s) => ({
+      streamIndex: s.index,
+      subtitleCodec: s.codec_name,
+      language: typeof s?.tags?.language === "string" ? s.tags.language.trim() : "",
+      title: typeof s?.tags?.title === "string" ? s.tags.title.trim() : "",
+    }));
 }
 
 /**

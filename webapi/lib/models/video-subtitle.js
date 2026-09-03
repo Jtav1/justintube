@@ -3,10 +3,11 @@ import { sequelize } from "../db.js";
 import { timestampColumn } from "./attribute-helpers.js";
 
 /**
- * VIDEO_SUBTITLE table model. Stores the caption/subtitle track for an
- * original upload (one row per ORIGINAL_UPLOADS record), always as WebVTT
- * (.vtt) regardless of whether it was auto-extracted from an embedded
- * subtitle stream or uploaded directly by the owner/admin.
+ * VIDEO_SUBTITLE table model. Stores one caption/subtitle track for an
+ * original upload (many rows per ORIGINAL_UPLOADS record, e.g. one per
+ * language), always as WebVTT (.vtt) regardless of whether it was
+ * auto-extracted from an embedded subtitle stream or uploaded directly by
+ * the owner/admin.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -21,7 +22,11 @@ export const VideoSubtitle = sequelize.define(
     originalUploadId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: false,
-      unique: "uq_video_subtitle_upload",
+    },
+    // Human-readable label shown to viewers, e.g. "English" or "Director's commentary".
+    label: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
     },
     subtitleFilename: {
       type: DataTypes.STRING(255),
