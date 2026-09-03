@@ -117,7 +117,7 @@ export async function clearMyHistory() {
  *   (seconds, fractional) for the auto-generated thumbnail instead of a
  *   random one — ignored if `skipThumbnail` is set. `skipAutoSubtitles` is
  *   the same idea for the auto-extracted subtitle track — pass this when the
- *   caller is about to upload their own via updateVideoSubtitles.
+ *   caller is about to upload their own via uploadVideoSubtitle.
  *   `onUploadProgress` is forwarded to axios for real byte-level upload
  *   progress (`event.loaded`/`event.total`).
  * @returns {Promise<{id: number, originalFilename: string, status: string}>}
@@ -329,26 +329,63 @@ export async function regenerateVideoThumbnail(id, thumbnailTimestamp) {
 }
 
 /**
- * Uploads (or replaces) a video's subtitle track. Accepts `.srt` or `.vtt`
- * — an uploaded `.srt` is converted to WebVTT server-side. Usable by the
- * video owner or a moderator/admin.
+ * Lists every subtitle track available for a video (zero, one, or many —
+ * e.g. one per language).
+ * @param {number} id
+ * @returns {Promise<{items: {id: number, label: string, source: string, url: string}[]}>}
+ */
+export async function listVideoSubtitles(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/subtitles`)
+  return res.data
+}
+
+/**
+ * Uploads a new subtitle track for a video. Accepts `.srt` or `.vtt` — an
+ * uploaded `.srt` is converted to WebVTT server-side. A video may carry any
+ * number of subtitles, so this always adds a new track. Usable by the video
+ * owner or a moderator/admin.
  * @param {number} id
  * @param {File} file
- * @returns {Promise<{subtitlesUrl: string}>}
+ * @param {string} label Human-readable label, e.g. "English".
+ * @returns {Promise<{id: number, label: string, source: string, url: string}>}
  */
-export async function updateVideoSubtitles(id, file) {
+export async function uploadVideoSubtitle(id, file, label) {
   const formData = new FormData()
   formData.append('file', file)
+  formData.append('label', label)
   const res = await apiClient.post(`/api/v1/videos/${id}/subtitles`, formData)
   return res.data
 }
 
 /**
- * Requests a fresh auto-extraction of a video's subtitle track from its
- * original file's embedded subtitle stream, if any. Does not delete the
- * existing subtitle up front — it's only replaced once (and if) the new
- * extraction actually succeeds, so a regeneration that finds nothing leaves
- * captions exactly as they were. Owner or admin.
+ * Renames a video's subtitle track. Owner or admin.
+ * @param {number} id
+ * @param {number} subtitleId
+ * @param {string} label
+ * @returns {Promise<{id: number, label: string, source: string, url: string}>}
+ */
+export async function updateVideoSubtitleLabel(id, subtitleId, label) {
+  const res = await apiClient.patch(`/api/v1/videos/${id}/subtitles/${subtitleId}`, { label })
+  return res.data
+}
+
+/**
+ * Deletes a video's subtitle track (row + file). Owner or admin.
+ * @param {number} id
+ * @param {number} subtitleId
+ * @returns {Promise<void>}
+ */
+export async function deleteVideoSubtitle(id, subtitleId) {
+  await apiClient.delete(`/api/v1/videos/${id}/subtitles/${subtitleId}`)
+}
+
+/**
+ * Requests a fresh auto-extraction of every embedded text/subtitle stream in
+ * a video's original file, if any. Does not delete the existing
+ * auto-extracted subtitles up front — they're only replaced once (and if)
+ * the new extraction actually succeeds, so a regeneration that finds
+ * nothing leaves captions exactly as they were. User-uploaded subtitles are
+ * never touched by regeneration. Owner or admin.
  * @param {number} id
  * @returns {Promise<{success: boolean}>}
  */

@@ -848,7 +848,7 @@ export function buildEmbeddedThumbnailFfmpegArgs({
 
 /**
  * Builds the ffmpeg argument list for extracting a subtitle stream (see
- * `probeSubtitleStreams`) into a standalone `.vtt` file. ffmpeg's `webvtt`
+ * `probeAllSubtitleStreams`) into a standalone `.vtt` file. ffmpeg's `webvtt`
  * subtitle encoder converts directly from any of the supported text-based
  * source codecs, so this always produces valid WebVTT regardless of the
  * source's own subtitle codec — no separate conversion step needed.

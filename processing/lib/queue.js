@@ -25,10 +25,10 @@ import {
 import {
   collectOutputMetadata,
   computeContentHash,
+  probeAllSubtitleStreams,
   probeEmbeddedThumbnailStream,
   probeHasVideoStream,
   probeStreamCodecs,
-  probeSubtitleStreams,
 } from "./probe.js";
 import {
   buildEmbedFfmpegArgs,
@@ -261,10 +261,17 @@ async function processThumbnailJob(job) {
  * treated the same as a probe that *succeeded but found nothing*: both skip
  * gracefully rather than attempt a guessed `-map 0:s:0`.
  *
+ * A source may embed more than one text stream (e.g. one per language), so
+ * every stream the probe finds is extracted into its own `.vtt` file
+ * (`${outputFilename}-<index>.vtt`, `outputFilename` here being a job-scoped
+ * prefix rather than a final filename) and reported in a single completion
+ * callback. One stream failing to convert doesn't fail the whole job — it's
+ * logged and skipped so the others still get extracted.
+ *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
  *   `inputFilename` and `outputFilename`.
- * @returns {Promise<{ outputFilename: string|null, skipped?: string }>}
+ * @returns {Promise<{ outputFilename: string|null, extracted?: number, skipped?: string }>}
  *   Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails unexpectedly.
  */
@@ -279,11 +286,10 @@ async function processSubtitleJob(job) {
   await job.updateProgress(10);
 
   const inputPath = resolveOriginalInputPath(inputFilename);
-  const outputPath = resolveSubtitleOutputPath(outputFilename);
 
-  let found = null;
+  let found = [];
   try {
-    found = await probeSubtitleStreams(inputPath);
+    found = await probeAllSubtitleStreams(inputPath);
   } catch (err) {
     logger.error(
       { err },
@@ -291,37 +297,51 @@ async function processSubtitleJob(job) {
     );
   }
 
-  if (found == null) {
+  if (found.length === 0) {
     logger.info(`[subtitle ${jobId}] source has no text-based subtitle stream; skipping`);
-    const notify = await notifySubtitleFailed(jobId, "no text-based subtitle stream found");
+    const notify = await notifySubtitleComplete(jobId, { subtitles: [] });
     if (!notify.ok) {
       logger.error(
         { error: notify.error },
-        `failed to notify API of skipped subtitle ${jobId}`,
+        `failed to notify API of empty subtitle extraction ${jobId}`,
       );
     }
     await job.updateProgress(100);
     return { outputFilename: null, skipped: "no_subtitle_stream" };
   }
 
-  logger.info(
-    `[subtitle ${jobId}] extracting subtitle stream 0:${found.streamIndex} (${found.subtitleCodec})`,
-  );
+  await job.updateProgress(20);
 
-  const args = buildSubtitleFfmpegArgs({
-    inputPath,
-    outputPath,
-    streamIndex: found.streamIndex,
-  });
+  const extracted = [];
+  for (const [index, stream] of found.entries()) {
+    const streamOutputFilename = `${outputFilename}-${index}.vtt`;
+    const outputPath = resolveSubtitleOutputPath(streamOutputFilename);
+    try {
+      logger.info(
+        `[subtitle ${jobId}] extracting subtitle stream 0:${stream.streamIndex} (${stream.subtitleCodec})`,
+      );
+      const args = buildSubtitleFfmpegArgs({
+        inputPath,
+        outputPath,
+        streamIndex: stream.streamIndex,
+      });
+      await runFfmpeg(args);
+      await stat(outputPath);
+      extracted.push({
+        outputFilename: streamOutputFilename,
+        language: stream.language,
+        title: stream.title,
+      });
+    } catch (err) {
+      logger.error(
+        { err },
+        `[subtitle ${jobId}] failed to extract stream 0:${stream.streamIndex}; skipping it`,
+      );
+    }
+    await job.updateProgress(20 + Math.round(((index + 1) / found.length) * 60));
+  }
 
-  await job.updateProgress(40);
-  await runFfmpeg(args);
-  await stat(outputPath);
-  await job.updateProgress(80);
-
-  const notify = await notifySubtitleComplete(jobId, {
-    subtitleFilename: outputFilename,
-  });
+  const notify = await notifySubtitleComplete(jobId, { subtitles: extracted });
   if (!notify.ok) {
     logger.error(
       { error: notify.error },
@@ -331,9 +351,11 @@ async function processSubtitleJob(job) {
 
   await job.updateProgress(100);
 
-  logger.info(`[subtitle ${jobId}] processing completed: ${outputFilename}`);
+  logger.info(
+    `[subtitle ${jobId}] processing completed: ${extracted.length}/${found.length} stream(s) extracted`,
+  );
 
-  return { outputFilename };
+  return { outputFilename, extracted: extracted.length };
 }
 
 /**

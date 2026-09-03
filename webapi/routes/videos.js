@@ -512,9 +512,10 @@ export function serializeVideo(upload, metadata, options = {}) {
     embedVideoUrl: upload.embedVideoStoragePath
       ? `/api/v1/videos/${upload.id}/embed-video`
       : null,
-    subtitlesUrl: upload.VideoSubtitle
-      ? `/api/v1/videos/${upload.id}/subtitles`
-      : null,
+    // Always points at the subtitle list endpoint now (a video may have zero,
+    // one, or many subtitles) - the client fetches it to populate the
+    // captions dropdown and hides the control entirely when the list is empty.
+    subtitlesUrl: `/api/v1/videos/${upload.id}/subtitles`,
     likeCount: options.likeCount ?? 0,
     dislikeCount: options.dislikeCount ?? 0,
     createdAt: metadata.createdAt,
@@ -1109,7 +1110,6 @@ async function loadUploadWithMetadata(id) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
-      { model: VideoSubtitle, required: false },
       { model: User, required: false },
     ],
   });
@@ -1174,7 +1174,6 @@ async function loadUploadWithMetadataByVideoId(videoId) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
-      { model: VideoSubtitle, required: false },
       { model: User, required: false },
     ],
   });
@@ -1378,7 +1377,6 @@ async function buildDiscoveryFindOptions(options = {}) {
     include: [
       { model: VideoMetadata, as: "VideoMetadata", required: true },
       { model: VideoThumbnail, required: false },
-      { model: VideoSubtitle, required: false },
       { model: User, required: false },
       ...(options.includes || []),
     ],
@@ -2887,15 +2885,32 @@ export function createVideosRouter() {
   router.use(thumbnailUploadErrorHandler);
 
   /**
-   * GET /videos/:id/subtitles — getVideoSubtitles
+   * Serializes a VIDEO_SUBTITLE row into its public list-item shape.
+   *
+   * @param {import('sequelize').Model} subtitle VideoSubtitle row.
+   * @returns {{id: number, label: string, source: string, url: string}} Public subtitle payload.
+   */
+  function serializeSubtitle(subtitle) {
+    return {
+      id: subtitle.id,
+      label: subtitle.label,
+      source: subtitle.source,
+      url: `/api/v1/videos/${subtitle.originalUploadId}/subtitles/${subtitle.id}`,
+    };
+  }
+
+  /**
+   * GET /videos/:id/subtitles — listVideoSubtitles
+   * Lists every subtitle track available for a video (zero, one, or many),
+   * e.g. to populate the video player's captions menu.
    * Auth: optional. Private requires owner, grant, or admin.
    *
    * @openapi
    * /api/v1/videos/{id}/subtitles:
    *   get:
    *     tags: [Videos]
-   *     summary: Get a video's subtitle track (WebVTT)
-   *     operationId: getVideoSubtitles
+   *     summary: List a video's subtitle tracks
+   *     operationId: listVideoSubtitles
    *     parameters:
    *       - in: path
    *         name: id
@@ -2904,9 +2919,9 @@ export function createVideosRouter() {
    *           type: integer
    *     responses:
    *       "200":
-   *         description: WebVTT subtitle file
+   *         description: Subtitle list
    *       "404":
-   *         description: Not found, inaccessible, or no subtitle track available
+   *         description: Not found or inaccessible
    */
   router.get("/videos/:id/subtitles", optionalAuth, async (req, res) => {
     try {
@@ -2932,10 +2947,78 @@ export function createVideosRouter() {
         return;
       }
 
-      const subtitle = upload.VideoSubtitle;
+      const subtitles = await VideoSubtitle.findAll({
+        where: { originalUploadId: upload.id },
+        order: [["createdAt", "ASC"]],
+      });
+
+      res.status(200).json({ items: subtitles.map(serializeSubtitle) });
+    } catch (err) {
+      logger.error({ err }, "listVideoSubtitles failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to load subtitles.",
+      });
+    }
+  });
+
+  /**
+   * GET /videos/:id/subtitles/:subtitleId — getVideoSubtitle
+   * Streams one subtitle track's WebVTT file.
+   * Auth: optional. Private requires owner, grant, or admin.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/subtitles/{subtitleId}:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Get a video's subtitle track (WebVTT)
+   *     operationId: getVideoSubtitle
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: path
+   *         name: subtitleId
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: WebVTT subtitle file
+   *       "404":
+   *         description: Not found or inaccessible
+   */
+  router.get("/videos/:id/subtitles/:subtitleId", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      const subtitleId = parsePositiveInt(req.params.subtitleId);
+      if (id == null || subtitleId == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id and subtitleId must be positive integers.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      const subtitle = await VideoSubtitle.findOne({
+        where: { id: subtitleId, originalUploadId: upload.id },
+      });
       if (!subtitle) {
-        // No placeholder fallback, unlike thumbnails - there's no default
-        // subtitle track to serve.
         sendNotFound(res);
         return;
       }
@@ -2955,7 +3038,7 @@ export function createVideosRouter() {
       const absolutePath = join(subtitlesDir, subtitle.subtitleFilename);
       await streamFileWithRangeSupport(req, res, absolutePath, "text/vtt");
     } catch (err) {
-      logger.error({ err }, "getVideoSubtitles failed");
+      logger.error({ err }, "getVideoSubtitle failed");
       if (!res.headersSent) {
         res.status(500).json({
           error: "internal_error",
@@ -2966,22 +3049,22 @@ export function createVideosRouter() {
   });
 
   /**
-   * Uploads (or replaces) a video's subtitle track. Usable by the video
-   * owner or an admin — an alternative to waiting for (or in addition to)
-   * processing's auto-extraction. Accepts `.srt` or `.vtt`; an uploaded
-   * `.srt` is converted to WebVTT on the way in (see `srtToVtt`), since
-   * that's the only format the browser's native `<track>` element
-   * understands. Deletes the previous subtitle file from disk, if any,
-   * after the new one is persisted.
-   * POST /videos/:id/subtitles — multipart `file`.
+   * Uploads a new subtitle track for a video. Usable by the video owner or
+   * an admin — a video may carry any number of subtitles (e.g. one per
+   * language), so this always creates a new track rather than replacing an
+   * existing one; use PATCH/DELETE to rename or remove a specific track.
+   * Accepts `.srt` or `.vtt`; an uploaded `.srt` is converted to WebVTT on
+   * the way in (see `srtToVtt`), since that's the only format the browser's
+   * native `<track>` element understands.
+   * POST /videos/:id/subtitles — multipart `file` + `label`.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *
    * @openapi
    * /api/v1/videos/{id}/subtitles:
    *   post:
    *     tags: [Videos]
-   *     summary: Upload or replace a video's subtitle track
-   *     operationId: updateVideoSubtitles
+   *     summary: Upload a new subtitle track for a video
+   *     operationId: createVideoSubtitle
    *     parameters:
    *       - $ref: "#/components/parameters/CsrfTokenHeader"
    *       - in: path
@@ -2998,17 +3081,20 @@ export function createVideosRouter() {
    *         multipart/form-data:
    *           schema:
    *             type: object
-   *             required: [file]
+   *             required: [file, label]
    *             properties:
    *               file:
    *                 type: string
    *                 format: binary
    *                 description: A `.srt` or `.vtt` subtitle file.
+   *               label:
+   *                 type: string
+   *                 description: Human-readable label, e.g. "English".
    *     responses:
-   *       "200":
-   *         description: Subtitles updated
+   *       "201":
+   *         description: Subtitle created
    *       "400":
-   *         description: Invalid id, missing file, or unsupported file type
+   *         description: Invalid id, missing file/label, or unsupported file type
    *       "401":
    *         description: Not authenticated
    *       "403":
@@ -3020,7 +3106,7 @@ export function createVideosRouter() {
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
-   * @returns {Promise<void>} Sends the subtitles URL or an error response.
+   * @returns {Promise<void>} Sends the created subtitle or an error response.
    */
   router.post(
     "/videos/:id/subtitles",
@@ -3069,6 +3155,16 @@ export function createVideosRouter() {
           return;
         }
 
+        const label = typeof req.body.label === "string" ? req.body.label.trim() : "";
+        if (!label || label.length > 100) {
+          await unlink(req.file.path).catch(() => {});
+          res.status(400).json({
+            error: "invalid_body",
+            message: "label is required and must be 1-100 characters.",
+          });
+          return;
+        }
+
         // Uploaded as either .srt or .vtt (filename callback preserved the
         // original extension) - normalize to a stored .vtt file, converting
         // in place when needed.
@@ -3085,46 +3181,33 @@ export function createVideosRouter() {
         // for cross-platform DB consistency.
         const relativeSubtitleFilename = relative(subtitlesDir, storedPath).replace(/\\/g, "/");
 
-        const existing = await VideoSubtitle.findOne({ where: { originalUploadId: upload.id } });
-        let previousFilename = null;
-        if (existing) {
-          if (existing.subtitleFilename !== relativeSubtitleFilename) {
-            previousFilename = existing.subtitleFilename;
-          }
-          await existing.update({ subtitleFilename: relativeSubtitleFilename, source: "user" });
-        } else {
-          await VideoSubtitle.create({
-            originalUploadId: upload.id,
-            subtitleFilename: relativeSubtitleFilename,
-            source: "user",
-          });
-        }
-        if (previousFilename) {
-          await unlink(join(subtitlesDir, previousFilename)).catch(() => {});
-        }
+        const subtitle = await VideoSubtitle.create({
+          originalUploadId: upload.id,
+          subtitleFilename: relativeSubtitleFilename,
+          source: "user",
+          label,
+        });
 
         // A user-provided subtitle always wins and, once set, no
-        // auto-extraction may overwrite it unless the user explicitly
-        // requests a regeneration (POST /videos/:id/subtitles/regenerate,
-        // which clears this flag first) - guards the race where an
-        // auto-extraction attempt from before this upload was still in
-        // flight (see the skipAutoSubtitles check in
+        // auto-extraction may overwrite the set of tracks unless the user
+        // explicitly requests a regeneration (POST
+        // /videos/:id/subtitles/regenerate, which clears this flag first) -
+        // guards the race where an auto-extraction attempt from before this
+        // upload was still in flight (see the skipAutoSubtitles check in
         // /internal/subtitles/:jobId/complete).
         if (!upload.skipAutoSubtitles) {
           await upload.update({ skipAutoSubtitles: true });
         }
 
-        res
-          .status(200)
-          .json({ subtitlesUrl: `/api/v1/videos/${upload.id}/subtitles` });
+        res.status(201).json(serializeSubtitle(subtitle));
       } catch (err) {
         if (req.file) {
           await unlink(req.file.path).catch(() => {});
         }
-        logger.error({ err }, "updateVideoSubtitles failed");
+        logger.error({ err }, "createVideoSubtitle failed");
         res.status(500).json({
           error: "internal_error",
-          message: "Failed to update subtitles.",
+          message: "Failed to create subtitle.",
         });
       }
     },
@@ -3132,20 +3215,228 @@ export function createVideosRouter() {
   router.use(subtitleUploadErrorHandler);
 
   /**
-   * Requests a fresh auto-extraction of a video's subtitle track from its
-   * original file's embedded subtitle stream (if any). Unlike
+   * PATCH /videos/:id/subtitles/:subtitleId — updateVideoSubtitleLabel
+   * Renames a subtitle track. Owner/admin only.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/subtitles/{subtitleId}:
+   *   patch:
+   *     tags: [Videos]
+   *     summary: Rename a video's subtitle track
+   *     operationId: updateVideoSubtitleLabel
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: path
+   *         name: subtitleId
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [label]
+   *             properties:
+   *               label:
+   *                 type: string
+   *     responses:
+   *       "200":
+   *         description: Subtitle updated
+   *       "400":
+   *         description: Invalid id or label
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not the video owner and not an admin
+   *       "404":
+   *         description: Unknown video or subtitle id
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the updated subtitle or an error response.
+   */
+  router.patch(
+    "/videos/:id/subtitles/:subtitleId",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        const subtitleId = parsePositiveInt(req.params.subtitleId);
+        if (id == null || subtitleId == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id and subtitleId must be positive integers.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload } = loaded;
+        if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only the owner or an admin can update this video's subtitles.",
+          });
+          return;
+        }
+
+        const subtitle = await VideoSubtitle.findOne({
+          where: { id: subtitleId, originalUploadId: upload.id },
+        });
+        if (!subtitle) {
+          sendNotFound(res);
+          return;
+        }
+
+        const label = typeof req.body.label === "string" ? req.body.label.trim() : "";
+        if (!label || label.length > 100) {
+          res.status(400).json({
+            error: "invalid_body",
+            message: "label is required and must be 1-100 characters.",
+          });
+          return;
+        }
+
+        await subtitle.update({ label });
+        res.status(200).json(serializeSubtitle(subtitle));
+      } catch (err) {
+        logger.error({ err }, "updateVideoSubtitleLabel failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to update subtitle.",
+        });
+      }
+    },
+  );
+
+  /**
+   * DELETE /videos/:id/subtitles/:subtitleId — deleteVideoSubtitle
+   * Deletes a subtitle track (row + file). Owner/admin only.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/subtitles/{subtitleId}:
+   *   delete:
+   *     tags: [Videos]
+   *     summary: Delete a video's subtitle track
+   *     operationId: deleteVideoSubtitle
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: path
+   *         name: subtitleId
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       "204":
+   *         description: Subtitle deleted
+   *       "400":
+   *         description: Invalid id
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not the video owner and not an admin
+   *       "404":
+   *         description: Unknown video or subtitle id
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 or an error response.
+   */
+  router.delete(
+    "/videos/:id/subtitles/:subtitleId",
+    requireAuth,
+    requireApiKeyScope("content_edit"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        const subtitleId = parsePositiveInt(req.params.subtitleId);
+        if (id == null || subtitleId == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id and subtitleId must be positive integers.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+
+        const { upload } = loaded;
+        if (!isOwnerOrAdmin(req.user, req.authRole, upload)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only the owner or an admin can update this video's subtitles.",
+          });
+          return;
+        }
+
+        const subtitle = await VideoSubtitle.findOne({
+          where: { id: subtitleId, originalUploadId: upload.id },
+        });
+        if (!subtitle) {
+          sendNotFound(res);
+          return;
+        }
+
+        await subtitle.destroy();
+        await unlink(join(subtitlesDir, subtitle.subtitleFilename)).catch(() => {});
+
+        res.status(204).end();
+      } catch (err) {
+        logger.error({ err }, "deleteVideoSubtitle failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to delete subtitle.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Requests a fresh auto-extraction of every embedded text/subtitle stream
+   * in a video's original file (if any). Unlike
    * `POST /videos/:id/thumbnail/regenerate`, this does NOT delete the
-   * existing subtitle (user-provided or auto-extracted) up front — a
-   * subtitle-extraction attempt routinely finds nothing (most sources have
-   * no embedded subtitle stream at all), so eager deletion would leave the
-   * video with no captions at all for a regeneration that was always likely
-   * to fail. Instead, the existing subtitle stays fully intact and servable
-   * until (and unless) the new extraction actually succeeds — see
+   * existing auto-extracted subtitles up front — an extraction attempt
+   * routinely finds nothing (most sources have no embedded subtitle stream
+   * at all), so eager deletion would leave the video with no auto captions
+   * at all for a regeneration that was always likely to fail. Instead, the
+   * existing auto-extracted tracks stay fully intact and servable until
+   * (and unless) the new extraction actually succeeds — see
    * `POST /internal/subtitles/:jobId/complete`, which is the only place a
-   * replacement actually happens. Clears `skipAutoSubtitles` so that
-   * callback is allowed to write. No `mediaType` gate — an audio source can
-   * carry a subtitle/lyrics track too. Owner/admin only, matching
-   * POST /videos/:id/subtitles.
+   * replacement actually happens (and only replaces `source: "auto"` rows;
+   * user-uploaded subtitles are never touched by regeneration). Clears
+   * `skipAutoSubtitles` so that callback is allowed to write. No `mediaType`
+   * gate — an audio source can carry a subtitle/lyrics track too.
+   * Owner/admin only, matching POST /videos/:id/subtitles.
    * POST /videos/:id/subtitles/regenerate.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *
@@ -3220,7 +3511,9 @@ export function createVideosRouter() {
           jobs: [
             {
               jobId: `subtitle-${upload.videoId}-${randomUUID()}`,
-              outputFilename: `${segment}/${randomUUID()}.vtt`,
+              // A prefix, not a final filename - processing may extract more
+              // than one text stream and writes each to `${outputFilename}-${i}.vtt`.
+              outputFilename: `${segment}/${randomUUID()}`,
               kind: "subtitle",
             },
           ],
@@ -3935,10 +4228,10 @@ export function createVideosRouter() {
         return;
       }
 
-      const [fileVersions, thumbnail, subtitle] = await Promise.all([
+      const [fileVersions, thumbnail, subtitles] = await Promise.all([
         FileVersion.findAll({ where: { originalUploadId: id } }),
         VideoThumbnail.findOne({ where: { originalUploadId: id } }),
-        VideoSubtitle.findOne({ where: { originalUploadId: id } }),
+        VideoSubtitle.findAll({ where: { originalUploadId: id } }),
       ]);
       const mediaFilesToDelete = [resolveMediaPath(upload.storagePath)];
       for (const version of fileVersions) {
@@ -3947,7 +4240,7 @@ export function createVideosRouter() {
       if (thumbnail) {
         mediaFilesToDelete.push(join(thumbnailsDir, thumbnail.thumbnailFilename));
       }
-      if (subtitle) {
+      for (const subtitle of subtitles) {
         mediaFilesToDelete.push(join(subtitlesDir, subtitle.subtitleFilename));
       }
 

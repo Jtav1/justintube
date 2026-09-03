@@ -180,7 +180,7 @@ function registerAssociations() {
     onDelete: "CASCADE",
   });
 
-  OriginalUpload.hasOne(VideoSubtitle, {
+  OriginalUpload.hasMany(VideoSubtitle, {
     foreignKey: "originalUploadId",
     onDelete: "CASCADE",
   });

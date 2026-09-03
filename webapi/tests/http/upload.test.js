@@ -236,10 +236,10 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     // Same random-jobId rationale applies to the subtitle job - it can be
     // re-enqueued later via POST /videos/:id/subtitles/regenerate.
     expect(subtitleJob.jobId).toMatch(new RegExp(`^subtitle-${res.body.videoId}-`));
+    // outputFilename is a prefix, not a final filename - processing may
+    // extract more than one stream and appends "-<index>.vtt" itself.
     expect(subtitleJob).toMatchObject({
-      outputFilename: expect.stringMatching(
-        new RegExp(`^${uploaderUser.id}/[0-9a-f-]{36}\\.vtt$`),
-      ),
+      outputFilename: expect.stringMatching(new RegExp(`^${uploaderUser.id}/[0-9a-f-]{36}$`)),
       kind: "subtitle",
     });
   });

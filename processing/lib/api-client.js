@@ -150,19 +150,20 @@ export async function notifyThumbnailFailed(uploadUuid, error) {
 }
 
 /**
- * Notifies the API that an upload's subtitle track was extracted
- * successfully.
+ * Notifies the API that an upload's subtitle extraction finished, reporting
+ * every text stream that was successfully extracted (possibly none).
  *
  * @param {string} jobId BullMQ job id for the subtitle job
  *   (`subtitle-<videoId>-<uuid>`).
  * @param {object} metadata Completion fields.
- * @param {string} metadata.subtitleFilename Basename written under `/media/subtitles`.
+ * @param {{outputFilename: string, language?: string, title?: string}[]} metadata.subtitles
+ *   One entry per extracted stream, written under `/media/subtitles`.
  * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
  *   Callback outcome.
  */
 export async function notifySubtitleComplete(jobId, metadata) {
   return postInternal(`/internal/subtitles/${encodeURIComponent(jobId)}/complete`, {
-    subtitleFilename: metadata.subtitleFilename,
+    subtitles: metadata.subtitles,
   });
 }
 

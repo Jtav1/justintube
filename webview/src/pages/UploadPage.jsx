@@ -15,7 +15,10 @@ import {
   getImportStatus,
   updateVideoThumbnail,
   regenerateVideoThumbnail,
-  updateVideoSubtitles,
+  listVideoSubtitles,
+  uploadVideoSubtitle,
+  updateVideoSubtitleLabel,
+  deleteVideoSubtitle,
   regenerateVideoSubtitles,
   getVideo,
 } from '../api/videos.js'
@@ -151,7 +154,14 @@ function UploadPage() {
   const [thumbnailFile, setThumbnailFile] = useState(null)
   const [thumbnailTimestamp, setThumbnailTimestamp] = useState('')
   const [subtitleFile, setSubtitleFile] = useState(null)
+  const [subtitleLabel, setSubtitleLabel] = useState('')
   const [subtitleRegenerating, setSubtitleRegenerating] = useState(false)
+  const [subtitlesList, setSubtitlesList] = useState([])
+  const [addingSubtitle, setAddingSubtitle] = useState(false)
+  const [editingSubtitleId, setEditingSubtitleId] = useState(null)
+  const [editingLabelDraft, setEditingLabelDraft] = useState('')
+  const [savingSubtitleLabel, setSavingSubtitleLabel] = useState(false)
+  const [deletingSubtitleId, setDeletingSubtitleId] = useState(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState('public')
@@ -219,6 +229,17 @@ function UploadPage() {
         setVisibility(video.visibility ?? 'public')
         setTags(video.tags ?? [])
         setFeatured(Boolean(video.featured))
+
+        try {
+          const { items } = await listVideoSubtitles(video.id)
+          if (!cancelled) {
+            setSubtitlesList(items)
+          }
+        } catch {
+          if (!cancelled) {
+            setSubtitlesList([])
+          }
+        }
 
         if (isOwnerAdmin) {
           const { items } = await getVideoAccess(video.id)
@@ -447,6 +468,79 @@ function UploadPage() {
     }
   }
 
+  async function handleAddSubtitle() {
+    if (!editUpload || !subtitleFile || addingSubtitle) {
+      return
+    }
+    const label = subtitleLabel.trim()
+    if (!label) {
+      toastError('Enter a label for this subtitle.')
+      return
+    }
+    setAddingSubtitle(true)
+    try {
+      const created = await uploadVideoSubtitle(editUpload.id, subtitleFile, label)
+      setSubtitlesList((prev) => [...prev, created])
+      setSubtitleFile(null)
+      setSubtitleLabel('')
+      success('Subtitle added.')
+    } catch {
+      toastError('Failed to add the subtitle. Please try again.')
+    } finally {
+      setAddingSubtitle(false)
+    }
+  }
+
+  function handleStartRenameSubtitle(subtitle) {
+    setEditingSubtitleId(subtitle.id)
+    setEditingLabelDraft(subtitle.label)
+  }
+
+  function handleCancelRenameSubtitle() {
+    setEditingSubtitleId(null)
+    setEditingLabelDraft('')
+  }
+
+  async function handleSaveSubtitleLabel(subtitleId) {
+    if (savingSubtitleLabel) {
+      return
+    }
+    const label = editingLabelDraft.trim()
+    if (!label) {
+      toastError('Label cannot be empty.')
+      return
+    }
+    setSavingSubtitleLabel(true)
+    try {
+      const updated = await updateVideoSubtitleLabel(editUpload.id, subtitleId, label)
+      setSubtitlesList((prev) => prev.map((item) => (item.id === subtitleId ? updated : item)))
+      setEditingSubtitleId(null)
+      setEditingLabelDraft('')
+    } catch {
+      toastError('Failed to rename the subtitle.')
+    } finally {
+      setSavingSubtitleLabel(false)
+    }
+  }
+
+  async function handleDeleteSubtitle(subtitle) {
+    if (deletingSubtitleId) {
+      return
+    }
+    if (!window.confirm(`Delete the "${subtitle.label}" subtitle? This cannot be undone.`)) {
+      return
+    }
+    setDeletingSubtitleId(subtitle.id)
+    try {
+      await deleteVideoSubtitle(editUpload.id, subtitle.id)
+      setSubtitlesList((prev) => prev.filter((item) => item.id !== subtitle.id))
+    } catch {
+      toastError('Failed to delete the subtitle.')
+    } finally {
+      setDeletingSubtitleId(null)
+    }
+  }
+
   function handleDragOver(event) {
     event.preventDefault()
     if (!fileLocked) {
@@ -541,12 +635,17 @@ function UploadPage() {
   // whenever the field is non-empty.
   const thumbnailTimestampInvalid =
     !thumbnailFile && thumbnailTimestampError(thumbnailTimestamp) != null
+  // Only relevant on a fresh upload - in edit mode, subtitles are added
+  // immediately via their own "Add subtitle" button, not deferred to submit.
+  const subtitleLabelMissing =
+    !isEditMode && Boolean(subtitleFile) && subtitleLabel.trim().length === 0
 
   const submitDisabled = isEditMode
     ? title.trim().length === 0 || thumbnailTimestampInvalid || submitting
     : (!file && url.trim().length === 0) ||
       title.trim().length === 0 ||
       thumbnailTimestampInvalid ||
+      subtitleLabelMissing ||
       submitting
 
   const bulkPopulatedCards = bulkCards.filter((c) => c.file)
@@ -717,9 +816,9 @@ function UploadPage() {
       }
     }
 
-    if (subtitleFile) {
+    if (!isEditMode && subtitleFile) {
       try {
-        await updateVideoSubtitles(createdId, subtitleFile)
+        await uploadVideoSubtitle(createdId, subtitleFile, subtitleLabel.trim())
       } catch {
         toastError(
           'Your video was uploaded and configured, but the subtitle file could not be saved. ' +
@@ -961,6 +1060,59 @@ function UploadPage() {
 
           <div className="upload-field-group">
             <label htmlFor="upload-subtitle-input">Subtitles</label>
+
+            {isEditMode && subtitlesList.length > 0 && (
+              <div className="upload-subtitle-list">
+                {subtitlesList.map((subtitle) => (
+                  <div className="upload-subtitle-row" key={subtitle.id}>
+                    {editingSubtitleId === subtitle.id ? (
+                      <>
+                        <input
+                          type="text"
+                          className="upload-subtitle-rename-input"
+                          value={editingLabelDraft}
+                          maxLength={100}
+                          onChange={(event) => setEditingLabelDraft(event.target.value)}
+                          autoFocus
+                        />
+                        <div className="upload-subtitle-actions">
+                          <button
+                            type="button"
+                            onClick={() => handleSaveSubtitleLabel(subtitle.id)}
+                            disabled={savingSubtitleLabel}
+                          >
+                            {savingSubtitleLabel ? 'Saving…' : 'Save'}
+                          </button>
+                          <button type="button" onClick={handleCancelRenameSubtitle}>
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <span className="upload-subtitle-label">{subtitle.label}</span>
+                        <span className="upload-subtitle-badge">
+                          {subtitle.source === 'auto' ? 'Auto' : 'User'}
+                        </span>
+                        <div className="upload-subtitle-actions">
+                          <button type="button" onClick={() => handleStartRenameSubtitle(subtitle)}>
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSubtitle(subtitle)}
+                            disabled={deletingSubtitleId === subtitle.id}
+                          >
+                            {deletingSubtitleId === subtitle.id ? 'Deleting…' : 'Delete'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="upload-thumbnail-row">
               <label htmlFor="upload-subtitle-input" className="upload-thumbnail-picker">
                 <UploadCloud size={20} />
@@ -980,6 +1132,7 @@ function UploadPage() {
                     onClick={(event) => {
                       event.stopPropagation()
                       setSubtitleFile(null)
+                      setSubtitleLabel('')
                     }}
                   >
                     Clear
@@ -998,11 +1151,34 @@ function UploadPage() {
                 </button>
               )}
             </div>
-            {isEditMode && (
-              <p className="upload-hint">
-                Add subtitles or attempt to auto-extract/generate (WIP) subtitles from the video file
-              </p>
+
+            {subtitleFile && (
+              <input
+                type="text"
+                className="upload-subtitle-label-input"
+                placeholder="Label, e.g. English"
+                value={subtitleLabel}
+                maxLength={100}
+                onChange={(event) => setSubtitleLabel(event.target.value)}
+              />
             )}
+
+            {isEditMode && subtitleFile && (
+              <button
+                type="button"
+                className="upload-link-button"
+                onClick={handleAddSubtitle}
+                disabled={addingSubtitle || subtitleLabel.trim().length === 0}
+              >
+                {addingSubtitle ? 'Adding…' : 'Add subtitle'}
+              </button>
+            )}
+
+            <p className="upload-hint">
+              {isEditMode
+                ? 'Add a labeled subtitle file, or attempt to auto-extract subtitles from the video file'
+                : 'Add a labeled subtitle file, uploaded alongside the video'}
+            </p>
           </div>
 
           <label htmlFor="upload-title">

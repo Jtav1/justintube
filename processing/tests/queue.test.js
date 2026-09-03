@@ -12,7 +12,7 @@ const notifySubtitleComplete = jest.fn();
 const notifySubtitleFailed = jest.fn();
 const probeEmbeddedThumbnailStream = jest.fn();
 const probeHasVideoStream = jest.fn();
-const probeSubtitleStreams = jest.fn();
+const probeAllSubtitleStreams = jest.fn();
 const resolveThumbnailOutputPath = jest.fn();
 const resolveThumbnailInputPath = jest.fn();
 const resolveTranscodedOutputPath = jest.fn();
@@ -33,7 +33,7 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   probeStreamCodecs: jest.fn(),
   probeEmbeddedThumbnailStream,
   probeHasVideoStream,
-  probeSubtitleStreams,
+  probeAllSubtitleStreams,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -208,7 +208,9 @@ function makeSubtitleJob(dataOverrides = {}) {
     data: {
       kind: "subtitle",
       inputFilename: "clip.mp4",
-      outputFilename: "subtitle-abc123-uuid.vtt",
+      // A prefix, not a final filename - processSubtitleJob appends
+      // "-<index>.vtt" per extracted stream.
+      outputFilename: "subtitle-abc123-uuid",
       ...dataOverrides,
     },
     updateProgress: jest.fn().mockResolvedValue(undefined),
@@ -217,7 +219,7 @@ function makeSubtitleJob(dataOverrides = {}) {
 
 describe("processTranscodeJob (kind: subtitle)", () => {
   beforeEach(() => {
-    probeSubtitleStreams.mockReset();
+    probeAllSubtitleStreams.mockReset();
     resolveSubtitleOutputPath.mockReset().mockImplementation((f) => `/media/subtitles/${f}`);
     buildSubtitleFfmpegArgs.mockReset().mockReturnValue(["subtitle-args"]);
     runFfmpeg.mockReset().mockResolvedValue(undefined);
@@ -226,53 +228,75 @@ describe("processTranscodeJob (kind: subtitle)", () => {
     notifySubtitleFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
   });
 
-  test("extracts the first text-based subtitle stream found", async () => {
-    probeSubtitleStreams.mockResolvedValue({ streamIndex: 3, subtitleCodec: "subrip" });
+  test("extracts every text-based subtitle stream found, one .vtt per stream", async () => {
+    probeAllSubtitleStreams.mockResolvedValue([
+      { streamIndex: 3, subtitleCodec: "subrip", language: "eng", title: "" },
+      { streamIndex: 4, subtitleCodec: "mov_text", language: "spa", title: "Spanish" },
+    ]);
     const job = makeSubtitleJob();
 
     const result = await processTranscodeJob(job);
 
-    expect(buildSubtitleFfmpegArgs).toHaveBeenCalledWith({
+    expect(buildSubtitleFfmpegArgs).toHaveBeenNthCalledWith(1, {
       inputPath: "/media/original/clip.mp4",
-      outputPath: "/media/subtitles/subtitle-abc123-uuid.vtt",
+      outputPath: "/media/subtitles/subtitle-abc123-uuid-0.vtt",
       streamIndex: 3,
     });
-    expect(runFfmpeg).toHaveBeenCalledWith(["subtitle-args"]);
-    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", {
-      subtitleFilename: "subtitle-abc123-uuid.vtt",
+    expect(buildSubtitleFfmpegArgs).toHaveBeenNthCalledWith(2, {
+      inputPath: "/media/original/clip.mp4",
+      outputPath: "/media/subtitles/subtitle-abc123-uuid-1.vtt",
+      streamIndex: 4,
     });
-    expect(result).toEqual({ outputFilename: "subtitle-abc123-uuid.vtt" });
+    expect(runFfmpeg).toHaveBeenCalledTimes(2);
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", {
+      subtitles: [
+        { outputFilename: "subtitle-abc123-uuid-0.vtt", language: "eng", title: "" },
+        { outputFilename: "subtitle-abc123-uuid-1.vtt", language: "spa", title: "Spanish" },
+      ],
+    });
+    expect(result).toEqual({ outputFilename: "subtitle-abc123-uuid", extracted: 2 });
   });
 
-  test("skips gracefully and resolves when no subtitle stream is found", async () => {
-    probeSubtitleStreams.mockResolvedValue(null);
+  test("reports an empty subtitles array (not a failure) when no stream is found", async () => {
+    probeAllSubtitleStreams.mockResolvedValue([]);
     const job = makeSubtitleJob();
 
     const result = await processTranscodeJob(job);
 
     expect(buildSubtitleFfmpegArgs).not.toHaveBeenCalled();
     expect(runFfmpeg).not.toHaveBeenCalled();
-    expect(notifySubtitleFailed).toHaveBeenCalledWith(
-      "subtitle-abc123-uuid",
-      "no text-based subtitle stream found",
-    );
-    expect(notifySubtitleComplete).not.toHaveBeenCalled();
+    expect(notifySubtitleFailed).not.toHaveBeenCalled();
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", { subtitles: [] });
     expect(result).toEqual({ outputFilename: null, skipped: "no_subtitle_stream" });
   });
 
-  test("skips gracefully (does not attempt a guessed extraction) when the probe itself fails", async () => {
-    probeSubtitleStreams.mockRejectedValue(new Error("ffprobe exited with code 1"));
+  test("reports an empty subtitles array (does not attempt a guessed extraction) when the probe itself fails", async () => {
+    probeAllSubtitleStreams.mockRejectedValue(new Error("ffprobe exited with code 1"));
     const job = makeSubtitleJob();
 
     const result = await processTranscodeJob(job);
 
     expect(buildSubtitleFfmpegArgs).not.toHaveBeenCalled();
     expect(runFfmpeg).not.toHaveBeenCalled();
-    expect(notifySubtitleFailed).toHaveBeenCalledWith(
-      "subtitle-abc123-uuid",
-      "no text-based subtitle stream found",
-    );
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", { subtitles: [] });
     expect(result).toEqual({ outputFilename: null, skipped: "no_subtitle_stream" });
+  });
+
+  test("skips a stream whose ffmpeg conversion fails, still reporting the others", async () => {
+    probeAllSubtitleStreams.mockResolvedValue([
+      { streamIndex: 3, subtitleCodec: "subrip", language: "eng", title: "" },
+      { streamIndex: 4, subtitleCodec: "mov_text", language: "spa", title: "" },
+    ]);
+    runFfmpeg.mockReset().mockRejectedValueOnce(new Error("ffmpeg exploded")).mockResolvedValueOnce(undefined);
+    const job = makeSubtitleJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(runFfmpeg).toHaveBeenCalledTimes(2);
+    expect(notifySubtitleComplete).toHaveBeenCalledWith("subtitle-abc123-uuid", {
+      subtitles: [{ outputFilename: "subtitle-abc123-uuid-1.vtt", language: "spa", title: "" }],
+    });
+    expect(result).toEqual({ outputFilename: "subtitle-abc123-uuid", extracted: 1 });
   });
 });
 
