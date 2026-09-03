@@ -101,7 +101,6 @@ function FileTreeEntry({ label, file }) {
       <span className="admin-file-tree-meta">
         {[
           file.mimeType || file.fileExtension || null,
-          file.fileSizeBytes != null ? `${formatFileSize(file.fileSizeBytes)} recorded` : null,
           file.sizeBytesOnDisk != null ? `${formatFileSize(file.sizeBytesOnDisk)} on disk` : null,
         ]
           .filter(Boolean)
@@ -500,9 +499,7 @@ function AdminPanel() {
         <div className="settings-card">
           <h2>Manage Themes</h2>
           <p className="settings-status">
-            Every theme is listed here, including users&apos; private ones — everywhere else
-            (the theme selector, each user&apos;s own theme list) only shows site-wide themes plus
-            whatever a user created themselves.
+            Manage site and user themes
           </p>
           <Link to="/control-panel/themes/new" className="settings-submit admin-themes-create-link">
             Create Theme
@@ -597,8 +594,7 @@ function AdminPanel() {
         <div className="settings-card">
           <h2>Video File Explorer</h2>
           <p className="admin-file-tree-hint">
-            Look up every file stored for an upload — pkid, internal uuid, or public video id
-            all work, or paste a link to a video on this site to auto-fill its id.
+            Look up every file related to an upload by: pkid, internal uuid, public video id, or link
           </p>
           <form className="settings-form admin-file-tree-form" onSubmit={handleFileTreeLookup}>
             <label htmlFor="admin-file-tree-query">Video identifier</label>
@@ -656,8 +652,7 @@ function AdminPanel() {
           <h2>Processing Queue</h2>
           {!transcodingEnabled && (
             <p className="admin-jobs-hint">
-              Transcoding is disabled on this server (ENABLE_TRANSCODING=false) — the
-              processing queue is expected to stay empty.
+              Transcoding is disabled on this server (ENABLE_TRANSCODING=false)
             </p>
           )}
 
