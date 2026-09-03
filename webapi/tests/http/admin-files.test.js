@@ -7,6 +7,7 @@ import {
   seedUpload,
   seedUser,
   seedUserApiKey,
+  seedVideoSubtitle,
   seedVideoThumbnail,
   setupSchema,
 } from "../helpers/db.js";
@@ -72,6 +73,7 @@ describe("GET /api/v1/admin/files/uploads/:identifier", () => {
     const upload = await seedUpload();
     const fileVersion = await seedFileVersion(upload.id);
     const thumbnail = await seedVideoThumbnail(upload.id);
+    const subtitle = await seedVideoSubtitle(upload.id, { source: "auto" });
 
     const res = await client
       .get(`/api/v1/admin/files/uploads/${upload.id}`)
@@ -89,11 +91,31 @@ describe("GET /api/v1/admin/files/uploads/:identifier", () => {
     });
     expect(res.body.files.original.existsOnDisk).toBe(false);
     expect(res.body.files.thumbnail).toMatchObject({ id: thumbnail.id, kind: "thumbnail" });
+    expect(res.body.files.subtitle).toMatchObject({
+      id: subtitle.id,
+      kind: "subtitle",
+      source: "auto",
+      relativePath: `subtitles/${subtitle.subtitleFilename}`,
+    });
+    expect(res.body.files.subtitle.existsOnDisk).toBe(false);
     expect(res.body.files.transcoded).toHaveLength(1);
     expect(res.body.files.transcoded[0]).toMatchObject({
       id: fileVersion.id,
       uuidName: fileVersion.uuidName,
     });
+  });
+
+  test("omits subtitle when the upload has no subtitle track", async () => {
+    const rawKey = "jt_test_admin_files_no_subtitle";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const upload = await seedUpload();
+
+    const res = await client
+      .get(`/api/v1/admin/files/uploads/${upload.id}`)
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.files.subtitle).toBeNull();
   });
 
   test("resolves by internal uuid", async () => {
@@ -218,7 +240,7 @@ describe("GET /api/v1/admin/files/tree/:category", () => {
     const rawKey = "jt_test_admin_tree_valid";
     await seedUserWithRoleAndKey("admin", rawKey);
 
-    for (const category of ["original", "transcoded", "thumbnails"]) {
+    for (const category of ["original", "transcoded", "thumbnails", "subtitles"]) {
       const res = await client
         .get(`/api/v1/admin/files/tree/${category}`)
         .set("Authorization", `Bearer ${rawKey}`);
