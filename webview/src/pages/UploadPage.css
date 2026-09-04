@@ -215,6 +215,18 @@
   text-decoration: underline;
 }
 
+.upload-link-button:disabled {
+  color: var(--text);
+  cursor: default;
+  text-decoration: none;
+}
+
+.upload-admin-actions-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
 .upload-thumbnail-row {
   display: flex;
   align-items: stretch;

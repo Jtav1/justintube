@@ -1,6 +1,13 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { createTestClient } from "../helpers/app.js";
-import { resetTables, seedUser, seedUserApiKey, setupSchema } from "../helpers/db.js";
+import {
+  resetTables,
+  seedFileVersion,
+  seedUpload,
+  seedUser,
+  seedUserApiKey,
+  setupSchema,
+} from "../helpers/db.js";
 import { Role } from "../../lib/models/index.js";
 
 /**
@@ -251,7 +258,123 @@ describe("GET /api/v1/admin/jobs/history", () => {
       .set("Authorization", `Bearer ${rawKey}`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ items, total: 12, page: 2, limit: 3 });
+    // "c1" doesn't match any seeded FileVersion, so the rendition item's
+    // upload can't be resolved - see the dedicated resolution tests below
+    // for the cases where it can.
+    expect(res.body).toEqual({
+      items: [{ ...items[0], uploadId: null, videoId: null }],
+      total: 12,
+      page: 2,
+      limit: 3,
+    });
+  });
+
+  test("resolves uploadId/videoId for job kinds that embed videoId directly in the jobId", async () => {
+    const rawKey = "jt_test_admin_jobs_history_direct";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const upload = await seedUpload();
+    const items = [
+      {
+        jobId: `thumbnail-${upload.videoId}-11111111-1111-1111-1111-111111111111`,
+        kind: "thumbnail",
+        name: "ffmpeg-thumbnail",
+        state: "completed",
+        finishedOn: 1000,
+        processedOn: 900,
+        failedReason: null,
+      },
+      {
+        jobId: `subtitle-${upload.videoId}-22222222-2222-2222-2222-222222222222`,
+        kind: "subtitle",
+        name: "ffmpeg-subtitle",
+        state: "completed",
+        finishedOn: 2000,
+        processedOn: 1900,
+        failedReason: null,
+      },
+      {
+        jobId: `normalize-${upload.videoId}`,
+        kind: "normalize",
+        name: "ffmpeg-normalize",
+        state: "completed",
+        finishedOn: 3000,
+        processedOn: 2900,
+        failedReason: null,
+      },
+      {
+        jobId: `hash-${upload.videoId}`,
+        kind: "hash",
+        name: "ffmpeg-hash",
+        state: "completed",
+        finishedOn: 4000,
+        processedOn: 3900,
+        failedReason: null,
+      },
+      {
+        jobId: `nope-${upload.videoId}`,
+        kind: "unknown_kind",
+        name: "mystery",
+        state: "completed",
+        finishedOn: 500,
+        processedOn: 400,
+        failedReason: null,
+      },
+    ];
+    globalThis.fetch = fetchMockFor(() => ({
+      status: 200,
+      body: { success: true, items, total: items.length, page: 1, limit: 5 },
+    }));
+
+    const res = await client
+      .get("/api/v1/admin/jobs/history")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    const byKind = Object.fromEntries(res.body.items.map((item) => [item.kind, item]));
+    expect(byKind.thumbnail).toMatchObject({ uploadId: upload.id, videoId: upload.videoId });
+    expect(byKind.subtitle).toMatchObject({ uploadId: upload.id, videoId: upload.videoId });
+    expect(byKind.normalize).toMatchObject({ uploadId: upload.id, videoId: upload.videoId });
+    expect(byKind.hash).toMatchObject({ uploadId: upload.id, videoId: upload.videoId });
+    expect(byKind.unknown_kind).toMatchObject({ uploadId: null, videoId: null });
+  });
+
+  test("resolves uploadId/videoId for a rendition job via its FileVersion.uuidName", async () => {
+    const rawKey = "jt_test_admin_jobs_history_rendition";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const upload = await seedUpload();
+    const version = await seedFileVersion(upload.id);
+    const items = [
+      {
+        jobId: version.uuidName,
+        kind: "rendition",
+        name: "ffmpeg-transcode",
+        state: "completed",
+        finishedOn: 1000,
+        processedOn: 900,
+        failedReason: null,
+      },
+      {
+        jobId: "00000000-0000-0000-0000-000000000000",
+        kind: "rendition",
+        name: "ffmpeg-transcode",
+        state: "completed",
+        finishedOn: 2000,
+        processedOn: 1900,
+        failedReason: null,
+      },
+    ];
+    globalThis.fetch = fetchMockFor(() => ({
+      status: 200,
+      body: { success: true, items, total: items.length, page: 1, limit: 5 },
+    }));
+
+    const res = await client
+      .get("/api/v1/admin/jobs/history")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0]).toMatchObject({ uploadId: upload.id, videoId: upload.videoId });
+    expect(res.body.items[1]).toMatchObject({ uploadId: null, videoId: null });
   });
 
   test("returns 400 invalid_query for a non-positive page", async () => {

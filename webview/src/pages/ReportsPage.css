@@ -14,24 +14,6 @@
   margin: 0;
 }
 
-.reports-page-new {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font: inherit;
-  padding: 8px 14px;
-  border-radius: 5px;
-  border: 2px solid transparent;
-  color: var(--accent);
-  background: var(--accent-bg);
-  cursor: pointer;
-  transition: border-color 0.3s;
-}
-
-.reports-page-new:hover {
-  border-color: var(--accent-border);
-}
-
 .reports-page-empty {
   text-align: center;
   color: var(--text);

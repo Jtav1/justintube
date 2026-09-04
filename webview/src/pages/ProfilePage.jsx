@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import {
   ArrowDownWideNarrow,
   ArrowRight,
   Funnel,
-  TriangleAlert,
   Pencil,
   UserRound,
 } from 'lucide-react'
@@ -15,10 +14,6 @@ import apiClient from '../api/client.js'
 import { resendVerification } from '../api/auth.js'
 import {
   getUserChannel,
-  updateUserProfile,
-  updateUserBanner,
-  deleteUserBanner,
-  updateUserAvatar,
   adminResendUserVerification,
   adminGrantUploader,
   adminUpdateUserRole,
@@ -61,9 +56,6 @@ function ProfilePage() {
   const { username } = useParams()
   const { user: authUser } = useAuth()
   const { success, error: toastError } = useToast()
-  const navigate = useNavigate()
-  const fileInputRef = useRef(null)
-  const avatarFileInputRef = useRef(null)
 
   const [profile, setProfile] = useState(null)
   const [sort, setSort] = useState('newest')
@@ -82,16 +74,8 @@ function ProfilePage() {
   // away and the ref (needed to measure and correct it) would never attach.
   const [playlistsColumns, setPlaylistsColumns] = useState(Infinity)
   const playlistsGridRef = useRef(null)
-  const [bannerUploading, setBannerUploading] = useState(false)
-  const [avatarUploading, setAvatarUploading] = useState(false)
   const [subscribed, setSubscribed] = useState(null)
   const [subscribePending, setSubscribePending] = useState(false)
-
-  const [editingName, setEditingName] = useState(false)
-  const [nameDraft, setNameDraft] = useState('')
-  const [editingBio, setEditingBio] = useState(false)
-  const [bioDraft, setBioDraft] = useState('')
-  const [savingField, setSavingField] = useState(false)
 
   const [resendingVerification, setResendingVerification] = useState(false)
 
@@ -228,21 +212,11 @@ function ProfilePage() {
 
   const isOwnProfile = Boolean(authUser && authUser.username === username)
   const isAdminViewer = Boolean(authUser && authUser.role === 'admin')
-  const canManageProfile = Boolean(
-    authUser && (isOwnProfile || authUser.role === 'admin' || authUser.role === 'moderator'),
-  )
   const canResendVerification = Boolean(
     (isOwnProfile || isAdminViewer) && profile?.user?.emailVerified === false,
   )
   const canGrantUploader = Boolean(isAdminViewer && profile?.user?.uploader === false)
   const canSubscribe = Boolean(authUser) && !isOwnProfile && profile?.user?.id != null
-  const canReportProfile = Boolean(authUser) && !isOwnProfile && profile?.user?.id != null
-
-  function handleReportProfile() {
-    navigate('/reports/new', {
-      state: { reportType: 'user', reportedUserId: profile.user.id, link: window.location.href },
-    })
-  }
 
   async function handleResendVerification() {
     setResendingVerification(true)
@@ -331,86 +305,6 @@ function ProfilePage() {
     }
   }
 
-  function startEditName() {
-    setNameDraft(profile.user.displayName || '')
-    setEditingName(true)
-  }
-
-  function startEditBio() {
-    setBioDraft(profile.user.bio || '')
-    setEditingBio(true)
-  }
-
-  async function saveField(field, value) {
-    setSavingField(true)
-    try {
-      const updated = await updateUserProfile(profile.user.id, { [field]: value })
-      setProfile((prev) => ({
-        ...prev,
-        user: { ...prev.user, displayName: updated.displayName, bio: updated.bio },
-      }))
-      setEditingName(false)
-      setEditingBio(false)
-      success('Profile updated.')
-    } catch {
-      toastError('Failed to save changes.')
-    } finally {
-      setSavingField(false)
-    }
-  }
-
-  async function handleAvatarFileChange(event) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file || !profile) {
-      return
-    }
-    setAvatarUploading(true)
-    try {
-      const { avatarFilename } = await updateUserAvatar(profile.user.id, file)
-      setProfile((prev) => ({ ...prev, user: { ...prev.user, avatarFilename } }))
-      success('Avatar updated.')
-    } catch {
-      toastError('Failed to upload avatar.')
-    } finally {
-      setAvatarUploading(false)
-    }
-  }
-
-  async function handleBannerFileChange(event) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file || !profile) {
-      return
-    }
-    setBannerUploading(true)
-    try {
-      const { bannerFilename } = await updateUserBanner(profile.user.id, file)
-      setProfile((prev) => ({ ...prev, user: { ...prev.user, bannerFilename } }))
-      success('Banner updated.')
-    } catch {
-      toastError('Failed to upload banner.')
-    } finally {
-      setBannerUploading(false)
-    }
-  }
-
-  async function handleBannerDelete() {
-    if (!profile) {
-      return
-    }
-    setBannerUploading(true)
-    try {
-      await deleteUserBanner(profile.user.id)
-      setProfile((prev) => ({ ...prev, user: { ...prev.user, bannerFilename: null } }))
-      success('Banner removed.')
-    } catch {
-      toastError('Failed to remove banner.')
-    } finally {
-      setBannerUploading(false)
-    }
-  }
-
   function handleSortChange(event) {
     setSort(event.target.value)
   }
@@ -467,53 +361,6 @@ function ProfilePage() {
         className="profile-banner"
         style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
       >
-        {(canManageProfile || canReportProfile) && (
-          <div className="profile-banner-actions">
-            {canManageProfile && (
-              <>
-                <button
-                  type="button"
-                  className="profile-banner-edit"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={bannerUploading}
-                  aria-label="Change banner image"
-                  title="Change banner image"
-                >
-                  <Pencil size={16} />
-                </button>
-                {bannerUrl && (
-                  <button
-                    type="button"
-                    className="profile-banner-remove"
-                    onClick={handleBannerDelete}
-                    disabled={bannerUploading}
-                  >
-                    Remove
-                  </button>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="profile-banner-file-input"
-                  onChange={handleBannerFileChange}
-                />
-              </>
-            )}
-            {canReportProfile && (
-              <button
-                type="button"
-                className="profile-banner-report"
-                onClick={handleReportProfile}
-                aria-label="Report this user"
-                title="Report this user"
-              >
-                <TriangleAlert size={16} />
-              </button>
-            )}
-          </div>
-        )}
-
         <div className="profile-avatar-wrap">
           {avatarUrl ? (
             <img className="profile-avatar" src={avatarUrl} alt="" />
@@ -522,91 +369,44 @@ function ProfilePage() {
               <UserRound size={120} />
             </span>
           )}
-          {canManageProfile && (
-            <>
-              <button
-                type="button"
-                className="profile-avatar-edit"
-                onClick={() => avatarFileInputRef.current?.click()}
-                disabled={avatarUploading}
-                aria-label="Change avatar image"
-                title="Change avatar image"
-              >
-                <Pencil size={14} />
-              </button>
-              <input
-                ref={avatarFileInputRef}
-                type="file"
-                accept="image/*"
-                className="profile-banner-file-input"
-                onChange={handleAvatarFileChange}
-              />
-            </>
-          )}
         </div>
 
         <div className="profile-name-row">
-          {editingName ? (
-            <form
-              className="profile-inline-edit"
-              onSubmit={(event) => {
-                event.preventDefault()
-                saveField('displayName', nameDraft)
-              }}
+          <h1 className="profile-username">
+            {user.displayName || user.username}
+            {user.displayName && (
+              <span className="profile-username-handle"> ({user.username})</span>
+            )}
+            {' '}<span className="profile-user-id">User # {user.id}</span>
+            {!isAdminViewer && user.role && (
+              <span className="profile-username-role"> - role: {user.role}</span>
+            )}
+          </h1>
+          {isAdminViewer && (
+            <label className="profile-role-select">
+              Role
+              <select
+                value={user.role ?? ''}
+                disabled={updatingRole}
+                onChange={(event) => handleRoleChange(event.target.value)}
+              >
+                {USER_ROLES.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {isOwnProfile && (
+            <Link
+              to="/settings"
+              className="profile-edit-icon"
+              aria-label="Edit profile"
+              title="Edit profile"
             >
-              <input
-                type="text"
-                value={nameDraft}
-                onChange={(event) => setNameDraft(event.target.value)}
-                autoFocus
-              />
-              <button type="submit" disabled={savingField}>
-                Save
-              </button>
-              <button type="button" onClick={() => setEditingName(false)} disabled={savingField}>
-                Cancel
-              </button>
-            </form>
-          ) : (
-            <>
-              <h1 className="profile-username">
-                {user.displayName || user.username}
-                {user.displayName && (
-                  <span className="profile-username-handle"> ({user.username})</span>
-                )}
-                {' '}<span className="profile-user-id">User # {user.id}</span>
-                {!isAdminViewer && user.role && (
-                  <span className="profile-username-role"> - role: {user.role}</span>
-                )}
-              </h1>
-              {isAdminViewer && (
-                <label className="profile-role-select">
-                  Role
-                  <select
-                    value={user.role ?? ''}
-                    disabled={updatingRole}
-                    onChange={(event) => handleRoleChange(event.target.value)}
-                  >
-                    {USER_ROLES.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {canManageProfile && (
-                <button
-                  type="button"
-                  className="profile-edit-icon"
-                  onClick={startEditName}
-                  aria-label="Edit name"
-                  title="Edit name"
-                >
-                  <Pencil size={18} />
-                </button>
-              )}
-            </>
+              <Pencil size={18} />
+            </Link>
           )}
         </div>
       </div>
@@ -626,47 +426,9 @@ function ProfilePage() {
       </div>
 
       <div className="profile-bio-row">
-        {editingBio ? (
-          <form
-            className="profile-inline-edit profile-inline-edit-bio"
-            onSubmit={(event) => {
-              event.preventDefault()
-              saveField('bio', bioDraft)
-            }}
-          >
-            <textarea
-              value={bioDraft}
-              onChange={(event) => setBioDraft(event.target.value)}
-              rows={3}
-              autoFocus
-            />
-            <div className="profile-inline-edit-actions">
-              <button type="submit" disabled={savingField}>
-                Save
-              </button>
-              <button type="button" onClick={() => setEditingBio(false)} disabled={savingField}>
-                Cancel
-              </button>
-            </div>
-          </form>
-        ) : (
-          <>
-            <p className="profile-bio">
-              {user.bio || <em>No bio yet.</em>}
-            </p>
-            {canManageProfile && (
-              <button
-                type="button"
-                className="profile-edit-icon"
-                onClick={startEditBio}
-                aria-label="Edit bio"
-                title="Edit bio"
-              >
-                <Pencil size={18} />
-              </button>
-            )}
-          </>
-        )}
+        <p className="profile-bio">
+          {user.bio || <em>No bio yet.</em>}
+        </p>
       </div>
 
       {canResendVerification && (

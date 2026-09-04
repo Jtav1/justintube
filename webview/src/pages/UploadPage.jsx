@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { UploadCloud } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
 import { useToast } from '../context/useToast.js'
 import {
   uploadVideoFile,
@@ -15,6 +16,8 @@ import {
   getImportStatus,
   updateVideoThumbnail,
   regenerateVideoThumbnail,
+  retranscodeVideo,
+  rebuildVideoRemux,
   listVideoSubtitles,
   uploadVideoSubtitle,
   updateVideoSubtitleLabel,
@@ -130,6 +133,7 @@ function addFilesToBulkCards(prevCards, files) {
 
 function UploadPage() {
   const { user, loading: authLoading } = useAuth()
+  const { transcodingEnabled } = useSiteConfig()
   const { success, error: toastError } = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -183,6 +187,12 @@ function UploadPage() {
 
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // In-flight state for the admin-only edit-mode actions at the bottom of
+  // the form - each is independent of the main save/delete flow and never
+  // navigates away or touches the form's own fields.
+  const [adminRegeneratingThumbnail, setAdminRegeneratingThumbnail] = useState(false)
+  const [adminRetranscoding, setAdminRetranscoding] = useState(false)
+  const [adminRebuildingRemux, setAdminRebuildingRemux] = useState(false)
   // True for the brief spinner pause between a successful new-upload
   // submission and navigating away (see POST_UPLOAD_DELAY_MS).
   const [postUploadPending, setPostUploadPending] = useState(false)
@@ -462,7 +472,7 @@ function UploadPage() {
       success('Captions are regenerating — this may take a moment.')
     } catch (err) {
       console.error('Failed to regenerate captions:', err)
-      toastError('Failed to regenerate captions.')
+      toastError(err.response?.data?.message || 'Failed to regenerate captions.')
     } finally {
       setSubtitleRegenerating(false)
     }
@@ -806,10 +816,13 @@ function UploadPage() {
     } else if (isEditMode && thumbnailTimestampToSend !== undefined) {
       try {
         await regenerateVideoThumbnail(createdId, thumbnailTimestampToSend)
-      } catch {
+      } catch (err) {
+        const reason = err.response?.data?.message
         toastError(
-          'Your changes were saved, but the thumbnail could not be regenerated. ' +
-            'You can try again from the edit page.',
+          reason
+            ? `Your changes were saved, but the thumbnail could not be regenerated: ${reason}`
+            : 'Your changes were saved, but the thumbnail could not be regenerated. ' +
+                'You can try again from the edit page.',
         )
         setSubmitting(false)
         return
@@ -905,6 +918,55 @@ function UploadPage() {
 
     success('Video deleted.')
     navigate(`/users/${user.username}`)
+  }
+
+  // Admin-only edit-mode actions below - each just fires a request and
+  // shows a toast; none of them touch the form's own fields, submit it, or
+  // navigate away.
+
+  async function handleAdminRegenerateThumbnail() {
+    if (adminRegeneratingThumbnail) {
+      return
+    }
+    setAdminRegeneratingThumbnail(true)
+    try {
+      await regenerateVideoThumbnail(editUpload.id)
+      success('Thumbnail regeneration queued.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to queue thumbnail regeneration.')
+    } finally {
+      setAdminRegeneratingThumbnail(false)
+    }
+  }
+
+  async function handleAdminRetranscode() {
+    if (adminRetranscoding) {
+      return
+    }
+    setAdminRetranscoding(true)
+    try {
+      await retranscodeVideo(editUpload.id)
+      success('Re-transcode queued.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to queue re-transcode.')
+    } finally {
+      setAdminRetranscoding(false)
+    }
+  }
+
+  async function handleAdminRebuildRemux() {
+    if (adminRebuildingRemux) {
+      return
+    }
+    setAdminRebuildingRemux(true)
+    try {
+      await rebuildVideoRemux(editUpload.id)
+      success('Remux container rebuild queued.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to queue remux container rebuild.')
+    } finally {
+      setAdminRebuildingRemux(false)
+    }
   }
 
   return (
@@ -1030,7 +1092,7 @@ function UploadPage() {
                 )}
               </label>
 
-              {!isEditingAudio && (
+              {!isEditingAudio && transcodingEnabled && (
                 <div className="upload-thumbnail-timestamp">
                   <label htmlFor="upload-thumbnail-timestamp">Frame at (sec)</label>
                   <input
@@ -1051,7 +1113,7 @@ function UploadPage() {
                 </div>
               )}
             </div>
-            {isEditMode && !isEditingAudio && (
+            {isEditMode && !isEditingAudio && transcodingEnabled && (
               <p className="upload-hint">
                 Specifying a timestamp (in seconds) to replace thumbnail with that frame
               </p>
@@ -1139,7 +1201,7 @@ function UploadPage() {
                   </button>
                 )}
               </label>
-              {isEditMode && (
+              {isEditMode && transcodingEnabled && (
                 <button
                   type="button"
                   className="upload-link-button"
@@ -1176,7 +1238,9 @@ function UploadPage() {
 
             <p className="upload-hint">
               {isEditMode
-                ? 'Add a labeled subtitle file, or attempt to auto-extract subtitles from the video file'
+                ? transcodingEnabled
+                  ? 'Add a labeled subtitle file, or attempt to auto-extract subtitles from the video file'
+                  : 'Add a labeled subtitle file'
                 : 'Add a labeled subtitle file, uploaded alongside the video'}
             </p>
           </div>
@@ -1328,6 +1392,38 @@ function UploadPage() {
           >
             {deleting ? 'Deleting...' : 'Delete Video'}
           </button>
+        )}
+
+        {isEditMode && isAdmin && transcodingEnabled && (
+          <div className="upload-field-group upload-admin-actions">
+            <label>Admin actions</label>
+            <div className="upload-admin-actions-buttons">
+              <button
+                type="button"
+                className="upload-link-button"
+                onClick={handleAdminRegenerateThumbnail}
+                disabled={adminRegeneratingThumbnail}
+              >
+                {adminRegeneratingThumbnail ? 'Regenerating…' : 'Regenerate Thumbnail'}
+              </button>
+              <button
+                type="button"
+                className="upload-link-button"
+                onClick={handleAdminRetranscode}
+                disabled={adminRetranscoding}
+              >
+                {adminRetranscoding ? 'Queuing…' : 'Re-transcode'}
+              </button>
+              <button
+                type="button"
+                className="upload-link-button"
+                onClick={handleAdminRebuildRemux}
+                disabled={adminRebuildingRemux}
+              >
+                {adminRebuildingRemux ? 'Queuing…' : 'Re-build Remux Container'}
+              </button>
+            </div>
+          </div>
         )}
       </form>
     </section>

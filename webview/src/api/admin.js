@@ -51,7 +51,10 @@ export async function getAdminJobQueue() {
 
 /**
  * Lists the most recently completed/failed processing jobs, newest first,
- * paginated (5 per page by default).
+ * paginated (5 per page by default). Each item carries `uploadId`
+ * (ORIGINAL_UPLOADS numeric pkid) and `videoId` (its public id) when the job
+ * could still be traced back to an upload — both `null` for a job whose
+ * upload has since been deleted, or whose jobId shape isn't recognized.
  * @param {{page?: number, limit?: number}} [options]
  * @returns {Promise<{items: object[], total: number, page: number, limit: number}>}
  */

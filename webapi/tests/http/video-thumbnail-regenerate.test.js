@@ -12,7 +12,7 @@ import {
   seedVideoThumbnail,
   setupSchema,
 } from "../helpers/db.js";
-import { OriginalUpload, VideoThumbnail } from "../../lib/models/index.js";
+import { OriginalUpload, Role, VideoThumbnail } from "../../lib/models/index.js";
 
 /**
  * Writes a fixture file under the test media root at a given relative storage
@@ -70,6 +70,20 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
     const upload = await seedUpload({ userId: owner.id, ...overrides });
     await seedMetadata(upload.id, { title: "Owned video" });
     return { ownerKey, ownerId: owner.id, uploadId: upload.id };
+  }
+
+  /**
+   * Seeds a user with the given role name and an API key for Bearer auth.
+   *
+   * @param {string} roleName Role name (`admin`, `viewer`, …).
+   * @param {string} rawKey Plaintext API key for Authorization headers.
+   * @returns {Promise<{id: number} & Record<string, unknown>>} Seeded user record.
+   */
+  async function seedUserWithRoleAndKey(roleName, rawKey) {
+    const role = await Role.findOne({ where: { name: roleName } });
+    const user = await seedUser({ roleId: role?.id ?? null, emailVerified: true });
+    await seedUserApiKey(user.id, rawKey);
+    return user;
   }
 
   /**
@@ -134,7 +148,7 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
     expect(res.body.error).toBe("not_found");
   });
 
-  test("returns 400 invalid_body when thumbnailTimestamp is omitted", async () => {
+  test("returns 403 forbidden when a non-admin owner omits thumbnailTimestamp", async () => {
     const { ownerKey, uploadId } = await seedOwnedVideo();
 
     const res = await client
@@ -142,8 +156,31 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
       .set("Authorization", `Bearer ${ownerKey}`)
       .send({});
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toBe("invalid_body");
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+  });
+
+  test("admin can queue a random thumbnail regeneration by omitting thumbnailTimestamp", async () => {
+    const { uploadId } = await seedOwnedVideo({ videoId: "regenvid2", fileExtension: "mp4" });
+    const seededRow = await OriginalUpload.findByPk(uploadId);
+    await seededRow.update({ thumbnailTimestampTenths: 50 });
+    await seedUserWithRoleAndKey("admin", "admin-thumb-regen-key");
+    const fetchMock = acceptJobFetchMock();
+    globalThis.fetch = fetchMock;
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/thumbnail/regenerate`)
+      .set("Authorization", "Bearer admin-thumb-regen-key")
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ success: true });
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(payload.jobs[0]).toMatchObject({ kind: "thumbnail", timestampSeconds: null });
+
+    const row = await OriginalUpload.findByPk(uploadId);
+    expect(row.thumbnailTimestampTenths).toBeNull();
   });
 
   test("returns 400 invalid_body for a negative thumbnailTimestamp", async () => {

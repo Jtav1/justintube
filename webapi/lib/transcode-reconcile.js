@@ -10,6 +10,7 @@ import {
   removeTranscodeJob,
   requestTranscodeBatch,
 } from "./processing-client.js";
+import { transcodingEnabled } from "./processing-features-config.js";
 import { logger } from "./logger.js";
 
 /**
@@ -156,13 +157,23 @@ export async function reconcileFileVersion(version) {
 }
 
 /**
- * Finds stale pending/processing file versions and reconciles each.
+ * Finds stale pending/processing file versions and reconciles each. A no-op
+ * when transcoding is disabled deployment-wide (`ENABLE_TRANSCODING=false`)
+ * — there is no processing service to check job status against or
+ * re-enqueue onto, so this must never attempt either. Any stale rows left
+ * behind from before transcoding was disabled simply stay untouched rather
+ * than being marked failed; re-enabling transcoding lets a later run pick
+ * them back up.
  *
  * @param {object} [options] Override stale window for tests.
  * @param {number} [options.staleMinutes] Minutes before a row is stale.
  * @returns {Promise<Array<{ action: string, uuidName: string }>>} Actions taken.
  */
 export async function runTranscodeReconcile(options = {}) {
+  if (!transcodingEnabled()) {
+    return [];
+  }
+
   const { staleMinutes } = { ...getReconcileConfig(), ...options };
   const cutoff = new Date(Date.now() - staleMinutes * 60_000);
 

@@ -11,6 +11,8 @@ import {
   moderateReport,
   updateReport,
 } from '../api/reports.js'
+import { getVideo } from '../api/videos.js'
+import { getUserChannel } from '../api/users.js'
 import './ReportForm.css'
 
 const REPORT_TYPE_OPTIONS = [
@@ -40,9 +42,58 @@ function ReportForm() {
   const [reportType, setReportType] = useState(prefill.reportType ?? 'website')
   const [link, setLink] = useState(prefill.link ?? '')
   const [description, setDescription] = useState('')
-  const [videoId] = useState(prefill.videoId ?? null)
-  const [reportedUserId] = useState(prefill.reportedUserId ?? null)
+  // The TopBar's report button only has the *public* videoId (from the
+  // `?v=` query param) and username (from the profile route) on hand, not
+  // either target's numeric pkid createReport actually needs - resolve
+  // those here rather than pushing an extra API call onto every navigation
+  // that might never end in a submitted report. playlistId needs no such
+  // resolution (playlists have no separate public-id scheme).
+  const [videoId, setVideoId] = useState(null)
+  const [reportedUserId, setReportedUserId] = useState(null)
   const [playlistId] = useState(prefill.playlistId ?? null)
+  const [targetResolving, setTargetResolving] = useState(
+    Boolean(prefill.videoPublicId || prefill.username),
+  )
+  const [targetError, setTargetError] = useState(null)
+
+  useEffect(() => {
+    if (isEditMode || (!prefill.videoPublicId && !prefill.username)) {
+      return undefined
+    }
+    let cancelled = false
+    const lookup = prefill.videoPublicId
+      ? getVideo(prefill.videoPublicId).then((data) => {
+          if (!cancelled) {
+            setVideoId(data.id)
+          }
+        })
+      : getUserChannel(prefill.username).then((data) => {
+          if (!cancelled) {
+            setReportedUserId(data.user.id)
+          }
+        })
+    lookup
+      .catch(() => {
+        if (!cancelled) {
+          setTargetError(
+            prefill.videoPublicId
+              ? 'Could not find that video to report.'
+              : 'Could not find that user to report.',
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTargetResolving(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+    // Only ever meant to run once, against whatever prefill this page
+    // mounted with - re-running on a state identity change isn't needed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [report, setReport] = useState(isEditMode ? (location.state?.report ?? null) : null)
   const [loading, setLoading] = useState(isEditMode && !location.state?.report)
@@ -247,7 +298,7 @@ function ReportForm() {
   }
 
   if (!isEditMode) {
-    const submitDisabled = !description.trim() || submitting
+    const submitDisabled = !description.trim() || submitting || targetResolving || Boolean(targetError)
     return (
       <section className="report-form-page">
         <form className="report-form-card" onSubmit={handleCreateSubmit}>
@@ -255,6 +306,8 @@ function ReportForm() {
             <TriangleAlert size={20} />
             New Report
           </h1>
+
+          {targetError && <p className="report-form-hint report-form-target-error">{targetError}</p>}
 
           <label htmlFor="report-type">Type</label>
           <select id="report-type" value={reportType} onChange={(event) => setReportType(event.target.value)}>
@@ -285,7 +338,7 @@ function ReportForm() {
           />
 
           <button type="submit" className="report-form-submit" disabled={submitDisabled}>
-            {submitting ? 'Submitting...' : 'Submit Report'}
+            {submitting ? 'Submitting...' : targetResolving ? 'Loading...' : 'Submit Report'}
           </button>
         </form>
       </section>
