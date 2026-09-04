@@ -3957,10 +3957,12 @@ export function createVideosRouter() {
    * `POST /videos/:id/thumbnail/regenerate` (unlike `POST /videos/:id/
    * retranscode`, there's no unique-constraint reason to delete first here -
    * the embed fields live directly on ORIGINAL_UPLOADS, not a separate
-   * uniquely-keyed table). Real videos (`hasVideoStream !== false`)
-   * never had one of these to rebuild in the first place, so this is a
-   * harmless no-op for them — still 202, since nothing actually failed.
-   * Admin only.
+   * uniquely-keyed table). Audio uploads only (`mediaType === "audio"`) -
+   * rejected outright for a video, rather than silently no-opping. Gated on
+   * `mediaType`, not the ffprobe-derived `hasVideoStream` (which stays null
+   * for any upload made while transcoding was disabled, or whose probe never
+   * ran) - `mediaType` is set unconditionally at upload time and is the
+   * reliable signal here. Admin only.
    * POST /videos/:id/remux/rebuild.
    * Auth: session cookie or Bearer API key; admin role required; X-CSRF-Token for sessions.
    *
@@ -3982,9 +3984,9 @@ export function createVideosRouter() {
    *       - bearerApiKey: []
    *     responses:
    *       "202":
-   *         description: Rebuild queued (or a no-op, for a video with a real video stream)
+   *         description: Rebuild queued
    *       "400":
-   *         description: Invalid id or transcoding disabled
+   *         description: Invalid id, not an audio upload, or transcoding disabled
    *       "401":
    *         description: Not authenticated
    *       "403":
@@ -4029,10 +4031,11 @@ export function createVideosRouter() {
           return;
         }
 
-        if (upload.hasVideoStream !== false) {
-          // Only audio-in-container uploads get a remux/embed container in
-          // the first place - nothing to rebuild for a real video.
-          res.status(202).json({ success: true, status: "not_applicable" });
+        if (upload.mediaType !== "audio") {
+          res.status(400).json({
+            error: "invalid_body",
+            message: "Only audio uploads have a remux/embed container to rebuild.",
+          });
           return;
         }
 

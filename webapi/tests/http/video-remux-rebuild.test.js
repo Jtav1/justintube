@@ -53,7 +53,7 @@ function acceptJobFetchMock() {
  * HTTP contract tests for `POST /videos/:id/remux/rebuild` — an admin-only
  * action that rebuilds an audio upload's link-unfurl embed video (a
  * thumbnail+audio MP4 muxed so bots like Discord's `og:video` unfurler have
- * something playable to embed). A no-op for real videos.
+ * something playable to embed). Rejected outright for a real video.
  */
 describe("POST /videos/:id/remux/rebuild", () => {
   /** @type {ReturnType<typeof createTestClient>} */
@@ -131,7 +131,7 @@ describe("POST /videos/:id/remux/rebuild", () => {
     expect(res.body.error).toBe("not_found");
   });
 
-  test("is a harmless no-op for a real video (hasVideoStream true)", async () => {
+  test("rejects a video upload without contacting processing", async () => {
     const { uploadId } = await seedOwnedVideo();
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock;
@@ -141,9 +141,27 @@ describe("POST /videos/:id/remux/rebuild", () => {
       .set("Authorization", `Bearer ${adminKey}`)
       .send({});
 
-    expect(res.status).toBe(202);
-    expect(res.body).toMatchObject({ success: true, status: "not_applicable" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_body");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("rebuilds for an audio upload even when hasVideoStream was never probed (null)", async () => {
+    // A null hasVideoStream (e.g. an upload made while transcoding was
+    // disabled, so the ffprobe source-detection step never ran) must not be
+    // mistaken for "has a real video stream" - mediaType is the reliable
+    // signal this route gates on, not the nullable ffprobe result.
+    const { uploadId } = await seedOwnedVideo({ mediaType: "audio", hasVideoStream: null });
+    globalThis.fetch = acceptJobFetchMock();
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/remux/rebuild`)
+      .set("Authorization", `Bearer ${adminKey}`)
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ success: true });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
   test("rebuilds the embed video for an audio-in-container upload, using its current thumbnail", async () => {
