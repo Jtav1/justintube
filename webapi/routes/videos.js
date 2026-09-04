@@ -14,7 +14,10 @@ import { requireModerator } from "../lib/auth/require-moderator.js";
 import { requireUploader } from "../lib/auth/require-uploader.js";
 import {
   DEFAULT_AUDIO_THUMBNAIL_FILENAME,
+  heightToResolution,
+  mimeTypeForContainer,
   mimeTypeForImage,
+  plannedTranscodedStoragePath,
   resolveMediaPath,
   userStorageSegment,
 } from "../lib/media-meta.js";
@@ -27,6 +30,7 @@ import {
   FileVersion,
   OriginalUpload,
   Subscription,
+  TranscodeProfile,
   User,
   UserHiddenVideo,
   UserViewHistory,
@@ -56,7 +60,9 @@ import { streamFileWithRangeSupport } from "../lib/range-stream.js";
 import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { srtToVtt } from "../lib/subtitle-convert.js";
-import { getQueueJobs, requestTranscodeBatch } from "../lib/processing-client.js";
+import { getQueueJobs, removeTranscodeJob, requestTranscodeBatch } from "../lib/processing-client.js";
+import { rollupOriginalUploadStatus, toTranscodeProfilePayload } from "../lib/file-versions.js";
+import { transcodingEnabled } from "../lib/processing-features-config.js";
 import {
   THUMBNAIL_OUTPUT_EXT,
   cancelQueuedTranscodeJobs,
@@ -3542,27 +3548,35 @@ export function createVideosRouter() {
   );
 
   /**
-   * Regenerates a video's thumbnail at a specific timestamp: once the
-   * processing job is successfully queued, immediately deletes whatever
-   * thumbnail (auto-generated or manually uploaded) currently exists — both
-   * its VIDEO_THUMBNAIL row and its file on disk — and clears
-   * `skipThumbnail` so the video goes back to auto-generation. Without
-   * clearing that flag, a manually-uploaded thumbnail would permanently
-   * block `POST /internal/thumbnails/:uploadUuid/complete` (called back by
-   * processing once the new frame is extracted) from ever recording the
-   * regenerated frame — see the `skipThumbnail` guard there. The deletion
-   * happens after a successful enqueue (not before) so a processing-service
-   * outage can't leave the video with no thumbnail at all. Owner/admin only,
-   * matching POST /videos/:id/thumbnail. Video-only — audio uploads never
-   * get an auto-generated thumbnail.
-   * POST /videos/:id/thumbnail/regenerate — { thumbnailTimestamp: number }.
+   * Regenerates a video's thumbnail: once the processing job is successfully
+   * queued, immediately deletes whatever thumbnail (auto-generated or
+   * manually uploaded) currently exists — both its VIDEO_THUMBNAIL row and
+   * its file on disk — and clears `skipThumbnail` so the video goes back to
+   * auto-generation. Without clearing that flag, a manually-uploaded
+   * thumbnail would permanently block `POST /internal/thumbnails/:uploadUuid/
+   * complete` (called back by processing once the new frame is extracted)
+   * from ever recording the regenerated frame — see the `skipThumbnail`
+   * guard there. The deletion happens after a successful enqueue (not
+   * before) so a processing-service outage can't leave the video with no
+   * thumbnail at all. Video-only — audio uploads never get an
+   * auto-generated thumbnail. Rejected outright when transcoding is
+   * disabled deployment-wide (`ENABLE_TRANSCODING=false`) — there is no
+   * processing service to enqueue a regeneration job against.
+   *
+   * `thumbnailTimestamp` is optional: when given, the owner or an admin may
+   * request that specific frame (unchanged from before); when omitted,
+   * processing picks a random frame the same way it does for a fresh upload
+   * — admin only, since a random re-roll (rather than a deliberate frame
+   * choice) is an admin escape-hatch action, not something owners get from
+   * this endpoint.
+   * POST /videos/:id/thumbnail/regenerate — { thumbnailTimestamp?: number }.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *
    * @openapi
    * /api/v1/videos/{id}/thumbnail/regenerate:
    *   post:
    *     tags: [Videos]
-   *     summary: Regenerate a video's thumbnail at a specific timestamp
+   *     summary: Regenerate a video's thumbnail, optionally at a specific timestamp
    *     operationId: regenerateVideoThumbnail
    *     parameters:
    *       - $ref: "#/components/parameters/CsrfTokenHeader"
@@ -3575,24 +3589,30 @@ export function createVideosRouter() {
    *       - cookieAuth: []
    *       - bearerApiKey: []
    *     requestBody:
-   *       required: true
+   *       required: false
    *       content:
    *         application/json:
    *           schema:
    *             type: object
-   *             required: [thumbnailTimestamp]
    *             properties:
    *               thumbnailTimestamp:
    *                 type: number
+   *                 description: >
+   *                   Seconds into the video. Omit to request a random frame
+   *                   (admin only).
    *     responses:
    *       "202":
    *         description: Thumbnail regeneration queued
    *       "400":
-   *         description: Invalid id, invalid/missing thumbnailTimestamp, or not a video
+   *         description: >
+   *           Invalid id, invalid thumbnailTimestamp, not a video, or
+   *           transcoding disabled
    *       "401":
    *         description: Not authenticated
    *       "403":
-   *         description: Not the video owner and not an admin
+   *         description: >
+   *           Not the video owner/admin, or thumbnailTimestamp was omitted by
+   *           a non-admin
    *       "404":
    *         description: Unknown video id
    *       "502":
@@ -3640,13 +3660,28 @@ export function createVideosRouter() {
           return;
         }
 
+        if (!transcodingEnabled()) {
+          res.status(400).json({
+            error: "transcoding_disabled",
+            message: "Transcoding is disabled for this deployment.",
+          });
+          return;
+        }
+
         const parsedTimestamp = parseThumbnailTimestampTenths(req.body?.thumbnailTimestamp);
-        if (!parsedTimestamp.ok || parsedTimestamp.tenths == null) {
+        if (!parsedTimestamp.ok) {
           res.status(400).json({
             error: "invalid_body",
-            message: parsedTimestamp.ok
-              ? "thumbnailTimestamp is required."
-              : parsedTimestamp.message,
+            message: parsedTimestamp.message,
+          });
+          return;
+        }
+
+        const isRandomRegeneration = parsedTimestamp.tenths == null;
+        if (isRandomRegeneration && !isAdmin(req.authRole)) {
+          res.status(403).json({
+            error: "forbidden",
+            message: "Only an admin can regenerate a thumbnail without a specific timestamp.",
           });
           return;
         }
@@ -3669,7 +3704,7 @@ export function createVideosRouter() {
               jobId: `thumbnail-${upload.videoId}-${randomUUID()}`,
               outputFilename: `${segment}/${randomUUID()}.${THUMBNAIL_OUTPUT_EXT}`,
               kind: "thumbnail",
-              timestampSeconds: parsedTimestamp.tenths / 10,
+              timestampSeconds: isRandomRegeneration ? null : parsedTimestamp.tenths / 10,
             },
           ],
         });
@@ -3696,7 +3731,7 @@ export function createVideosRouter() {
         }
 
         await upload.update({
-          thumbnailTimestampTenths: parsedTimestamp.tenths,
+          thumbnailTimestampTenths: isRandomRegeneration ? null : parsedTimestamp.tenths,
           skipThumbnail: false,
         });
 
@@ -3706,6 +3741,332 @@ export function createVideosRouter() {
         res.status(500).json({
           error: "internal_error",
           message: "Failed to regenerate thumbnail.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Re-transcodes a video: cancels and deletes every existing FILE_VERSIONS
+   * row (row + file on disk) for this upload, then creates a fresh pending
+   * FILE_VERSIONS row and queues a processing job for every TRANSCODE_PROFILES
+   * row matching this upload's media type. Delete-before-create, not the
+   * other way around (unlike `POST /videos/:id/thumbnail/regenerate`'s
+   * enqueue-then-delete), because FILE_VERSIONS has a unique constraint on
+   * (originalUploadId, transcodeProfileId) — a fresh pending row for a
+   * profile can't coexist with the old rendition it's replacing. If the
+   * enqueue call itself then fails, this deliberately leaves the video with
+   * no alternative renditions rather than silently keeping the stale ones;
+   * the admin can simply retry. Admin only: this is a manual "start over"
+   * escape hatch (e.g. after a TRANSCODE_PROFILES change, or a batch of
+   * renditions stuck in a bad state) — routine failures are already handled
+   * automatically by transcode-reconcile.js.
+   * POST /videos/:id/retranscode.
+   * Auth: session cookie or Bearer API key; admin role required; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/retranscode:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Re-transcode a video against its current transcode profiles
+   *     operationId: retranscodeVideo
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       "202":
+   *         description: Re-transcode queued
+   *       "400":
+   *         description: >
+   *           Invalid id, transcoding disabled, or no transcode profiles
+   *           configured for this media type
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not an admin
+   *       "404":
+   *         description: Unknown video id
+   *       "502":
+   *         description: >
+   *           Processing service unavailable - the video's previous
+   *           renditions are already gone at this point and must be
+   *           recreated by retrying
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 202 on success or an error response.
+   */
+  router.post(
+    "/videos/:id/retranscode",
+    requireAuth,
+    requireAdmin,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+        const { upload } = loaded;
+
+        if (!transcodingEnabled()) {
+          res.status(400).json({
+            error: "transcoding_disabled",
+            message: "Transcoding is disabled for this deployment.",
+          });
+          return;
+        }
+
+        const profiles = await TranscodeProfile.findAll({ where: { mediaType: upload.mediaType } });
+        if (profiles.length === 0) {
+          res.status(400).json({
+            error: "invalid_state",
+            message: "No transcode profiles are configured for this media type.",
+          });
+          return;
+        }
+
+        // Cancel + delete every existing rendition up front - see the
+        // unique-constraint rationale above for why this can't wait until
+        // after the new batch is confirmed queued.
+        const previousVersions = await FileVersion.findAll({ where: { originalUploadId: upload.id } });
+        for (const version of previousVersions) {
+          await removeTranscodeJob(version.uuidName).catch(() => {});
+          await version.destroy();
+          await unlink(resolveMediaPath(version.storagePath)).catch(() => {});
+        }
+
+        const segment = userStorageSegment(upload.userId);
+        /** @type {import('sequelize').Model[]} */
+        const newVersions = [];
+        for (const row of profiles) {
+          const versionUuid = randomUUID();
+          const ext = String(row.outputContainer || "mp4")
+            .trim()
+            .toLowerCase()
+            .replace(/^\./, "");
+          newVersions.push(
+            await FileVersion.create({
+              originalUploadId: upload.id,
+              uuidName: versionUuid,
+              fileExtension: ext,
+              mimeType: mimeTypeForContainer(ext),
+              fileSizeBytes: null,
+              storagePath: plannedTranscodedStoragePath(upload.userId, versionUuid, ext),
+              status: "pending",
+              videoWidth: row.outputWidth,
+              videoHeight: row.outputHeight,
+              resolution: heightToResolution(row.outputHeight),
+              transcodeProfileId: row.id,
+            }),
+          );
+        }
+
+        const renditionJobs = newVersions.map((version, index) => ({
+          jobId: version.uuidName,
+          outputFilename: `${segment}/${version.uuidName}.${version.fileExtension}`,
+          kind: "rendition",
+          profile: toTranscodeProfilePayload(profiles[index]),
+        }));
+
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const enqueue = await requestTranscodeBatch({ filename: storedFilename, jobs: renditionJobs });
+
+        if (!enqueue.ok) {
+          logger.error({ error: enqueue.error }, "retranscodeVideo enqueue failed");
+          await Promise.all(newVersions.map((v) => v.destroy()));
+          await rollupOriginalUploadStatus(upload.id);
+          res.status(502).json({
+            error: "processing_unavailable",
+            message: "Failed to queue re-transcode.",
+          });
+          return;
+        }
+
+        // Mirrors finalizeUploadTranscodes's handling of profiles processing
+        // rejected as exceeding the source resolution - drop those pending
+        // rows rather than leaving them stuck pending forever.
+        const body = enqueue.body && typeof enqueue.body === "object" ? enqueue.body : {};
+        const skippedJobIds = new Set(
+          Array.isArray(body.skipped)
+            ? body.skipped
+                .map((row) => (row && typeof row.jobId === "string" ? row.jobId : null))
+                .filter(Boolean)
+            : [],
+        );
+        for (const version of newVersions) {
+          if (skippedJobIds.has(version.uuidName)) {
+            await version.destroy();
+          } else {
+            await version.update({ status: "processing" });
+          }
+        }
+
+        await rollupOriginalUploadStatus(upload.id);
+
+        res.status(202).json({ success: true });
+      } catch (err) {
+        logger.error({ err }, "retranscodeVideo failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to re-transcode video.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Rebuilds an audio upload's link-unfurl embed video (a thumbnail+audio
+   * MP4 muxed purely so bots like Discord's `og:video` unfurler have
+   * something playable to embed — see `enqueueAudioEmbedVideo`,
+   * routes/uploads.js): once a fresh embed job is confirmed queued,
+   * immediately clears the existing `embedVideoStoragePath`/dimensions and
+   * deletes its file on disk, the same enqueue-before-delete convention as
+   * `POST /videos/:id/thumbnail/regenerate` (unlike `POST /videos/:id/
+   * retranscode`, there's no unique-constraint reason to delete first here -
+   * the embed fields live directly on ORIGINAL_UPLOADS, not a separate
+   * uniquely-keyed table). Real videos (`hasVideoStream !== false`)
+   * never had one of these to rebuild in the first place, so this is a
+   * harmless no-op for them — still 202, since nothing actually failed.
+   * Admin only.
+   * POST /videos/:id/remux/rebuild.
+   * Auth: session cookie or Bearer API key; admin role required; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/remux/rebuild:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Rebuild an audio upload's link-unfurl embed video container
+   *     operationId: rebuildVideoRemux
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       "202":
+   *         description: Rebuild queued (or a no-op, for a video with a real video stream)
+   *       "400":
+   *         description: Invalid id or transcoding disabled
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not an admin
+   *       "404":
+   *         description: Unknown video id
+   *       "502":
+   *         description: Processing service unavailable
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 202 on success or an error response.
+   */
+  router.post(
+    "/videos/:id/remux/rebuild",
+    requireAuth,
+    requireAdmin,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const loaded = await loadUploadWithMetadata(id);
+        if (!loaded) {
+          sendNotFound(res);
+          return;
+        }
+        const { upload } = loaded;
+
+        if (!transcodingEnabled()) {
+          res.status(400).json({
+            error: "transcoding_disabled",
+            message: "Transcoding is disabled for this deployment.",
+          });
+          return;
+        }
+
+        if (upload.hasVideoStream !== false) {
+          // Only audio-in-container uploads get a remux/embed container in
+          // the first place - nothing to rebuild for a real video.
+          res.status(202).json({ success: true, status: "not_applicable" });
+          return;
+        }
+
+        const existingThumbnail = upload.VideoThumbnail;
+        const thumbnailFilename = existingThumbnail
+          ? existingThumbnail.thumbnailFilename
+          : DEFAULT_AUDIO_THUMBNAIL_FILENAME;
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const segment = userStorageSegment(upload.userId);
+
+        const enqueue = await requestTranscodeBatch({
+          filename: storedFilename,
+          jobs: [
+            {
+              jobId: `embed-${upload.videoId}-${randomUUID()}`,
+              outputFilename: `${segment}/${randomUUID()}-embed.mp4`,
+              kind: "embed",
+              thumbnailFilename,
+              isDefault: !existingThumbnail,
+            },
+          ],
+        });
+
+        if (!enqueue.ok) {
+          logger.error({ error: enqueue.error }, "rebuildVideoRemux enqueue failed");
+          res.status(502).json({
+            error: "processing_unavailable",
+            message: "Failed to queue remux rebuild.",
+          });
+          return;
+        }
+
+        const previousPath = upload.embedVideoStoragePath;
+        await upload.update({
+          embedVideoStoragePath: null,
+          embedVideoWidth: null,
+          embedVideoHeight: null,
+          embedVideoIsDefault: false,
+        });
+        if (previousPath) {
+          await unlink(resolveMediaPath(previousPath)).catch(() => {});
+        }
+
+        res.status(202).json({ success: true });
+      } catch (err) {
+        logger.error({ err }, "rebuildVideoRemux failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to rebuild remux container.",
         });
       }
     },

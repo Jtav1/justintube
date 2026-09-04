@@ -1,7 +1,15 @@
 import { Buffer } from "node:buffer";
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { createTestClient } from "../helpers/app.js";
-import { resetTables, seedUser, seedUserApiKey, setupSchema } from "../helpers/db.js";
+import {
+  resetTables,
+  seedMetadata,
+  seedUpload,
+  seedUser,
+  seedUserApiKey,
+  setupSchema,
+} from "../helpers/db.js";
+import { Role } from "../../lib/models/index.js";
 
 /**
  * HTTP contract tests for the `ENABLE_TRANSCODING`/`ENABLE_VIDEO_IMPORTS`
@@ -43,6 +51,23 @@ describe("ENABLE_TRANSCODING / ENABLE_VIDEO_IMPORTS gates", () => {
   async function seedUploaderCreds() {
     uploaderUser = await seedUser({ uploader: true, emailVerified: true });
     await seedUserApiKey(uploaderUser.id, uploaderKey);
+  }
+
+  /**
+   * Seeds an admin user with an API key, plus a video upload+metadata row
+   * for the admin-only transcoding-gated actions to target.
+   *
+   * @param {object} [uploadOverrides] Passed through to seedUpload.
+   * @returns {Promise<{ adminKey: string, uploadId: number }>}
+   */
+  async function seedAdminCredsAndVideo(uploadOverrides = {}) {
+    const adminRole = await Role.findOne({ where: { name: "admin" } });
+    const admin = await seedUser({ roleId: adminRole?.id ?? null, emailVerified: true });
+    const adminKey = "jt_test_processing_flags_admin_key";
+    await seedUserApiKey(admin.id, adminKey);
+    const upload = await seedUpload({ userId: admin.id, ...uploadOverrides });
+    await seedMetadata(upload.id, { title: "Gated video" });
+    return { adminKey, uploadId: upload.id };
   }
 
   /**
@@ -120,6 +145,57 @@ describe("ENABLE_TRANSCODING / ENABLE_VIDEO_IMPORTS gates", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ available: false });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /videos/:id/thumbnail/regenerate with ENABLE_TRANSCODING=false", () => {
+    test("rejects the request without contacting processing", async () => {
+      process.env.ENABLE_TRANSCODING = "false";
+      globalThis.fetch = unreachableFetchMock();
+      const { adminKey, uploadId } = await seedAdminCredsAndVideo();
+
+      const res = await client
+        .post(`/api/v1/videos/${uploadId}/thumbnail/regenerate`)
+        .set("Authorization", `Bearer ${adminKey}`)
+        .send({ thumbnailTimestamp: 5 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("transcoding_disabled");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /videos/:id/retranscode with ENABLE_TRANSCODING=false", () => {
+    test("rejects the request without contacting processing", async () => {
+      process.env.ENABLE_TRANSCODING = "false";
+      globalThis.fetch = unreachableFetchMock();
+      const { adminKey, uploadId } = await seedAdminCredsAndVideo();
+
+      const res = await client
+        .post(`/api/v1/videos/${uploadId}/retranscode`)
+        .set("Authorization", `Bearer ${adminKey}`)
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("transcoding_disabled");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /videos/:id/remux/rebuild with ENABLE_TRANSCODING=false", () => {
+    test("rejects the request without contacting processing", async () => {
+      process.env.ENABLE_TRANSCODING = "false";
+      globalThis.fetch = unreachableFetchMock();
+      const { adminKey, uploadId } = await seedAdminCredsAndVideo({ mediaType: "audio" });
+
+      const res = await client
+        .post(`/api/v1/videos/${uploadId}/remux/rebuild`)
+        .set("Authorization", `Bearer ${adminKey}`)
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("transcoding_disabled");
       expect(globalThis.fetch).not.toHaveBeenCalled();
     });
   });

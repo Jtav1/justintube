@@ -313,18 +313,42 @@ export async function updateVideoThumbnail(id, file) {
 }
 
 /**
- * Queues regeneration of a video's auto-generated thumbnail at a specific
- * timestamp, overwriting whatever thumbnail (auto-generated or manually
- * uploaded) currently exists once processing extracts the new frame. Video
- * only — owner or admin.
+ * Queues regeneration of a video's auto-generated thumbnail, overwriting
+ * whatever thumbnail (auto-generated or manually uploaded) currently exists
+ * once processing extracts the new frame. Video only — owner or admin.
  * @param {number} id
- * @param {number} thumbnailTimestamp Seconds (fractional) into the video.
+ * @param {number} [thumbnailTimestamp] Seconds (fractional) into the video.
+ *   Omit to request a random frame — admin only.
  * @returns {Promise<{success: boolean}>}
  */
 export async function regenerateVideoThumbnail(id, thumbnailTimestamp) {
   const res = await apiClient.post(`/api/v1/videos/${id}/thumbnail/regenerate`, {
     thumbnailTimestamp,
   })
+  return res.data
+}
+
+/**
+ * Re-transcodes a video: deletes every existing FILE_VERSIONS rendition and
+ * queues a fresh batch against the video's current transcode profiles.
+ * Admin only.
+ * @param {number} id
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function retranscodeVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/retranscode`)
+  return res.data
+}
+
+/**
+ * Rebuilds an audio upload's link-unfurl embed video (a thumbnail+audio MP4
+ * muxed so bots like Discord's `og:video` unfurler have something playable
+ * to embed). A harmless no-op for a real video. Admin only.
+ * @param {number} id
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function rebuildVideoRemux(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/remux/rebuild`)
   return res.data
 }
 
