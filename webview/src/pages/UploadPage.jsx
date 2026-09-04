@@ -472,7 +472,7 @@ function UploadPage() {
       success('Captions are regenerating — this may take a moment.')
     } catch (err) {
       console.error('Failed to regenerate captions:', err)
-      toastError('Failed to regenerate captions.')
+      toastError(err.response?.data?.message || 'Failed to regenerate captions.')
     } finally {
       setSubtitleRegenerating(false)
     }
@@ -816,10 +816,13 @@ function UploadPage() {
     } else if (isEditMode && thumbnailTimestampToSend !== undefined) {
       try {
         await regenerateVideoThumbnail(createdId, thumbnailTimestampToSend)
-      } catch {
+      } catch (err) {
+        const reason = err.response?.data?.message
         toastError(
-          'Your changes were saved, but the thumbnail could not be regenerated. ' +
-            'You can try again from the edit page.',
+          reason
+            ? `Your changes were saved, but the thumbnail could not be regenerated: ${reason}`
+            : 'Your changes were saved, but the thumbnail could not be regenerated. ' +
+                'You can try again from the edit page.',
         )
         setSubmitting(false)
         return
@@ -929,8 +932,8 @@ function UploadPage() {
     try {
       await regenerateVideoThumbnail(editUpload.id)
       success('Thumbnail regeneration queued.')
-    } catch {
-      toastError('Failed to queue thumbnail regeneration.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to queue thumbnail regeneration.')
     } finally {
       setAdminRegeneratingThumbnail(false)
     }
@@ -944,8 +947,8 @@ function UploadPage() {
     try {
       await retranscodeVideo(editUpload.id)
       success('Re-transcode queued.')
-    } catch {
-      toastError('Failed to queue re-transcode.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to queue re-transcode.')
     } finally {
       setAdminRetranscoding(false)
     }
@@ -959,8 +962,8 @@ function UploadPage() {
     try {
       await rebuildVideoRemux(editUpload.id)
       success('Remux container rebuild queued.')
-    } catch {
-      toastError('Failed to queue remux container rebuild.')
+    } catch (err) {
+      toastError(err.response?.data?.message || 'Failed to queue remux container rebuild.')
     } finally {
       setAdminRebuildingRemux(false)
     }
@@ -1089,7 +1092,7 @@ function UploadPage() {
                 )}
               </label>
 
-              {!isEditingAudio && (
+              {!isEditingAudio && transcodingEnabled && (
                 <div className="upload-thumbnail-timestamp">
                   <label htmlFor="upload-thumbnail-timestamp">Frame at (sec)</label>
                   <input
@@ -1110,7 +1113,7 @@ function UploadPage() {
                 </div>
               )}
             </div>
-            {isEditMode && !isEditingAudio && (
+            {isEditMode && !isEditingAudio && transcodingEnabled && (
               <p className="upload-hint">
                 Specifying a timestamp (in seconds) to replace thumbnail with that frame
               </p>
@@ -1198,7 +1201,7 @@ function UploadPage() {
                   </button>
                 )}
               </label>
-              {isEditMode && (
+              {isEditMode && transcodingEnabled && (
                 <button
                   type="button"
                   className="upload-link-button"
@@ -1235,7 +1238,9 @@ function UploadPage() {
 
             <p className="upload-hint">
               {isEditMode
-                ? 'Add a labeled subtitle file, or attempt to auto-extract subtitles from the video file'
+                ? transcodingEnabled
+                  ? 'Add a labeled subtitle file, or attempt to auto-extract subtitles from the video file'
+                  : 'Add a labeled subtitle file'
                 : 'Add a labeled subtitle file, uploaded alongside the video'}
             </p>
           </div>

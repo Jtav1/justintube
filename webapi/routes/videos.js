@@ -3441,7 +3441,10 @@ export function createVideosRouter() {
    * replacement actually happens (and only replaces `source: "auto"` rows;
    * user-uploaded subtitles are never touched by regeneration). Clears
    * `skipAutoSubtitles` so that callback is allowed to write. No `mediaType`
-   * gate — an audio source can carry a subtitle/lyrics track too.
+   * gate — an audio source can carry a subtitle/lyrics track too. Rejected
+   * outright when transcoding is disabled deployment-wide
+   * (`ENABLE_TRANSCODING=false`) — there is no processing service to
+   * enqueue an extraction job against.
    * Owner/admin only, matching POST /videos/:id/subtitles.
    * POST /videos/:id/subtitles/regenerate.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
@@ -3466,7 +3469,7 @@ export function createVideosRouter() {
    *       "202":
    *         description: Subtitle regeneration queued
    *       "400":
-   *         description: Invalid id
+   *         description: Invalid id, or transcoding disabled
    *       "401":
    *         description: Not authenticated
    *       "403":
@@ -3506,6 +3509,14 @@ export function createVideosRouter() {
           res.status(403).json({
             error: "forbidden",
             message: "Only the owner or an admin can update this video's subtitles.",
+          });
+          return;
+        }
+
+        if (!transcodingEnabled()) {
+          res.status(400).json({
+            error: "transcoding_disabled",
+            message: "Transcoding is disabled for this deployment.",
           });
           return;
         }

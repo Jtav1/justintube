@@ -7,7 +7,7 @@ import {
   seedUpload,
   setupSchema,
 } from "../helpers/db.js";
-import { reconcileFileVersion } from "../../lib/transcode-reconcile.js";
+import { reconcileFileVersion, runTranscodeReconcile } from "../../lib/transcode-reconcile.js";
 import { FileVersion } from "../../lib/models/index.js";
 import { logger } from "../../lib/logger.js";
 
@@ -159,5 +159,35 @@ describe("reconcileFileVersion", () => {
     const body = JSON.parse(String(postCalls[0][1].body));
     expect(body.filename).toBe("source.mp4");
     expect(body.jobs[0].jobId).toBe(version.uuidName);
+  });
+});
+
+describe("runTranscodeReconcile with ENABLE_TRANSCODING=false", () => {
+  beforeAll(async () => {
+    await setupSchema();
+  });
+
+  afterEach(async () => {
+    delete process.env.ENABLE_TRANSCODING;
+    await resetTables();
+  });
+
+  test("is a no-op and never contacts the processing service", async () => {
+    process.env.ENABLE_TRANSCODING = "false";
+    const unreachableFetch = jest.fn(() => {
+      throw new Error("fetch should not be called when transcoding is disabled");
+    });
+    globalThis.fetch = unreachableFetch;
+
+    const upload = await seedUpload({ status: "processing" });
+    await seedFileVersion(upload.id, {
+      status: "pending",
+      createdAt: new Date(Date.now() - 60 * 60_000),
+    });
+
+    const results = await runTranscodeReconcile();
+
+    expect(results).toEqual([]);
+    expect(unreachableFetch).not.toHaveBeenCalled();
   });
 });
