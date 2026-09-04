@@ -3569,17 +3569,19 @@ export function createVideosRouter() {
    * from ever recording the regenerated frame — see the `skipThumbnail`
    * guard there. The deletion happens after a successful enqueue (not
    * before) so a processing-service outage can't leave the video with no
-   * thumbnail at all. Video-only — audio uploads never get an
-   * auto-generated thumbnail. Rejected outright when transcoding is
-   * disabled deployment-wide (`ENABLE_TRANSCODING=false`) — there is no
-   * processing service to enqueue a regeneration job against.
+   * thumbnail at all. Rejected outright when transcoding is disabled
+   * deployment-wide (`ENABLE_TRANSCODING=false`) — there is no processing
+   * service to enqueue a regeneration job against.
    *
    * `thumbnailTimestamp` is optional: when given, the owner or an admin may
-   * request that specific frame (unchanged from before); when omitted,
-   * processing picks a random frame the same way it does for a fresh upload
-   * — admin only, since a random re-roll (rather than a deliberate frame
-   * choice) is an admin escape-hatch action, not something owners get from
-   * this endpoint.
+   * request that specific frame (video only — an audio upload has no video
+   * frame to grab at a timestamp); when omitted, processing re-runs the same
+   * job it uses for a fresh upload — embedded cover art extraction for audio
+   * (falling back to the bundled placeholder when none is found, exactly
+   * like `GET /videos/:id/thumbnail` already does for any audio upload with
+   * no VIDEO_THUMBNAIL row), or a random video frame for video — admin only,
+   * since a random re-roll (rather than a deliberate frame choice) is an
+   * admin escape-hatch action, not something owners get from this endpoint.
    * POST /videos/:id/thumbnail/regenerate — { thumbnailTimestamp?: number }.
    * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
    *
@@ -3616,8 +3618,8 @@ export function createVideosRouter() {
    *         description: Thumbnail regeneration queued
    *       "400":
    *         description: >
-   *           Invalid id, invalid thumbnailTimestamp, not a video, or
-   *           transcoding disabled
+   *           Invalid id, invalid thumbnailTimestamp, thumbnailTimestamp given
+   *           for an audio upload, or transcoding disabled
    *       "401":
    *         description: Not authenticated
    *       "403":
@@ -3663,14 +3665,6 @@ export function createVideosRouter() {
           return;
         }
 
-        if (upload.mediaType !== "video") {
-          res.status(400).json({
-            error: "invalid_body",
-            message: "Only videos have an auto-generated thumbnail to regenerate.",
-          });
-          return;
-        }
-
         if (!transcodingEnabled()) {
           res.status(400).json({
             error: "transcoding_disabled",
@@ -3693,6 +3687,16 @@ export function createVideosRouter() {
           res.status(403).json({
             error: "forbidden",
             message: "Only an admin can regenerate a thumbnail without a specific timestamp.",
+          });
+          return;
+        }
+
+        if (upload.mediaType === "audio" && !isRandomRegeneration) {
+          res.status(400).json({
+            error: "invalid_body",
+            message:
+              "Audio uploads have no video frame to regenerate from a timestamp - omit " +
+              "thumbnailTimestamp to re-attempt embedded cover art extraction instead.",
           });
           return;
         }
