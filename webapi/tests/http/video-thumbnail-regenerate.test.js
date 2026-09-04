@@ -33,8 +33,11 @@ function writeMediaFixture(relativeStoragePath, contents) {
 /**
  * HTTP contract tests for `POST /videos/:id/thumbnail/regenerate` — lets the
  * video owner (or an admin) request a fresh auto-generated thumbnail at a
- * given timestamp, overwriting whatever VIDEO_THUMBNAIL currently exists once
- * processing finishes the frame extraction.
+ * given timestamp (video only), or an admin re-run the same job a fresh
+ * upload gets with no explicit timestamp (video or audio — for audio this
+ * re-attempts embedded cover art extraction, falling back to the bundled
+ * placeholder when none is found), overwriting whatever VIDEO_THUMBNAIL
+ * currently exists once processing finishes.
  */
 describe("POST /videos/:id/thumbnail/regenerate", () => {
   /** @type {ReturnType<typeof createTestClient>} */
@@ -195,7 +198,7 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
     expect(res.body.error).toBe("invalid_body");
   });
 
-  test("returns 400 invalid_body for an audio upload", async () => {
+  test("returns 400 invalid_body when a specific thumbnailTimestamp is given for an audio upload", async () => {
     const { ownerKey, uploadId } = await seedOwnedVideo({ mediaType: "audio" });
 
     const res = await client
@@ -205,6 +208,60 @@ describe("POST /videos/:id/thumbnail/regenerate", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_body");
+  });
+
+  test("admin can queue a thumbnail regeneration for an audio upload by omitting thumbnailTimestamp", async () => {
+    const { uploadId } = await seedOwnedVideo({
+      videoId: "regenaud1",
+      mediaType: "audio",
+      fileExtension: "mp3",
+    });
+    const seededRow = await OriginalUpload.findByPk(uploadId);
+    await seedUserWithRoleAndKey("admin", "admin-thumb-regen-audio-key");
+    const fetchMock = acceptJobFetchMock();
+    globalThis.fetch = fetchMock;
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/thumbnail/regenerate`)
+      .set("Authorization", "Bearer admin-thumb-regen-audio-key")
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ success: true });
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(payload.filename).toBe(seededRow.storagePath.replace(/^original\//, ""));
+    expect(payload.jobs[0]).toMatchObject({
+      kind: "thumbnail",
+      jobId: expect.stringMatching(/^thumbnail-regenaud1-/),
+      timestampSeconds: null,
+    });
+  });
+
+  test("admin regenerating an audio thumbnail falls back to the default placeholder when no cover art is found", async () => {
+    const { uploadId } = await seedOwnedVideo({ mediaType: "audio", hasVideoStream: false });
+    const thumbnail = await seedVideoThumbnail(uploadId);
+    const thumbnailPath = writeMediaFixture(
+      `thumbnails/${thumbnail.thumbnailFilename}`,
+      Buffer.from("old-cover-art"),
+    );
+    await seedUserWithRoleAndKey("admin", "admin-thumb-regen-audio-fallback-key");
+    globalThis.fetch = acceptJobFetchMock();
+
+    const res = await client
+      .post(`/api/v1/videos/${uploadId}/thumbnail/regenerate`)
+      .set("Authorization", "Bearer admin-thumb-regen-audio-fallback-key")
+      .send({});
+
+    expect(res.status).toBe(202);
+
+    // The stale thumbnail (row + file) is dropped immediately once the
+    // extraction job is queued; without a fresh VIDEO_THUMBNAIL row,
+    // GET /videos/:id/thumbnail already falls back to serving the bundled
+    // placeholder for any audio upload — this is what "resets to the
+    // default png" actually means server-side, not a special-cased row.
+    expect(existsSync(thumbnailPath)).toBe(false);
+    expect(await VideoThumbnail.findOne({ where: { originalUploadId: uploadId } })).toBeNull();
   });
 
   test("owner can queue thumbnail regeneration at a timestamp", async () => {
