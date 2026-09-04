@@ -11,10 +11,12 @@
   },
   "scripts": {
     "migrate:mediacms": "node migrate-user-videos.js",
+    "fix:media-types": "node fix-missing-media-types.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "mysql2": "^3.23.0",
     "pg": "^8.13.1"
   }
 }

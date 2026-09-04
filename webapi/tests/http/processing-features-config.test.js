@@ -166,6 +166,23 @@ describe("ENABLE_TRANSCODING / ENABLE_VIDEO_IMPORTS gates", () => {
     });
   });
 
+  describe("POST /videos/:id/media-type/repopulate with ENABLE_TRANSCODING=false", () => {
+    test("rejects the request without contacting processing", async () => {
+      process.env.ENABLE_TRANSCODING = "false";
+      globalThis.fetch = unreachableFetchMock();
+      const { adminKey, uploadId } = await seedAdminCredsAndVideo();
+
+      const res = await client
+        .post(`/api/v1/videos/${uploadId}/media-type/repopulate`)
+        .set("Authorization", `Bearer ${adminKey}`)
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("transcoding_disabled");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe("POST /videos/:id/thumbnail/regenerate with ENABLE_TRANSCODING=false", () => {
     test("rejects the request without contacting processing", async () => {
       process.env.ENABLE_TRANSCODING = "false";

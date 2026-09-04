@@ -4091,6 +4091,137 @@ export function createVideosRouter() {
   );
 
   /**
+   * Re-derives an upload's `mediaType` ("video" or "audio") from its actual
+   * source file via the processing service's ffprobe, and writes it back —
+   * a repair action for rows whose `mediaType` is missing (e.g. written by
+   * an external import that bypassed the normal upload flow, which always
+   * sets it), since it isn't a `PATCH`-able field via `PATCH /videos/:id`.
+   * Loads the upload directly (not `loadUploadWithMetadata`, which requires
+   * a VIDEO_METADATA row) since a broken row missing `mediaType` may not
+   * have one either.
+   *
+   * Reuses the `"hash"` job kind purely to trigger processing's source
+   * probe — the same trick `enqueueDuplicateHashCheck` (uploads.js) uses,
+   * and the same `hash-<videoId>` job id, so if duplicate-upload detection
+   * happens to be enabled this is indistinguishable from a normal
+   * content-hash check for this upload. Unlike the other admin actions in
+   * this file, this is fully synchronous — the probe result comes back in
+   * the same `POST /transcode` response, so there's no separate completion
+   * callback and no processing job whose outcome this needs to wait for.
+   * Admin only.
+   * POST /videos/:id/media-type/repopulate.
+   * Auth: session cookie or Bearer API key; admin role required; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/media-type/repopulate:
+   *   post:
+   *     tags: [Videos]
+   *     summary: Re-derive and persist an upload's mediaType via ffprobe
+   *     operationId: repopulateMediaType
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       "200":
+   *         description: mediaType re-derived and persisted
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success: { type: boolean }
+   *                 mediaType: { type: string, enum: [video, audio] }
+   *       "400":
+   *         description: Invalid id or transcoding disabled
+   *       "401":
+   *         description: Not authenticated
+   *       "403":
+   *         description: Not an admin
+   *       "404":
+   *         description: Unknown upload id
+   *       "502":
+   *         description: Processing service unavailable, or ffprobe could not determine a media type
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 on success or an error response.
+   */
+  router.post(
+    "/videos/:id/media-type/repopulate",
+    requireAuth,
+    requireAdmin,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({
+            error: "invalid_id",
+            message: "id must be a positive integer.",
+          });
+          return;
+        }
+
+        const upload = await OriginalUpload.findByPk(id);
+        if (!upload) {
+          sendNotFound(res);
+          return;
+        }
+
+        if (!transcodingEnabled()) {
+          res.status(400).json({
+            error: "transcoding_disabled",
+            message: "Transcoding is disabled for this deployment.",
+          });
+          return;
+        }
+
+        const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const enqueue = await requestTranscodeBatch({
+          filename: storedFilename,
+          jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
+        });
+
+        if (!enqueue.ok) {
+          logger.error({ error: enqueue.error }, "repopulateMediaType enqueue failed");
+          res.status(502).json({
+            error: "processing_unavailable",
+            message: "Failed to probe the source file.",
+          });
+          return;
+        }
+
+        const hasVideoStream = enqueue.body?.source?.hasVideoStream;
+        if (typeof hasVideoStream !== "boolean") {
+          res.status(502).json({
+            error: "media_type_undetermined",
+            message: "ffprobe could not determine whether the source has a video stream.",
+          });
+          return;
+        }
+
+        const mediaType = hasVideoStream ? "video" : "audio";
+        await upload.update({ mediaType });
+
+        res.status(200).json({ success: true, mediaType });
+      } catch (err) {
+        logger.error({ err }, "repopulateMediaType failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to repopulate media type.",
+        });
+      }
+    },
+  );
+
+  /**
    * PATCH /videos/:id — updateVideo
    * Auth: required. Owner, admin, or a user with an "edit" VIDEO_ACCESS grant.
    * Body: title, description, visibility, commentsEnabled, createdAt, tags. A
