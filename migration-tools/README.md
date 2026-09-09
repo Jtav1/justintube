@@ -78,6 +78,45 @@ failures, the script prints the exact `--retry-from <path>` command to rerun jus
 State and log files are gitignored (except `.gitkeep`) — they're per-migration-run artifacts, not
 something to commit.
 
+## `clone.js` / `ytdlup.sh` (download a URL with yt-dlp, upload to justintube)
+
+Downloads a single video from any site yt-dlp supports, then uploads it into justintube via its
+public API (`POST /videos/upload` -> `PATCH /videos/:id`), the same pipeline a normal browser
+upload goes through. The local downloaded file is deleted after a successful upload unless
+`--keep-file` is passed.
+
+Requires [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) to be installed and on `PATH` (or point
+`YTDLP_EXE` at its location).
+
+### Setup
+
+```bash
+cd migration-tools
+cp .env.example .env   # fill in the values below
+npm install
+```
+
+| Env var | Purpose |
+| --- | --- |
+| `JUSTINTUBE_API_BASE_URL` | Full base URL of the justintube public API, no trailing slash. |
+| `JUSTINTUBE_API_KEY` | `jt_...` API key belonging to the justintube user videos are uploaded as. Needs `content_edit` or `full_access` scope; its owning user must have `uploader=true` and a verified email, same as any normal upload. Create one via the justintube UI (Settings -> API keys) or `POST /me/api-keys`. |
+| `YTDLP_EXE` | Path/name of the yt-dlp executable. Defaults to `yt-dlp` (must be on `PATH`). |
+| `YTDLP_DOWNLOAD_DIR` | Local directory yt-dlp downloads into before uploading. Defaults to the OS temp dir. |
+
+### Usage
+
+```bash
+npm run clone -- <url> [--title <title>] [--visibility public|unlisted|private] [--keep-file]
+# or:
+./ytdlup.sh <url> [--title <title>] [--visibility public|unlisted|private] [--keep-file]
+```
+
+`--visibility` defaults to `public`. `--title` defaults to one derived from the downloaded
+filename (yt-dlp's `%(title)s`) when omitted; description notes it was auto-uploaded and when. `ytdlup.sh` is a thin wrapper meant
+to be put on your shell `PATH` or aliased for quick one-off clones from the command line; it
+forwards all arguments to `clone.js` and resolves its own location automatically, so no path
+editing is needed as long as it stays alongside `clone.js`.
+
 ## `fix-missing-media-types.js`
 
 Repairs `ORIGINAL_UPLOADS` rows whose `media_type` column is missing (`NULL` or empty) — e.g. rows

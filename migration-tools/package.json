@@ -12,6 +12,7 @@
   "scripts": {
     "migrate:mediacms": "node migrate-user-videos.js",
     "fix:media-types": "node fix-missing-media-types.js",
+    "clone": "node clone.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
