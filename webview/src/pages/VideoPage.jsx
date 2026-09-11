@@ -1,17 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { unhideVideo } from '../api/videos.js'
+import { getVideo, unhideVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
-import { prefetchVideo, getVideoOrPrefetched } from '../lib/videoPrefetchCache.js'
 import { useToast } from '../context/useToast.js'
 import { useIsMobile } from '../lib/viewport.js'
-import apiClient from '../api/client.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
 import PlaylistQueue from '../components/PlaylistQueue.jsx'
-import { Skeleton } from '../components/Skeleton.jsx'
 import './VideoPage.css'
 
 function VideoPage() {
@@ -43,11 +40,6 @@ function VideoPage() {
   // and the screen edge) by stacking the suggested/queue rail below it
   // instead of beside it - toggled by VideoPlayer's overlay button.
   const [expanded, setExpanded] = useState(false)
-  // Autoplay target picked (and pre-warmed) near the current video's end; see handleNearEnd.
-  const nextVideoRef = useRef(null)
-  useEffect(() => {
-    nextVideoRef.current = null
-  }, [videoId])
 
   // Arriving via the Random Video button forces autoplay on going forward
   // (it's a persisted, browser-wide preference, not just for this view).
@@ -73,7 +65,7 @@ function VideoPage() {
       setError(null)
       setHiddenByViewer(false)
       try {
-        const data = await getVideoOrPrefetched(videoId)
+        const data = await getVideo(videoId)
         if (!cancelled) {
           setVideo(data)
         }
@@ -121,28 +113,11 @@ function VideoPage() {
     setAutoplayEnabled(enabled)
   }
 
-  // Picks the autoplay target and warms its metadata + thumbnail only
-  // (never the media stream, to avoid over-fetching an unwatched video).
-  function handleNearEnd() {
-    if (nextVideoRef.current || suggestions.length === 0) {
+  function handleAutoplayNext() {
+    if (suggestions.length === 0) {
       return
     }
     const next = suggestions[Math.floor(Math.random() * suggestions.length)]
-    nextVideoRef.current = next
-    prefetchVideo(next.videoId)
-    if (next.thumbnailUrl) {
-      const img = new Image()
-      img.src = `${apiClient.defaults.baseURL}${next.thumbnailUrl}`
-    }
-  }
-
-  function handleAutoplayNext() {
-    const next =
-      nextVideoRef.current ??
-      (suggestions.length > 0 ? suggestions[Math.floor(Math.random() * suggestions.length)] : null)
-    if (!next) {
-      return
-    }
     // Carries `random=1` forward so the chain of autoplayed videos keeps
     // being treated as "arrived via random" on each hop, and sets
     // `autoplay=1` so the next page starts playback itself instead of
@@ -201,17 +176,6 @@ function VideoPage() {
 
   return (
     <section className="video-page">
-      {loading && (
-        <div className="video-page-layout">
-          <div className="video-page-main">
-            <Skeleton className="video-page-skeleton-player" />
-            <div className="video-page-skeleton-text">
-              <Skeleton className="video-page-skeleton-title" />
-              <Skeleton className="video-page-skeleton-meta" />
-            </div>
-          </div>
-        </div>
-      )}
       {error && <p className="video-page-error">{error}</p>}
       {hiddenByViewer && (
         <div className="video-page-hidden-notice">
@@ -228,7 +192,6 @@ function VideoPage() {
               autoplayEnabled={!playlist && autoplayEnabled}
               onAutoplayNext={handleAutoplayNext}
               onAutoplayChange={handleAutoplayChange}
-              onNearEnd={!playlist && autoplayEnabled ? handleNearEnd : undefined}
               autoplayOnLoad={autoplayOnLoad}
               expanded={expanded && !isMobile}
               onToggleExpand={isMobile ? undefined : () => setExpanded((prev) => !prev)}

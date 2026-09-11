@@ -5,10 +5,7 @@ import { useToast } from '../context/useToast.js'
 import VideoCard from '../components/VideoCard.jsx'
 import PlaylistCard from '../components/PlaylistCard.jsx'
 import UserCard from '../components/UserCard.jsx'
-import { VideoCardSkeleton } from '../components/Skeleton.jsx'
 import './SearchResults.css'
-
-const SKELETON_COUNT = 8
 
 function SearchResults() {
   const { error: toastError } = useToast()
@@ -71,18 +68,12 @@ function SearchResults() {
           <p className="search-results-empty">No videos or playlists found.</p>
         )}
         <div className="search-results-grid">
-          {loading
-            ? Array.from({ length: SKELETON_COUNT }, (_, i) => <VideoCardSkeleton key={i} />)
-            : (
-              <>
-                {videos.map((video) => (
-                  <VideoCard key={`video-${video.id}`} video={video} showReactionScore={false} />
-                ))}
-                {playlists.map((playlist) => (
-                  <PlaylistCard key={`playlist-${playlist.id}`} playlist={playlist} />
-                ))}
-              </>
-            )}
+          {videos.map((video) => (
+            <VideoCard key={`video-${video.id}`} video={video} showReactionScore={false} />
+          ))}
+          {playlists.map((playlist) => (
+            <PlaylistCard key={`playlist-${playlist.id}`} playlist={playlist} />
+          ))}
         </div>
       </div>
 

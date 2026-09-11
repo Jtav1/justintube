@@ -2,17 +2,15 @@ import apiClient from './client.js'
 
 /**
  * Searches/lists videos with pagination and sort.
- * @param {{ q?: string, tags?: string[]|string, tagsMode?: 'all'|'any', sort?: string, page?: number, limit?: number }} params
- *   `tags` requires results to include all of them by default ("all"); pass `tagsMode: 'any'`
- *   to match videos sharing at least one of them instead (comma-separated on the wire).
+ * @param {{ q?: string, tags?: string[]|string, sort?: string, page?: number, limit?: number }} params
+ *   `tags` requires results to include all of them (comma-separated on the wire).
  * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
  */
-export async function searchVideos({ q, tags, tagsMode, sort, page, limit } = {}) {
+export async function searchVideos({ q, tags, sort, page, limit } = {}) {
   const res = await apiClient.get('/api/v1/search', {
     params: {
       q,
       tags: Array.isArray(tags) ? tags.join(',') : tags,
-      tagsMode,
       sort,
       page,
       limit,
