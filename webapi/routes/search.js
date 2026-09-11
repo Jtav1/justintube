@@ -141,6 +141,7 @@ function handleSearchError(res, err, label) {
  *   ok: true,
  *   q: string,
  *   tags: string[],
+ *   tagsMode: "all"|"any",
  *   username?: string,
  *   sort?: string,
  *   page: number,
@@ -157,6 +158,11 @@ function parseSearchQuery(query) {
       .flatMap((entry) => String(entry ?? "").split(","))
       .map((tag) => tag.trim())
       .filter(Boolean);
+  }
+
+  const tagsMode = query.tagsMode === undefined ? "all" : String(query.tagsMode).trim();
+  if (tagsMode !== "all" && tagsMode !== "any") {
+    return { ok: false, message: 'tagsMode must be "all" or "any".' };
   }
 
   const username =
@@ -191,6 +197,7 @@ function parseSearchQuery(query) {
     ok: true,
     q,
     tags,
+    tagsMode,
     username,
     sort: SORT_OPTIONS[sortKey],
     page: pageRaw,
@@ -447,7 +454,15 @@ export function createSearchRouter() {
    *         required: false
    *         schema:
    *           type: string
-   *         description: Comma-separated tags; results must include all of them.
+   *         description: Comma-separated tags to filter by.
+   *       - name: tagsMode
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: string
+   *           enum: [all, any]
+   *           default: all
+   *         description: Whether `tags` must all be present ("all") or any of them ("any").
    *       - name: username
    *         in: query
    *         required: false
