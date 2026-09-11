@@ -122,6 +122,30 @@ describe("Search indexing (lib/search/basic.js, the default backend)", () => {
     expect(result.hits.map((h) => h.id)).toEqual([uploadA.id]);
   });
 
+  test("searchVideos with tagsMode 'any' matches videos sharing at least one requested tag", async () => {
+    const uploadA = await seedUpload({ status: "ready" });
+    await seedMetadata(uploadA.id, { title: "Tagged A", visibility: "public" });
+    await seedContentTag(uploadA.id, { tag: "cats" });
+    const uploadB = await seedUpload({ status: "ready" });
+    await seedMetadata(uploadB.id, { title: "Tagged B", visibility: "public" });
+    await seedContentTag(uploadB.id, { tag: "dogs" });
+    const uploadC = await seedUpload({ status: "ready" });
+    await seedMetadata(uploadC.id, { title: "Tagged C", visibility: "public" });
+    await seedContentTag(uploadC.id, { tag: "birds" });
+    await syncVideoIndex(uploadA.id);
+    await syncVideoIndex(uploadB.id);
+    await syncVideoIndex(uploadC.id);
+
+    const result = await searchVideos({
+      tags: ["cats", "dogs"],
+      tagsMode: "any",
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.hits.map((h) => h.id).sort()).toEqual([uploadA.id, uploadB.id].sort());
+  });
+
   test("searchVideos filters by exact uploader username", async () => {
     const alice = await seedUser({ username: "alice" });
     const bob = await seedUser({ username: "bob" });
