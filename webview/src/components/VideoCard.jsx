@@ -9,6 +9,7 @@ import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { getVideoProcessingStatus, hideVideo } from '../api/videos.js'
 import apiClient from '../api/client.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import { useTextOverflowShrink } from '../hooks/useTextOverflowShrink.js'
 import ReactionScore from './ReactionScore.jsx'
 import SegmentedProgressBar from './SegmentedProgressBar.jsx'
 import './VideoCard.css'
@@ -40,8 +41,6 @@ function VideoCard({
   const toggleRef = useRef(null)
   const dropdownRef = useRef(null)
   const titleRef = useRef(null)
-  const measureCanvasRef = useRef(null)
-  const [titleShrunk, setTitleShrunk] = useState(false)
 
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [myPlaylists, setMyPlaylists] = useState(null)
@@ -59,27 +58,10 @@ function VideoCard({
     ? video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
     : Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
 
-  useEffect(() => {
-    const el = titleRef.current
-    if (!el) {
-      return undefined
-    }
-
-    function measure() {
-      const canvas = measureCanvasRef.current ?? (measureCanvasRef.current = document.createElement('canvas'))
-      const ctx = canvas.getContext('2d')
-      const fontFamily = getComputedStyle(el).fontFamily
-      ctx.font = `${TITLE_FONT_WEIGHT} ${TITLE_FONT_SIZE}px ${fontFamily}`
-      const naturalWidth = ctx.measureText(video.title ?? '').width
-      setTitleShrunk(naturalWidth > el.clientWidth)
-    }
-
-    measure()
-
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [video.title])
+  const titleShrunk = useTextOverflowShrink(titleRef, video.title, {
+    fontSize: TITLE_FONT_SIZE,
+    fontWeight: TITLE_FONT_WEIGHT,
+  })
 
   const uploaderName = video.uploader?.displayName || video.uploader?.username
   const thumbnailUrl = video.thumbnailUrl
@@ -220,23 +202,6 @@ function VideoCard({
       return undefined
     }
 
-    function handleClickOutside(event) {
-      const clickedMenu = menuRef.current?.contains(event.target)
-      const clickedDropdown = dropdownRef.current?.contains(event.target)
-      if (!clickedMenu && !clickedDropdown) {
-        closeMenu()
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [menuOpen])
-
-  useEffect(() => {
-    if (!menuOpen) {
-      return undefined
-    }
-
     // The dropdown is portaled to <body> with a fixed position computed on
     // open, so it won't track its trigger if an ancestor (e.g. the playlist
     // queue's scrollable rail) scrolls - close it instead of leaving it
@@ -249,7 +214,7 @@ function VideoCard({
     return () => window.removeEventListener('scroll', handleScroll, true)
   }, [menuOpen])
 
-  useDismissablePopover(menuOpen, closeMenu, toggleRef)
+  useDismissablePopover(menuOpen, closeMenu, toggleRef, { dismissRefs: [menuRef, dropdownRef] })
 
   if (hidden) {
     return null
@@ -261,7 +226,7 @@ function VideoCard({
     >
       <Link to={videoPath} className="video-card-thumb">
         {thumbnailUrl ? (
-          <img src={thumbnailUrl} alt="" loading="lazy" />
+          <img src={thumbnailUrl} alt="" loading="lazy" width={320} height={180} />
         ) : (
           <div className="video-card-thumb-placeholder">
             {video.mediaType === 'audio' ? <VideoOff size={28} /> : <ImageOff size={28} />}

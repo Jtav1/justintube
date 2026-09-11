@@ -9,6 +9,7 @@ import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js'
 import { useIsMobile } from '../lib/viewport.js'
 import VideoCard from '../components/VideoCard.jsx'
 import LiveStreamCard from '../components/LiveStreamCard.jsx'
+import { VideoCardSkeleton } from '../components/Skeleton.jsx'
 import './VideoListing.css'
 
 const PAGE_LIMIT = 24
@@ -177,6 +178,17 @@ function VideoListing() {
         </div>
       )}
 
+      {loading && featured.length === 0 && (
+        <div className="video-listing-section">
+          <h2 className="video-listing-section-title">Featured Videos</h2>
+          <div className="video-listing-grid video-listing-featured-grid">
+            {Array.from({ length: FEATURED_LIMIT }, (_, i) => (
+              <VideoCardSkeleton key={i} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {featured.length > 0 && (
         <div className="video-listing-section">
           <h2 className="video-listing-section-title">Featured Videos</h2>
@@ -201,9 +213,9 @@ function VideoListing() {
       <div className="video-listing-section">
         <h2 className="video-listing-section-title">Recent Uploads</h2>
         <div className="video-listing-grid">
-          {recent.map((video) => (
-            <VideoCard key={video.id} video={video} />
-          ))}
+          {recentLoading && recent.length === 0
+            ? Array.from({ length: PAGE_LIMIT }, (_, i) => <VideoCardSkeleton key={i} />)
+            : recent.map((video) => <VideoCard key={video.id} video={video} />)}
         </div>
         {hasMoreRecent && <div className="video-listing-scroll-sentinel" ref={loadMoreRef} />}
       </div>

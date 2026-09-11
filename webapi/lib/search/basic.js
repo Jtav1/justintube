@@ -164,12 +164,19 @@ export async function removeVideoDocument(originalUploadId) {
  *
  * @private
  * @param {object} doc Stored search result (includes STORE_FIELDS).
- * @param {{tags?: string[], username?: string}} filters Requested filters.
+ * @param {{tags?: string[], tagsMode?: "all"|"any", username?: string}} filters Requested filters.
  * @returns {boolean} True when the document matches all requested filters.
  */
-function matchesFilters(doc, { tags, username }) {
-  if (tags?.length && !tags.every((t) => (doc.tags || []).includes(t))) {
-    return false;
+function matchesFilters(doc, { tags, tagsMode, username }) {
+  if (tags?.length) {
+    const docTags = doc.tags || [];
+    const matches =
+      tagsMode === "any"
+        ? tags.some((t) => docTags.includes(t))
+        : tags.every((t) => docTags.includes(t));
+    if (!matches) {
+      return false;
+    }
   }
   if (username && doc.username !== username) {
     return false;
@@ -195,7 +202,8 @@ const SORTERS = {
  *
  * @param {object} params Search parameters.
  * @param {string} [params.q] Free-text query (empty/omitted = browse all).
- * @param {string[]} [params.tags] Tags that must all be present (AND).
+ * @param {string[]} [params.tags] Tags to filter by.
+ * @param {"all"|"any"} [params.tagsMode] Whether `tags` must ALL be present (default) or ANY of them.
  * @param {string} [params.username] Exact uploader username filter.
  * @param {string} [params.sort] Sort clause, e.g. "createdAt:desc".
  * @param {number} params.page 1-indexed page number.
@@ -203,12 +211,12 @@ const SORTERS = {
  * @returns {Promise<{hits: object[], page: number, hitsPerPage: number, totalHits: number, totalPages: number}>}
  *   Same response shape as the Meilisearch backend.
  */
-export async function searchVideos({ q, tags, username, sort, page, limit }) {
+export async function searchVideos({ q, tags, tagsMode, username, sort, page, limit }) {
   await ensureBuilt();
   const query = q ? q : MiniSearch.wildcard;
   let hits = index.search(query, {
     prefix: true,
-    filter: (result) => matchesFilters(result, { tags, username }),
+    filter: (result) => matchesFilters(result, { tags, tagsMode, username }),
   });
 
   if (sort && SORTERS[sort]) {

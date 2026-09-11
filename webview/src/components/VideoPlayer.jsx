@@ -35,6 +35,7 @@ import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../a
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import { useTextOverflowShrink } from '../hooks/useTextOverflowShrink.js'
 import { readVolume, writeVolume } from '../lib/volume.js'
 import ChipInput from './ChipInput.jsx'
 import ReactionScore from './ReactionScore.jsx'
@@ -68,6 +69,9 @@ const AUTOPLAY_COUNTDOWN_SECONDS = 5
 // (`?autoplay=1`, see autoplayOnLoad), before starting playback.
 const AUTOPLAY_ON_LOAD_DELAY_MS = 2000
 
+// Seconds before end-of-video to fire onNearEnd (warms the autoplay-next target).
+const NEAR_END_THRESHOLD_SECONDS = 15
+
 /**
  * Picks the default rendition to play: always "original" when available,
  * otherwise falls back to whatever rendition is first.
@@ -85,6 +89,7 @@ function VideoPlayer({
   autoplayEnabled = false,
   onAutoplayNext,
   onAutoplayChange,
+  onNearEnd,
   autoplayOnLoad = false,
   expanded = false,
   onToggleExpand,
@@ -176,31 +181,12 @@ function VideoPlayer({
   const retryCountRef = useRef(0)
   const retryTimeoutRef = useRef(null)
   const viewRecordedRef = useRef(false)
+  const nearEndFiredRef = useRef(false)
   const titleRef = useRef(null)
-  const measureCanvasRef = useRef(null)
-  const [titleShrunk, setTitleShrunk] = useState(false)
-
-  useEffect(() => {
-    const el = titleRef.current
-    if (!el) {
-      return undefined
-    }
-
-    function measure() {
-      const canvas = measureCanvasRef.current ?? (measureCanvasRef.current = document.createElement('canvas'))
-      const ctx = canvas.getContext('2d')
-      const fontFamily = getComputedStyle(el).fontFamily
-      ctx.font = `${TITLE_FONT_WEIGHT} ${TITLE_FONT_SIZE}px ${fontFamily}`
-      const naturalWidth = ctx.measureText(video.title ?? '').width
-      setTitleShrunk(naturalWidth > el.clientWidth)
-    }
-
-    measure()
-
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [video.title])
+  const titleShrunk = useTextOverflowShrink(titleRef, video.title, {
+    fontSize: TITLE_FONT_SIZE,
+    fontWeight: TITLE_FONT_WEIGHT,
+  })
 
   const streamUrl = embedVideoUrl
     ? embedVideoUrl
@@ -269,22 +255,9 @@ function VideoPlayer({
     }
   }, [canSubscribe, uploaderId])
 
-  useEffect(() => {
-    if (!qualityMenuOpen) {
-      return undefined
-    }
-
-    function handleClickOutside(event) {
-      if (qualityMenuRef.current && !qualityMenuRef.current.contains(event.target)) {
-        setQualityMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [qualityMenuOpen])
-
-  useDismissablePopover(qualityMenuOpen, () => setQualityMenuOpen(false), qualityToggleRef)
+  useDismissablePopover(qualityMenuOpen, () => setQualityMenuOpen(false), qualityToggleRef, {
+    dismissRefs: [qualityMenuRef],
+  })
 
   // Refetches whenever the video itself changes (not on a quality switch -
   // the subtitle list is the same across renditions of the same video).
@@ -308,39 +281,13 @@ function VideoPlayer({
     }
   }, [video.id])
 
-  useEffect(() => {
-    if (!captionsMenuOpen) {
-      return undefined
-    }
+  useDismissablePopover(captionsMenuOpen, () => setCaptionsMenuOpen(false), captionsToggleRef, {
+    dismissRefs: [captionsMenuRef],
+  })
 
-    function handleClickOutside(event) {
-      if (captionsMenuRef.current && !captionsMenuRef.current.contains(event.target)) {
-        setCaptionsMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [captionsMenuOpen])
-
-  useDismissablePopover(captionsMenuOpen, () => setCaptionsMenuOpen(false), captionsToggleRef)
-
-  useEffect(() => {
-    if (!playlistMenuOpen) {
-      return undefined
-    }
-
-    function handleClickOutside(event) {
-      if (playlistMenuRef.current && !playlistMenuRef.current.contains(event.target)) {
-        setPlaylistMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [playlistMenuOpen])
-
-  useDismissablePopover(playlistMenuOpen, () => setPlaylistMenuOpen(false), playlistToggleRef)
+  useDismissablePopover(playlistMenuOpen, () => setPlaylistMenuOpen(false), playlistToggleRef, {
+    dismissRefs: [playlistMenuRef],
+  })
 
   useEffect(() => {
     if (playlistMenuOpen) {
@@ -630,6 +577,26 @@ function VideoPlayer({
     }
   }
 
+  // Reset once per video so onNearEnd can fire again for the next one.
+  useEffect(() => {
+    nearEndFiredRef.current = false
+  }, [video.id])
+
+  function handleTimeUpdate(event) {
+    if (nearEndFiredRef.current || !onNearEnd) {
+      return
+    }
+    const el = event.currentTarget
+    if (!el.duration || Number.isNaN(el.duration)) {
+      return
+    }
+    const remaining = el.duration - el.currentTime
+    if (remaining <= NEAR_END_THRESHOLD_SECONDS) {
+      nearEndFiredRef.current = true
+      onNearEnd()
+    }
+  }
+
   function handleCancelAutoplay() {
     onAutoplayChange?.(false)
   }
@@ -759,6 +726,7 @@ function VideoPlayer({
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handleFirstPlay}
               onEnded={handleEnded}
+              onTimeUpdate={handleTimeUpdate}
               onVolumeChange={handleVolumeChange}
               onError={handlePlaybackError}
             >
@@ -786,6 +754,7 @@ function VideoPlayer({
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
             onEnded={handleEnded}
+            onTimeUpdate={handleTimeUpdate}
             onVolumeChange={handleVolumeChange}
             onError={handlePlaybackError}
           >
