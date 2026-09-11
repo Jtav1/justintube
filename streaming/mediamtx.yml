@@ -1,0 +1,41 @@
+# MediaMTX config for Justintube's RTMP ingest / HLS playback.
+# Verified against the bundled default config for the version pinned in
+# ./Dockerfile (v1.20.0) - re-check these keys if that version is bumped,
+# since hook/auth config shape has moved across MediaMTX releases.
+
+rtmpAddress: :1935
+hlsAddress: :8888
+
+# Internal-only control API (127.0.0.1, never published to the host). Used
+# by the compose healthcheck and by scripts/on-{publish,unpublish}.sh to
+# dynamically add/remove the playback alias path described below.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# Publish attempts are validated against webapi before MediaMTX accepts
+# them. authHTTPAddress can't send an Authorization header, so the token
+# travels in its own query string instead - see
+# webapi/routes/internal-livestreams.js's mediamtx-auth route. MediaMTX has
+# no ${VAR} substitution inside this file, so the actual URL (with the
+# INTERNAL_SERVICE_TOKEN baked into its query string) is supplied via the
+# MTX_AUTHHTTPADDRESS environment variable in docker-compose.yml instead of
+# being set here.
+authMethod: http
+authHTTPExclude:
+  - action: read
+  - action: playback
+  - action: api
+  - action: metrics
+  - action: pprof
+
+paths:
+  # OBS concatenates its "Server" and "Stream Key" fields into one publish
+  # URL, so the raw stream key (format sk_<64 hex>, see
+  # webapi/lib/auth/stream-key.js) IS the path here - there is no separate
+  # per-user path at publish time. This pattern only matches that
+  # secret-shaped publish path; it never collides with the purely-numeric
+  # `live/{userId}` alias paths added dynamically below.
+  "~^live/sk_[0-9a-f]{64}$":
+    runOnAvailable: /scripts/on-publish.sh
+    runOnAvailableRestart: no
+    runOnUnavailable: /scripts/on-unpublish.sh

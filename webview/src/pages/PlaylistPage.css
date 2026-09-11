@@ -1,0 +1,130 @@
+.playlist-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  margin: 0;
+  padding: 16px;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.playlist-page-status {
+  text-align: center;
+  color: var(--text);
+}
+
+.playlist-page-info {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .playlist-page-info {
+    flex-direction: column;
+  }
+}
+
+.playlist-page-info-main {
+  min-width: 0;
+}
+
+.playlist-page-title {
+  margin: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 130%;
+  color: var(--text-h);
+}
+
+.playlist-page-creator-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.playlist-page-avatar-link {
+  flex-shrink: 0;
+}
+
+.playlist-page-avatar {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--code-bg);
+}
+
+.playlist-page-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-h);
+}
+
+.playlist-page-creator {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-h);
+  text-decoration: none;
+}
+
+.playlist-page-creator:hover {
+  text-decoration: underline;
+}
+
+.playlist-page-description {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.playlist-page-stats {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 300;
+  color: var(--text);
+}
+
+.playlist-page-visibility {
+  text-transform: capitalize;
+}
+
+.playlist-page-play-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.playlist-page-play-btn:hover:not(:disabled) {
+  background: var(--accent-border);
+  color: var(--text-h);
+}
+
+.playlist-page-play-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.playlist-page-videos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}

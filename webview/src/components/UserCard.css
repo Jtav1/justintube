@@ -1,0 +1,196 @@
+.user-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 125px;
+  width: 100%;
+  padding: 12px 16px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  text-decoration: none;
+  color: inherit;
+}
+
+.user-card:hover {
+  border-color: var(--accent-border);
+}
+
+.user-card-avatar {
+  width: 100px;
+  height: 100px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--accent-bg);
+}
+
+.user-card-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-h);
+}
+
+.user-card-identity {
+  flex-shrink: 0;
+  min-width: 160px;
+  max-width: 220px;
+}
+
+.user-card-name {
+  margin: 0;
+  font-family: var(--heading);
+  font-weight: 500;
+  font-size: 18px;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-card-handle {
+  font-weight: 300;
+  color: var(--text);
+}
+
+.user-card-uploads {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 300;
+  color: var(--text);
+}
+
+.user-card-bio {
+  margin: 0;
+  flex-grow: 1;
+  min-width: 0;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.user-card-subscribe-btn {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.user-card-subscribe-btn:hover:not(:disabled) {
+  background: var(--accent-border);
+  color: var(--text-h);
+}
+
+.user-card-subscribe-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.user-card-subscribe-btn-active {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.user-card-subscribe-btn-active:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.user-card-status-icons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.user-card-status-icon-true {
+  color: #2e7d32;
+}
+
+.user-card-status-icon-false {
+  color: #d33;
+}
+
+.user-card-role-select {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text);
+  cursor: default;
+
+  select {
+    font: inherit;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text-h);
+    cursor: pointer;
+  }
+
+  select:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+@media (max-width: 640px) {
+  .user-card {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    height: auto;
+    gap: 8px 12px;
+  }
+
+  .user-card-avatar {
+    width: 56px;
+    height: 56px;
+    order: 1;
+  }
+
+  .user-card-identity {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .user-card-subscribe-btn {
+    order: 3;
+    margin-left: auto;
+  }
+
+  .user-card-status-icons {
+    order: 3;
+    flex-direction: row;
+    margin-left: auto;
+  }
+
+  .user-card-bio {
+    order: 4;
+    flex: 1 1 100%;
+    -webkit-line-clamp: 3;
+  }
+
+  .user-card-role-select {
+    order: 5;
+    flex: 1 1 100%;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}

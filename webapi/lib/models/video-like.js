@@ -4,8 +4,9 @@ import { timestampColumn } from "./attribute-helpers.js";
 import { LIKE_VALUES } from "./constants.js";
 
 /**
- * VIDEO_LIKES table model. Records a single user's like (1) on an upload. Delete likes
- * on "un liking" instead of storing a negative value to make sqlite happy.
+ * VIDEO_LIKES table model. Records a single user's reaction (1 = like, -1 = dislike) on an
+ * upload. At most one row per (user, upload); toggling the same reaction again or switching
+ * to the other reaction replaces/removes the row (see the like/dislike routes in routes/videos.js).
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */

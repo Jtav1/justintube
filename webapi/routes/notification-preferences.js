@@ -1,0 +1,287 @@
+import { Router } from "express";
+import { csrfProtection } from "../lib/auth/csrf.js";
+import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
+import { requireAuth } from "../lib/auth/require-auth.js";
+import {
+  NotificationType,
+  UserNotificationSetting,
+  sequelize,
+} from "../lib/models/index.js";
+import { getNotificationTypeDefaults, isNotificationTypeInAppLocked } from "../lib/seed.js";
+import { logger } from "../lib/logger.js";
+
+/**
+ * Loads all active notification types, ordered by id.
+ *
+ * @returns {Promise<import('sequelize').Model[]>} Active NotificationType rows.
+ */
+async function loadActiveNotificationTypes() {
+  return NotificationType.findAll({
+    where: { enabled: true },
+    order: [["id", "ASC"]],
+  });
+}
+
+/**
+ * Builds the caller's full notification preferences payload: one entry per
+ * active notification type. Every user is expected to have an explicit
+ * USER_NOTIFICATION_SETTINGS row for every active type (seeded at
+ * registration and reconciled on every boot by
+ * `ensureUserNotificationSettings`), so this reads those rows directly. The
+ * type's seeded default (`getNotificationTypeDefaults`) is only a fallback
+ * for a row somehow being missing, not the normal path.
+ *
+ * @param {number} userId Id of the authenticated user.
+ * @returns {Promise<{preferences: {notificationType: string, description: string|null, enabled: boolean, emailEnabled: boolean, enabledLocked: boolean}[]}>}
+ *   The preferences payload.
+ */
+async function buildPreferencesPayload(userId) {
+  const types = await loadActiveNotificationTypes();
+  const settings = await UserNotificationSetting.findAll({ where: { userId } });
+  const settingByTypeId = new Map(settings.map((row) => [row.notificationTypeId, row]));
+
+  return {
+    preferences: types.map((type) => {
+      const setting = settingByTypeId.get(type.id);
+      const defaults = getNotificationTypeDefaults(type.name);
+      const enabledLocked = isNotificationTypeInAppLocked(type.name);
+      return {
+        notificationType: type.name,
+        description: type.description,
+        enabled: enabledLocked ? true : setting ? Boolean(setting.enabled) : defaults.enabled,
+        emailEnabled: setting ? Boolean(setting.emailEnabled) : defaults.emailEnabled,
+        enabledLocked,
+      };
+    }),
+  };
+}
+
+/**
+ * Validates a PATCH request body's `preferences` array. Each item must
+ * specify at least one of `enabled` (in-app delivery) or `emailEnabled`
+ * (email delivery) - the other is left untouched, letting callers flip one
+ * switch at a time.
+ *
+ * @param {unknown} body Parsed request body.
+ * @param {Map<string, number>} typeIdByName Active notification type name -> id.
+ * @returns {{ ok: true, updates: {notificationTypeId: number, enabled?: boolean, emailEnabled?: boolean}[] }
+ *   | { ok: false, message: string }} Validated updates or a validation error.
+ */
+function parsePreferencesUpdate(body, typeIdByName) {
+  const preferences = body?.preferences;
+  if (!Array.isArray(preferences) || preferences.length === 0) {
+    return { ok: false, message: "preferences must be a non-empty array." };
+  }
+
+  /** @type {{ notificationTypeId: number, enabled?: boolean, emailEnabled?: boolean }[]} */
+  const updates = [];
+  const seen = new Set();
+
+  for (const item of preferences) {
+    const notificationType = String(item?.notificationType ?? "").trim();
+    if (!notificationType) {
+      return { ok: false, message: "notificationType is required." };
+    }
+
+    const hasEnabled = Object.prototype.hasOwnProperty.call(item ?? {}, "enabled");
+    const hasEmailEnabled = Object.prototype.hasOwnProperty.call(item ?? {}, "emailEnabled");
+    if (!hasEnabled && !hasEmailEnabled) {
+      return {
+        ok: false,
+        message: `At least one of enabled or emailEnabled is required for notificationType "${notificationType}".`,
+      };
+    }
+    if (hasEnabled && typeof item.enabled !== "boolean") {
+      return {
+        ok: false,
+        message: `enabled must be a boolean for notificationType "${notificationType}".`,
+      };
+    }
+    if (hasEnabled && item.enabled === false && isNotificationTypeInAppLocked(notificationType)) {
+      return {
+        ok: false,
+        message: `In-app notifications for "${notificationType}" cannot be disabled.`,
+      };
+    }
+    if (hasEmailEnabled && typeof item.emailEnabled !== "boolean") {
+      return {
+        ok: false,
+        message: `emailEnabled must be a boolean for notificationType "${notificationType}".`,
+      };
+    }
+    if (seen.has(notificationType)) {
+      return {
+        ok: false,
+        message: `Duplicate notificationType: "${notificationType}".`,
+      };
+    }
+    seen.add(notificationType);
+
+    const typeId = typeIdByName.get(notificationType);
+    if (typeId === undefined) {
+      return {
+        ok: false,
+        message: `Unknown notification type: "${notificationType}".`,
+      };
+    }
+
+    const update = { notificationTypeId: typeId };
+    if (hasEnabled) {
+      update.enabled = item.enabled;
+    }
+    if (hasEmailEnabled) {
+      update.emailEnabled = item.emailEnabled;
+    }
+    updates.push(update);
+  }
+
+  return { ok: true, updates };
+}
+
+/**
+ * Builds the notification preferences router (mounted under `/api/v1`).
+ *
+ * @returns {import('express').Router} Configured notification preferences router.
+ */
+export function createNotificationPreferencesRouter() {
+  const router = Router();
+  router.use(csrfProtection);
+
+  /**
+   * Returns the authenticated user's notification preferences.
+   * GET /api/v1/me/notification-preferences
+   * Auth: session cookie or Bearer API key (`requireAuth`).
+   *
+   * @openapi
+   * /api/v1/me/notification-preferences:
+   *   get:
+   *     tags: [Me]
+   *     summary: Get my notification preferences
+   *     operationId: getNotificationPreferences
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: >
+   *           Per-type enabled/emailEnabled flags (default to true for types with no explicit row).
+   *           `enabledLocked: true` marks types whose in-app delivery can't be disabled (moderation,
+   *           account, admin) - `enabled` always reads true for those regardless of any stored setting.
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ preferences }` or an error response.
+   */
+  router.get("/me/notification-preferences", requireAuth, async (req, res) => {
+    try {
+      res.json(await buildPreferencesPayload(req.user.id));
+    } catch (err) {
+      logger.error({ err }, "getNotificationPreferences failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to load notification preferences.",
+      });
+    }
+  });
+
+  /**
+   * Updates one or more of the authenticated user's notification preferences.
+   * PATCH /api/v1/me/notification-preferences with
+   * `{ preferences: [{ notificationType, enabled?, emailEnabled? }] }` - each item must include
+   * at least one of `enabled`/`emailEnabled`; the other is left unchanged.
+   * Auth: session cookie or Bearer API key; X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/me/notification-preferences:
+   *   patch:
+   *     tags: [Me]
+   *     summary: Update my notification preferences
+   *     operationId: updateNotificationPreferences
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [preferences]
+   *             properties:
+   *               preferences:
+   *                 type: array
+   *                 items:
+   *                   type: object
+   *                   required: [notificationType]
+   *                   description: At least one of enabled/emailEnabled must be present.
+   *                   properties:
+   *                     notificationType: { type: string }
+   *                     enabled: { type: boolean, description: "In-app/tray delivery. Cannot be set to false for enabledLocked types (moderation, account, admin)." }
+   *                     emailEnabled: { type: boolean, description: "Email delivery" }
+   *     responses:
+   *       200:
+   *         description: Updated preferences (full list, same shape as GET)
+   *       400:
+   *         description: Invalid body
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the updated preferences or an error response.
+   */
+  router.patch(
+    "/me/notification-preferences",
+    requireAuth,
+    requireApiKeyScope("profile_edit"),
+    async (req, res) => {
+      try {
+        const types = await loadActiveNotificationTypes();
+        const typeIdByName = new Map(types.map((type) => [type.name, type.id]));
+
+        const parsed = parsePreferencesUpdate(req.body, typeIdByName);
+        if (!parsed.ok) {
+          res.status(400).json({ error: "invalid_body", message: parsed.message });
+          return;
+        }
+
+        await sequelize.transaction(async (transaction) => {
+          for (const { notificationTypeId, enabled, emailEnabled } of parsed.updates) {
+            const [row, created] = await UserNotificationSetting.findOrCreate({
+              where: { userId: req.user.id, notificationTypeId },
+              defaults: {
+                enabled: enabled ?? true,
+                emailEnabled: emailEnabled ?? true,
+              },
+              transaction,
+            });
+            if (!created) {
+              const changes = {};
+              if (enabled !== undefined) {
+                changes.enabled = enabled;
+              }
+              if (emailEnabled !== undefined) {
+                changes.emailEnabled = emailEnabled;
+              }
+              await row.update(changes, { transaction });
+            }
+          }
+        });
+
+        res.json(await buildPreferencesPayload(req.user.id));
+      } catch (err) {
+        logger.error({ err }, "updateNotificationPreferences failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to update notification preferences.",
+        });
+      }
+    },
+  );
+
+  return router;
+}

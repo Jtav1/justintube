@@ -1,7 +1,11 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../db.js";
 import { constrainedString, timestampColumn } from "./attribute-helpers.js";
-import { VISIBILITY_VALUES } from "./constants.js";
+import {
+  PLAYLIST_KIND_VALUES,
+  SEARCH_INDEX_STATUS_VALUES,
+  VISIBILITY_VALUES,
+} from "./constants.js";
 
 /**
  * USER_PLAYLISTS table model. Stores playlists owned by a user.
@@ -32,10 +36,18 @@ export const UserPlaylist = sequelize.define(
       allowNull: false,
       defaultValue: "private",
     }),
+    kind: constrainedString(PLAYLIST_KIND_VALUES, {
+      allowNull: false,
+      defaultValue: "standard",
+    }),
     lastAddedAt: {
       type: DataTypes.DATE,
       allowNull: true,
     },
+    searchIndexStatus: constrainedString(SEARCH_INDEX_STATUS_VALUES, {
+      allowNull: false,
+      defaultValue: "pending",
+    }),
     createdAt: timestampColumn("created_at"),
     updatedAt: timestampColumn("updated_at"),
   },

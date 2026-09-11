@@ -1,10 +1,12 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../db.js";
-import { timestampColumn } from "./attribute-helpers.js";
+import { constrainedString, timestampColumn } from "./attribute-helpers.js";
+import { SEARCH_INDEX_STATUS_VALUES } from "./constants.js";
 
 /**
  * USERS table model. One row per account; local accounts store a bcrypt hash in
- * `passwordHash` (nullable for SSO-only accounts).
+ * `passwordHash` (nullable for SSO-only accounts). When `passwordExpired` is
+ * true, the account must change its password (e.g. after an admin reset).
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */
@@ -34,8 +36,21 @@ export const User = sequelize.define(
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    passwordExpired: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     bio: {
       type: DataTypes.STRING(5000),
+      allowNull: true,
+    },
+    avatarFilename: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    bannerFilename: {
+      type: DataTypes.STRING(255),
       allowNull: true,
     },
     emailVerified: {
@@ -54,6 +69,18 @@ export const User = sequelize.define(
     },
     roleId: {
       type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+    themeId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+    searchIndexStatus: constrainedString(SEARCH_INDEX_STATUS_VALUES, {
+      allowNull: false,
+      defaultValue: "pending",
+    }),
+    lastLogIn: {
+      type: DataTypes.DATE,
       allowNull: true,
     },
     createdAt: timestampColumn("created_at"),

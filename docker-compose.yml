@@ -1,22 +1,15 @@
 services:
-  # Bundled MySQL used when running the full stack with Docker Compose.
-  # (Local development instead uses SQLite via `npm run dev` in ./api.)
   db:
-    image: mysql:8.4
+    image: justintube-db:latest
     container_name: justintube-db
     restart: unless-stopped
     environment:
-      # Root credentials used only for container init / administration.
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      # Passed through to the init script (see api/db/init/01-init-justintube.sh).
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set - see .env.example}
       JUSTINTUBE_DB: ${MYSQL_DATABASE:-justintube}
       JUSTINTUBE_USER: ${MYSQL_USER:-justintube}
-      JUSTINTUBE_PASSWORD: ${MYSQL_PASSWORD:-password}
-    ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      JUSTINTUBE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set - see .env.example}
     volumes:
       - db-data:/var/lib/mysql
-      - ./api/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
         [
@@ -25,32 +18,206 @@ services:
           "ping",
           "-h",
           "localhost",
-          "-p${MYSQL_ROOT_PASSWORD:-rootpassword}",
+          "-p${MYSQL_ROOT_PASSWORD}",
         ]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  api:
+  redis:
+    image: redis:7-alpine
+    container_name: justintube-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set - see .env.example}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Optional - see .env.example - If adv search is disabled you can remove or comment out this service
+  search:
+    image: getmeili/meilisearch:v1.15.1
+    container_name: justintube-search
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY must be set - see .env.example}
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_ENV: ${MEILI_ENV:-production}
+    volumes:
+      - search-data:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7700/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  webapi:
     build:
-      context: ./api
+      context: ./webapi
     container_name: justintube-api
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      processing:
+        condition: service_healthy
     environment:
       PORT: ${PORT:-3000}
-      # The composed stack always uses the bundled MySQL service.
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
       DB_CLIENT: mysql
+      # You can use your own MYSQL but you have to adjust these yourself should be pretty ez lol
       MYSQL_HOST: db
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE:-justintube}
       MYSQL_USER: ${MYSQL_USER:-justintube}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set - see .env.example}
       MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      MEDIA_STORAGE_DIRECTORY: /media
+      SITEDATA_STORAGE_DIRECTORY: /sitedata
+      PROCESSING_API_URL: http://processing:3001
+      DOWNLOAD_REQUEST_TIMEOUT_MS: ${DOWNLOAD_REQUEST_TIMEOUT_MS:-900000}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
+      ENABLE_TRANSCODING: ${ENABLE_TRANSCODING:-true}
+      ENABLE_VIDEO_IMPORTS: ${ENABLE_VIDEO_IMPORTS:-true}
+      ENABLE_LIVESTREAM: ${ENABLE_LIVESTREAM:-false}
+      RTMP_INGEST_URL: ${RTMP_INGEST_URL:-rtmp://localhost:1935/live}
+      HLS_BASE_URL: ${HLS_BASE_URL:-http://localhost:8888}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set - see .env.example}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      TRANSCODE_RECONCILE_CRON: ${TRANSCODE_RECONCILE_CRON:-*/5 * * * *}
+      TRANSCODE_RECONCILE_STALE_MINUTES: ${TRANSCODE_RECONCILE_STALE_MINUTES:-15}
+      SEARCH_REINDEX_ENABLED: ${SEARCH_REINDEX_ENABLED:-true}
+      SEARCH_REINDEX_CRON: ${SEARCH_REINDEX_CRON:-0 3 * * *}
+      NOTIFICATION_EMAIL_DIGEST_ENABLED: ${NOTIFICATION_EMAIL_DIGEST_ENABLED:-true}
+      NOTIFICATION_EMAIL_DIGEST_CRON: ${NOTIFICATION_EMAIL_DIGEST_CRON:-0 * * * *}
+      ENABLE_ADVANCED_SEARCH: ${ENABLE_ADVANCED_SEARCH:-true}
+      MEILI_HOST: http://search:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_INDEX_NAME: ${MEILI_INDEX_NAME:-videos}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-false}
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+      ENABLE_ACCOUNT_REGISTRATION: ${ENABLE_ACCOUNT_REGISTRATION:-true}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
+      ENABLE_ADMIN_NEW_USER_NOTIFICATIONS: ${ENABLE_ADMIN_NEW_USER_NOTIFICATIONS:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      FILETYPES_ALLOWED: ${FILETYPES_ALLOWED:-mp4,mkv,webm,wav,mp3,m4a,aac,flac,ogg}
+      FILETYPES_CONVERTIBLE: ${FILETYPES_CONVERTIBLE:-mov,avi,wmv,flv,mpg,mpeg,m4v,3gp,ts,wma,aiff,aif,amr}
+      THUMBNAIL_FILETYPES_ALLOWED: ${THUMBNAIL_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
+      AVATAR_FILETYPES_ALLOWED: ${AVATAR_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
+      BANNER_FILETYPES_ALLOWED: ${BANNER_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
+      THEME_IMAGE_FILETYPES_ALLOWED: ${THEME_IMAGE_FILETYPES_ALLOWED:-jpg,jpeg,png,webp}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:${WEBVIEW_PORT:-5173}}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:${PORT:-3000}}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEBVIEW_PORT:-5173}}
+      ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
+      DUPLICATE_HASH_RECONCILE_ENABLED: ${DUPLICATE_HASH_RECONCILE_ENABLED:-true}
+      DUPLICATE_HASH_RECONCILE_CRON: ${DUPLICATE_HASH_RECONCILE_CRON:-0 3 * * *}
     ports:
       - "${PORT:-3000}:3000"
+    volumes:
+      - media-data:/media
+      - ./webapi/media/sitedata:/sitedata
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
+  # Optional - see .env.example - If processing features are disabled you can remove or comment out this service
+  processing:
+    build:
+      context: ./processing
+    container_name: justintube-processing
+    restart: unless-stopped
+    env_file:
+      - ./processing/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      PORT: ${PROCESSING_PORT:-3001}
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      MEDIA_STORAGE_DIRECTORY: /media
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      API_BASE_URL: http://webapi:3000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      ENABLE_DUPLICATE_UPLOAD_DETECTION: ${ENABLE_DUPLICATE_UPLOAD_DETECTION:-false}
+      HASH_GENERATION_WINDOW: ${HASH_GENERATION_WINDOW:-}
+    # REQUIRED for hw accel transcoding
+    # devices:
+    #   - /dev/dri/renderD128:/dev/dri/renderD128
+    volumes:
+      - media-data:/media
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # Streaming is completely experimental. See .env.example - uncomment this if you turn it on
+  # No guarntees itll work tho lol
+  # streaming:
+  #   build:
+  #     context: ./streaming
+  #   container_name: justintube-streaming
+  #   restart: unless-stopped
+  #   depends_on:
+  #     webapi:
+  #       condition: service_healthy
+  #   environment:
+  #     API_BASE_URL: http://webapi:3000
+  #     INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set - see .env.example}
+  #     MTX_AUTHHTTPADDRESS: http://webapi:3000/internal/livestreams/mediamtx-auth?token=${INTERNAL_SERVICE_TOKEN}
+  #   ports:
+  #     # RTMP ingest (OBS) and HLS playback both need to be reachable
+  #     # directly by external clients
+  #     - "1935:1935"
+  #     - "8888:8888"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://127.0.0.1:9997/v3/config/global/get"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 10s
+
+  webview:
+    build:
+      context: ./webview
+    container_name: justintube-webview
+    restart: unless-stopped
+    depends_on:
+      webapi:
+        condition: service_healthy
+    environment:
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:3000}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TRANSCODE_CONTAINER_OPTIONS: ${TRANSCODE_CONTAINER_OPTIONS:-mp4,webm}
+    ports:
+      - "${WEBVIEW_PORT:-5173}:8080"
+
+# You probably definitely want to set these to be persistent. Vars are available in .env
 volumes:
   db-data:
+  media-data:
+  redis-data:
+  search-data:

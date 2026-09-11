@@ -1,0 +1,13 @@
+.bulk-upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.bulk-upload-form-drag-active {
+  border-color: var(--accent-border);
+}

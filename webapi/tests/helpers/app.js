@@ -11,3 +11,13 @@ import { createApp } from "../../index.js";
 export function createTestClient() {
   return request(createApp());
 }
+
+/**
+ * Builds a cookie-jar agent bound to a fresh Express app so session cookies
+ * persist across requests in auth tests.
+ *
+ * @returns {import('supertest').SuperAgentTest} Supertest agent with cookie jar.
+ */
+export function createTestAgent() {
+  return request.agent(createApp());
+}

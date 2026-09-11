@@ -1,0 +1,402 @@
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { ImageOff, MoreVertical, VideoOff } from 'lucide-react'
+import { formatDuration, formatRelativeDate, formatViewCount } from '../lib/format.js'
+import { CORE_JOB_KINDS, colorForJobKind, labelForJobKind } from '../lib/jobKinds.js'
+import { useAuth } from '../context/useAuth.js'
+import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
+import { getVideoProcessingStatus, hideVideo } from '../api/videos.js'
+import apiClient from '../api/client.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import { useTextOverflowShrink } from '../hooks/useTextOverflowShrink.js'
+import ReactionScore from './ReactionScore.jsx'
+import SegmentedProgressBar from './SegmentedProgressBar.jsx'
+import './VideoCard.css'
+
+// Must match .video-card-title's font-size/font-weight in VideoCard.css.
+const TITLE_FONT_SIZE = 18
+const TITLE_FONT_WEIGHT = 500
+const TITLE_SHRINK_PX = 4
+const PROCESSING_POLL_MS = 5000
+// Spreads out the first poll across many owned cards on one page (e.g.
+// after a bulk import) so they don't all hit the API in the same tick.
+const PROCESSING_POLL_MAX_JITTER_MS = 2000
+
+function VideoCard({
+  video,
+  orientation = 'vertical',
+  hideMenu = false,
+  linkTo,
+  active = false,
+  onRemoveFromPlaylist,
+  onRemoveFromHistory,
+  showReactionScore = true,
+}) {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [dropdownPosition, setDropdownPosition] = useState(null)
+  const menuRef = useRef(null)
+  const toggleRef = useRef(null)
+  const dropdownRef = useRef(null)
+  const titleRef = useRef(null)
+
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const [myPlaylists, setMyPlaylists] = useState(null)
+  const [playlistsLoading, setPlaylistsLoading] = useState(false)
+  const [playlistsError, setPlaylistsError] = useState(null)
+  const [addStatus, setAddStatus] = useState({})
+  const [hidden, setHidden] = useState(false)
+  const [hideError, setHideError] = useState(false)
+
+  // List-fetched videos don't carry viewerPermission (see webapi's
+  // scope note on list endpoints), so fall back to the client-side
+  // owner/admin check there; singular-fetch contexts get the accurate
+  // owner-or-edit-grantee answer for free.
+  const canEdit = video.viewerPermission
+    ? video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
+    : Boolean(user) && (user.role === 'admin' || video.uploader?.userId === user.id)
+
+  const titleShrunk = useTextOverflowShrink(titleRef, video.title, {
+    fontSize: TITLE_FONT_SIZE,
+    fontWeight: TITLE_FONT_WEIGHT,
+  })
+
+  const uploaderName = video.uploader?.displayName || video.uploader?.username
+  const thumbnailUrl = video.thumbnailUrl
+    ? `${apiClient.defaults.baseURL}${video.thumbnailUrl}`
+    : null
+
+  const isOwner = Boolean(user) && user.id === video.uploader?.userId
+  const isModerator = user?.role === 'moderator' || user?.role === 'admin'
+  const videoPath = linkTo ?? `/video?v=${video.videoId}`
+
+  const [outstandingJobs, setOutstandingJobs] = useState([])
+  // Owner-only: only the uploader sees processing status on their own
+  // upload's card. Skipped entirely once the upload reaches "ready" (or has
+  // no status at all) so an already-finished video never polls.
+  const shouldTrackProcessing = isOwner && Boolean(video.status) && video.status !== 'ready'
+
+  useEffect(() => {
+    if (!shouldTrackProcessing) {
+      // Nothing to reset: the render below gates on `shouldTrackProcessing`
+      // directly, so stale `outstandingJobs` from a prior tracked state
+      // simply never gets shown once this flips false.
+      return undefined
+    }
+
+    let cancelled = false
+    let interval
+
+    async function checkProcessingStatus() {
+      try {
+        const data = await getVideoProcessingStatus(video.id)
+        if (cancelled) {
+          return
+        }
+        // A processing-fetch failure on the API side means "couldn't
+        // confirm", not "confirmed empty" - leave whatever was last shown
+        // rather than snapping the bar away.
+        if (data.jobsStatusUnknown) {
+          return
+        }
+        const jobs = data.outstandingJobs ?? []
+        setOutstandingJobs(jobs)
+        if (jobs.length === 0) {
+          clearInterval(interval)
+        }
+      } catch {
+        // Network/auth error - same "leave it as-is" handling as above.
+      }
+    }
+
+    const jitterMs = Math.random() * PROCESSING_POLL_MAX_JITTER_MS
+    const timeout = setTimeout(() => {
+      checkProcessingStatus()
+      interval = setInterval(checkProcessingStatus, PROCESSING_POLL_MS)
+    }, jitterMs)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+      clearInterval(interval)
+    }
+  }, [video.id, shouldTrackProcessing])
+
+  async function handleCopyLink() {
+    setMenuOpen(false)
+    await navigator.clipboard.writeText(`${window.location.origin}${videoPath}`)
+  }
+
+  async function handleHide() {
+    if (!window.confirm('Hide this video forever? You won\'t see it recommended again.')) {
+      return
+    }
+    setHideError(false)
+    try {
+      await hideVideo(video.id)
+      setMenuOpen(false)
+      setHidden(true)
+    } catch {
+      setHideError(true)
+    }
+  }
+
+  function closeMenu() {
+    setMenuOpen(false)
+    setAddMenuOpen(false)
+  }
+
+  function handleToggleMenu() {
+    if (!menuOpen) {
+      const rect = toggleRef.current.getBoundingClientRect()
+      const openUpward = window.innerHeight - rect.bottom < 220
+      setDropdownPosition({
+        right: window.innerWidth - rect.right,
+        ...(openUpward
+          ? { bottom: window.innerHeight - rect.top + 4 }
+          : { top: rect.bottom + 4 }),
+      })
+      setMenuOpen(true)
+    } else {
+      closeMenu()
+    }
+  }
+
+  async function handleToggleAddMenu() {
+    const opening = !addMenuOpen
+    setAddMenuOpen(opening)
+    if (opening && myPlaylists === null && !playlistsLoading) {
+      setPlaylistsLoading(true)
+      setPlaylistsError(null)
+      try {
+        const data = await listMyPlaylists({ limit: 99 })
+        setMyPlaylists(data.items)
+      } catch {
+        setPlaylistsError('Failed to load your playlists.')
+      } finally {
+        setPlaylistsLoading(false)
+      }
+    }
+  }
+
+  function handleCreateNewPlaylist() {
+    closeMenu()
+    navigate(`/playlists/new?videoId=${video.id}`)
+  }
+
+  async function handleAddToExistingPlaylist(playlistId) {
+    setAddStatus((prev) => ({ ...prev, [playlistId]: 'adding' }))
+    try {
+      await addVideoToPlaylist(playlistId, video.id)
+      closeMenu()
+    } catch (err) {
+      const conflict = err?.response?.status === 409
+      setAddStatus((prev) => ({ ...prev, [playlistId]: conflict ? 'conflict' : 'error' }))
+    }
+  }
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined
+    }
+
+    // The dropdown is portaled to <body> with a fixed position computed on
+    // open, so it won't track its trigger if an ancestor (e.g. the playlist
+    // queue's scrollable rail) scrolls - close it instead of leaving it
+    // floating in the wrong place.
+    function handleScroll() {
+      closeMenu()
+    }
+
+    window.addEventListener('scroll', handleScroll, true)
+    return () => window.removeEventListener('scroll', handleScroll, true)
+  }, [menuOpen])
+
+  useDismissablePopover(menuOpen, closeMenu, toggleRef, { dismissRefs: [menuRef, dropdownRef] })
+
+  if (hidden) {
+    return null
+  }
+
+  return (
+    <article
+      className={`video-card video-card-${orientation}${menuOpen ? ' video-card-menu-open' : ''}${active ? ' video-card-active' : ''}`}
+    >
+      <Link to={videoPath} className="video-card-thumb">
+        {thumbnailUrl ? (
+          <img src={thumbnailUrl} alt="" loading="lazy" width={320} height={180} />
+        ) : (
+          <div className="video-card-thumb-placeholder">
+            {video.mediaType === 'audio' ? <VideoOff size={28} /> : <ImageOff size={28} />}
+          </div>
+        )}
+        {video.durationSeconds != null && (
+          <span className="video-card-duration">{formatDuration(video.durationSeconds)}</span>
+        )}
+        {shouldTrackProcessing && outstandingJobs.length > 0 && (
+          <div className="video-card-processing-overlay">
+            <SegmentedProgressBar
+              segments={CORE_JOB_KINDS.map((kind) => ({
+                key: kind,
+                value: outstandingJobs.filter((job) => job.kind === kind).length,
+                color: colorForJobKind(kind),
+                label: labelForJobKind(kind),
+              }))}
+              showLegend={false}
+            />
+          </div>
+        )}
+      </Link>
+      <div className="video-card-body">
+        <div className="video-card-text">
+          <h3
+            className="video-card-title"
+            ref={titleRef}
+            style={titleShrunk ? { fontSize: TITLE_FONT_SIZE - TITLE_SHRINK_PX } : undefined}
+          >
+            <Link to={videoPath}>{video.title}</Link>
+          </h3>
+          <p className="video-card-meta">
+            <Link to={`/users/${video.uploader?.username}`}>{uploaderName}</Link>
+          </p>
+          <p className="video-card-meta">
+            {video.viewedAt ? (
+              `Watched ${formatRelativeDate(video.viewedAt)}`
+            ) : (
+              <>{formatViewCount(video.viewCount)} &middot; {formatRelativeDate(video.createdAt)}</>
+            )}
+            {video.visibility && video.visibility !== 'public' && (
+              <> &middot; <span className="video-card-visibility">{video.visibility}</span></>
+            )}
+          </p>
+        </div>
+        {!hideMenu && (
+          <div className="video-card-menu" ref={menuRef}>
+            <button
+              ref={toggleRef}
+              type="button"
+              className="video-card-menu-toggle"
+              aria-label="Video options"
+              title="Video options"
+              onClick={handleToggleMenu}
+            >
+              <MoreVertical size={18} />
+            </button>
+            {menuOpen && dropdownPosition && createPortal(
+              <div
+                className="video-card-menu-dropdown"
+                ref={dropdownRef}
+                style={{ position: 'fixed', ...dropdownPosition }}
+              >
+                <button type="button" className="video-card-menu-item" onClick={handleCopyLink}>
+                  Copy Link
+                </button>
+                <button type="button" className="video-card-menu-item" onClick={handleToggleAddMenu}>
+                  Add to Playlist
+                </button>
+                {addMenuOpen && (
+                  <div className="video-card-playlist-submenu">
+                    <button
+                      type="button"
+                      className="video-card-playlist-submenu-item video-card-playlist-submenu-create"
+                      onClick={handleCreateNewPlaylist}
+                    >
+                      Create New Playlist
+                    </button>
+                    {playlistsLoading && (
+                      <p className="video-card-playlist-submenu-note">Loading your playlists...</p>
+                    )}
+                    {playlistsError && (
+                      <p className="video-card-playlist-submenu-note video-card-playlist-submenu-error">
+                        {playlistsError}
+                      </p>
+                    )}
+                    {!playlistsLoading && myPlaylists && myPlaylists.length === 0 && (
+                      <p className="video-card-playlist-submenu-note">
+                        You don&apos;t have any playlists yet.
+                      </p>
+                    )}
+                    {myPlaylists?.map((playlist) => {
+                      const status = addStatus[playlist.id]
+                      return (
+                        <button
+                          key={playlist.id}
+                          type="button"
+                          className="video-card-playlist-submenu-item"
+                          disabled={status === 'adding'}
+                          onClick={() => handleAddToExistingPlaylist(playlist.id)}
+                        >
+                          {playlist.title}
+                          {status === 'adding' && ' — Adding...'}
+                          {status === 'conflict' && ' — Already added'}
+                          {status === 'error' && ' — Failed, try again'}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {Boolean(user) && !isOwner && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={handleHide}
+                  >
+                    Never Show Me This Again
+                    {hideError && ' — Failed, try again'}
+                  </button>
+                )}
+                {onRemoveFromPlaylist && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={() => {
+                      closeMenu()
+                      onRemoveFromPlaylist()
+                    }}
+                  >
+                    Remove from Playlist
+                  </button>
+                )}
+                {onRemoveFromHistory && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={() => {
+                      closeMenu()
+                      onRemoveFromHistory()
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+                {canEdit && (
+                  <Link
+                    to={`/upload?v=${video.videoId}`}
+                    className="video-card-menu-item"
+                    onClick={closeMenu}
+                  >
+                    Edit
+                  </Link>
+                )}
+                {isModerator && (
+                  <button
+                    type="button"
+                    className="video-card-menu-item"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    MOD: Delist
+                  </button>
+                )}
+              </div>,
+              document.body,
+            )}
+          </div>
+        )}
+      </div>
+    </article>
+  )
+}
+
+export default VideoCard

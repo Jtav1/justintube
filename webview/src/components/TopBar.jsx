@@ -1,0 +1,324 @@
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Dices, Menu, TriangleAlert, MoreVertical, Palette, Radio, Search, UserRound, Video } from 'lucide-react'
+import { useAuth } from '../context/useAuth.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
+import { useToast } from '../context/useToast.js'
+import apiClient from '../api/client.js'
+import { getRandomVideos } from '../api/videos.js'
+import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import SearchAutocomplete from './SearchAutocomplete.jsx'
+import ThemeSelector from './ThemeSelector.jsx'
+import NotificationBell from './NotificationBell.jsx'
+import './TopBar.css'
+
+/**
+ * Picks a default report category (and, where resolvable from the URL
+ * alone, a target reference) for the given location - Video on a video
+ * watch page, User on a profile page, Playlist on a playlist page,
+ * otherwise Site. TopBar renders once inside AppLayout rather than under a
+ * route scoped to any one of these paths, so this reads `pathname`/
+ * `searchParams` directly instead of `useParams()` (which would be empty
+ * here).
+ *
+ * @param {string} pathname Current `location.pathname`.
+ * @param {URLSearchParams} searchParams Current `location.search`, parsed.
+ * @returns {{reportType: string, videoPublicId?: string, username?: string, playlistId?: string}}
+ *   Report-form prefill fields; only `reportType` is present for `'website'`.
+ */
+function reportContextFor(pathname, searchParams) {
+  if (pathname === '/video') {
+    const videoPublicId = searchParams.get('v')
+    return videoPublicId ? { reportType: 'video', videoPublicId } : { reportType: 'website' }
+  }
+  const userMatch = /^\/users\/([^/]+)$/.exec(pathname)
+  if (userMatch) {
+    return { reportType: 'user', username: decodeURIComponent(userMatch[1]) }
+  }
+  const playlistMatch = /^\/playlists\/([^/]+)$/.exec(pathname)
+  if (playlistMatch && playlistMatch[1] !== 'new') {
+    return { reportType: 'playlist', playlistId: playlistMatch[1] }
+  }
+  return { reportType: 'website' }
+}
+
+function TopBar({ onToggleSidebar, backgroundUrl }) {
+  const { user, logout } = useAuth()
+  const { livestreamEnabled } = useSiteConfig()
+  const { error: toastError } = useToast()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
+  const [query, setQuery] = useState('')
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false)
+  const themeMenuRef = useRef(null)
+  const themeToggleRef = useRef(null)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef(null)
+  const userToggleRef = useRef(null)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [randomVideoLoading, setRandomVideoLoading] = useState(false)
+
+  // Keeps the search box in sync with the URL only on the results page -
+  // elsewhere it's free local state that starts empty on navigation. Adjusted
+  // during render (not an effect) per https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  const [syncedSearchKey, setSyncedSearchKey] = useState(null)
+  const searchKey = location.pathname === '/search' ? searchParams.get('q') ?? '' : null
+  if (searchKey !== null && searchKey !== syncedSearchKey) {
+    setSyncedSearchKey(searchKey)
+    setQuery(searchKey)
+  }
+
+  function handleSearchSubmit(event) {
+    event.preventDefault()
+    const trimmed = query.trim()
+    if (!trimmed) {
+      return
+    }
+    navigate(`/search?q=${encodeURIComponent(trimmed)}`)
+  }
+
+  async function handleRandomVideo() {
+    if (randomVideoLoading) {
+      return
+    }
+    setRandomVideoLoading(true)
+    try {
+      const { items } = await getRandomVideos({ quantity: 1 })
+      const video = items?.[0]
+      if (!video) {
+        toastError('No videos available.')
+        return
+      }
+      navigate(`/video?v=${video.videoId}&random=1`)
+    } catch {
+      toastError('Failed to load a random video.')
+    } finally {
+      setRandomVideoLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!themeMenuOpen) {
+      return undefined
+    }
+
+    function handleClickOutside(event) {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(event.target)) {
+        setThemeMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [themeMenuOpen])
+
+  useDismissablePopover(themeMenuOpen, () => setThemeMenuOpen(false), themeToggleRef)
+
+  useEffect(() => {
+    if (!userMenuOpen) {
+      return undefined
+    }
+
+    function handleClickOutside(event) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setUserMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [userMenuOpen])
+
+  useDismissablePopover(userMenuOpen, () => setUserMenuOpen(false), userToggleRef)
+
+  const avatarUrl = user
+    ? `${apiClient.defaults.baseURL}/api/v1/users/${user.username}/avatar`
+    : null
+  const canUpload = Boolean(
+    user && (user.role === 'admin' || (user.uploader && user.emailVerified)),
+  )
+
+  return (
+    <header
+      className={`topbar${mobileMenuOpen ? ' topbar-menu-open' : ''}`}
+      style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}
+    >
+      <div className="topbar-left">
+        <button
+          type="button"
+          className="topbar-toggle"
+          onClick={onToggleSidebar}
+          aria-label="Toggle sidebar"
+          title="Toggle sidebar"
+        >
+          <Menu size={20} />
+        </button>
+        <Link to="/" className="topbar-title">
+          <svg
+            className="topbar-logo"
+            width="150"
+            height="34"
+            viewBox="0 0 180 40"
+            xmlns="http://www.w3.org/2000/svg"
+            role="img"
+            aria-label="Justintube"
+          >
+            <g fill="none" stroke="#0b3d91" strokeWidth="2" strokeLinejoin="round">
+              <rect x="2" y="9" width="30" height="22" rx="5" />
+              <path d="M32 16.5 L44 11 V29 L32 23.5 Z" />
+            </g>
+            <path
+              d="M14 14 L24 20 L14 26 Z"
+              fill="none"
+              stroke="#000"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+            <text
+              x="52"
+              y="27"
+              fontFamily="Verdana, Geneva, sans-serif"
+              fontSize="19"
+              fontWeight="bold"
+              fontStyle="normal"
+              fill="currentColor"
+            >
+              Justintube
+            </text>
+          </svg>
+        </Link>
+      </div>
+      <div className="topbar-user-slot">
+        {user ? (
+          <div className="topbar-user" ref={userMenuRef}>
+            <button
+              type="button"
+              className="topbar-user-button"
+              onClick={() => setUserMenuOpen((open) => !open)}
+              aria-haspopup="true"
+              aria-expanded={userMenuOpen}
+              ref={userToggleRef}
+            >
+              {user.avatarFilename ? (
+                <img className="topbar-avatar" src={avatarUrl} alt="" />
+              ) : (
+                <span className="topbar-avatar topbar-avatar-placeholder">
+                  <UserRound size={18} />
+                </span>
+              )}
+              <span className="topbar-username">{user.displayName || user.username}</span>
+            </button>
+            {userMenuOpen && (
+              <div className="topbar-user-menu" role="menu">
+                <Link
+                  to={`/users/${user.username}`}
+                  className="topbar-user-menu-item"
+                  onClick={() => setUserMenuOpen(false)}
+                >
+                  My Profile
+                </Link>
+                <Link
+                  to="/settings"
+                  className="topbar-user-menu-item"
+                  onClick={() => setUserMenuOpen(false)}
+                >
+                  Settings
+                </Link>
+              </div>
+            )}
+          </div>
+        ) : (
+          <Link to="/login" className="topbar-login">
+            Log in
+          </Link>
+        )}
+      </div>
+      <button
+        type="button"
+        className="topbar-mobile-toggle"
+        onClick={() => setMobileMenuOpen((open) => !open)}
+        aria-label="More options"
+        title="More options"
+        aria-haspopup="true"
+        aria-expanded={mobileMenuOpen}
+      >
+        <MoreVertical size={20} />
+      </button>
+      <div className="topbar-center">
+        <form className="topbar-search" onSubmit={handleSearchSubmit}>
+          <SearchAutocomplete value={query} onChange={setQuery} />
+          <button type="submit" className="topbar-search-button" aria-label="Search" title="Search">
+            <Search size={18} />
+          </button>
+        </form>
+      </div>
+      <div className="topbar-right">
+        {canUpload && (
+          <Link to="/upload" className="topbar-upload">
+            <Video size={18} />
+            <span>Upload</span>
+          </Link>
+        )}
+        {canUpload && livestreamEnabled && (
+          <Link to="/go-live" className="topbar-golive">
+            <Radio size={18} />
+            <span>Go Live</span>
+          </Link>
+        )}
+        <button
+          type="button"
+          className="topbar-random-btn"
+          aria-label="Random Video"
+          title="Random Video"
+          onClick={handleRandomVideo}
+          disabled={randomVideoLoading}
+        >
+          <Dices size={20} />
+        </button>
+        {user && (
+          <button
+            type="button"
+            className="topbar-report-btn"
+            aria-label="Report an issue"
+            title="Report an issue"
+            onClick={() =>
+              navigate('/reports/new', {
+                state: { ...reportContextFor(location.pathname, searchParams), link: window.location.href },
+              })
+            }
+          >
+            <TriangleAlert size={20} />
+          </button>
+        )}
+        {user && <NotificationBell />}
+        <div className="topbar-theme" ref={themeMenuRef}>
+          <button
+            type="button"
+            className="topbar-theme-toggle"
+            onClick={() => setThemeMenuOpen((open) => !open)}
+            aria-label="Select theme"
+            title="Select theme"
+            aria-haspopup="true"
+            aria-expanded={themeMenuOpen}
+            ref={themeToggleRef}
+          >
+            <Palette size={20} />
+          </button>
+          {themeMenuOpen && (
+            <div className="topbar-theme-menu" role="menu">
+              <ThemeSelector />
+            </div>
+          )}
+        </div>
+      </div>
+      {user && (
+        <button type="button" className="topbar-logout" onClick={logout}>
+          Log out
+        </button>
+      )}
+    </header>
+  )
+}
+
+export default TopBar

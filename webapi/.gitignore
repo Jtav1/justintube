@@ -87,7 +87,14 @@ typings/
 # DynamoDB Local files
 .dynamodb/
 
+# Storage-migration script state (resumable manifest) - see scripts/
+scripts/state/*
+!scripts/state/.gitkeep
+
 .DS_Store
 db/data/
 media/
 .env.prod
+# Generated OpenAPI artifacts
+openapi.generated.json
+

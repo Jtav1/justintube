@@ -1,0 +1,4 @@
+process.env.ENABLE_TRANSCODING = "true";
+process.env.ENABLE_HW_ACCELERATED_TRANSCODING = "false";
+process.env.GPU_ACCELERATION_DEVICE = "";
+process.env.HW_ACCELERATED_TRANSCODING_ENCODERS = "[]";

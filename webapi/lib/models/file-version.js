@@ -5,7 +5,7 @@ import { RESOLUTION_VALUES } from "./constants.js";
 
 /**
  * FILE_VERSIONS table model. Stores transcoded copies of an upload, keyed to a
- * transcode profile instead of a user.
+ * transcode profile instead of a user. Update status from pending to complete or failed.
  *
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>}
  */

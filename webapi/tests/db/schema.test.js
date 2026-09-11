@@ -8,10 +8,14 @@ import {
   seedMetadata,
   seedPlaylist,
   seedSsoProvider,
+  seedSystemConfig,
+  seedTranscodeProfile,
   seedUpload,
   seedUser,
   seedUserIdentity,
+  seedVideoAccess,
   seedVideoLike,
+  seedVideoThumbnail,
   setupSchema,
 } from "../helpers/db.js";
 
@@ -34,26 +38,34 @@ describe("Video-upload schema (SQLite)", () => {
       const rows = await queryRows(
         `SELECT name, type FROM sqlite_master
           WHERE name IN (
-            'ROLES','USERS','SSO_PROVIDERS','USER_IDENTITIES',
-            'ORIGINAL_UPLOADS','VIDEO_METADATA','FILE_VERSIONS',
-            'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES',
-            'CONTENT_TAGS','FEATURED_VIDEOS'
+            'ROLES','USERS','USER_API_KEYS','EMAIL_VERIFICATION_TOKENS',
+            'SSO_PROVIDERS','USER_IDENTITIES',
+            'ORIGINAL_UPLOADS','VIDEO_METADATA','VIDEO_THUMBNAIL',
+            'TRANSCODE_PROFILES','FILE_VERSIONS',
+            'USER_PLAYLISTS','PLAYLIST_ITEMS','VIDEO_LIKES','VIDEO_ACCESS',
+            'CONTENT_TAGS','FEATURED_VIDEOS','SYSTEM_CONFIG'
           )`,
       );
       const byName = Object.fromEntries(rows.map((r) => [r.name, r.type]));
 
       expect(byName.ROLES).toBe("table");
       expect(byName.USERS).toBe("table");
+      expect(byName.USER_API_KEYS).toBe("table");
+      expect(byName.EMAIL_VERIFICATION_TOKENS).toBe("table");
       expect(byName.SSO_PROVIDERS).toBe("table");
       expect(byName.USER_IDENTITIES).toBe("table");
       expect(byName.ORIGINAL_UPLOADS).toBe("table");
       expect(byName.VIDEO_METADATA).toBe("table");
+      expect(byName.VIDEO_THUMBNAIL).toBe("table");
+      expect(byName.TRANSCODE_PROFILES).toBe("table");
       expect(byName.FILE_VERSIONS).toBe("table");
       expect(byName.USER_PLAYLISTS).toBe("table");
       expect(byName.PLAYLIST_ITEMS).toBe("table");
       expect(byName.VIDEO_LIKES).toBe("table");
+      expect(byName.VIDEO_ACCESS).toBe("table");
       expect(byName.CONTENT_TAGS).toBe("table");
       expect(byName.FEATURED_VIDEOS).toBe("table");
+      expect(byName.SYSTEM_CONFIG).toBe("table");
     });
   });
 
@@ -61,8 +73,8 @@ describe("Video-upload schema (SQLite)", () => {
     test("ORIGINAL_UPLOADS.status defaults to 'uploaded'", async () => {
       const result = await execute(
         `INSERT INTO ORIGINAL_UPLOADS
-           (original_filename, uuid_name, file_extension, storage_path)
-         VALUES ('a.mp4', 'uuid-defaults-1', 'mp4', 'uuid-defaults-1.mp4')`,
+           (original_filename, video_id, uuid, file_extension, storage_path)
+         VALUES ('a.mp4', 'defat', '11111111-1111-1111-1111-111111111111', 'mp4', 'original/_unowned/defat.mp4')`,
       );
       const rows = await queryRows(
         "SELECT * FROM ORIGINAL_UPLOADS WHERE id = :id",
@@ -92,12 +104,12 @@ describe("Video-upload schema (SQLite)", () => {
       const user = await seedUser();
       const like = await seedVideoLike(upload.id, {
         userId: user.id,
-        likeValue: -1,
+        likeValue: 1,
       });
       const rows = await queryRows("SELECT * FROM VIDEO_LIKES WHERE id = :id", {
         id: like.id,
       });
-      expect(rows[0].like_value).toBe(-1);
+      expect(rows[0].like_value).toBe(1);
       expect(rows[0].created_at).toBeTruthy();
     });
 
@@ -109,6 +121,35 @@ describe("Video-upload schema (SQLite)", () => {
       });
       expect(rows[0].tag).toBe("music");
       expect(rows[0].created_at).toBeTruthy();
+    });
+
+    test("VIDEO_THUMBNAIL.created_at defaults to a timestamp", async () => {
+      const upload = await seedUpload();
+      const thumbnail = await seedVideoThumbnail(upload.id, {
+        thumbnailFilename: "thumb.jpg",
+      });
+      const rows = await queryRows(
+        "SELECT * FROM VIDEO_THUMBNAIL WHERE id = :id",
+        { id: thumbnail.id },
+      );
+      expect(rows[0].thumbnail_filename).toBe("thumb.jpg");
+      expect(rows[0].created_at).toBeTruthy();
+      expect(rows[0].updated_at).toBeTruthy();
+    });
+
+    test("TRANSCODE_PROFILES.created_at defaults to a timestamp", async () => {
+      const profile = await seedTranscodeProfile({
+        outputHeight: 480,
+        outputWidth: 854,
+      });
+      const rows = await queryRows(
+        "SELECT * FROM TRANSCODE_PROFILES WHERE id = :id",
+        { id: profile.id },
+      );
+      expect(rows[0].output_height).toBe(480);
+      expect(rows[0].output_width).toBe(854);
+      expect(rows[0].created_at).toBeTruthy();
+      expect(rows[0].updated_at).toBeTruthy();
     });
 
     test("FEATURED_VIDEOS.created_at defaults to a timestamp", async () => {
@@ -136,6 +177,12 @@ describe("Video-upload schema (SQLite)", () => {
       ).rejects.toThrow();
     });
 
+    test("rejects an invalid resolution_name on TRANSCODE_PROFILES", async () => {
+      await expect(
+        seedTranscodeProfile({ resolutionName: "9001p" }),
+      ).rejects.toThrow();
+    });
+
     test("rejects an invalid visibility on VIDEO_METADATA", async () => {
       const upload = await seedUpload();
       await expect(
@@ -158,9 +205,14 @@ describe("Video-upload schema (SQLite)", () => {
   });
 
   describe("UNIQUE constraints", () => {
-    test("ORIGINAL_UPLOADS.uuid_name is unique", async () => {
-      await seedUpload({ uuidName: "dupe-uuid" });
-      await expect(seedUpload({ uuidName: "dupe-uuid" })).rejects.toThrow();
+    test("ORIGINAL_UPLOADS.video_id is unique", async () => {
+      await seedUpload({ videoId: "dupeid" });
+      await expect(seedUpload({ videoId: "dupeid" })).rejects.toThrow();
+    });
+
+    test("ORIGINAL_UPLOADS.video_id is case-sensitive", async () => {
+      await seedUpload({ videoId: "aaaaaa" });
+      await expect(seedUpload({ videoId: "AAAAAA" })).resolves.toBeDefined();
     });
 
     test("VIDEO_METADATA allows only one row per upload", async () => {
@@ -171,9 +223,10 @@ describe("Video-upload schema (SQLite)", () => {
 
     test("FILE_VERSIONS is unique per (upload, transcode profile)", async () => {
       const upload = await seedUpload();
-      await seedFileVersion(upload.id, { transcodeProfileId: 7 });
+      const profile = await seedTranscodeProfile();
+      await seedFileVersion(upload.id, { transcodeProfileId: profile.id });
       await expect(
-        seedFileVersion(upload.id, { transcodeProfileId: 7 }),
+        seedFileVersion(upload.id, { transcodeProfileId: profile.id }),
       ).rejects.toThrow();
     });
 
@@ -216,6 +269,19 @@ describe("Video-upload schema (SQLite)", () => {
       await seedFeaturedVideo(upload.id);
       await expect(seedFeaturedVideo(upload.id)).rejects.toThrow();
     });
+
+    test("VIDEO_ACCESS is unique per (upload, user)", async () => {
+      const upload = await seedUpload();
+      const user = await seedUser();
+      await seedVideoAccess(upload.id, user.id);
+      await expect(seedVideoAccess(upload.id, user.id)).rejects.toThrow();
+    });
+
+    test("VIDEO_THUMBNAIL allows only one row per upload", async () => {
+      const upload = await seedUpload();
+      await seedVideoThumbnail(upload.id);
+      await expect(seedVideoThumbnail(upload.id)).rejects.toThrow();
+    });
   });
 
   describe("cascade deletes", () => {
@@ -254,12 +320,14 @@ describe("Video-upload schema (SQLite)", () => {
       ).toHaveLength(0);
     });
 
-    test("deleting an upload cascades to likes, tags and featured entries", async () => {
+    test("deleting an upload cascades to likes, tags, featured entries and access", async () => {
       const upload = await seedUpload();
       const user = await seedUser();
       await seedVideoLike(upload.id, { userId: user.id });
+      await seedVideoAccess(upload.id, user.id);
       await seedContentTag(upload.id, { tag: "cascade" });
       await seedFeaturedVideo(upload.id);
+      await seedVideoThumbnail(upload.id);
 
       await execute("DELETE FROM ORIGINAL_UPLOADS WHERE id = :id", {
         id: upload.id,
@@ -273,6 +341,12 @@ describe("Video-upload schema (SQLite)", () => {
       ).toHaveLength(0);
       expect(
         await queryRows(
+          "SELECT * FROM VIDEO_ACCESS WHERE original_upload_id = :id",
+          { id: upload.id },
+        ),
+      ).toHaveLength(0);
+      expect(
+        await queryRows(
           "SELECT * FROM CONTENT_TAGS WHERE original_upload_id = :id",
           { id: upload.id },
         ),
@@ -280,6 +354,12 @@ describe("Video-upload schema (SQLite)", () => {
       expect(
         await queryRows(
           "SELECT * FROM FEATURED_VIDEOS WHERE original_upload_id = :id",
+          { id: upload.id },
+        ),
+      ).toHaveLength(0);
+      expect(
+        await queryRows(
+          "SELECT * FROM VIDEO_THUMBNAIL WHERE original_upload_id = :id",
           { id: upload.id },
         ),
       ).toHaveLength(0);
@@ -516,6 +596,28 @@ describe("Video-upload schema (SQLite)", () => {
           id: user.id,
         }),
       ).toHaveLength(0);
+    });
+  });
+
+  describe("SYSTEM_CONFIG constraints", () => {
+    test("SYSTEM_CONFIG.name is unique", async () => {
+      await seedSystemConfig({ name: "site_title", value: "one" });
+      await expect(
+        seedSystemConfig({ name: "site_title", value: "two" }),
+      ).rejects.toThrow();
+    });
+
+    test("SYSTEM_CONFIG stores name and value", async () => {
+      const config = await seedSystemConfig({
+        name: "max_upload_mb",
+        value: "512",
+      });
+      const rows = await queryRows(
+        "SELECT name, value FROM SYSTEM_CONFIG WHERE id = :id",
+        { id: config.id },
+      );
+      expect(rows[0].name).toBe("max_upload_mb");
+      expect(rows[0].value).toBe("512");
     });
   });
 });

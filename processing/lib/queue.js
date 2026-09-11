@@ -1,0 +1,1224 @@
+import { stat } from "node:fs/promises";
+import { DelayedError, Queue, Worker } from "bullmq";
+import {
+  notifyContentHashComplete,
+  notifyContentHashFailed,
+  notifyEmbedVideoComplete,
+  notifyEmbedVideoFailed,
+  notifyFileVersionComplete,
+  notifyFileVersionFailed,
+  notifyOriginalUploadNormalizeComplete,
+  notifyOriginalUploadNormalizeFailed,
+  notifySubtitleComplete,
+  notifySubtitleFailed,
+  notifyThumbnailComplete,
+  notifyThumbnailFailed,
+} from "./api-client.js";
+import {
+  resolveNormalizedOutputPath,
+  resolveOriginalInputPath,
+  resolveSubtitleOutputPath,
+  resolveThumbnailInputPath,
+  resolveThumbnailOutputPath,
+  resolveTranscodedOutputPath,
+} from "./media-paths.js";
+import {
+  collectOutputMetadata,
+  computeContentHash,
+  probeAllSubtitleStreams,
+  probeEmbeddedThumbnailStream,
+  probeHasVideoStream,
+  probeStreamCodecs,
+} from "./probe.js";
+import {
+  buildEmbedFfmpegArgs,
+  buildEmbeddedThumbnailFfmpegArgs,
+  buildFfmpegArgs,
+  buildNormalizeFfmpegArgs,
+  buildSubtitleFfmpegArgs,
+  buildThumbnailFfmpegArgs,
+  runFfmpeg,
+} from "./transcode.js";
+import { logger } from "./logger.js";
+
+/**
+ * BullMQ queue name for ffmpeg transcode jobs.
+ *
+ * @type {string}
+ */
+export const TRANSCODE_QUEUE_NAME = "transcode";
+
+/**
+ * Maximum number of times a duplicate-upload content-hash job may run
+ * (counting its original attempt, any of BullMQ's own automatic
+ * attempts/backoff retries, and every retry the nightly hash-reconcile cron
+ * triggers) before {@link retryFailedHashJobs} discards it instead of
+ * retrying it again.
+ *
+ * @type {number}
+ */
+export const MAX_HASH_JOB_RUNS = 7;
+
+/**
+ * BullMQ job priority per job kind (lower number = dequeued first among
+ * currently-waiting jobs). Thumbnails are cheap and user-visible fastest, so
+ * they jump ahead of everything else. Normalize jobs come next — they're the
+ * highest-priority kind after thumbnails because every other job for that
+ * same upload (renditions, thumbnail, duplicate-hash) is blocked behind one
+ * finishing, so letting it queue behind unrelated rendition/hash jobs from
+ * other uploads would stall that whole upload. Rendition and embed
+ * transcodes come next. Subtitle extraction is deliberately the
+ * second-to-lowest priority — cheap, but not urgent, and never something a
+ * user is actively waiting on the way they are a thumbnail/rendition — and
+ * duplicate-upload hash probes always sort dead last. Priority only affects
+ * ordering among jobs already waiting - it does not preempt a job a worker
+ * has already started.
+ *
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hash: number }}
+ */
+export const JOB_PRIORITY_BY_KIND = {
+  thumbnail: 1,
+  normalize: 2,
+  rendition: 3,
+  embed: 3,
+  subtitle: 4,
+  hash: 5,
+};
+
+/**
+ * Builds an ioredis-compatible connection options object for BullMQ.
+ *
+ * @param {object} [overrides] Optional host/port/password overrides for tests.
+ * @param {string} [overrides.host] Redis hostname.
+ * @param {number} [overrides.port] Redis port.
+ * @param {string} [overrides.password] Redis auth password.
+ * @returns {{ host: string, port: number, password: string|undefined, maxRetriesPerRequest: null }}
+ *   Connection options suitable for Queue and Worker constructors.
+ */
+export function createRedisConnection(overrides = {}) {
+  return {
+    host: overrides.host || process.env.REDIS_HOST || "127.0.0.1",
+    port: Number(overrides.port || process.env.REDIS_PORT || 6379),
+    password: overrides.password || process.env.REDIS_PASSWORD || undefined,
+    // Required by BullMQ so blocking commands are not buffered for retries.
+    maxRetriesPerRequest: null,
+  };
+}
+
+/**
+ * Creates the BullMQ Queue used to enqueue and look up transcode jobs.
+ *
+ * @param {object} connection Redis connection options from
+ *   {@link createRedisConnection}.
+ * @returns {import('bullmq').Queue} Configured transcode queue.
+ */
+export function createTranscodeQueue(connection) {
+  return new Queue(TRANSCODE_QUEUE_NAME, {
+    connection,
+    defaultJobOptions: {
+      // Keep completed/failed jobs in Redis so GET /transcode/:jobId works.
+      removeOnComplete: false,
+      removeOnFail: false,
+      // Retry transient failures (network blips, momentary ffmpeg/yt-dlp
+      // errors) instead of failing permanently on the first attempt.
+      attempts: Number(process.env.TRANSCODE_JOB_ATTEMPTS) || 3,
+      backoff: { type: "exponential", delay: 5000 },
+    },
+  });
+}
+
+/**
+ * Processes a single thumbnail job: resolve paths, run ffmpeg, confirm the
+ * output exists, and notify the API. Unlike rendition jobs, no FILE_VERSIONS
+ * row exists for a thumbnail, so there's no width/height/resolution metadata
+ * to collect — the API only needs the output filename.
+ *
+ * Prioritizes any embedded cover art / attached thumbnail already present in
+ * the source (ID3 art on audio files, MP4 `covr` atoms, Matroska attached
+ * pictures, etc. — see `probeEmbeddedThumbnailStream`) over generating one,
+ * for both video and audio-only uploads. Only falls back to a timestamped
+ * frame grab (the prior, only, behavior) when no such embedded image exists.
+ *
+ * Before attempting that frame grab, probes whether the source has a genuine
+ * decoded video stream at all (`probeHasVideoStream`). An audio-only source
+ * with no embedded art has none, and ffmpeg's `-frames:v 1` frame grab
+ * against it deterministically fails ("Output file does not contain any
+ * stream" et al.) — not a transient error worth BullMQ's retry/backoff, and
+ * not worth surfacing as a job failure. In that case this resolves the job
+ * successfully (no thumbnail produced) and calls `notifyThumbnailFailed`
+ * directly so the API's placeholder fallback (see
+ * `/internal/thumbnails/:uploadUuid/failed`) still runs, once, immediately.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename`, `outputFilename`, and `timestampSeconds`.
+ * @returns {Promise<{ outputFilename: string|null, skipped?: string }>}
+ *   Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails unexpectedly.
+ */
+async function processThumbnailJob(job) {
+  const { inputFilename, outputFilename, timestampSeconds } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[thumbnail ${jobId}] processing started: ${inputFilename} -> ${outputFilename} @ ${timestampSeconds}s`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const outputPath = resolveThumbnailOutputPath(outputFilename);
+
+  let embeddedStreamIndex = null;
+  try {
+    embeddedStreamIndex = await probeEmbeddedThumbnailStream(inputPath);
+  } catch (err) {
+    logger.error(
+      { err },
+      `[thumbnail ${jobId}] embedded-thumbnail probe failed; falling back to frame grab`,
+    );
+  }
+
+  if (embeddedStreamIndex == null) {
+    let hasVideoStream = true;
+    try {
+      hasVideoStream = await probeHasVideoStream(inputPath);
+    } catch (err) {
+      logger.error(
+        { err },
+        `[thumbnail ${jobId}] video-stream probe failed; attempting frame grab anyway`,
+      );
+    }
+
+    if (!hasVideoStream) {
+      logger.info(
+        `[thumbnail ${jobId}] source has no video stream and no embedded art; skipping frame grab`,
+      );
+      const notify = await notifyThumbnailFailed(jobId, "source has no video stream");
+      if (!notify.ok) {
+        logger.error(
+          { error: notify.error },
+          `failed to notify API of skipped thumbnail ${jobId}`,
+        );
+      }
+      await job.updateProgress(100);
+      return { outputFilename: null, skipped: "no_video_stream" };
+    }
+  }
+
+  const args =
+    embeddedStreamIndex != null
+      ? buildEmbeddedThumbnailFfmpegArgs({
+          inputPath,
+          outputPath,
+          streamIndex: embeddedStreamIndex,
+        })
+      : buildThumbnailFfmpegArgs({
+          inputPath,
+          outputPath,
+          timestampSeconds,
+        });
+
+  if (embeddedStreamIndex != null) {
+    logger.info(
+      `[thumbnail ${jobId}] using embedded cover art (stream 0:${embeddedStreamIndex})`,
+    );
+  }
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await stat(outputPath);
+  await job.updateProgress(80);
+
+  const notify = await notifyThumbnailComplete(jobId, {
+    thumbnailFilename: outputFilename,
+  });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed thumbnail ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[thumbnail ${jobId}] processing completed: ${outputFilename}`);
+
+  return { outputFilename };
+}
+
+/**
+ * Processes a single subtitle-extraction job: probe the original upload for
+ * an embedded text-based subtitle stream and, if one exists, extract it into
+ * a standalone `.vtt` file.
+ *
+ * Follows `processThumbnailJob`'s graceful-skip pattern (probe first, skip
+ * cleanly rather than let a doomed ffmpeg run fail and retry) with one
+ * deliberate difference: `processThumbnailJob`'s probe-error case falls
+ * through to attempt a frame grab anyway, because a frame grab needs no
+ * stream index. Subtitle extraction has no such fallback — without a known
+ * `streamIndex` there's nothing to `-map` — so here a probe *error* is
+ * treated the same as a probe that *succeeded but found nothing*: both skip
+ * gracefully rather than attempt a guessed `-map 0:s:0`.
+ *
+ * A source may embed more than one text stream (e.g. one per language), so
+ * every stream the probe finds is extracted into its own `.vtt` file
+ * (`${outputFilename}-<index>.vtt`, `outputFilename` here being a job-scoped
+ * prefix rather than a final filename) and reported in a single completion
+ * callback. One stream failing to convert doesn't fail the whole job — it's
+ * logged and skipped so the others still get extracted.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` and `outputFilename`.
+ * @returns {Promise<{ outputFilename: string|null, extracted?: number, skipped?: string }>}
+ *   Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails unexpectedly.
+ */
+async function processSubtitleJob(job) {
+  const { inputFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[subtitle ${jobId}] processing started: ${inputFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+
+  let found = [];
+  try {
+    found = await probeAllSubtitleStreams(inputPath);
+  } catch (err) {
+    logger.error(
+      { err },
+      `[subtitle ${jobId}] subtitle-stream probe failed; skipping extraction`,
+    );
+  }
+
+  if (found.length === 0) {
+    logger.info(`[subtitle ${jobId}] source has no text-based subtitle stream; skipping`);
+    const notify = await notifySubtitleComplete(jobId, { subtitles: [] });
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of empty subtitle extraction ${jobId}`,
+      );
+    }
+    await job.updateProgress(100);
+    return { outputFilename: null, skipped: "no_subtitle_stream" };
+  }
+
+  await job.updateProgress(20);
+
+  const extracted = [];
+  for (const [index, stream] of found.entries()) {
+    const streamOutputFilename = `${outputFilename}-${index}.vtt`;
+    const outputPath = resolveSubtitleOutputPath(streamOutputFilename);
+    try {
+      logger.info(
+        `[subtitle ${jobId}] extracting subtitle stream 0:${stream.streamIndex} (${stream.subtitleCodec})`,
+      );
+      const args = buildSubtitleFfmpegArgs({
+        inputPath,
+        outputPath,
+        streamIndex: stream.streamIndex,
+      });
+      await runFfmpeg(args);
+      await stat(outputPath);
+      extracted.push({
+        outputFilename: streamOutputFilename,
+        language: stream.language,
+        title: stream.title,
+      });
+    } catch (err) {
+      logger.error(
+        { err },
+        `[subtitle ${jobId}] failed to extract stream 0:${stream.streamIndex}; skipping it`,
+      );
+    }
+    await job.updateProgress(20 + Math.round(((index + 1) / found.length) * 60));
+  }
+
+  const notify = await notifySubtitleComplete(jobId, { subtitles: extracted });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed subtitle ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(
+    `[subtitle ${jobId}] processing completed: ${extracted.length}/${found.length} stream(s) extracted`,
+  );
+
+  return { outputFilename, extracted: extracted.length };
+}
+
+/**
+ * Parses the `HASH_GENERATION_WINDOW` env var (e.g. `"0-6"`) into start/end
+ * hours (0-23, server local time). Returns `null` when unset or malformed,
+ * meaning hash jobs are not time-restricted.
+ *
+ * @param {string | undefined} value Raw env var value.
+ * @returns {{ startHour: number, endHour: number } | null} Parsed window, or
+ *   `null` when hash jobs should run anytime.
+ */
+function parseHashGenerationWindow(value) {
+  if (!value) {
+    return null;
+  }
+  const match = /^(\d{1,2})-(\d{1,2})$/.exec(value.trim());
+  const startHour = match ? Number(match[1]) : NaN;
+  const endHour = match ? Number(match[2]) : NaN;
+  const valid =
+    match &&
+    startHour >= 0 &&
+    startHour <= 23 &&
+    endHour >= 0 &&
+    endHour <= 23 &&
+    startHour !== endHour;
+  if (!valid) {
+    logger.warn(
+      `ignoring malformed HASH_GENERATION_WINDOW (expected "H-H", e.g. "0-6"): ${value}`,
+    );
+    return null;
+  }
+  return { startHour, endHour };
+}
+
+/**
+ * Checks whether `now`'s hour falls inside a start/end hour window, handling
+ * windows that wrap past midnight (e.g. `22-4`).
+ *
+ * @param {Date} now Current time.
+ * @param {{ startHour: number, endHour: number }} window Parsed window.
+ * @returns {boolean} `true` when `now` is inside the window.
+ */
+function isWithinHourWindow(now, window) {
+  const hour = now.getHours();
+  const { startHour, endHour } = window;
+  return startHour < endHour
+    ? hour >= startHour && hour < endHour
+    : hour >= startHour || hour < endHour;
+}
+
+/**
+ * Computes milliseconds from `now` until the next occurrence of
+ * `window.startHour`.
+ *
+ * @param {Date} now Current time.
+ * @param {{ startHour: number, endHour: number }} window Parsed window.
+ * @returns {number} Milliseconds to delay until the window opens.
+ */
+function msUntilWindowStart(now, window) {
+  const next = new Date(now);
+  next.setHours(window.startHour, 0, 0, 0);
+  if (next <= now) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
+/**
+ * Processes a single duplicate-upload content-hash job: probe the source
+ * file's decoded video stream with ffmpeg and notify the API of the result.
+ * No output file is written, so unlike rendition/thumbnail jobs there's
+ * nothing to resolve an output path for.
+ *
+ * Persists a `runCount` on the job's own data (in Redis, alongside the job)
+ * incremented at the start of every execution - whether this run was kicked
+ * off by BullMQ's own attempts/backoff, or by the nightly hash-reconcile
+ * cron retrying a job that had already landed in the failed state. This is
+ * what {@link retryFailedHashJobs} checks against {@link MAX_HASH_JOB_RUNS}
+ * to decide whether a failed job is retried again or discarded outright.
+ *
+ * When `HASH_GENERATION_WINDOW` (e.g. `"0-6"`) is set and the current server
+ * hour falls outside it, the job defers itself: it moves back to BullMQ's
+ * delayed state until the window next opens and throws {@link DelayedError}
+ * (the signal BullMQ's Worker requires after a manual `moveToDelayed`, so it
+ * does not also mark the job complete/failed). `runCount` is not incremented
+ * for a deferral, only for an actual hash attempt.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes `inputFilename`.
+ * @param {string} [token] BullMQ lock token for this processing attempt,
+ *   required by `job.moveToDelayed` when deferring.
+ * @returns {Promise<{ contentHash: string }>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ * @throws {DelayedError} When deferred until `HASH_GENERATION_WINDOW` opens.
+ */
+async function processHashJob(job, token) {
+  const { inputFilename } = job.data;
+  const jobId = String(job.id);
+
+  const window = parseHashGenerationWindow(process.env.HASH_GENERATION_WINDOW);
+  if (window && !isWithinHourWindow(new Date(), window)) {
+    const delayMs = msUntilWindowStart(new Date(), window);
+    logger.info(
+      `[hash ${jobId}] outside HASH_GENERATION_WINDOW (${process.env.HASH_GENERATION_WINDOW}); ` +
+        `deferring ~${Math.ceil(delayMs / 60000)}m`,
+    );
+    await job.moveToDelayed(Date.now() + delayMs, token);
+    throw new DelayedError();
+  }
+
+  const runCount = (Number(job.data.runCount) || 0) + 1;
+  await job.updateData({ ...job.data, runCount });
+
+  logger.info(
+    `[hash ${jobId}] processing started (run ${runCount}/${MAX_HASH_JOB_RUNS}): ${inputFilename}`,
+  );
+
+  await job.updateProgress(20);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const contentHash = await computeContentHash(inputPath);
+
+  await job.updateProgress(90);
+
+  const notify = await notifyContentHashComplete(jobId, { contentHash });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of computed hash ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[hash ${jobId}] processing completed: ${contentHash}`);
+
+  return { contentHash };
+}
+
+/**
+ * Processes a single normalize job: an upload accepted through
+ * FILETYPES_CONVERTIBLE (a common container ffmpeg reads, but not one
+ * FILETYPES_ALLOWED serves as-is) gets remuxed/transcoded into an H.264/AAC
+ * MP4 (or M4A for audio-only) at its original dimensions - never scaled,
+ * unlike a rendition job. Probes the source's actual stream codecs so
+ * `buildNormalizeFfmpegArgs` can copy whichever streams are already in the
+ * target codec instead of blindly re-encoding both.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` and `outputFilename`.
+ * @returns {Promise<{
+ *   outputFilename: string,
+ *   fileSizeBytes: number,
+ *   videoWidth: number|null,
+ *   videoHeight: number|null,
+ *   resolution: string|null,
+ *   storagePath: string,
+ *   mimeType: string|null
+ * }>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+async function processNormalizeJob(job) {
+  const { inputFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[normalize ${jobId}] processing started: ${inputFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const outputPath = resolveNormalizedOutputPath(outputFilename);
+  const codecs = await probeStreamCodecs(inputPath);
+  const args = buildNormalizeFfmpegArgs({ inputPath, outputPath, codecs });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await job.updateProgress(80);
+
+  const outputContainer = outputFilename.split(".").pop() || "mp4";
+  const metadata = await collectOutputMetadata({
+    outputPath,
+    outputFilename,
+    outputContainer,
+  });
+  // collectOutputMetadata's storagePath assumes `transcoded/` (its usual
+  // caller); normalize output lives in `original/` instead.
+  metadata.storagePath = `original/${outputFilename}`;
+
+  const notify = await notifyOriginalUploadNormalizeComplete(jobId, {
+    ...metadata,
+    fileExtension: outputContainer,
+  });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed normalize ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[normalize ${jobId}] processing completed: ${outputFilename}`);
+
+  return {
+    outputFilename,
+    fileSizeBytes: metadata.fileSizeBytes,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+    resolution: metadata.resolution,
+    storagePath: metadata.storagePath,
+    mimeType: metadata.mimeType,
+  };
+}
+
+/**
+ * Processes a single embed job: mux an audio-only upload with its thumbnail
+ * image into a real MP4, for link-unfurl bots (Discord in particular) that
+ * only render `og:video`. Unlike rendition/normalize jobs there's no
+ * meaningful `mimeType`/`resolution` to report back — the output is always
+ * `video/mp4` by construction — so only width/height/storagePath are sent to
+ * the completion callback.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` (the audio source), `thumbnailFilename`, `outputFilename`,
+ *   and `isDefault`.
+ * @returns {Promise<{
+ *   outputFilename: string,
+ *   fileSizeBytes: number,
+ *   videoWidth: number|null,
+ *   videoHeight: number|null,
+ *   storagePath: string
+ * }>} Result payload stored on the completed job.
+ * @throws {Error} When an input is missing or ffmpeg fails.
+ */
+async function processEmbedJob(job) {
+  const { inputFilename, thumbnailFilename, outputFilename, isDefault } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[embed ${jobId}] processing started: ${inputFilename} + ${thumbnailFilename} -> ${outputFilename}` +
+      (isDefault ? " (placeholder thumbnail)" : ""),
+  );
+
+  await job.updateProgress(10);
+
+  const audioPath = resolveOriginalInputPath(inputFilename);
+  const imagePath = resolveThumbnailInputPath(thumbnailFilename);
+  const outputPath = resolveTranscodedOutputPath(outputFilename);
+  const args = buildEmbedFfmpegArgs({ imagePath, audioPath, outputPath });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await job.updateProgress(80);
+
+  const metadata = await collectOutputMetadata({
+    outputPath,
+    outputFilename,
+    outputContainer: "mp4",
+  });
+
+  const notify = await notifyEmbedVideoComplete(jobId, { ...metadata, isDefault: Boolean(isDefault) });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed embed video ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[embed ${jobId}] processing completed: ${outputFilename}`);
+
+  return {
+    outputFilename,
+    fileSizeBytes: metadata.fileSizeBytes,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+    storagePath: metadata.storagePath,
+  };
+}
+
+/**
+ * Processes a single rendition transcode job: resolve paths, run ffmpeg,
+ * collect metadata, notify the API, and return the result payload.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename`, `outputFilename`, and `profile`.
+ * @returns {Promise<{
+ *   outputFilename: string,
+ *   profileId: number,
+ *   fileSizeBytes: number,
+ *   videoWidth: number|null,
+ *   videoHeight: number|null,
+ *   resolution: string|null,
+ *   storagePath: string,
+ *   mimeType: string|null
+ * }>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+async function processRenditionJob(job) {
+  const { inputFilename, outputFilename, profile } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[rendition ${jobId}] processing started: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const outputPath = resolveTranscodedOutputPath(outputFilename);
+  const args = buildFfmpegArgs({ inputPath, outputPath, profile });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await job.updateProgress(80);
+
+  const metadata = await collectOutputMetadata({
+    outputPath,
+    outputFilename,
+    outputContainer: profile.outputContainer,
+  });
+
+  const notify = await notifyFileVersionComplete(jobId, metadata);
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed transcode ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(
+    `[rendition ${jobId}] processing completed: ${outputFilename} (${metadata.resolution ?? "unknown resolution"}, ${metadata.fileSizeBytes} bytes)`,
+  );
+
+  return {
+    outputFilename,
+    profileId: profile.id,
+    fileSizeBytes: metadata.fileSizeBytes,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+    resolution: metadata.resolution,
+    storagePath: metadata.storagePath,
+    mimeType: metadata.mimeType,
+  };
+}
+
+/**
+ * Processes a single queued job, dispatching on `job.data.kind`.
+ *
+ * @param {import('bullmq').Job} job BullMQ job (`data.kind` is `"thumbnail"`,
+ *   `"hash"`, `"normalize"`, or `"rendition"`).
+ * @param {string} [token] BullMQ lock token for this attempt, passed through
+ *   to {@link processHashJob} in case it needs to defer itself.
+ * @returns {Promise<object>} Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+export async function processTranscodeJob(job, token) {
+  const kind = job.data?.kind || "rendition";
+  logger.info(`[worker] dequeued job ${job.id} (${kind})`);
+
+  if (kind === "thumbnail") {
+    return processThumbnailJob(job);
+  }
+  if (kind === "hash") {
+    return processHashJob(job, token);
+  }
+  if (kind === "normalize") {
+    return processNormalizeJob(job);
+  }
+  if (kind === "subtitle") {
+    return processSubtitleJob(job);
+  }
+  if (kind === "embed") {
+    return processEmbedJob(job);
+  }
+  return processRenditionJob(job);
+}
+
+/**
+ * Creates a BullMQ Worker that processes the transcode queue with ffmpeg.
+ *
+ * @param {object} connection Redis connection options from
+ *   {@link createRedisConnection}.
+ * @param {(job: import('bullmq').Job) => Promise<unknown>} [processor]
+ *   Optional processor override for tests (defaults to
+ *   {@link processTranscodeJob}).
+ * @returns {import('bullmq').Worker} Started worker instance.
+ */
+export function createTranscodeWorker(
+  connection,
+  processor = processTranscodeJob,
+) {
+  return new Worker(TRANSCODE_QUEUE_NAME, processor, {
+    connection,
+    // Thumbnail jobs (a single cheap frame grab) share this queue with full
+    // rendition transcodes (multi-minute ffmpeg runs). At concurrency 1, a
+    // thumbnail queued behind an in-flight rendition job waits for the whole
+    // rendition to finish before it can even start. Concurrency > 1 lets a
+    // thumbnail job take a free execution slot and complete immediately
+    // instead. Configurable since the right value depends on host CPU/decode
+    // capacity.
+    concurrency: Number(process.env.TRANSCODE_WORKER_CONCURRENCY) || 2,
+  });
+}
+
+/**
+ * Enqueues a transcode job with a caller-supplied job id and output filename.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {object} options Job payload and identifiers.
+ * @param {string} options.jobId Stable job identifier returned to the client.
+ * @param {string} options.inputFilename Basename under `/media/original`.
+ * @param {string} options.outputFilename Basename under `/media/transcoded`.
+ * @param {import('./transcode.js').TranscodeProfilePayload} options.profile
+ *   Validated profile fields.
+ * @returns {Promise<import('bullmq').Job>} The created BullMQ job.
+ */
+export async function enqueueTranscodeJob(queue, options) {
+  const { jobId, inputFilename, outputFilename, profile } = options;
+
+  logger.info(
+    `[rendition ${jobId}] enqueued: ${inputFilename} -> ${outputFilename} (profile ${profile?.id})`,
+  );
+
+  return queue.add(
+    "ffmpeg-transcode",
+    { inputFilename, outputFilename, profile },
+    { jobId },
+  );
+}
+
+/**
+ * Enqueues multiple transcode jobs for the same input file.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {string} inputFilename Basename under `/media/original`.
+ * @param {Array<import('./transcode.js').ValidatedTranscodeJob>} jobs Validated job descriptors.
+ * @returns {Promise<import('bullmq').Job[]>} Created BullMQ jobs.
+ */
+export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
+  for (const job of jobs) {
+    logger.info(
+      `[${job.kind} ${job.jobId}] enqueued: ${inputFilename} -> ${job.outputFilename}` +
+        (job.kind === "rendition" ? ` (profile ${job.profile?.id})` : ""),
+    );
+  }
+
+  return queue.addBulk(
+    jobs.map((job) => ({
+      name:
+        job.kind === "thumbnail"
+          ? "ffmpeg-thumbnail"
+          : job.kind === "hash"
+            ? "ffmpeg-hash"
+            : job.kind === "normalize"
+              ? "ffmpeg-normalize"
+              : job.kind === "subtitle"
+                ? "ffmpeg-subtitle"
+                : job.kind === "embed"
+                  ? "ffmpeg-embed"
+                  : "ffmpeg-transcode",
+      data: {
+        inputFilename,
+        outputFilename: job.outputFilename,
+        kind: job.kind,
+        profile: job.profile,
+        timestampSeconds: job.timestampSeconds,
+        thumbnailFilename: job.thumbnailFilename,
+        isDefault: job.isDefault,
+      },
+      opts: {
+        jobId: job.jobId,
+        priority: JOB_PRIORITY_BY_KIND[job.kind] ?? JOB_PRIORITY_BY_KIND.rendition,
+      },
+    })),
+  );
+}
+
+/**
+ * Loads a transcode job by id and maps it to a status payload for the API.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {string} jobId Job identifier from POST `/transcode`.
+ * @returns {Promise<object | null>} Status object, or `null` if not found.
+ */
+export async function getTranscodeJobStatus(queue, jobId) {
+  const job = await queue.getJob(jobId);
+  if (!job) {
+    return null;
+  }
+
+  const state = await job.getState();
+  const progress =
+    typeof job.progress === "number" ? job.progress : Number(job.progress) || 0;
+
+  logger.info(
+    `[job ${jobId}] status queried: state=${state}, progress=${progress}`,
+  );
+
+  return {
+    jobId: String(job.id),
+    state,
+    progress,
+    outputFilename: job.data?.outputFilename ?? null,
+    profileId: job.data?.profile?.id ?? null,
+    failedReason: job.failedReason || null,
+    returnvalue: job.returnvalue ?? null,
+    // Only ever set for kind: "hash" jobs (see processHashJob) - null for
+    // rendition/thumbnail jobs, which don't track this.
+    runCount: job.data?.runCount ?? null,
+  };
+}
+
+/**
+ * Removes a transcode job from Redis by id (waiting, delayed, completed, or
+ * failed). A job currently "active" (locked by a worker) cannot be removed —
+ * BullMQ's `Job.remove()` throws rather than removing it - so that case is
+ * caught and reported back distinctly (`active: true`) instead of throwing,
+ * letting callers (e.g. the `DELETE /:jobId` route, or webapi cancelling
+ * every queued job for a deleted upload) treat "can't cancel, it's already
+ * running" differently from "nothing to cancel."
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {string} jobId Job identifier to remove.
+ * @returns {Promise<{ removed: boolean, active: boolean }>} `removed: true`
+ *   when the job was found and removed; otherwise `active: true` when it
+ *   exists but is currently locked by a worker, or both `false` when no job
+ *   with that id exists at all.
+ */
+export async function removeTranscodeJob(queue, jobId) {
+  const job = await queue.getJob(jobId);
+  if (!job) {
+    logger.info(`[job ${jobId}] remove requested: not found`);
+    return { removed: false, active: false };
+  }
+  try {
+    await job.remove();
+  } catch (err) {
+    logger.warn({ err }, `[job ${jobId}] remove failed (likely active/locked)`);
+    return { removed: false, active: true };
+  }
+  logger.info(`[job ${jobId}] removed`);
+  return { removed: true, active: false };
+}
+
+/**
+ * Finds every failed BullMQ job of kind `"hash"` and either moves it back to
+ * the wait queue for reprocessing, or - once it's already run
+ * {@link MAX_HASH_JOB_RUNS} times (per the `runCount` {@link processHashJob}
+ * persists on the job's own data) - discards it outright rather than
+ * retrying forever. A failed hash job is deliberately left in Redis
+ * (`removeOnFail: false` on the queue, set in {@link createTranscodeQueue})
+ * rather than requeued automatically, so this is what actually resurfaces
+ * it — driven by webapi's nightly duplicate-hash reconcile cron rather than
+ * anything in-process here.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @returns {Promise<{
+ *   retried: string[],
+ *   discarded: string[],
+ *   failed: Array<{ jobId: string, error: string }>
+ * }>} Job ids retried, job ids discarded after reaching the run cap, and any
+ *   that errored while retrying/discarding.
+ */
+export async function retryFailedHashJobs(queue) {
+  const failedJobs = await queue.getJobs(["failed"]);
+  const hashJobs = failedJobs.filter((job) => job.data?.kind === "hash");
+
+  /** @type {string[]} */
+  const retried = [];
+  /** @type {string[]} */
+  const discarded = [];
+  /** @type {Array<{ jobId: string, error: string }>} */
+  const failed = [];
+
+  for (const job of hashJobs) {
+    const jobId = String(job.id);
+    const runCount = Number(job.data?.runCount) || 0;
+
+    if (runCount >= MAX_HASH_JOB_RUNS) {
+      try {
+        await job.remove();
+        discarded.push(jobId);
+        logger.warn(
+          `[hash ${jobId}] discarded after ${runCount} run(s) (max ${MAX_HASH_JOB_RUNS})`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "discard failed";
+        failed.push({ jobId, error: message });
+        logger.error(
+          { err },
+          `[hash ${jobId}] failed to discard after reaching max runs`,
+        );
+      }
+      continue;
+    }
+
+    try {
+      await job.retry();
+      retried.push(jobId);
+      logger.info(
+        `[hash ${jobId}] retried by reconcile (run ${runCount}/${MAX_HASH_JOB_RUNS})`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "retry failed";
+      failed.push({ jobId, error: message });
+      logger.error({ err }, `[hash ${jobId}] retry by reconcile failed`);
+    }
+  }
+
+  return { retried, discarded, failed };
+}
+
+/**
+ * Maximum number of jobs fetched per non-terminal state (waiting/prioritized/
+ * active/delayed) by {@link getQueueJobs}, guarding against unbounded memory
+ * use if the queue somehow grows very large. Self-hosted deployments run a
+ * single worker at low concurrency, so real queue depth is expected to stay
+ * far below this.
+ *
+ * @type {number}
+ */
+export const QUEUE_JOBS_CAP_PER_STATE = 500;
+
+/**
+ * Lists every currently non-terminal job (waiting, prioritized, active, or
+ * delayed) across all job kinds, each tagged with its state. Fetches each
+ * state separately rather than one combined call plus a per-job
+ * `job.getState()` round trip - the state is already known from which fetch
+ * returned the job. A job mid-retry-backoff (BullMQ moves a failed-but-retryable
+ * job to "delayed" until `attemptsMade` reaches the configured `attempts`) or
+ * a hash job deferred by `HASH_GENERATION_WINDOW` both correctly surface here
+ * as "delayed" - both are legitimately still in flight, not terminal.
+ *
+ * "prioritized" is its own BullMQ v5 job state, distinct from "waiting" -
+ * every job here is enqueued with an explicit `priority` (see
+ * `JOB_PRIORITY_BY_KIND`), and BullMQ holds any job added with a priority in
+ * a separate prioritized set until a worker slot actually opens up, only
+ * then promoting it to "waiting" for the instant it takes to be picked up.
+ * With this app's low worker concurrency, that means nearly every not-yet-
+ * running job sits in "prioritized", not "waiting" - omitting it here would
+ * make the admin queue view look like only the handful of active jobs exist.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {{ capPerState?: number }} [options] Per-state fetch cap override (tests only).
+ * @returns {Promise<Array<{
+ *   jobId: string,
+ *   kind: string,
+ *   name: string,
+ *   state: "waiting"|"prioritized"|"active"|"delayed",
+ *   truncated: boolean
+ * }>>} Non-terminal jobs across all states.
+ */
+export async function getQueueJobs(queue, { capPerState = QUEUE_JOBS_CAP_PER_STATE } = {}) {
+  const [waiting, prioritized, active, delayed] = await Promise.all([
+    queue.getJobs(["waiting"], 0, capPerState - 1),
+    queue.getJobs(["prioritized"], 0, capPerState - 1),
+    queue.getJobs(["active"], 0, capPerState - 1),
+    queue.getJobs(["delayed"], 0, capPerState - 1),
+  ]);
+
+  const tag = (jobs, state) =>
+    jobs.map((job) => ({
+      jobId: String(job.id),
+      kind: job.data?.kind || "rendition",
+      name: job.name,
+      state,
+      truncated: jobs.length >= capPerState,
+    }));
+
+  return [
+    ...tag(waiting, "waiting"),
+    ...tag(prioritized, "prioritized"),
+    ...tag(active, "active"),
+    ...tag(delayed, "delayed"),
+  ];
+}
+
+/**
+ * Number of most-recent completed/failed jobs fetched (per state) by
+ * {@link getQueueHistory} before sorting/paginating in memory. Bounds how far
+ * back "history" can page - `total` (from `queue.getJobCounts`) stays exact
+ * even when the real count exceeds this window, but pages past it return an
+ * empty `items` array rather than erroring.
+ *
+ * @type {number}
+ */
+export const QUEUE_HISTORY_FETCH_WINDOW = 200;
+
+/**
+ * Lists the most recently completed/failed jobs across all job kinds,
+ * newest-first, paginated. Completed and failed jobs live in two separate
+ * BullMQ sorted sets; fetching each with `asc: false` already returns each
+ * one newest-first, so this only needs to merge the two already-sorted lists
+ * by `finishedOn` rather than re-sorting from scratch.
+ *
+ * @param {import('bullmq').Queue} queue Transcode queue instance.
+ * @param {{ page: number, limit: number }} options 1-based page number and page size.
+ * @returns {Promise<{
+ *   items: Array<{
+ *     jobId: string,
+ *     kind: string,
+ *     name: string,
+ *     state: "completed"|"failed",
+ *     finishedOn: number,
+ *     processedOn: number|null,
+ *     failedReason: string|null
+ *   }>,
+ *   total: number,
+ *   page: number,
+ *   limit: number
+ * }>} Page of history items plus the exact total job count (which may exceed
+ *   what's actually paginatable within `QUEUE_HISTORY_FETCH_WINDOW`).
+ */
+export async function getQueueHistory(queue, { page, limit }) {
+  const [completed, failed, counts] = await Promise.all([
+    queue.getJobs(["completed"], 0, QUEUE_HISTORY_FETCH_WINDOW - 1, false),
+    queue.getJobs(["failed"], 0, QUEUE_HISTORY_FETCH_WINDOW - 1, false),
+    queue.getJobCounts("completed", "failed"),
+  ]);
+
+  const merged = [...completed, ...failed]
+    .map((job) => ({
+      jobId: String(job.id),
+      kind: job.data?.kind || "rendition",
+      name: job.name,
+      // Failed jobs always carry a failedReason; completed jobs never do -
+      // more direct than re-deriving it from finishedOn/returnvalue.
+      state: job.failedReason ? "failed" : "completed",
+      finishedOn: job.finishedOn ?? 0,
+      processedOn: job.processedOn ?? null,
+      failedReason: job.failedReason || null,
+    }))
+    .sort((a, b) => b.finishedOn - a.finishedOn);
+
+  const total = (counts.completed || 0) + (counts.failed || 0);
+  const start = (page - 1) * limit;
+  const items = start < merged.length ? merged.slice(start, start + limit) : [];
+
+  return { items, total, page, limit };
+}
+
+/**
+ * Notifies the API that a BullMQ job failed (best-effort). Thumbnail jobs
+ * have no pending placeholder row to roll back (unlike FILE_VERSIONS, no
+ * VIDEO_THUMBNAIL row exists until success), but a failure here is still the
+ * signal the API's thumbnail-resolution priority order needs: neither
+ * embedded cover art nor a decoded-video-frame grab produced anything, so an
+ * eligible audio upload can fall back to the placeholder speaker icon (see
+ * `/internal/thumbnails/:uploadUuid/failed`). Hash jobs also call back on
+ * failure purely so the API can log it — hashing runs entirely in the
+ * background after the upload is already live, so there is nothing to roll
+ * back or release either way.
+ *
+ * @param {import('bullmq').Job | undefined} job Failed job, when available.
+ * @param {Error | undefined} err Failure reason.
+ * @returns {Promise<void>} Resolves after the callback attempt finishes.
+ */
+export async function notifyTranscodeJobFailed(job, err) {
+  const jobId = job?.id != null ? String(job.id) : "";
+  if (!jobId) {
+    return;
+  }
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof job?.failedReason === "string" && job.failedReason
+        ? job.failedReason
+        : "transcode failed";
+
+  if (job?.data?.kind === "thumbnail") {
+    logger.error({ message }, `[thumbnail ${jobId}] processing failed`);
+    const notify = await notifyThumbnailFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed thumbnail job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "hash") {
+    logger.error({ message }, `[hash ${jobId}] processing failed`);
+    const notify = await notifyContentHashFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed hash job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "normalize") {
+    logger.error({ message }, `[normalize ${jobId}] processing failed`);
+    const notify = await notifyOriginalUploadNormalizeFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed normalize job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "subtitle") {
+    logger.error({ message }, `[subtitle ${jobId}] processing failed`);
+    const notify = await notifySubtitleFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed subtitle job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "embed") {
+    logger.error({ message }, `[embed ${jobId}] processing failed`);
+    const notify = await notifyEmbedVideoFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed embed video job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  logger.error({ message }, `[rendition ${jobId}] processing failed`);
+  const notify = await notifyFileVersionFailed(jobId, message);
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of failed transcode ${jobId}`,
+    );
+  }
+}
+
+/**
+ * Closes BullMQ queue and worker resources gracefully.
+ *
+ * @param {object} resources Open queue/worker handles.
+ * @param {import('bullmq').Queue | null | undefined} [resources.queue] Queue.
+ * @param {import('bullmq').Worker | null | undefined} [resources.worker] Worker.
+ * @returns {Promise<void>} Resolves after both are closed (when present).
+ */
+export async function closeTranscodeResources({ queue, worker } = {}) {
+  const tasks = [];
+  if (worker) {
+    tasks.push(worker.close());
+  }
+  if (queue) {
+    tasks.push(queue.close());
+  }
+  await Promise.all(tasks);
+}

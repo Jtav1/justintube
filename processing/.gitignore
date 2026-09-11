@@ -1,0 +1,15 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Local env and runtime dirs (compose mounts named volumes instead)
+.env
+.env.test
+media/
+data/
+
+.DS_Store

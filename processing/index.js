@@ -1,0 +1,135 @@
+import { pathToFileURL } from "node:url";
+import express from "express";
+import { logger } from "./lib/logger.js";
+import { requireInternalToken } from "./lib/require-internal-token.js";
+import { getTranscodeConfig } from "./lib/transcode.js";
+import { createDownloadRouter } from "./routes/download.js";
+import { createQueueRouter } from "./routes/queue.js";
+import { createTranscodeRouter } from "./routes/transcode.js";
+import {
+  closeTranscodeResources,
+  createRedisConnection,
+  createTranscodeQueue,
+  createTranscodeWorker,
+  notifyTranscodeJobFailed,
+} from "./lib/queue.js";
+
+const PORT = Number(process.env.PORT) || 3001;
+
+/**
+ * Creates and configures the Express application for the processing service
+ * (yt-dlp downloads + queued ffmpeg transcodes).
+ *
+ * @param {object} [options] Optional dependencies for tests / wiring.
+ * @param {import('bullmq').Queue | null} [options.transcodeQueue] BullMQ queue
+ *   used by the `/transcode` and `/queue` routes. When omitted, neither is mounted.
+ * @returns {import('express').Express} Ready-to-listen Express app.
+ */
+export function createApp(options = {}) {
+  const app = express();
+  const { transcodeQueue = null } = options;
+
+  app.use(express.json());
+
+  /**
+   * Liveness / readiness probe for deploy and docker-compose checks. Also
+   * reports current hardware-accelerated transcoding availability so webapi
+   * can surface it to the admin UI (see webapi's
+   * `GET /admin/transcode-profiles/hardware-status`) without duplicating
+   * env-var parsing across services.
+   *
+   * @param {import('express').Request} _req Incoming request (unused).
+   * @param {import('express').Response} res Express response.
+   * @returns {void} Sends JSON health payload including queue readiness.
+   */
+  app.get("/health", (_req, res) => {
+    const { useHardware, hardwareEncoders } = getTranscodeConfig();
+    res.json({
+      status: "ok",
+      redis: transcodeQueue ? "configured" : "unavailable",
+      hardwareAcceleration: {
+        enabled: useHardware,
+        encoders: hardwareEncoders,
+      },
+    });
+  });
+
+  app.use("/download", requireInternalToken, createDownloadRouter());
+
+  if (transcodeQueue) {
+    app.use(
+      "/transcode",
+      requireInternalToken,
+      createTranscodeRouter({ queue: transcodeQueue }),
+    );
+    app.use(
+      "/queue",
+      requireInternalToken,
+      createQueueRouter({ queue: transcodeQueue }),
+    );
+  }
+
+  return app;
+}
+
+/**
+ * Starts the HTTP server, BullMQ queue, and ffmpeg worker when this module is
+ * the process entrypoint.
+ *
+ * @returns {Promise<void>} Resolves once the server is listening.
+ */
+async function main() {
+  const connection = createRedisConnection();
+  const queue = createTranscodeQueue(connection);
+  const worker = createTranscodeWorker(connection);
+
+  worker.on("active", (job) => {
+    logger.info(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) started`);
+  });
+
+  worker.on("completed", (job) => {
+    logger.info(`[worker] job ${job.id} (${job.data?.kind || "rendition"}) completed`);
+  });
+
+  worker.on("failed", (job, err) => {
+    logger.error(
+      { err },
+      `[worker] job ${job?.id ?? "unknown"} (${job?.data?.kind || "rendition"}) failed`,
+    );
+    void notifyTranscodeJobFailed(job, err);
+  });
+
+  const app = createApp({ transcodeQueue: queue });
+  const server = app.listen(PORT, () => {
+    console.log(`justintube-processing listening on port ${PORT}`);
+  });
+
+  /**
+   * Stops accepting HTTP traffic and closes BullMQ resources.
+   *
+   * @returns {Promise<void>} Resolves after shutdown completes.
+   */
+  async function shutdown() {
+    logger.info("shutting down processing service…");
+    await new Promise((resolve) => server.close(resolve));
+    await closeTranscodeResources({ queue, worker });
+    process.exit(0);
+  }
+
+  process.on("SIGINT", () => {
+    void shutdown();
+  });
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
+}
+
+// Only boot HTTP + workers when this file is executed directly.
+const isMain =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  main().catch((err) => {
+    logger.error({ err }, "Failed to start processing service");
+    process.exit(1);
+  });
+}

@@ -1,0 +1,956 @@
+import { Op } from "sequelize";
+import rateLimit from "express-rate-limit";
+import { Router } from "express";
+import { hashPassword, verifyPassword } from "../lib/auth/password.js";
+import { listAdminEmails } from "../lib/auth/admin-notifications.js";
+import {
+  createVerificationToken,
+  EmailVerificationError,
+  verifyEmailToken,
+} from "../lib/auth/email-verification.js";
+import {
+  consumePasswordResetToken,
+  createPasswordResetToken,
+  PasswordResetError,
+} from "../lib/auth/password-reset.js";
+import {
+  adminNewUserNotificationsEnabled,
+  emailEnabled,
+  sendNewUserAdminNotification,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from "../lib/email/mailer.js";
+import { isValidEmailFormat } from "../lib/email/validate-email.js";
+import {
+  csrfProtection,
+  ensureCsrfToken,
+  rotateCsrfToken,
+} from "../lib/auth/csrf.js";
+import { requireAuth } from "../lib/auth/require-auth.js";
+import { serializeUser } from "../lib/auth/serialize-user.js";
+import {
+  destroySession,
+  regenerateSession,
+  saveSession,
+} from "../lib/auth/session.js";
+import { Role, User } from "../lib/models/index.js";
+import { syncUserIndex } from "../lib/search.js";
+import { ensureUserNotificationSettings } from "../lib/seed.js";
+import { logger } from "../lib/logger.js";
+
+/**
+ * Minimum accepted password length for register/login validation.
+ *
+ * @type {number}
+ */
+const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * Stricter rate limiter for credential endpoints (register / login).
+ *
+ * @type {import('express').RequestHandler}
+ */
+const authCredentialLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Stricter rate limiter for resend-verification to reduce email abuse.
+ *
+ * @type {import('express').RequestHandler}
+ */
+const resendVerificationLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Rate limiter for the forgot-password request endpoint, to reduce email
+ * abuse and slow account-existence probing.
+ *
+ * @type {import('express').RequestHandler}
+ */
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Rate limiter for the reset-password consume endpoint. Unauthenticated and
+ * mutates the account, so it gets its own throttle (unlike /verify-email).
+ *
+ * @type {import('express').RequestHandler}
+ */
+const resetPasswordLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Returns whether public account registration is enabled.
+ *
+ * @private
+ * @returns {boolean} True when ENABLE_ACCOUNT_REGISTRATION is the string "true".
+ */
+function registrationEnabled() {
+  return (
+    String(process.env.ENABLE_ACCOUNT_REGISTRATION || "").toLowerCase() ===
+    "true"
+  );
+}
+
+/**
+ * Returns whether new accounts require email verification before full access.
+ *
+ * @private
+ * @returns {boolean} True when REQUIRE_EMAIL_VERIFICATION is the string "true".
+ */
+function requireEmailVerification() {
+  return (
+    String(process.env.REQUIRE_EMAIL_VERIFICATION || "").toLowerCase() ===
+    "true"
+  );
+}
+
+/**
+ * Establishes an authenticated session for a user after regenerating the
+ * session id (session-fixation mitigation) and rotating the CSRF token.
+ *
+ * @private
+ * @param {import('express').Request} req Incoming request.
+ * @param {number} userId Authenticated user's id.
+ * @returns {Promise<string>} Fresh CSRF token for the new session.
+ */
+async function establishSession(req, userId) {
+  await regenerateSession(req);
+  req.session.userId = userId;
+  const csrfToken = rotateCsrfToken(req);
+  await saveSession(req);
+  return csrfToken;
+}
+
+/**
+ * Loads a user with their Role by username.
+ *
+ * @private
+ * @param {string} username Account username.
+ * @returns {Promise<import('sequelize').Model|null>} User instance or null.
+ */
+async function findUserByUsername(username) {
+  return User.findOne({
+    where: { username },
+    include: [{ model: Role, required: false }],
+  });
+}
+
+/**
+ * Sends a verification email when email is configured; logs and swallows errors.
+ *
+ * @private
+ * @param {import('sequelize').Model} user User with `id` and `email`.
+ * @returns {Promise<void>} Resolves when send completes or fails gracefully.
+ */
+async function sendUserVerificationEmail(user) {
+  if (!emailEnabled()) {
+    return;
+  }
+
+  try {
+    const token = await createVerificationToken(user.id);
+    await sendVerificationEmail({ to: user.email, token });
+  } catch (err) {
+    logger.error({ err }, "Failed to send verification email");
+  }
+}
+
+/**
+ * Notifies every admin with an email address once a user completes email
+ * verification. Gated by ENABLE_ADMIN_NEW_USER_NOTIFICATIONS (in addition to
+ * email being configured); best-effort — logs and swallows errors so a
+ * notification failure never affects the verifying user's response.
+ *
+ * @private
+ * @param {import('sequelize').Model} newUser Newly verified user (id, username, email).
+ * @returns {Promise<void>} Resolves when send completes or fails gracefully.
+ */
+async function notifyAdminsOfNewUser(newUser) {
+  if (!adminNewUserNotificationsEnabled() || !emailEnabled()) {
+    return;
+  }
+
+  try {
+    const adminEmails = await listAdminEmails();
+    if (adminEmails.length === 0) {
+      return;
+    }
+    await sendNewUserAdminNotification({ adminEmails, newUser });
+  } catch (err) {
+    logger.error({ err }, "Failed to send new-user admin notification");
+  }
+}
+
+/**
+ * Builds the `/auth` router (mounted under `/api/v1`).
+ *
+ * @returns {import('express').Router} Configured auth router.
+ */
+export function createAuthRouter() {
+  const router = Router();
+  const auth = Router();
+  auth.use(csrfProtection);
+
+  /**
+   * Issues (or returns) a CSRF token for the current session.
+   * GET /api/v1/auth/csrf — no body.
+   * Auth: none (creates/touches an anonymous session cookie).
+   *
+   * @openapi
+   * /api/v1/auth/csrf:
+   *   get:
+   *     tags: [Auth]
+   *     summary: Issue CSRF token
+   *     operationId: authCsrf
+   *     responses:
+   *       200:
+   *         description: CSRF token for subsequent mutating cookie requests
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               required: [csrfToken]
+   *               properties:
+   *                 csrfToken:
+   *                   type: string
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ csrfToken }`.
+   */
+  auth.get("/csrf", async (req, res) => {
+    try {
+      // saveUninitialized is false; touch the session so the CSRF cookie exists.
+      const csrfToken = ensureCsrfToken(req);
+      await saveSession(req);
+      res.json({ csrfToken });
+    } catch (err) {
+      logger.error({ err }, "authCsrf failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to issue CSRF token.",
+      });
+    }
+  });
+
+  /**
+   * Registers a new local account when registration is enabled.
+   * POST /api/v1/auth/register with { username, email, password, displayName? }.
+   * Auth: X-CSRF-Token required. Returns 201 `{ user, csrfToken }`.
+   *
+   * @openapi
+   * /api/v1/auth/register:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Register a local account
+   *     operationId: authRegister
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [username, email, password]
+   *             properties:
+   *               username: { type: string }
+   *               email: { type: string, format: email }
+   *               password: { type: string, minLength: 8 }
+   *               displayName: { type: string, nullable: true }
+   *     responses:
+   *       201:
+   *         description: Account created and session established
+   *       403:
+   *         description: Registration disabled
+   *       409:
+   *         description: Username or email already registered
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends created user or an error response.
+   */
+  auth.post("/register", authCredentialLimiter, async (req, res) => {
+    try {
+      if (!registrationEnabled()) {
+        res.status(403).json({
+          error: "registration_disabled",
+          message: "Account registration is disabled.",
+        });
+        return;
+      }
+
+      const username = String(req.body?.username || "").trim();
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      const password = String(req.body?.password || "");
+      const displayNameRaw = req.body?.displayName;
+      const displayName =
+        displayNameRaw === undefined || displayNameRaw === null
+          ? null
+          : String(displayNameRaw).trim() || null;
+
+      if (!username || !email || !password) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "username, email, and password are required.",
+        });
+        return;
+      }
+
+      if (!isValidEmailFormat(email)) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "email must be a valid email address.",
+        });
+        return;
+      }
+
+      if (password.length < MIN_PASSWORD_LENGTH) {
+        res.status(400).json({
+          error: "invalid_password",
+          message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        });
+        return;
+      }
+
+      const duplicate = await User.findOne({
+        where: {
+          [Op.or]: [{ username }, { email }],
+        },
+      });
+      if (duplicate) {
+        res.status(409).json({
+          error: "conflict",
+          message: "Username or email is already registered.",
+        });
+        return;
+      }
+
+      const needsVerify = requireEmailVerification();
+      const role = await Role.findOne({ where: { name: "viewer" } });
+      const passwordHash = await hashPassword(password);
+
+      const user = await User.create({
+        username,
+        email,
+        displayName,
+        passwordHash,
+        emailVerified: !needsVerify,
+        emailVerifiedAt: needsVerify ? null : new Date(),
+        uploader: false,
+        roleId: role ? role.id : null,
+      });
+
+      if (role) {
+        user.Role = role;
+      }
+      syncUserIndex(user.id);
+      await ensureUserNotificationSettings(user.id);
+
+      if (needsVerify) {
+        await sendUserVerificationEmail(user);
+      }
+
+      const csrfToken = await establishSession(req, user.id);
+      res.status(201).json({
+        user: serializeUser(user, role),
+        csrfToken,
+      });
+    } catch (err) {
+      logger.error({ err }, "authRegister failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Registration failed.",
+      });
+    }
+  });
+
+  /**
+   * Authenticates with username and password, establishing a cookie session.
+   * POST /api/v1/auth/login with { username, password }.
+   * Auth: X-CSRF-Token required. Returns `{ user, csrfToken }`.
+   *
+   * @openapi
+   * /api/v1/auth/login:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Log in with username and password
+   *     operationId: authLogin
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [username, password]
+   *             properties:
+   *               username: { type: string }
+   *               password: { type: string }
+   *     responses:
+   *       200:
+   *         description: Session established; `user.passwordExpired` indicates
+   *           whether the client should force a password change
+   *       401:
+   *         description: Invalid credentials
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ user, csrfToken }` (including
+   *   `user.passwordExpired`) or an error response.
+   */
+  auth.post("/login", authCredentialLimiter, async (req, res) => {
+    try {
+      const username = String(req.body?.username || "").trim();
+      const password = String(req.body?.password || "");
+
+      if (!username || !password) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "username and password are required.",
+        });
+        return;
+      }
+
+      const user = await findUserByUsername(username);
+      const passwordOk = user
+        ? await verifyPassword(password, user.passwordHash)
+        : false;
+
+      if (!user || !passwordOk) {
+        res.status(401).json({
+          error: "invalid_credentials",
+          message: "Invalid username or password.",
+        });
+        return;
+      }
+
+      const role = user.Role || null;
+      if (role && role.name === "locked") {
+        res.status(401).json({
+          error: "invalid_credentials",
+          message: "Invalid username or password.",
+        });
+        return;
+      }
+
+      const csrfToken = await establishSession(req, user.id);
+      await user.update({ lastLogIn: new Date() });
+      res.json({
+        user: serializeUser(user, role),
+        csrfToken,
+      });
+    } catch (err) {
+      logger.error({ err }, "authLogin failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Login failed.",
+      });
+    }
+  });
+
+  /**
+   * Destroys the current session cookie.
+   * POST /api/v1/auth/logout — no body.
+   * Auth: required (session cookie or Bearer API key). X-CSRF-Token required
+   * for session cookie clients; Bearer API keys skip CSRF.
+   *
+   * @openapi
+   * /api/v1/auth/logout:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Log out and clear session cookie
+   *     operationId: authLogout
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     responses:
+   *       200:
+   *         description: Session destroyed
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }`.
+   */
+  auth.post("/logout", requireAuth, async (req, res) => {
+    try {
+      await destroySession(req);
+      res.clearCookie("justintube.sid");
+      res.status(200).json({ success: true });
+    } catch (err) {
+      logger.error({ err }, "authLogout failed");
+      res.status(500).json({
+        success: false,
+        error: "internal_error",
+        message: "Logout failed.",
+      });
+    }
+  });
+
+  /**
+   * Returns the authenticated user's public profile.
+   * GET /api/v1/auth/me — no body.
+   * Auth: session cookie or Authorization Bearer API key (`requireAuth`).
+   *
+   * @openapi
+   * /api/v1/auth/me:
+   *   get:
+   *     tags: [Auth]
+   *     summary: Current authenticated user
+   *     operationId: authMe
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: Public user profile
+   *       401:
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request (`req.user` / `req.authRole` set).
+   * @param {import('express').Response} res Express response.
+   * @returns {void} Sends the public user object.
+   */
+  auth.get("/me", requireAuth, (req, res) => {
+    res.json(serializeUser(req.user, req.authRole));
+  });
+
+  /**
+   * Confirms a user's email address using a one-time verification token.
+   * POST /api/v1/auth/verify-email with { token }.
+   * Auth: none (token is proof); X-CSRF-Token required for cookie clients.
+   *
+   * @openapi
+   * /api/v1/auth/verify-email:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Verify email with a one-time token
+   *     operationId: authVerifyEmail
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [token]
+   *             properties:
+   *               token: { type: string }
+   *     responses:
+   *       200:
+   *         description: Email verified; returns updated user profile
+   *       400:
+   *         description: Missing or invalid token
+   *       409:
+   *         description: Email already verified
+   *       410:
+   *         description: Token expired
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ user }` or an error response.
+   */
+  auth.post("/verify-email", async (req, res) => {
+    try {
+      const token = String(req.body?.token || "").trim();
+      if (!token) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "token is required.",
+        });
+        return;
+      }
+
+      const user = await verifyEmailToken(token);
+      await notifyAdminsOfNewUser(user);
+      const role = user.Role || null;
+      res.json({ user: serializeUser(user, role) });
+    } catch (err) {
+      if (err instanceof EmailVerificationError) {
+        const statusByCode = {
+          invalid_body: 400,
+          invalid_token: 400,
+          token_expired: 410,
+          already_verified: 409,
+        };
+        const status = statusByCode[err.code] || 400;
+        res.status(status).json({
+          error: err.code,
+          message: err.message,
+        });
+        return;
+      }
+      logger.error({ err }, "authVerifyEmail failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Email verification failed.",
+      });
+    }
+  });
+
+  /**
+   * Sends a fresh verification email to the authenticated user.
+   * POST /api/v1/auth/resend-verification — no body.
+   * Auth: session cookie or API key (`requireAuth`); X-CSRF-Token for sessions.
+   *
+   * @openapi
+   * /api/v1/auth/resend-verification:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Resend email verification message
+   *     operationId: authResendVerification
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     responses:
+   *       200:
+   *         description: Verification email sent
+   *       403:
+   *         description: Email already verified
+   *       503:
+   *         description: Email capability disabled
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
+   */
+  auth.post(
+    "/resend-verification",
+    resendVerificationLimiter,
+    requireAuth,
+    async (req, res) => {
+      try {
+        if (!emailEnabled()) {
+          res.status(503).json({
+            success: false,
+            error: "email_disabled",
+            message: "Email is not configured.",
+          });
+          return;
+        }
+
+        if (req.user.emailVerified) {
+          res.status(403).json({
+            success: false,
+            error: "already_verified",
+            message: "Email is already verified.",
+          });
+          return;
+        }
+
+        await sendUserVerificationEmail(req.user);
+        res.status(200).json({ success: true });
+      } catch (err) {
+        logger.error({ err }, "authResendVerification failed");
+        res.status(500).json({
+          success: false,
+          error: "internal_error",
+          message: "Failed to resend verification email.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Requests a password reset email. Always responds 200 regardless of
+   * whether the username/email pair matches an account, so this endpoint
+   * cannot be used to enumerate valid accounts.
+   * POST /api/v1/auth/forgot-password with { username, email }.
+   * Auth: none; X-CSRF-Token required for cookie clients.
+   *
+   * @openapi
+   * /api/v1/auth/forgot-password:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Request a password reset email
+   *     operationId: authForgotPassword
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [username, email]
+   *             properties:
+   *               username: { type: string }
+   *               email: { type: string }
+   *     responses:
+   *       200:
+   *         description: Always returned; a reset email is sent only when the pair matches an account
+   *       400:
+   *         description: Missing username or email
+   *       429:
+   *         description: Rate limited
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Always sends 200 `{ success: true }` once validated.
+   */
+  auth.post("/forgot-password", forgotPasswordLimiter, async (req, res) => {
+    try {
+      const username = String(req.body?.username || "").trim();
+      const email = String(req.body?.email || "").trim();
+
+      if (!username || !email) {
+        res.status(400).json({
+          success: false,
+          error: "invalid_body",
+          message: "username and email are required.",
+        });
+        return;
+      }
+
+      if (emailEnabled()) {
+        const user = await User.findOne({ where: { username, email } });
+        if (user) {
+          try {
+            const token = await createPasswordResetToken(user.id);
+            await sendPasswordResetEmail({ to: user.email, token });
+          } catch (err) {
+            logger.error({ err }, "Failed to send password reset email");
+          }
+        }
+      }
+
+      res.status(200).json({ success: true });
+    } catch (err) {
+      logger.error({ err }, "authForgotPassword failed");
+      res.status(500).json({
+        success: false,
+        error: "internal_error",
+        message: "Failed to process password reset request.",
+      });
+    }
+  });
+
+  /**
+   * Consumes a password reset token and sets a new password. The token is
+   * the sole proof of identity here — no session is required or established.
+   * POST /api/v1/auth/reset-password with { token, newPassword }.
+   * Auth: none (token is proof); X-CSRF-Token required for cookie clients.
+   *
+   * @openapi
+   * /api/v1/auth/reset-password:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Reset password with a one-time token
+   *     operationId: authResetPassword
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [token, newPassword]
+   *             properties:
+   *               token: { type: string }
+   *               newPassword: { type: string, minLength: 8 }
+   *     responses:
+   *       200:
+   *         description: Password reset
+   *       400:
+   *         description: Missing/invalid body, invalid token, or password too short
+   *       410:
+   *         description: Token expired
+   *       429:
+   *         description: Rate limited
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
+   */
+  auth.post(
+    "/reset-password",
+    resetPasswordLimiter,
+    async (req, res) => {
+      try {
+        const token = String(req.body?.token || "").trim();
+        const newPassword = String(req.body?.newPassword || "");
+
+        if (!token || !newPassword) {
+          res.status(400).json({
+            success: false,
+            error: "invalid_body",
+            message: "token and newPassword are required.",
+          });
+          return;
+        }
+
+        if (newPassword.length < MIN_PASSWORD_LENGTH) {
+          res.status(400).json({
+            success: false,
+            error: "invalid_password",
+            message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+          });
+          return;
+        }
+
+        const passwordHash = await hashPassword(newPassword);
+        await consumePasswordResetToken(token, passwordHash);
+        res.status(200).json({ success: true });
+      } catch (err) {
+        if (err instanceof PasswordResetError) {
+          const statusByCode = {
+            invalid_body: 400,
+            invalid_token: 400,
+            token_expired: 410,
+          };
+          const status = statusByCode[err.code] || 400;
+          res.status(status).json({
+            success: false,
+            error: err.code,
+            message: err.message,
+          });
+          return;
+        }
+        logger.error({ err }, "authResetPassword failed");
+        res.status(500).json({
+          success: false,
+          error: "internal_error",
+          message: "Password reset failed.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Changes the authenticated user's password (session cookie only).
+   * POST /api/v1/auth/password with { currentPassword, newPassword }.
+   * Auth: session cookie; X-CSRF-Token required.
+   *
+   * @openapi
+   * /api/v1/auth/password:
+   *   post:
+   *     tags: [Auth]
+   *     summary: Change account password
+   *     operationId: authChangePassword
+   *     parameters:
+   *       - $ref: '#/components/parameters/CsrfTokenHeader'
+   *     security:
+   *       - cookieAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [currentPassword, newPassword]
+   *             properties:
+   *               currentPassword: { type: string }
+   *               newPassword: { type: string, minLength: 8 }
+   *     responses:
+   *       200:
+   *         description: Password updated
+   *       401:
+   *         description: Current password incorrect
+   *       403:
+   *         description: Password not set or API key auth not allowed
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 200 `{ success: true }` or an error response.
+   */
+  auth.post("/password", requireAuth, async (req, res) => {
+    try {
+      if (req.authMethod !== "session") {
+        res.status(403).json({
+          success: false,
+          error: "session_required",
+          message: "Password change requires a session cookie.",
+        });
+        return;
+      }
+
+      const currentPassword = String(req.body?.currentPassword || "");
+      const newPassword = String(req.body?.newPassword || "");
+
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({
+          success: false,
+          error: "invalid_body",
+          message: "currentPassword and newPassword are required.",
+        });
+        return;
+      }
+
+      if (!req.user.passwordHash) {
+        res.status(403).json({
+          success: false,
+          error: "password_not_set",
+          message: "This account does not have a local password.",
+        });
+        return;
+      }
+
+      if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        res.status(400).json({
+          success: false,
+          error: "invalid_password",
+          message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        });
+        return;
+      }
+
+      const currentOk = await verifyPassword(
+        currentPassword,
+        req.user.passwordHash,
+      );
+      if (!currentOk) {
+        res.status(401).json({
+          success: false,
+          error: "invalid_credentials",
+          message: "Current password is incorrect.",
+        });
+        return;
+      }
+
+      const passwordHash = await hashPassword(newPassword);
+      await req.user.update({
+        passwordHash,
+        passwordExpired: false,
+      });
+      res.status(200).json({ success: true });
+    } catch (err) {
+      logger.error({ err }, "authChangePassword failed");
+      res.status(500).json({
+        success: false,
+        error: "internal_error",
+        message: "Password change failed.",
+      });
+    }
+  });
+
+  // Mount under /auth so CSRF middleware does not apply to other /api/v1 routes.
+  router.use("/auth", auth);
+  return router;
+}
+

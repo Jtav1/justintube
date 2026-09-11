@@ -1,0 +1,538 @@
+import apiClient from './client.js'
+
+/**
+ * Searches/lists videos with pagination and sort.
+ * @param {{ q?: string, tags?: string[]|string, tagsMode?: 'all'|'any', sort?: string, page?: number, limit?: number }} params
+ *   `tags` requires results to include all of them by default ("all"); pass `tagsMode: 'any'`
+ *   to match videos sharing at least one of them instead (comma-separated on the wire).
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function searchVideos({ q, tags, tagsMode, sort, page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/search', {
+    params: {
+      q,
+      tags: Array.isArray(tags) ? tags.join(',') : tags,
+      tagsMode,
+      sort,
+      page,
+      limit,
+    },
+  })
+  return res.data
+}
+
+/**
+ * Fetches a single video's metadata and renditions.
+ * @param {string|number} id Numeric video id or its public videoId.
+ * @returns {Promise<object>}
+ */
+export async function getVideo(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}`)
+  return res.data
+}
+
+/**
+ * Lists featured videos the current viewer may see (public, plus their own
+ * and any they hold a VIDEO_ACCESS grant for), newest-featured first.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function getFeaturedVideos({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/videos/featured', { params: { page, limit } })
+  return res.data
+}
+
+/**
+ * Lists videos the current viewer may see (public, plus their own and any
+ * they hold a VIDEO_ACCESS grant for), newest first.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function getNewestVideos({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/videos/newest', { params: { page, limit } })
+  return res.data
+}
+
+/**
+ * Fetches a random sample of videos the current viewer may see (public,
+ * plus their own and any they hold a VIDEO_ACCESS grant for).
+ * @param {{ quantity?: number }} [params]
+ * @returns {Promise<{items: object[]}>}
+ */
+export async function getRandomVideos({ quantity } = {}) {
+  const res = await apiClient.get('/api/v1/videos/random', { params: { quantity } })
+  return res.data
+}
+
+/**
+ * Lists videos the current user has liked (that they can still view), newest
+ * like first. Requires authentication.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function getMyLikes({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/me/likes', { params: { page, limit } })
+  return res.data
+}
+
+/**
+ * Lists videos the current user has watched, most-recently-viewed first.
+ * Repeat views of the same video appear as separate entries (distinct
+ * `historyId`s). Requires authentication.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function getMyHistory({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/me/history', { params: { page, limit } })
+  return res.data
+}
+
+/**
+ * Removes a single entry from the current user's watch history, by the
+ * history entry's own id (not the video's id - the same video can have
+ * multiple history entries from repeat views).
+ * @param {number} historyId
+ * @returns {Promise<void>}
+ */
+export async function removeHistoryEntry(historyId) {
+  await apiClient.delete(`/api/v1/me/history/${historyId}`)
+}
+
+/**
+ * Clears the current user's entire watch history.
+ * @returns {Promise<void>}
+ */
+export async function clearMyHistory() {
+  await apiClient.delete('/api/v1/me/history')
+}
+
+/**
+ * Uploads a video file, creating an ORIGINAL_UPLOADS row (private by
+ * default, with a default title derived from the filename). Callers should
+ * follow up with updateVideo to set the real title/description/visibility/tags.
+ * @param {File} file
+ * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number, skipAutoSubtitles?: boolean, onUploadProgress?: (event: ProgressEvent) => void }} [options]
+ *   `skipThumbnail` skips the processing service's auto-generated thumbnail
+ *   — pass this when the caller is about to upload a custom one via
+ *   updateVideoThumbnail, so it can't be overwritten by a later-arriving
+ *   auto-generated thumbnail. `thumbnailTimestamp` requests a specific frame
+ *   (seconds, fractional) for the auto-generated thumbnail instead of a
+ *   random one — ignored if `skipThumbnail` is set. `skipAutoSubtitles` is
+ *   the same idea for the auto-extracted subtitle track — pass this when the
+ *   caller is about to upload their own via uploadVideoSubtitle.
+ *   `onUploadProgress` is forwarded to axios for real byte-level upload
+ *   progress (`event.loaded`/`event.total`).
+ * @returns {Promise<{id: number, originalFilename: string, status: string}>}
+ */
+export async function uploadVideoFile(
+  file,
+  { skipThumbnail = false, thumbnailTimestamp, skipAutoSubtitles = false, onUploadProgress } = {},
+) {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (skipThumbnail) {
+    formData.append('skipThumbnail', 'true')
+  } else if (thumbnailTimestamp != null) {
+    formData.append('thumbnailTimestamp', String(thumbnailTimestamp))
+  }
+  if (skipAutoSubtitles) {
+    formData.append('skipAutoSubtitles', 'true')
+  }
+  const res = await apiClient.post('/api/v1/videos/upload', formData, { onUploadProgress })
+  return res.data
+}
+
+/**
+ * Updates a video's metadata. Usable by the video owner or a moderator/admin.
+ * @param {number} id
+ * @param {{ title?: string, description?: string|null, visibility?: string, commentsEnabled?: boolean, tags?: string[] }} updates
+ * @returns {Promise<object>}
+ */
+export async function updateVideo(id, updates) {
+  const res = await apiClient.patch(`/api/v1/videos/${id}`, updates)
+  return res.data
+}
+
+/**
+ * Adds tags to a video (additive - merges into the existing set, does not
+ * remove any). Usable by any Trusted User (verified email + uploader access,
+ * admins bypass) who can view the video, not just its owner/editors.
+ * @param {number} id
+ * @param {string[]} tags
+ * @returns {Promise<object>}
+ */
+export async function addVideoTags(id, tags) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/tags`, { tags })
+  return res.data
+}
+
+/**
+ * Removes tags from a video. Usable by the video owner, an admin, or a
+ * moderator - a stricter tier than addVideoTags, since removing a tag
+ * (including one another Trusted User added) is a moderation-level action.
+ * Idempotent: tags that aren't present are silently ignored.
+ * @param {number} id
+ * @param {string[]} tags
+ * @returns {Promise<object>}
+ */
+export async function removeVideoTags(id, tags) {
+  const res = await apiClient.delete(`/api/v1/videos/${id}/tags`, { data: { tags } })
+  return res.data
+}
+
+/**
+ * Replaces the editor list for a video. Unlike viewers, editors are
+ * meaningful (and settable) regardless of the video's visibility.
+ * Usable by the video owner or a moderator/admin.
+ * @param {number} id
+ * @param {string[]} usernames
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null, permission: string}>}>}
+ */
+export async function setVideoEditors(id, usernames) {
+  const res = await apiClient.put(`/api/v1/videos/${id}/editors`, { usernames })
+  return res.data
+}
+
+/**
+ * Replaces the private-viewer list for a video. The video's visibility must
+ * currently be "private". Usable by the video owner or a moderator/admin.
+ * @param {number} id
+ * @param {string[]} usernames
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null, permission: string}>}>}
+ */
+export async function setVideoViewers(id, usernames) {
+  const res = await apiClient.put(`/api/v1/videos/${id}/viewers`, { usernames })
+  return res.data
+}
+
+/**
+ * Lists the private-access grants for a video. Owner or admin only.
+ * @param {number} id
+ * @returns {Promise<{items: Array<{userId: number, username: string, displayName: string|null, permission: string}>}>}
+ */
+export async function getVideoAccess(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/access`)
+  return res.data
+}
+
+/**
+ * Sets or clears a video's featured status. Admin only.
+ * @param {number} id
+ * @param {boolean} featured
+ * @returns {Promise<{featured: boolean}>}
+ */
+export async function setVideoFeatured(id, featured) {
+  const res = await apiClient.put(`/api/v1/videos/${id}/featured`, { featured })
+  return res.data
+}
+
+/**
+ * Delists a video, setting its visibility to "unlisted". Moderator/admin only.
+ * @param {number} id
+ * @returns {Promise<object>}
+ */
+export async function delistVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/delist`)
+  return res.data
+}
+
+/**
+ * Permanently deletes a video. Usable by the video owner or an admin.
+ * @param {number} id
+ * @returns {Promise<void>}
+ */
+export async function deleteVideo(id) {
+  await apiClient.delete(`/api/v1/videos/${id}`)
+}
+
+/**
+ * Imports a video from a remote URL via the processing service, creating an
+ * ORIGINAL_UPLOADS row the same way uploadVideoFile does.
+ * @param {string} url
+ * @param {{ skipThumbnail?: boolean, thumbnailTimestamp?: number, skipAutoSubtitles?: boolean }} [options]
+ *   `skipThumbnail` skips the processing service's auto-generated thumbnail
+ *   — pass this when the caller is about to upload a custom one via
+ *   updateVideoThumbnail, so it can't be overwritten by a later-arriving
+ *   auto-generated thumbnail. `thumbnailTimestamp` requests a specific frame
+ *   (seconds, fractional) for the auto-generated thumbnail instead of a
+ *   random one — ignored if `skipThumbnail` is set. `skipAutoSubtitles` is
+ *   the same idea for the auto-extracted subtitle track.
+ * @returns {Promise<{id: number, originalFilename: string, status: string}>}
+ */
+export async function importVideoUrl(
+  url,
+  { skipThumbnail = false, thumbnailTimestamp, skipAutoSubtitles = false } = {},
+) {
+  const body = { url, skipThumbnail, skipAutoSubtitles }
+  if (!skipThumbnail && thumbnailTimestamp != null) {
+    body.thumbnailTimestamp = thumbnailTimestamp
+  }
+  const res = await apiClient.post('/api/v1/videos/import', body)
+  return res.data
+}
+
+/**
+ * Checks whether URL import is currently available (i.e. the processing
+ * service is reachable and healthy).
+ * @returns {Promise<{available: boolean}>}
+ */
+export async function getImportStatus() {
+  const res = await apiClient.get('/api/v1/videos/import/status')
+  return res.data
+}
+
+/**
+ * Gets an upload's download/transcode progress, including outstanding
+ * "core" processing jobs (rendition, thumbnail, normalize) still in flight.
+ * Owner or admin only. Used by VideoCard's processing-status overlay.
+ * @param {number} id
+ * @returns {Promise<{
+ *   status: string,
+ *   statusMessage: string|null,
+ *   fileVersions: object[],
+ *   outstandingJobs: Array<{kind: string, state: string, resolution?: string|null}>,
+ *   jobsRemaining: number,
+ *   jobsStatusUnknown: boolean,
+ * }>}
+ */
+export async function getVideoProcessingStatus(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/processing-status`)
+  return res.data
+}
+
+/**
+ * Uploads (or replaces) a video's thumbnail image. Usable by the video
+ * owner or a moderator/admin.
+ * @param {number} id
+ * @param {File} file
+ * @returns {Promise<{thumbnailUrl: string}>}
+ */
+export async function updateVideoThumbnail(id, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await apiClient.post(`/api/v1/videos/${id}/thumbnail`, formData)
+  return res.data
+}
+
+/**
+ * Queues regeneration of a video's auto-generated thumbnail, overwriting
+ * whatever thumbnail (auto-generated or manually uploaded) currently exists
+ * once processing extracts the new frame. Video only — owner or admin.
+ * @param {number} id
+ * @param {number} [thumbnailTimestamp] Seconds (fractional) into the video.
+ *   Omit to request a random frame — admin only.
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function regenerateVideoThumbnail(id, thumbnailTimestamp) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/thumbnail/regenerate`, {
+    thumbnailTimestamp,
+  })
+  return res.data
+}
+
+/**
+ * Re-transcodes a video: deletes every existing FILE_VERSIONS rendition and
+ * queues a fresh batch against the video's current transcode profiles.
+ * Admin only.
+ * @param {number} id
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function retranscodeVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/retranscode`)
+  return res.data
+}
+
+/**
+ * Rebuilds an audio upload's link-unfurl embed video (a thumbnail+audio MP4
+ * muxed so bots like Discord's `og:video` unfurler have something playable
+ * to embed). A harmless no-op for a real video. Admin only.
+ * @param {number} id
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function rebuildVideoRemux(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/remux/rebuild`)
+  return res.data
+}
+
+/**
+ * Lists every subtitle track available for a video (zero, one, or many —
+ * e.g. one per language).
+ * @param {number} id
+ * @returns {Promise<{items: {id: number, label: string, source: string, url: string}[]}>}
+ */
+export async function listVideoSubtitles(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/subtitles`)
+  return res.data
+}
+
+/**
+ * Uploads a new subtitle track for a video. Accepts `.srt` or `.vtt` — an
+ * uploaded `.srt` is converted to WebVTT server-side. A video may carry any
+ * number of subtitles, so this always adds a new track. Usable by the video
+ * owner or a moderator/admin.
+ * @param {number} id
+ * @param {File} file
+ * @param {string} label Human-readable label, e.g. "English".
+ * @returns {Promise<{id: number, label: string, source: string, url: string}>}
+ */
+export async function uploadVideoSubtitle(id, file, label) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('label', label)
+  const res = await apiClient.post(`/api/v1/videos/${id}/subtitles`, formData)
+  return res.data
+}
+
+/**
+ * Renames a video's subtitle track. Owner or admin.
+ * @param {number} id
+ * @param {number} subtitleId
+ * @param {string} label
+ * @returns {Promise<{id: number, label: string, source: string, url: string}>}
+ */
+export async function updateVideoSubtitleLabel(id, subtitleId, label) {
+  const res = await apiClient.patch(`/api/v1/videos/${id}/subtitles/${subtitleId}`, { label })
+  return res.data
+}
+
+/**
+ * Deletes a video's subtitle track (row + file). Owner or admin.
+ * @param {number} id
+ * @param {number} subtitleId
+ * @returns {Promise<void>}
+ */
+export async function deleteVideoSubtitle(id, subtitleId) {
+  await apiClient.delete(`/api/v1/videos/${id}/subtitles/${subtitleId}`)
+}
+
+/**
+ * Requests a fresh auto-extraction of every embedded text/subtitle stream in
+ * a video's original file, if any. Does not delete the existing
+ * auto-extracted subtitles up front — they're only replaced once (and if)
+ * the new extraction actually succeeds, so a regeneration that finds
+ * nothing leaves captions exactly as they were. User-uploaded subtitles are
+ * never touched by regeneration. Owner or admin.
+ * @param {number} id
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function regenerateVideoSubtitles(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/subtitles/regenerate`)
+  return res.data
+}
+
+/**
+ * Likes a video, toggling the reaction off if already liked (replaces any
+ * existing dislike).
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{liked: boolean, disliked: boolean}>}
+ */
+export async function likeVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/like`)
+  return res.data
+}
+
+/**
+ * Dislikes a video, toggling the reaction off if already disliked (replaces
+ * any existing like).
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{liked: boolean, disliked: boolean}>}
+ */
+export async function dislikeVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/dislike`)
+  return res.data
+}
+
+/**
+ * Hides a video from the caller's own listings/feeds going forward.
+ * Idempotent. Cannot be used on the caller's own uploaded video.
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{hidden: boolean}>}
+ */
+export async function hideVideo(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/hide`)
+  return res.data
+}
+
+/**
+ * Unhides a previously-hidden video. Idempotent.
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{hidden: boolean}>}
+ */
+export async function unhideVideo(id) {
+  const res = await apiClient.delete(`/api/v1/videos/${id}/hide`)
+  return res.data
+}
+
+/**
+ * Records a view: increments the video's view count (all viewers), and, when
+ * the caller is authenticated, adds a row to their watch history.
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{viewCount: number}>}
+ */
+export async function recordView(id) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/view`)
+  return res.data
+}
+
+/**
+ * Lists public videos from channels the current user is subscribed to,
+ * excluding already-watched videos, newest first. Requires authentication.
+ * @param {{ page?: number, limit?: number }} [params]
+ * @returns {Promise<{items: object[], page: number, limit: number, totalHits: number, totalPages: number}>}
+ */
+export async function getSubscriptionFeed({ page, limit } = {}) {
+  const res = await apiClient.get('/api/v1/feed/subscriptions', { params: { page, limit } })
+  return res.data
+}
+
+/**
+ * Lists every comment (and reply) on a video, oldest first. Note: unlike
+ * `getVideo`, this keys on the video's numeric id, not its public `videoId`.
+ * @param {number} id Numeric video id.
+ * @returns {Promise<{items: object[]}>}
+ */
+export async function listComments(id) {
+  const res = await apiClient.get(`/api/v1/videos/${id}/comments`)
+  return res.data
+}
+
+/**
+ * Posts a comment (or, with `parentCommentId`, a reply) on a video.
+ * @param {number} id Numeric video id.
+ * @param {{ body: string, parentCommentId?: number, distinguishedMod?: boolean, distinguishedAdmin?: boolean }} comment
+ * @returns {Promise<object>}
+ */
+export async function createComment(id, { body, parentCommentId, distinguishedMod, distinguishedAdmin }) {
+  const res = await apiClient.post(`/api/v1/videos/${id}/comments`, {
+    body,
+    parentCommentId,
+    distinguishedMod,
+    distinguishedAdmin,
+  })
+  return res.data
+}
+
+/**
+ * Edits a comment's body (author-only), or toggles its distinguished flags
+ * (moderator/admin-only).
+ * @param {number} id Numeric video id.
+ * @param {number} commentId Comment id to update.
+ * @param {{ body?: string, distinguishedMod?: boolean, distinguishedAdmin?: boolean }} updates
+ * @returns {Promise<object>}
+ */
+export async function updateComment(id, commentId, updates) {
+  const res = await apiClient.patch(`/api/v1/videos/${id}/comments/${commentId}`, updates)
+  return res.data
+}
+
+/**
+ * Deletes a comment (and, via DB cascade, any of its replies). Allowed for
+ * the comment's own author, moderators (on non-admin-distinguished comments),
+ * and admins.
+ * @param {number} id Numeric video id.
+ * @param {number} commentId Comment id to delete.
+ * @returns {Promise<void>}
+ */
+export async function deleteComment(id, commentId) {
+  await apiClient.delete(`/api/v1/videos/${id}/comments/${commentId}`)
+}
