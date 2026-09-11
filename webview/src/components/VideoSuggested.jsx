@@ -5,6 +5,8 @@ import './VideoSuggested.css'
 
 const TOTAL_COUNT = 15
 const TAG_MATCH_COUNT = 3
+// Caps worst-case tag fan-out for heavily-tagged videos.
+const MAX_TAG_SEARCHES = 5
 
 /**
  * Fisher-Yates shuffle, non-mutating.
@@ -49,47 +51,34 @@ function VideoSuggested({ video, autoplayEnabled, onAutoplayChange, onSuggestion
       const seenIds = new Set([video.id])
       const results = []
 
-      const tags = video.tags ?? []
-      if (tags.length > 0) {
-        const tagSearches = await Promise.allSettled(
-          tags.map((tag) => searchVideos({ tags: [tag], limit: TAG_MATCH_COUNT * 3 })),
-        )
-        const tagPool = []
-        const tagPoolIds = new Set()
-        for (const outcome of tagSearches) {
-          if (outcome.status !== 'fulfilled') {
-            // One tag's search failed (e.g. search backend unavailable) -
-            // skip it and keep the others.
-            continue
-          }
-          for (const item of outcome.value.items ?? []) {
-            if (!seenIds.has(item.id) && !tagPoolIds.has(item.id)) {
-              tagPoolIds.add(item.id)
-              tagPool.push(item)
-            }
-          }
-        }
+      const tags = (video.tags ?? []).slice(0, MAX_TAG_SEARCHES)
+
+      // Fire both requests together (not chained) for one round trip instead
+      // of two. Random count is requested pessimistically (as if zero tags
+      // matched) since the real shortfall isn't known until both resolve.
+      const tagSearchPromise =
+        tags.length > 0
+          ? searchVideos({ tags, tagsMode: 'any', limit: TAG_MATCH_COUNT * 5 })
+          : Promise.resolve({ items: [] })
+      const randomPromise = getRandomVideos({ quantity: TOTAL_COUNT + seenIds.size })
+
+      const [tagOutcome, randomOutcome] = await Promise.allSettled([tagSearchPromise, randomPromise])
+
+      if (tagOutcome.status === 'fulfilled') {
+        const tagPool = (tagOutcome.value.items ?? []).filter((item) => !seenIds.has(item.id))
         for (const item of shuffle(tagPool).slice(0, TAG_MATCH_COUNT)) {
           seenIds.add(item.id)
           results.push(item)
         }
       }
+      // Otherwise tag search failed; random backfill fills the whole rail.
 
-      // Fill the rest of TOTAL_COUNT with random videos - this also
-      // backfills any tag-match shortfall, so the rail still reaches
-      // TOTAL_COUNT even when few/no tags matched.
-      const randomTarget = TOTAL_COUNT - results.length
-      try {
-        // Worst case every fetched video collides with seenIds, so ask for
-        // that many extra to still end up with randomTarget after filtering.
-        const { items } = await getRandomVideos({
-          quantity: randomTarget + seenIds.size,
-        })
-        const pool = (items ?? []).filter((item) => !seenIds.has(item.id))
+      if (randomOutcome.status === 'fulfilled') {
+        const randomTarget = TOTAL_COUNT - results.length
+        const pool = (randomOutcome.value.items ?? []).filter((item) => !seenIds.has(item.id))
         results.push(...pool.slice(0, randomTarget))
-      } catch {
-        // No random fallback available; show whatever tag matches were found.
       }
+      // Otherwise no random fallback available; show whatever tag matches were found.
 
       if (!cancelled) {
         setSuggestions(results)

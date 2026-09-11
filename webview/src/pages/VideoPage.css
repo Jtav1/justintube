@@ -12,6 +12,29 @@
   color: var(--text);
 }
 
+.video-page-skeleton-player {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  border-radius: 8px;
+}
+
+.video-page-skeleton-text {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.video-page-skeleton-title {
+  height: 20px;
+  width: 50%;
+}
+
+.video-page-skeleton-meta {
+  height: 13px;
+  width: 30%;
+}
+
 .video-page-hidden-notice {
   display: flex;
   flex-direction: column;

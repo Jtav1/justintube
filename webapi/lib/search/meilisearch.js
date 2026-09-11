@@ -155,18 +155,22 @@ export async function removeVideoDocument(originalUploadId) {
  *
  * @param {object} params Search parameters.
  * @param {string} [params.q] Free-text query.
- * @param {string[]} [params.tags] Tags that must all be present (AND).
+ * @param {string[]} [params.tags] Tags to filter by.
+ * @param {"all"|"any"} [params.tagsMode] Whether `tags` must ALL be present (default) or ANY of them.
  * @param {string} [params.username] Exact uploader username filter.
  * @param {string} [params.sort] Meilisearch sort clause, e.g. "createdAt:desc".
  * @param {number} params.page 1-indexed page number.
  * @param {number} params.limit Page size.
  * @returns {Promise<import("meilisearch").SearchResponse>} Raw Meilisearch response.
  */
-export async function searchVideos({ q, tags, username, sort, page, limit }) {
+export async function searchVideos({ q, tags, tagsMode, username, sort, page, limit }) {
   await ensureIndexConfigured();
   const filterClauses = ["visibility = public"];
   if (tags?.length) {
-    filterClauses.push(`(${tags.map((t) => `tags = ${JSON.stringify(t)}`).join(" OR ")})`);
+    const tagClauses = tags.map((t) => `tags = ${JSON.stringify(t)}`);
+    filterClauses.push(
+      tagsMode === "any" ? `(${tagClauses.join(" OR ")})` : tagClauses.join(" AND "),
+    );
   }
   if (username) {
     filterClauses.push(`username = ${JSON.stringify(username)}`);
