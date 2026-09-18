@@ -7,6 +7,7 @@ import { prefetchVideo, getVideoOrPrefetched } from '../lib/videoPrefetchCache.j
 import { useToast } from '../context/useToast.js'
 import { useIsMobile } from '../lib/viewport.js'
 import apiClient from '../api/client.js'
+import { useCast } from '../context/useCast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
@@ -16,6 +17,7 @@ import './VideoPage.css'
 
 function VideoPage() {
   const { error: toastError } = useToast()
+  const { session: castSession, addToQueue } = useCast()
   const navigate = useNavigate()
   const isMobile = useIsMobile()
   const [searchParams] = useSearchParams()
@@ -182,6 +184,27 @@ function VideoPage() {
   const canEditPlaylist = Boolean(playlist)
     && (playlist.viewerPermission === 'owner' || playlist.viewerPermission === 'edit')
 
+  /**
+   * Adds the video being watched to the active CAST session's queue. Takes the
+   * public videoId string (not the numeric id) because that's what the socket's
+   * queue:add event expects. Errors propagate so VideoPlayer can toast them.
+   * @returns {Promise<void>}
+   */
+  function handleAddToCastQueue() {
+    return addToQueue(video.videoId)
+  }
+
+  function handleReport() {
+    navigate('/reports/new', {
+      state: {
+        reportType: 'video',
+        videoId: video.id,
+        playlistId: playlist?.id,
+        link: window.location.href,
+      },
+    })
+  }
+
   async function handleRemoveFromPlaylist() {
     try {
       await removePlaylistItem(playlist.id, video.id)
@@ -232,6 +255,7 @@ function VideoPage() {
               autoplayOnLoad={autoplayOnLoad}
               expanded={expanded && !isMobile}
               onToggleExpand={isMobile ? undefined : () => setExpanded((prev) => !prev)}
+              onAddToCastQueue={castSession ? handleAddToCastQueue : undefined}
             />
             <VideoComments video={video} />
           </div>

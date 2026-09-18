@@ -8,6 +8,16 @@ import CastPage from './pages/CastPage.jsx'
 import CastJoinPage from './pages/CastJoinPage.jsx'
 import CastDisplayPage from './pages/CastDisplayPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
+import ControlPanelPage from './pages/AdminPanel.jsx'
+import AdminThemesPage from './pages/AdminThemes.jsx'
+import AdminTranscodeProfilesPage from './pages/AdminTranscodeProfiles.jsx'
+import AdminCastSessionsPage from './pages/AdminCastSessions.jsx'
+import ReportsPage from './pages/ReportsPage.jsx'
+import ReportForm from './pages/ReportForm.jsx'
+import UserPlaylistsPage from './pages/UserPlaylists.jsx'
+import PlaylistsPage from './pages/Playlists.jsx'
+import FeaturedVideosPage from './pages/FeaturedVideos.jsx'
+import UsersListPage from './pages/UsersList.jsx'
 import SearchResultsPage from './pages/SearchResults.jsx'
 import { useSiteConfig } from './context/useSiteConfig.js'
 import RouteLoadingFallback from './components/RouteLoadingFallback.jsx'
@@ -79,7 +89,9 @@ function App() {
           <Route path="/upload" element={<UploadPage />} />
           {livestreamEnabled && <Route path="/go-live" element={<GoLivePage />} />}
           {livestreamEnabled && <Route path="/live/:id" element={<LiveWatchPage />} />}
-          {castEnabled && <Route path="/cast/:id" element={<CastPage />} />}
+          {castEnabled && (
+            <Route path="/control-panel/cast-sessions" element={<AdminCastSessionsPage />} />
+          )}
           <Route path="/playlists/new" element={<CreatePlaylistPage />} />
           <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
           <Route path="/playlists/:id" element={<PlaylistPage />} />

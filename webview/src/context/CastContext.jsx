@@ -5,6 +5,7 @@ import * as castApi from '../api/cast.js'
 import { CastContext } from './cast-context.js'
 import { useAuth } from './useAuth.js'
 import { useToast } from './useToast.js'
+import { readActiveCastSessionId, writeActiveCastSessionId } from '../lib/cast-session.js'
 
 const MAX_ACTIVITY_ENTRIES = 50
 
@@ -24,9 +25,12 @@ const EMPTY_PLAYBACK = { status: 'paused', positionSeconds: 0, updatedAt: null }
  */
 export function CastProvider({ children }) {
   const { user } = useAuth()
-  const { error: toastError } = useToast()
+  const { error: toastError, info: toastInfo } = useToast()
 
-  const [activeSessionId, setActiveSessionId] = useState(null)
+  // Seeded from localStorage so a reload rejoins the session the user was in,
+  // rather than silently dropping them out of the party. The socket's join ack
+  // rejects a stale or ended id, which clears it through the usual path.
+  const [activeSessionId, setActiveSessionId] = useState(readActiveCastSessionId)
   const [connected, setConnected] = useState(false)
   // Set whenever a join attempt fails or a live session goes away out from
   // under the caller (kicked, or otherwise no longer a member) - the one
@@ -34,19 +38,25 @@ export function CastProvider({ children }) {
   // "never got in" and "was in, then kicked" without needing to distinguish
   // them separately.
   const [joinError, setJoinError] = useState(null)
+  // Set when the session the caller was in ended normally (owner or admin),
+  // as opposed to joinError's "you can't be here" cases. Kept separate so the
+  // pages can show "this session has ended" rather than an error, while the
+  // session state itself is cleared out from under them - see handleEnded.
+  const [ended, setEnded] = useState(false)
   // Adjusted during render (not the connect effect below) so starting a
-  // fresh attempt clears any previous error without a synchronous
+  // fresh attempt clears any previous error/ended flag without a synchronous
   // setState-in-effect - same pattern as SearchAutocomplete's `clearedFor`.
   // Deliberately only fires when activeSessionId becomes a new *non-null*
   // value (a new attempt) - it must NOT fire when activeSessionId goes back
-  // to null, since that's exactly what happens *when* an error occurs
-  // (handleConnect's ack failure and handleKicked both null it out in the
-  // same batch as setJoinError), which would otherwise erase the error
-  // before CastPage/CastDisplayPage's effect ever saw it.
-  const [joinErrorClearedFor, setJoinErrorClearedFor] = useState(null)
-  if (activeSessionId != null && activeSessionId !== joinErrorClearedFor) {
-    setJoinErrorClearedFor(activeSessionId)
+  // to null, since that's exactly what happens *when* a session goes away
+  // (handleConnect's ack failure, handleKicked and handleEnded all null it
+  // out in the same batch), which would otherwise erase the signal before
+  // CastPage/CastDisplayPage's effect ever saw it.
+  const [clearedFor, setClearedFor] = useState(null)
+  if (activeSessionId != null && activeSessionId !== clearedFor) {
+    setClearedFor(activeSessionId)
     setJoinError(null)
+    setEnded(false)
   }
   const [session, setSession] = useState(null)
   const [queue, setQueue] = useState([])
@@ -83,6 +93,13 @@ export function CastProvider({ children }) {
   function pushActivity(entry) {
     setActivity((prev) => [...prev.slice(-(MAX_ACTIVITY_ENTRIES - 1)), entry])
   }
+
+  // Mirror the active session into localStorage so a reload can pick it back
+  // up. Writing an external store from an effect is exactly what effects are
+  // for, so this stays out of the setters themselves.
+  useEffect(() => {
+    writeActiveCastSessionId(activeSessionId)
+  }, [activeSessionId])
 
   // Opens (and tears down) the socket connection whenever activeSessionId
   // changes - this is the "lazy connect" seam: no socket exists at all until
@@ -142,8 +159,15 @@ export function CastProvider({ children }) {
       setActiveSessionId(null)
       resetState()
     }
+    // Mirrors handleKicked: the session is gone, so every trace of it has to
+    // go too. Patching status in place used to leave `session` truthy, which
+    // kept StartCastPopover showing the QR code and join link for a dead
+    // session app-wide (it lives in the TopBar, so it outlives the cast page).
     function handleEnded() {
-      setSession((prev) => (prev ? { ...prev, status: 'ended' } : prev))
+      toastInfo('This CAST session has ended.')
+      setEnded(true)
+      setActiveSessionId(null)
+      resetState()
     }
 
     socket.on('connect', handleConnect)
@@ -161,8 +185,9 @@ export function CastProvider({ children }) {
       socketRef.current = null
       setConnected(false)
     }
-    // toastError deliberately omitted: it's a context function that would
-    // tear down and reopen the socket on every ToastProvider re-render.
+    // toastError/toastInfo deliberately omitted: they're context functions
+    // that would tear down and reopen the socket on every ToastProvider
+    // re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, user])
 
@@ -254,6 +279,32 @@ export function CastProvider({ children }) {
   function leaveActiveSession() {
     setActiveSessionId(null)
     resetState()
+  }
+
+  /**
+   * Leaves the session for real: drops membership server-side, then tears the
+   * local state down. Distinct from `leaveActiveSession`, which only stops
+   * tracking a session locally - now that a session survives navigation, this
+   * is the only deliberate way out short of the owner ending it.
+   * @returns {Promise<void>}
+   */
+  async function leaveSession() {
+    if (!session) return
+    await castApi.leaveCastSession(session.id)
+    setActiveSessionId(null)
+    resetState()
+  }
+
+  /**
+   * Renames the active session (owner or admin). The server broadcasts
+   * `state:sync` afterwards, so local state updates through the socket rather
+   * than from this response.
+   * @param {string} title
+   * @returns {Promise<void>}
+   */
+  async function renameSession(title) {
+    if (!session) return
+    await castApi.renameCastSession(session.id, title)
   }
 
   /**
@@ -352,22 +403,31 @@ export function CastProvider({ children }) {
   }
 
   /**
-   * Ends the active session (owner only) via REST, then clears local state.
+   * Ends the active session (owner or admin) via REST, then clears local
+   * state. It can't wait for its own `session:ended` broadcast to do the
+   * clearing: nulling activeSessionId tears the socket down in the connect
+   * effect's cleanup, which races the inbound event.
    * @returns {Promise<void>}
    */
   async function endActiveSession() {
     if (!session) return
     await castApi.endCastSession(session.id)
+    setEnded(true)
     setActiveSessionId(null)
+    resetState()
   }
 
   const isOwner = Boolean(user && session && Number(session.ownerUserId) === Number(user.id))
+  // Mirrors the server's owner-or-admin check on rename/end, so the UI only
+  // offers what the API will actually accept.
+  const canManageSession = Boolean(session && (isOwner || user?.role === 'admin'))
 
   return (
     <CastContext.Provider
       value={{
         connected,
         joinError,
+        ended,
         session,
         queue,
         history,
@@ -378,12 +438,15 @@ export function CastProvider({ children }) {
         activity,
         loading,
         isOwner,
+        canManageSession,
         createFromPlaylist,
         createFromVideo,
         createEmpty,
         joinByCode,
         enterSession,
         leaveActiveSession,
+        leaveSession,
+        renameSession,
         addToQueue,
         removeFromQueue,
         moveInQueue,

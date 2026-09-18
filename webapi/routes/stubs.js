@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { castEnabled } from "../lib/cast-config.js";
+import { deviceCastEnabled } from "../lib/cast-devices/config.js";
 import { livestreamEnabled } from "../lib/livestream-config.js";
 import { createAdminBroadcastRouter } from "./admin-broadcast.js";
 import { createAdminFilesRouter } from "./admin-files.js";
 import { createAdminJobsRouter } from "./admin-jobs.js";
+import { createAdminCastRouter } from "./admin-cast.js";
+import { createCastDevicesRouter } from "./cast-devices.js";
 import { createAdminUsersRouter } from "./admin-users.js";
 import { createApiKeysRouter } from "./api-keys.js";
 import { createAuthRouter } from "./auth.js";
@@ -96,6 +99,12 @@ export function createApiRouter() {
   // index.js's start() - this only covers the REST surface.
   if (castEnabled()) {
     router.use(createCastRouter());
+    router.use(createAdminCastRouter());
+  }
+  // Separately gated from ENABLE_CAST: device casting needs the API process on
+  // the same L2 network as the TV (host networking), which watch parties don't.
+  if (deviceCastEnabled()) {
+    router.use(createCastDevicesRouter());
   }
   router.use(createNotificationPreferencesRouter());
   router.use(createNotificationsRouter());

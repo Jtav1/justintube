@@ -4,6 +4,7 @@ import { getAuthContext } from "../auth/require-auth.js";
 import { createSessionMiddleware } from "../auth/session.js";
 import { logger } from "../logger.js";
 import { CastSession } from "../models/index.js";
+import { isReactionEmoji, recordEmojiUse } from "./emoji-usage.js";
 import { CastServiceError } from "./errors.js";
 import {
   addQueueItem,
@@ -480,11 +481,17 @@ export function attachCastRealtime(httpServer) {
     socket.on("react", (payload) => {
       const sessionId = socket.data.sessionId;
       if (sessionId == null) return;
-      const emoji = String(payload?.emoji ?? "").slice(0, 8);
-      if (!emoji) return;
+      const emoji = payload?.emoji;
+      // Validated rather than truncated: this is broadcast to every member's
+      // screen, so arbitrary text must not get through - and the old
+      // slice(0, 8) corrupted legitimate emoji (👨‍👩‍👧‍👦 is 11 code units).
+      if (!isReactionEmoji(emoji)) return;
       io.of("/cast")
         .to(roomName(sessionId))
         .emit("react", { emoji, name: displayNameFor(socket.data.user) });
+      // Fire-and-forget: recordEmojiUse swallows its own failures, so a
+      // counter write can never hold up or break the broadcast above.
+      recordEmojiUse(emoji);
     });
 
     socket.on("disconnect", () => {

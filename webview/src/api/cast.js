@@ -96,10 +96,44 @@ export async function kickCastMember(id, userId) {
 }
 
 /**
- * Ends a session. Owner only.
+ * Ends a session. Owner or admin.
  * @param {string|number} id
  * @returns {Promise<void>}
  */
 export async function endCastSession(id) {
   await apiClient.post(`/api/v1/cast/${id}/end`)
+}
+
+/**
+ * Renames a session. Owner or admin.
+ * @param {string|number} id
+ * @param {string} title
+ * @returns {Promise<object>} Updated session snapshot.
+ */
+export async function renameCastSession(id, title) {
+  const res = await apiClient.patch(`/api/v1/cast/${id}`, { title })
+  return res.data
+}
+
+/**
+ * Leaves a session, dropping the caller's own membership. The session keeps
+ * running for everyone else.
+ * @param {string|number} id
+ * @returns {Promise<void>}
+ */
+export async function leaveCastSession(id) {
+  await apiClient.post(`/api/v1/cast/${id}/leave`)
+}
+
+/**
+ * Lists the instance's most-used reaction emoji, highest first. Site-wide, not
+ * per-user, and padded with the seeded defaults so it's never short.
+ * @param {number} [limit]
+ * @returns {Promise<{items: string[]}>}
+ */
+export async function listReactionEmoji(limit) {
+  const res = await apiClient.get('/api/v1/reaction-emoji', {
+    params: limit ? { limit } : undefined,
+  })
+  return res.data
 }

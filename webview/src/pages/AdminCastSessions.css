@@ -1,0 +1,148 @@
+/* The shared settings card is capped at 640px for single-column forms, which
+   is far too narrow for a seven-column table - the End button ended up
+   rendering outside the card. Compound selector so this wins over
+   .settings-card regardless of stylesheet order. */
+.settings-card.admin-cast-card {
+  flex-basis: 1100px;
+  max-width: 1100px;
+  width: 100%;
+}
+
+.admin-cast-intro {
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* The table is the one thing allowed to out-scroll the card, so a narrow
+   viewport scrolls the columns instead of the whole page. */
+.admin-cast-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-cast-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.admin-cast-table th,
+.admin-cast-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* Free-text columns wrap instead of stretching the table, so the End button
+   stays on screen rather than being pushed past the right edge. */
+.admin-cast-table th.admin-cast-wrap,
+.admin-cast-table td.admin-cast-wrap {
+  white-space: normal;
+  min-width: 120px;
+}
+
+/* Shrink-to-fit: the action column takes only what the button needs, pinned
+   to the right of the row. */
+.admin-cast-table th.admin-cast-actions,
+.admin-cast-table td.admin-cast-actions {
+  width: 1%;
+  text-align: right;
+}
+
+.admin-cast-table th {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.admin-cast-table td {
+  color: var(--text-h);
+}
+
+.admin-cast-table tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-cast-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-cast-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.admin-cast-rename-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.admin-cast-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-cast-rename input {
+  flex: 1;
+  min-width: 120px;
+  padding: 4px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.admin-cast-rename button {
+  padding: 4px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-cast-rename button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.admin-cast-rename button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.admin-cast-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.admin-cast-end {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--error);
+  background: transparent;
+  color: var(--error);
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-cast-end:hover:not(:disabled) {
+  background: var(--error-bg);
+}
+
+.admin-cast-end:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

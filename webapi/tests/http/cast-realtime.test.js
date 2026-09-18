@@ -4,7 +4,7 @@ import request from "supertest";
 import { io as ioClient } from "socket.io-client";
 import { createApp } from "../../index.js";
 import { attachCastRealtime } from "../../lib/cast/realtime.js";
-import { Role } from "../../lib/models/index.js";
+import { EmojiReactionUsage, Role } from "../../lib/models/index.js";
 import {
   resetTables,
   seedMetadata,
@@ -210,6 +210,46 @@ describe("CAST realtime (Socket.IO /cast namespace)", () => {
     const tick = await waitForEvent(socket, "player:tick", 4000);
     expect(tick.status).toBe("playing");
     expect(typeof tick.positionSeconds).toBe("number");
+  }, 10000);
+
+  test("react broadcasts a multi-codepoint emoji intact and records its use", async () => {
+    await seedUserWithKey("rt-key-react-1");
+    const session = await createSession("rt-key-react-1");
+    const socket = connectSocket("rt-key-react-1");
+    await waitForEvent(socket, "connect");
+    await emitWithAck(socket, "session:join", { sessionId: session.session.id });
+
+    // 11 UTF-16 code units - the old slice(0, 8) handling corrupted this.
+    const reactPromise = waitForEvent(socket, "react");
+    socket.emit("react", { emoji: "👨‍👩‍👧‍👦" });
+
+    const payload = await reactPromise;
+    expect(payload.emoji).toBe("👨‍👩‍👧‍👦");
+
+    // The counter write is fire-and-forget, so give it a beat to land.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const row = await EmojiReactionUsage.findByPk("👨‍👩‍👧‍👦", { raw: true });
+    expect(row).not.toBeNull();
+    expect(Number(row.useCount)).toBe(1);
+  }, 10000);
+
+  test("react ignores a non-emoji payload entirely", async () => {
+    await seedUserWithKey("rt-key-react-2");
+    const session = await createSession("rt-key-react-2");
+    const socket = connectSocket("rt-key-react-2");
+    await waitForEvent(socket, "connect");
+    await emitWithAck(socket, "session:join", { sessionId: session.session.id });
+
+    let received = null;
+    socket.on("react", (payload) => {
+      received = payload;
+    });
+    socket.emit("react", { emoji: "<script>alert(1)</script>" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(received).toBeNull();
+    const rows = await EmojiReactionUsage.findAll({ where: {}, raw: true });
+    expect(rows.every((row) => Number(row.useCount) === 0)).toBe(true);
   }, 10000);
 
   test("a REST kick forcibly disconnects the kicked member's live socket", async () => {

@@ -9,6 +9,9 @@ export function SiteConfigProvider({ children }) {
   const [transcodingEnabled, setTranscodingEnabled] = useState(true)
   // Matches the webapi default (ENABLE_CAST defaults to true) for the same reason.
   const [castEnabled, setCastEnabled] = useState(true)
+  // Matches the webapi default (ENABLE_DEVICE_CAST defaults to false): server
+  // side casting needs hardware on the network, so assume absent until told.
+  const [deviceCastEnabled, setDeviceCastEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -21,6 +24,7 @@ export function SiteConfigProvider({ children }) {
           setLivestreamEnabled(Boolean(config.livestreamEnabled))
           setTranscodingEnabled(config.transcodingEnabled !== false)
           setCastEnabled(config.castEnabled !== false)
+          setDeviceCastEnabled(Boolean(config.deviceCastEnabled))
         }
       } catch (err) {
         console.error('Failed to load site config:', err)
@@ -40,7 +44,7 @@ export function SiteConfigProvider({ children }) {
 
   return (
     <SiteConfigContext.Provider
-      value={{ livestreamEnabled, transcodingEnabled, castEnabled, loading }}
+      value={{ livestreamEnabled, transcodingEnabled, castEnabled, deviceCastEnabled, loading }}
     >
       {children}
     </SiteConfigContext.Provider>

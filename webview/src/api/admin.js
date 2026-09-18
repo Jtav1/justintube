@@ -62,3 +62,22 @@ export async function getAdminJobHistory({ page, limit } = {}) {
   const res = await apiClient.get('/api/v1/admin/jobs/history', { params: { page, limit } })
   return res.data
 }
+
+/**
+ * Lists every active CAST session across all users (admin only).
+ * @param {{limit?: number, offset?: number}} [params]
+ * @returns {Promise<{items: object[], total: number, limit: number, offset: number}>}
+ */
+export async function adminListCastSessions(params = {}) {
+  const res = await apiClient.get('/api/v1/admin/cast/sessions', { params })
+  return res.data
+}
+
+/**
+ * Ends any CAST session administratively, disconnecting every participant.
+ * @param {number} id CAST session id.
+ * @returns {Promise<void>}
+ */
+export async function adminEndCastSession(id) {
+  await apiClient.post(`/api/v1/admin/cast/sessions/${id}/end`)
+}

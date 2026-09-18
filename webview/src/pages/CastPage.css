@@ -29,30 +29,6 @@
   position: relative;
 }
 
-.cast-page-reaction-bar {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.cast-page-reaction-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  font-size: 20px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  cursor: pointer;
-}
-
-.cast-page-reaction-btn:hover {
-  border-color: var(--accent-border);
-  background: var(--accent-bg);
-}
-
 .cast-page-sidebar {
   width: 25%;
   flex-shrink: 0;

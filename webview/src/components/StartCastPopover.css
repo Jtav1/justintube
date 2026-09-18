@@ -48,7 +48,9 @@
 .cast-popover-start-list button,
 .cast-popover-playlist-row button,
 .cast-popover-open,
-.cast-popover-copy {
+.cast-popover-copy,
+.cast-popover-leave,
+.cast-popover-end {
   padding: 8px 12px;
   border-radius: 6px;
   border: 1px solid var(--accent-border);
@@ -69,6 +71,116 @@
 .cast-popover-join-row button:disabled,
 .cast-popover-start-list button:disabled,
 .cast-popover-playlist-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Label-then-icon, so the play glyph sits after the text on its baseline
+   instead of hanging off the end of the line box. Scoped under the list so it
+   outranks the shared .cast-popover-start-list button rules above. */
+.cast-popover-start-list button.cast-popover-start {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-color: var(--success);
+  background: var(--success);
+  color: #fff;
+}
+
+.cast-popover-start-list button.cast-popover-start:hover:not(:disabled) {
+  background: var(--success);
+  filter: brightness(1.1);
+}
+
+/* --success lightens in dark mode, where white-on-green drops below a
+   readable contrast ratio - hold the darker green so the label stays legible. */
+@media (prefers-color-scheme: dark) {
+  .cast-popover-start-list button.cast-popover-start {
+    border-color: #2e7d32;
+    background: #2e7d32;
+  }
+}
+
+.cast-popover-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.cast-popover-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cast-popover-rename-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.cast-popover-rename input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.cast-popover-rename-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.cast-popover-rename-actions button {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cast-popover-rename-actions button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.cast-popover-rename-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cast-popover-leave:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+/* Ending a session is destructive for everyone in it, so it carries the same
+   error treatment as CastQueue's end button rather than reading as a peer of
+   Leave. */
+.cast-popover-end {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.cast-popover-end:hover:not(:disabled) {
+  background: var(--error-bg);
+}
+
+.cast-popover-leave:disabled,
+.cast-popover-end:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -134,7 +246,9 @@
 }
 
 .cast-popover-copy,
-.cast-popover-open {
+.cast-popover-open,
+.cast-popover-leave,
+.cast-popover-end {
   display: inline-flex;
   align-items: center;
   justify-content: center;

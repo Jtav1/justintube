@@ -35,6 +35,7 @@ import { UserNotificationSetting } from "./user-notification-setting.js";
 import { UserPlaylist } from "./user-playlist.js";
 import { UserViewHistory } from "./user-view-history.js";
 import { VideoAccess } from "./video-access.js";
+import { EmojiReactionUsage } from "./emoji-reaction-usage.js";
 import { VideoLike } from "./video-like.js";
 import { VideoMetadata } from "./video-metadata.js";
 import { VideoThumbnail } from "./video-thumbnail.js";
@@ -669,6 +670,7 @@ export const models = {
   PlaylistAccess,
   Report,
   DuplicateUploadFlag,
+  EmojiReactionUsage,
   VideoLike,
   VideoAccess,
   ContentTag,
@@ -722,6 +724,7 @@ export {
   UserApiKeyScope,
   UserHiddenVideo,
   UserIdentity,
+  EmojiReactionUsage,
   UserNotificationSetting,
   UserPlaylist,
   UserViewHistory,

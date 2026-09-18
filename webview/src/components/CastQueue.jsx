@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Pause, Play, SkipBack, SkipForward, Square, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Pause, Pencil, Play, SkipBack, SkipForward, Square, X } from 'lucide-react'
 import { suggestSearch } from '../api/search.js'
 import { useCast } from '../context/useCast.js'
 import { useToast } from '../context/useToast.js'
@@ -30,9 +30,14 @@ function CastQueue() {
     skip,
     previous,
     endActiveSession,
+    canManageSession,
+    renameSession,
   } = useCast()
   const { error: toastError } = useToast()
 
+  const [renaming, setRenaming] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
   const [addValue, setAddValue] = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [suggestOpen, setSuggestOpen] = useState(false)
@@ -127,6 +132,30 @@ function CastQueue() {
     }
   }
 
+  /**
+   * Renames the session from the page itself. The new title comes back over
+   * the socket's state:sync broadcast, so there's nothing to set locally.
+   *
+   * @param {import('react').FormEvent} event Submit event.
+   * @returns {Promise<void>}
+   */
+  async function handleRenameSubmit(event) {
+    event.preventDefault()
+    const title = titleDraft.trim()
+    if (!title || renameBusy) {
+      return
+    }
+    setRenameBusy(true)
+    try {
+      await renameSession(title)
+      setRenaming(false)
+    } catch (err) {
+      toastError(err.message || 'Failed to rename the session.')
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
   async function handleEndSession() {
     if (!window.confirm('End this CAST session for everyone?')) {
       return
@@ -142,8 +171,45 @@ function CastQueue() {
     <aside className="cast-queue">
       <div className="cast-queue-header">
         <div className="cast-queue-header-row">
-          <p className="cast-queue-title">{session?.title || 'CAST session'}</p>
-          {isOwner && (
+          {renaming ? (
+            <form className="cast-queue-rename" onSubmit={handleRenameSubmit}>
+              <input
+                type="text"
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                maxLength={255}
+                aria-label="Session name"
+                autoFocus
+              />
+              <div className="cast-queue-rename-actions">
+                <button type="submit" disabled={renameBusy || !titleDraft.trim()}>
+                  Save
+                </button>
+                <button type="button" disabled={renameBusy} onClick={() => setRenaming(false)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <p className="cast-queue-title">
+              {session?.title || 'CAST session'}
+              {canManageSession && (
+                <button
+                  type="button"
+                  className="cast-queue-rename-btn"
+                  aria-label="Rename session"
+                  title="Rename session"
+                  onClick={() => {
+                    setTitleDraft(session?.title ?? '')
+                    setRenaming(true)
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
+            </p>
+          )}
+          {isOwner && !renaming && (
             <button
               type="button"
               className="cast-queue-end"

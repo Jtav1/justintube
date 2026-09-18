@@ -771,21 +771,29 @@ export async function leaveSession({ session, user }) {
 }
 
 /**
- * Ends a session (owner-only): freezes the playback clock, marks the
+ * Ends a session (owner or admin): freezes the playback clock, marks the
  * session `"ended"`. The realtime layer is responsible for broadcasting
  * `session:ended` and clearing the room afterward.
  *
  * @param {object} params
  * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
  * @param {import('sequelize').Model} params.actingUser The user requesting the end.
+ * @param {{ name?: string }} [params.actingRole] The caller's role, so admins can
+ *   end any session from the admin surface. Omitted callers are owner-only.
  * @returns {Promise<object>} The ended session's {@link loadSessionSnapshot} result.
- * @throws {CastServiceError} 403 if the caller isn't the owner, 409 if already ended.
+ * @throws {CastServiceError} 403 if the caller is neither owner nor admin, 409 if already ended.
  */
-export async function endSession({ session, actingUser }) {
+export async function endSession({ session, actingUser, actingRole }) {
   assertSessionActive(session);
 
-  if (Number(actingUser.id) !== Number(session.ownerUserId)) {
-    throw new CastServiceError(403, "forbidden", "Only the session owner can end the session.");
+  const isOwner = Number(actingUser.id) === Number(session.ownerUserId);
+  const isAdmin = actingRole?.name === "admin";
+  if (!isOwner && !isAdmin) {
+    throw new CastServiceError(
+      403,
+      "forbidden",
+      "Only the session owner or an admin can end the session.",
+    );
   }
 
   session.playbackPositionSeconds = effectivePosition(session);
@@ -793,6 +801,39 @@ export async function endSession({ session, actingUser }) {
   session.playbackUpdatedAt = new Date();
   session.status = "ended";
   session.endedAt = new Date();
+  await session.save();
+
+  return loadSessionSnapshot(session);
+}
+
+/**
+ * Renames a session (owner or admin). The caller is expected to have already
+ * validated and trimmed `title`; the realtime layer re-broadcasts the snapshot
+ * so connected members see the new name without a refetch.
+ *
+ * @param {object} params
+ * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
+ * @param {import('sequelize').Model} params.actingUser The user requesting the rename.
+ * @param {{ name?: string }} [params.actingRole] The caller's role, so admins can
+ *   rename any session. Omitted callers are owner-only.
+ * @param {string} params.title The new title.
+ * @returns {Promise<object>} The renamed session's {@link loadSessionSnapshot} result.
+ * @throws {CastServiceError} 403 if the caller is neither owner nor admin, 409 if already ended.
+ */
+export async function renameSession({ session, actingUser, actingRole, title }) {
+  assertSessionActive(session);
+
+  const isOwner = Number(actingUser.id) === Number(session.ownerUserId);
+  const isAdmin = actingRole?.name === "admin";
+  if (!isOwner && !isAdmin) {
+    throw new CastServiceError(
+      403,
+      "forbidden",
+      "Only the session owner or an admin can rename the session.",
+    );
+  }
+
+  session.title = title;
   await session.save();
 
   return loadSessionSnapshot(session);

@@ -19,6 +19,72 @@
   font-size: 18px;
   font-weight: 500;
   color: var(--text-h);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cast-queue-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 3px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cast-queue-rename-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+/* Takes the whole header row while editing - the End button is hidden during
+   a rename, so there's nothing to sit beside. */
+.cast-queue-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+.cast-queue-rename input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.cast-queue-rename-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.cast-queue-rename-actions button {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cast-queue-rename-actions button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.cast-queue-rename-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .cast-queue-end {

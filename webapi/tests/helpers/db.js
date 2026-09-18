@@ -13,6 +13,7 @@ import {
   CastSession,
   CastSessionMember,
   Comment,
+  EmojiReactionUsage,
   ContentTag,
   DuplicateUploadFlag,
   FeaturedVideo,
@@ -64,6 +65,7 @@ import { ensureUserNotificationSettings } from "../../lib/seed.js";
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>[]}
  */
 const RESET_MODELS = [
+  EmojiReactionUsage,
   CastQueueItem,
   CastSessionMember,
   CastSession,
