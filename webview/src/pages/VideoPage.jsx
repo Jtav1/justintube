@@ -5,6 +5,7 @@ import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useCast } from '../context/useCast.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
@@ -14,6 +15,7 @@ import './VideoPage.css'
 function VideoPage() {
   const { user } = useAuth()
   const { error: toastError } = useToast()
+  const { session: castSession, addToQueue } = useCast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const videoId = searchParams.get('v')
@@ -153,6 +155,16 @@ function VideoPage() {
   const canEditPlaylist = Boolean(playlist)
     && (playlist.viewerPermission === 'owner' || playlist.viewerPermission === 'edit')
 
+  /**
+   * Adds the video being watched to the active CAST session's queue. Takes the
+   * public videoId string (not the numeric id) because that's what the socket's
+   * queue:add event expects. Errors propagate so VideoPlayer can toast them.
+   * @returns {Promise<void>}
+   */
+  function handleAddToCastQueue() {
+    return addToQueue(video.videoId)
+  }
+
   function handleReport() {
     navigate('/reports/new', {
       state: {
@@ -201,6 +213,7 @@ function VideoPage() {
               onAutoplayNext={handleAutoplayNext}
               onAutoplayChange={handleAutoplayChange}
               autoplayOnLoad={autoplayOnLoad}
+              onAddToCastQueue={castSession ? handleAddToCastQueue : undefined}
             />
             <VideoComments video={video} />
           </div>

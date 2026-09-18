@@ -7,6 +7,7 @@ import {
   seedAdminUser,
   seedDemoUsers,
   seedThemes,
+  seedReactionEmoji,
   seedTranscodeProfiles,
   seedNotificationTypes,
   shouldSeedDemoUsers,
@@ -815,6 +816,7 @@ export async function ensureSchema() {
     await seedDemoUsers();
   }
   await seedThemes();
+  await seedReactionEmoji();
   if (shouldSeedDefaultTranscodeProfiles()) {
     await seedTranscodeProfiles();
   }

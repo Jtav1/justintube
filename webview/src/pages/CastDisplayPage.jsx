@@ -23,8 +23,17 @@ function CastDisplayPage() {
   const { id } = useParams()
   const { user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
-  const { session, nowPlaying, playback, members, joinError, enterSession, leaveActiveSession } =
-    useCast()
+  const {
+    session,
+    nowPlaying,
+    playback,
+    members,
+    joinError,
+    ended,
+    enterSession,
+    play,
+    pause,
+  } = useCast()
 
   const videoPlayerRef = useRef(null)
   const [hudVisible, setHudVisible] = useState(true)
@@ -51,9 +60,7 @@ function CastDisplayPage() {
       return
     }
     enterSession(id)
-    return () => {
-      leaveActiveSession()
-    }
+    // No cleanup here either - see CastPage for why.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user, authLoading])
 
@@ -66,6 +73,23 @@ function CastDisplayPage() {
   }, [joinError, navigate])
 
   useCastPlaybackSync(videoPlayerRef, nowPlaying, playback)
+
+  /**
+   * Mirrors CastPage: a pause/play on this screen's own controls drives the
+   * session rather than being instantly reverted by the sync hook. Emits only
+   * when the element has diverged from the server clock, so the hook's own
+   * corrections don't echo back.
+   *
+   * @param {boolean} paused The element's new paused state.
+   * @returns {void}
+   */
+  function handlePlaybackIntent(paused) {
+    if (paused && playback.status === 'playing') {
+      pause().catch(() => {})
+    } else if (!paused && playback.status === 'paused') {
+      play().catch(() => {})
+    }
+  }
 
   // Detects an autoplay-block: whenever the server clock says "playing" but
   // the local element is paused, try to start it and surface a full-screen
@@ -115,10 +139,24 @@ function CastDisplayPage() {
     return null
   }
 
+  // No redirect here, unlike CastPage: this is the unattended TV view, where
+  // bouncing to the homepage would be less use than saying what happened.
+  if (ended) {
+    return (
+      <div className="cast-display">
+        <p className="cast-display-empty">This CAST session has ended.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="cast-display">
       {nowPlaying ? (
-        <VideoPlayer ref={videoPlayerRef} video={nowPlaying.video} />
+        <VideoPlayer
+          ref={videoPlayerRef}
+          video={nowPlaying.video}
+          onPlaybackIntent={handlePlaybackIntent}
+        />
       ) : (
         <p className="cast-display-empty">Waiting for a video…</p>
       )}

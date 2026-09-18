@@ -18,6 +18,7 @@ describe("ENABLE_LIVESTREAM gate", () => {
         livestreamEnabled: true,
         transcodingEnabled: true,
         castEnabled: true,
+        deviceCastEnabled: false,
       });
     });
 
@@ -29,6 +30,7 @@ describe("ENABLE_LIVESTREAM gate", () => {
         livestreamEnabled: false,
         transcodingEnabled: true,
         castEnabled: true,
+        deviceCastEnabled: false,
       });
     });
   });

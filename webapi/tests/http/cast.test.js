@@ -533,6 +533,21 @@ describe("CAST endpoints (CAST_SESSIONS + CAST_QUEUE_ITEMS + CAST_SESSION_MEMBER
       expect(res.status).toBe(403);
     });
 
+    test("an admin who is not the owner can end the session", async () => {
+      await seedUserWithRoleAndKey("viewer", "end-key-4");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer end-key-4")
+        .send({ sourceType: "empty" });
+      await seedUserWithRoleAndKey("admin", "end-key-4-admin");
+
+      const res = await client
+        .post(`/api/v1/cast/${createRes.body.session.id}/end`)
+        .set("Authorization", "Bearer end-key-4-admin");
+
+      expect(res.status).toBe(204);
+    });
+
     test("409s ending an already-ended session", async () => {
       await seedUserWithRoleAndKey("viewer", "end-key-3");
       const createRes = await client
@@ -549,6 +564,199 @@ describe("CAST endpoints (CAST_SESSIONS + CAST_QUEUE_ITEMS + CAST_SESSION_MEMBER
 
       expect(res.status).toBe(409);
       expect(res.body.error).toBe("session_ended");
+    });
+  });
+
+  describe("PATCH /cast/:id (renameCastSession)", () => {
+    test("the owner renames the session and the snapshot carries the new title", async () => {
+      await seedUserWithRoleAndKey("viewer", "rename-key-1");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer rename-key-1")
+        .send({ sourceType: "empty" });
+
+      const res = await client
+        .patch(`/api/v1/cast/${createRes.body.session.id}`)
+        .set("Authorization", "Bearer rename-key-1")
+        .send({ title: "Friday Movie Night" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.session.title).toBe("Friday Movie Night");
+
+      const getRes = await client
+        .get(`/api/v1/cast/${createRes.body.session.id}`)
+        .set("Authorization", "Bearer rename-key-1");
+      expect(getRes.body.session.title).toBe("Friday Movie Night");
+    });
+
+    test("an admin who is not the owner can rename the session", async () => {
+      await seedUserWithRoleAndKey("viewer", "rename-key-2");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer rename-key-2")
+        .send({ sourceType: "empty" });
+      await seedUserWithRoleAndKey("admin", "rename-key-2-admin");
+
+      const res = await client
+        .patch(`/api/v1/cast/${createRes.body.session.id}`)
+        .set("Authorization", "Bearer rename-key-2-admin")
+        .send({ title: "Renamed by an admin" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.session.title).toBe("Renamed by an admin");
+    });
+
+    test("rejects a plain member attempting to rename with 403", async () => {
+      await seedUserWithRoleAndKey("viewer", "rename-key-3");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer rename-key-3")
+        .send({ sourceType: "empty" });
+      await seedUserWithRoleAndKey("viewer", "rename-key-3b");
+      await client
+        .post("/api/v1/cast/join")
+        .set("Authorization", "Bearer rename-key-3b")
+        .send({ code: createRes.body.session.code });
+
+      const res = await client
+        .patch(`/api/v1/cast/${createRes.body.session.id}`)
+        .set("Authorization", "Bearer rename-key-3b")
+        .send({ title: "Not allowed" });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+    });
+
+    test("400s on a blank title and on one longer than 255 characters", async () => {
+      await seedUserWithRoleAndKey("viewer", "rename-key-4");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer rename-key-4")
+        .send({ sourceType: "empty" });
+      const id = createRes.body.session.id;
+
+      const blank = await client
+        .patch(`/api/v1/cast/${id}`)
+        .set("Authorization", "Bearer rename-key-4")
+        .send({ title: "   " });
+      expect(blank.status).toBe(400);
+      expect(blank.body.error).toBe("invalid_body");
+
+      const tooLong = await client
+        .patch(`/api/v1/cast/${id}`)
+        .set("Authorization", "Bearer rename-key-4")
+        .send({ title: "x".repeat(256) });
+      expect(tooLong.status).toBe(400);
+      expect(tooLong.body.error).toBe("invalid_body");
+    });
+
+    test("409s renaming an ended session", async () => {
+      await seedUserWithRoleAndKey("viewer", "rename-key-5");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer rename-key-5")
+        .send({ sourceType: "empty" });
+      await client
+        .post(`/api/v1/cast/${createRes.body.session.id}/end`)
+        .set("Authorization", "Bearer rename-key-5");
+
+      const res = await client
+        .patch(`/api/v1/cast/${createRes.body.session.id}`)
+        .set("Authorization", "Bearer rename-key-5")
+        .send({ title: "Too late" });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe("session_ended");
+    });
+  });
+
+  describe("POST /cast/:id/leave (leaveCastSession)", () => {
+    test("a member leaves and drops off the member list, session stays active", async () => {
+      await seedUserWithRoleAndKey("viewer", "leave-key-1");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer leave-key-1")
+        .send({ sourceType: "empty" });
+      const id = createRes.body.session.id;
+      const joiner = await seedUserWithRoleAndKey("viewer", "leave-key-1b");
+      await client
+        .post("/api/v1/cast/join")
+        .set("Authorization", "Bearer leave-key-1b")
+        .send({ code: createRes.body.session.code });
+
+      const res = await client
+        .post(`/api/v1/cast/${id}/leave`)
+        .set("Authorization", "Bearer leave-key-1b");
+      expect(res.status).toBe(204);
+
+      const membersRes = await client
+        .get(`/api/v1/cast/${id}/members`)
+        .set("Authorization", "Bearer leave-key-1");
+      expect(membersRes.status).toBe(200);
+      expect(membersRes.body.items.some((m) => m.userId === joiner.id)).toBe(false);
+
+      const getRes = await client
+        .get(`/api/v1/cast/${id}`)
+        .set("Authorization", "Bearer leave-key-1");
+      expect(getRes.body.session.status).toBe("active");
+    });
+
+    test("leaving twice still succeeds", async () => {
+      await seedUserWithRoleAndKey("viewer", "leave-key-2");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer leave-key-2")
+        .send({ sourceType: "empty" });
+      await seedUserWithRoleAndKey("viewer", "leave-key-2b");
+      await client
+        .post("/api/v1/cast/join")
+        .set("Authorization", "Bearer leave-key-2b")
+        .send({ code: createRes.body.session.code });
+
+      const first = await client
+        .post(`/api/v1/cast/${createRes.body.session.id}/leave`)
+        .set("Authorization", "Bearer leave-key-2b");
+      const second = await client
+        .post(`/api/v1/cast/${createRes.body.session.id}/leave`)
+        .set("Authorization", "Bearer leave-key-2b");
+
+      expect(first.status).toBe(204);
+      expect(second.status).toBe(204);
+    });
+
+    test("the owner leaving does not end the session for everyone else", async () => {
+      await seedUserWithRoleAndKey("viewer", "leave-key-3");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer leave-key-3")
+        .send({ sourceType: "empty" });
+      await seedUserWithRoleAndKey("viewer", "leave-key-3b");
+      await client
+        .post("/api/v1/cast/join")
+        .set("Authorization", "Bearer leave-key-3b")
+        .send({ code: createRes.body.session.code });
+
+      const res = await client
+        .post(`/api/v1/cast/${createRes.body.session.id}/leave`)
+        .set("Authorization", "Bearer leave-key-3");
+      expect(res.status).toBe(204);
+
+      const getRes = await client
+        .get(`/api/v1/cast/${createRes.body.session.id}`)
+        .set("Authorization", "Bearer leave-key-3b");
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.session.status).toBe("active");
+    });
+
+    test("404s leaving a session that doesn't exist", async () => {
+      await seedUserWithRoleAndKey("viewer", "leave-key-4");
+
+      const res = await client
+        .post("/api/v1/cast/999999/leave")
+        .set("Authorization", "Bearer leave-key-4");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("not_found");
     });
   });
 });

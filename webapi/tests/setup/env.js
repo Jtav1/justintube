@@ -36,6 +36,9 @@ process.env.ENABLE_VIDEO_IMPORTS = "true";
 process.env.HLS_BASE_URL = "http://hls.test:8888";
 process.env.ENABLE_LIVESTREAM = "true";
 process.env.ENABLE_CAST = "true";
+// Pinned off, matching the shipped default: device casting reaches out to real
+// hardware over mDNS, which a test run must never attempt.
+process.env.ENABLE_DEVICE_CAST = "false";
 process.env.INTERNAL_SERVICE_TOKEN = "test-internal-token";
 process.env.TRANSCODE_RECONCILE_ENABLED = "false";
 process.env.SESSION_SECRET = "test-session-secret";

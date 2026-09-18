@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Cast, Copy } from 'lucide-react'
+import { Cast, Copy, Pencil, Play } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { listMyPlaylists } from '../api/playlists.js'
 import { useCast } from '../context/useCast.js'
@@ -35,7 +35,17 @@ function StartCastPopover() {
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const { error: toastError } = useToast()
-  const { session, createFromPlaylist, createFromVideo, createEmpty, joinByCode } = useCast()
+  const {
+    session,
+    canManageSession,
+    createFromPlaylist,
+    createFromVideo,
+    createEmpty,
+    joinByCode,
+    leaveSession,
+    renameSession,
+    endActiveSession,
+  } = useCast()
 
   const [open, setOpen] = useState(false)
   const [dropdownPosition, setDropdownPosition] = useState(null)
@@ -43,6 +53,8 @@ function StartCastPopover() {
   const [busy, setBusy] = useState(false)
   const [playlists, setPlaylists] = useState(null)
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
 
   const menuRef = useRef(null)
   const toggleRef = useRef(null)
@@ -83,6 +95,7 @@ function StartCastPopover() {
   function handleToggle() {
     if (open) {
       setOpen(false)
+      setRenaming(false)
       return
     }
     if (toggleRef.current) {
@@ -126,6 +139,52 @@ function StartCastPopover() {
     }
   }
 
+  async function handleRename(event) {
+    event.preventDefault()
+    const title = titleDraft.trim()
+    if (!title || busy) return
+    setBusy(true)
+    try {
+      // The new title arrives back through the socket's state:sync broadcast,
+      // so there's nothing to set locally here.
+      await renameSession(title)
+      setRenaming(false)
+    } catch (err) {
+      toastError(err.message || 'Failed to rename the session.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleLeave() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await leaveSession()
+      setOpen(false)
+    } catch (err) {
+      toastError(err.message || 'Failed to leave the session.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleEnd() {
+    if (busy) return
+    if (!window.confirm('End this CAST session for everyone?')) {
+      return
+    }
+    setBusy(true)
+    try {
+      await endActiveSession()
+      setOpen(false)
+    } catch (err) {
+      toastError(err.message || 'Failed to end the session.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleCopyLink() {
     if (!session) return
     const url = `${window.location.origin}/cast/join?code=${session.code}`
@@ -162,7 +221,44 @@ function StartCastPopover() {
         >
           {session ? (
             <div className="cast-popover-active">
-              <p className="cast-popover-heading">{session.title}</p>
+              {renaming ? (
+                <form className="cast-popover-rename" onSubmit={handleRename}>
+                  <input
+                    type="text"
+                    value={titleDraft}
+                    onChange={(event) => setTitleDraft(event.target.value)}
+                    maxLength={255}
+                    aria-label="Session name"
+                    autoFocus
+                  />
+                  <div className="cast-popover-rename-actions">
+                    <button type="submit" disabled={busy || !titleDraft.trim()}>
+                      Save
+                    </button>
+                    <button type="button" onClick={() => setRenaming(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="cast-popover-title-row">
+                  <p className="cast-popover-heading">{session.title}</p>
+                  {canManageSession && (
+                    <button
+                      type="button"
+                      className="cast-popover-rename-btn"
+                      aria-label="Rename session"
+                      title="Rename session"
+                      onClick={() => {
+                        setTitleDraft(session.title ?? '')
+                        setRenaming(true)
+                      }}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="cast-popover-qr">
                 <QRCodeSVG value={joinUrl} size={160} marginSize={2} />
               </div>
@@ -181,6 +277,24 @@ function StartCastPopover() {
               >
                 Open session
               </button>
+              <button
+                type="button"
+                className="cast-popover-leave"
+                disabled={busy}
+                onClick={handleLeave}
+              >
+                Leave session
+              </button>
+              {canManageSession && (
+                <button
+                  type="button"
+                  className="cast-popover-end"
+                  disabled={busy}
+                  onClick={handleEnd}
+                >
+                  End session
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -212,8 +326,13 @@ function StartCastPopover() {
                     From this video
                   </button>
                 )}
-                <button type="button" disabled={busy} onClick={() => handleStart(createEmpty)}>
-                  Empty session
+                <button
+                  type="button"
+                  className="cast-popover-start"
+                  disabled={busy}
+                  onClick={() => handleStart(createEmpty)}
+                >
+                  Start Session <Play size={14} />
                 </button>
               </div>
 

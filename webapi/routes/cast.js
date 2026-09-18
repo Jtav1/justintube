@@ -2,16 +2,19 @@ import { Router } from "express";
 import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { CastServiceError } from "../lib/cast/errors.js";
+import { topReactionEmoji } from "../lib/cast/emoji-usage.js";
 import {
   addQueueItem,
   createSession,
   endSession,
   joinSessionByCode,
   kickMember,
+  leaveSession,
   loadActiveMembership,
   loadSessionById,
   loadSessionSnapshot,
   removeQueueItem,
+  renameSession,
   reorderQueueItem,
 } from "../lib/cast/queue-service.js";
 import {
@@ -21,6 +24,27 @@ import {
   notifySessionEnded,
 } from "../lib/cast/realtime.js";
 import { logger } from "../lib/logger.js";
+
+/**
+ * Maximum accepted CAST session title length, matching CAST_SESSIONS.title.
+ *
+ * @type {number}
+ */
+const MAX_TITLE_LENGTH = 255;
+
+/**
+ * How many reaction emoji the bar asks for when it doesn't say.
+ *
+ * @type {number}
+ */
+const DEFAULT_EMOJI_LIMIT = 6;
+
+/**
+ * Upper bound on a caller-supplied reaction-emoji `limit`.
+ *
+ * @type {number}
+ */
+const MAX_EMOJI_LIMIT = 24;
 
 /**
  * Parses a route `:id`/`:itemId`/`:userId` param as a positive integer.
@@ -685,9 +709,9 @@ export function createCastRouter() {
   });
 
   /**
-   * Ends a session. Owner only.
+   * Ends a session. Owner or admin.
    * POST /api/v1/cast/:id/end
-   * Auth: required, session owner.
+   * Auth: required, session owner or admin.
    *
    * @openapi
    * /api/v1/cast/{id}/end:
@@ -710,7 +734,7 @@ export function createCastRouter() {
    *       "400":
    *         description: Invalid id
    *       "403":
-   *         description: Caller is not the session owner
+   *         description: Caller is neither the session owner nor an admin
    *       "404":
    *         description: Session not found
    *       "409":
@@ -729,13 +753,223 @@ export function createCastRouter() {
       }
 
       const session = await loadSessionById(id);
-      await endSession({ session, actingUser: req.user });
+      await endSession({ session, actingUser: req.user, actingRole: req.authRole });
       notifySessionEnded(session.id);
       res.status(204).send();
     } catch (err) {
       if (handleServiceError(res, err)) return;
       logger.error({ err }, "endCastSession failed");
       res.status(500).json({ error: "internal_error", message: "Failed to end CAST session." });
+    }
+  });
+
+  /**
+   * Lists the instance's most-used reaction emoji, highest first, for the CAST
+   * reaction bar. Site-wide rather than per-user, and padded with the seeded
+   * defaults so the bar is never short.
+   * GET /api/v1/reaction-emoji?limit=
+   * Auth: required.
+   *
+   * @openapi
+   * /api/v1/reaction-emoji:
+   *   get:
+   *     tags: [Cast]
+   *     summary: List the most-used reaction emoji
+   *     operationId: listReactionEmoji
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - name: limit
+   *         in: query
+   *         required: false
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 24
+   *           default: 6
+   *     responses:
+   *       "200":
+   *         description: Emoji ordered by usage
+   *       "400":
+   *         description: Invalid limit
+   *       "401":
+   *         description: Not authenticated
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ items }` or an error response.
+   */
+  router.get("/reaction-emoji", requireAuth, async (req, res) => {
+    try {
+      const raw = req.query.limit;
+      const limit = raw === undefined || raw === "" ? DEFAULT_EMOJI_LIMIT : Number(raw);
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_EMOJI_LIMIT) {
+        res.status(400).json({
+          error: "invalid_query",
+          message: `limit must be an integer between 1 and ${MAX_EMOJI_LIMIT}.`,
+        });
+        return;
+      }
+
+      res.status(200).json({ items: await topReactionEmoji(limit) });
+    } catch (err) {
+      logger.error({ err }, "listReactionEmoji failed");
+      res.status(500).json({
+        error: "internal_error",
+        message: "Failed to list reaction emoji.",
+      });
+    }
+  });
+
+  /**
+   * Renames a session. Owner or admin.
+   * PATCH /api/v1/cast/:id
+   * Auth: required, session owner or admin.
+   *
+   * @openapi
+   * /api/v1/cast/{id}:
+   *   patch:
+   *     tags: [Cast]
+   *     summary: Rename a CAST session
+   *     operationId: renameCastSession
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [title]
+   *             properties:
+   *               title:
+   *                 type: string
+   *                 maxLength: 255
+   *     responses:
+   *       "200":
+   *         description: Updated session snapshot
+   *       "400":
+   *         description: Invalid id or title
+   *       "403":
+   *         description: Caller is neither the session owner nor an admin
+   *       "404":
+   *         description: Session not found
+   *       "409":
+   *         description: The session has ended
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the updated session snapshot or an error response.
+   */
+  router.patch("/cast/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        sendInvalidId(res);
+        return;
+      }
+
+      const title = req.body?.title == null ? "" : String(req.body.title).trim();
+      if (!title) {
+        res.status(400).json({ error: "invalid_body", message: "title is required." });
+        return;
+      }
+      if (title.length > MAX_TITLE_LENGTH) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: `title must be at most ${MAX_TITLE_LENGTH} characters.`,
+        });
+        return;
+      }
+
+      // Not requireSessionMembership: an admin renaming someone else's session
+      // is not a member of it, so authorization is left to the service.
+      const session = await loadSessionById(id);
+      const snapshot = await renameSession({
+        session,
+        actingUser: req.user,
+        actingRole: req.authRole,
+        title,
+      });
+      await notifySessionChanged(session.id);
+      notifyActivity(session.id, {
+        type: "session_renamed",
+        actorName: displayNameFor(req.user),
+        text: `${displayNameFor(req.user)} renamed the session to "${title}"`,
+      });
+      res.status(200).json(snapshot);
+    } catch (err) {
+      if (handleServiceError(res, err)) return;
+      logger.error({ err }, "renameCastSession failed");
+      res.status(500).json({ error: "internal_error", message: "Failed to rename CAST session." });
+    }
+  });
+
+  /**
+   * Leaves a session, dropping the caller's own membership. Any member may
+   * call it; leaving a session the caller isn't in succeeds quietly.
+   * POST /api/v1/cast/:id/leave
+   * Auth: required.
+   *
+   * @openapi
+   * /api/v1/cast/{id}/leave:
+   *   post:
+   *     tags: [Cast]
+   *     summary: Leave a CAST session
+   *     operationId: leaveCastSession
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *     responses:
+   *       "204":
+   *         description: Left the session (or was already not a member)
+   *       "400":
+   *         description: Invalid id
+   *       "404":
+   *         description: Session not found
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends 204 or an error response.
+   */
+  router.post("/cast/:id/leave", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        sendInvalidId(res);
+        return;
+      }
+
+      const session = await loadSessionById(id);
+      await leaveSession({ session, user: req.user });
+      await notifySessionChanged(session.id);
+      notifyActivity(session.id, {
+        type: "member_left",
+        actorName: displayNameFor(req.user),
+        text: `${displayNameFor(req.user)} left the session`,
+      });
+      // Deliberately not disconnectMember(): that emits `session:kicked`, which
+      // the client surfaces as "you were removed". A voluntary leave tears its
+      // own socket down when the caller clears its active session.
+      res.status(204).send();
+    } catch (err) {
+      if (handleServiceError(res, err)) return;
+      logger.error({ err }, "leaveCastSession failed");
+      res.status(500).json({ error: "internal_error", message: "Failed to leave CAST session." });
     }
   });
 
