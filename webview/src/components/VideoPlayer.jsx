@@ -358,6 +358,29 @@ function VideoPlayer({
     }
   }, [video.id])
 
+  useEffect(() => {
+    if (!castMenuOpen) {
+      return undefined
+    }
+
+    function handleClickOutside(event) {
+      if (castMenuRef.current && !castMenuRef.current.contains(event.target)) {
+        setCastMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [castMenuOpen])
+
+  useDismissablePopover(castMenuOpen, () => setCastMenuOpen(false), castToggleRef)
+
+  useEffect(() => {
+    if (!playlistMenuOpen) {
+      return undefined
+    }
+  }, [video.id])
+
   useDismissablePopover(captionsMenuOpen, () => setCaptionsMenuOpen(false), captionsToggleRef, {
     dismissRefs: [captionsMenuRef],
   })
