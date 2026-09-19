@@ -873,5 +873,42 @@ describe("CAST endpoints (CAST_SESSIONS + CAST_QUEUE_ITEMS + CAST_SESSION_MEMBER
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("not_found");
     });
+
+    test("the session auto-ends once every member has left", async () => {
+      await seedUserWithRoleAndKey("viewer", "leave-key-5");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer leave-key-5")
+        .send({ sourceType: "empty" });
+      const id = createRes.body.session.id;
+      await seedUserWithRoleAndKey("viewer", "leave-key-5b");
+      await client
+        .post("/api/v1/cast/join")
+        .set("Authorization", "Bearer leave-key-5b")
+        .send({ code: createRes.body.session.code });
+
+      const firstLeave = await client
+        .post(`/api/v1/cast/${id}/leave`)
+        .set("Authorization", "Bearer leave-key-5b");
+      expect(firstLeave.status).toBe(204);
+
+      const stillActive = await client
+        .get(`/api/v1/cast/${id}`)
+        .set("Authorization", "Bearer leave-key-5");
+      expect(stillActive.body.session.status).toBe("active");
+
+      const lastLeave = await client
+        .post(`/api/v1/cast/${id}/leave`)
+        .set("Authorization", "Bearer leave-key-5");
+      expect(lastLeave.status).toBe(204);
+
+      // No member (not even the former owner) can GET an ended session
+      // anymore, so confirm via a mutation that only rejects ended sessions.
+      const endRes = await client
+        .post(`/api/v1/cast/${id}/end`)
+        .set("Authorization", "Bearer leave-key-5");
+      expect(endRes.status).toBe(409);
+      expect(endRes.body.error).toBe("session_ended");
+    });
   });
 });

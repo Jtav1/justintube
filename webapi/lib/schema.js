@@ -338,6 +338,11 @@ async function ensureSqliteMissingColumns() {
       column: "has_video_stream",
       ddl: "`has_video_stream` TINYINT(1) NULL",
     },
+    {
+      table: "CAST_SESSIONS",
+      column: "last_activity_at",
+      ddl: "`last_activity_at` DATETIME NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

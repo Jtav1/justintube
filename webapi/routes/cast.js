@@ -1040,13 +1040,20 @@ export function createCastRouter() {
       }
 
       const session = await loadSessionById(id);
-      await leaveSession({ session, user: req.user });
-      await notifySessionChanged(session.id);
-      notifyActivity(session.id, {
-        type: "member_left",
-        actorName: displayNameFor(req.user),
-        text: `${displayNameFor(req.user)} left the session`,
-      });
+      const { ended } = await leaveSession({ session, user: req.user });
+      if (ended) {
+        // Last active member just left - the session auto-ended, so tell the
+        // room the same way an explicit end does rather than leaving it in
+        // limbo until someone reopens it and notices.
+        notifySessionEnded(session.id);
+      } else {
+        await notifySessionChanged(session.id);
+        notifyActivity(session.id, {
+          type: "member_left",
+          actorName: displayNameFor(req.user),
+          text: `${displayNameFor(req.user)} left the session`,
+        });
+      }
       // Deliberately not disconnectMember(): that emits `session:kicked`, which
       // the client surfaces as "you were removed". A voluntary leave tears its
       // own socket down when the caller clears its active session.

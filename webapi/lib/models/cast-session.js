@@ -62,6 +62,16 @@ export const CastSession = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    // Bumped on every member-driven action (playback control, queue changes,
+    // join/kick, rename) - deliberately NOT bumped by the playback-clock
+    // tick's periodic position persist in realtime.js, so a video left
+    // playing untouched for hours doesn't reset the inactivity clock. Null
+    // for sessions created before this column existed; the inactivity sweep
+    // falls back to `createdAt` for those.
+    lastActivityAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     createdAt: timestampColumn("created_at"),
     updatedAt: timestampColumn("updated_at"),
   },
