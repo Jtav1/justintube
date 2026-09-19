@@ -429,10 +429,11 @@ function AdminPanel() {
 
   return (
     <section className="settings-page">
-      <div className="admin-panel-columns">
-        <div className="settings-card">
-          <h1>Admin Panel</h1>
-          <h2>Send a notification</h2>
+      <div className="admin-panel-wrap">
+        <h1 className="admin-panel-title">Admin Panel</h1>
+        <div className="admin-panel-columns">
+          <div className="settings-card">
+            <h2>Send a notification</h2>
 
           <form className="settings-form" onSubmit={handleSubmit}>
             <label htmlFor="admin-notify-audience">Send to</label>
@@ -755,6 +756,7 @@ function AdminPanel() {
             )}
           </div>
         </div>
+      </div>
       </div>
     </section>
   )
