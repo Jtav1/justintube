@@ -5,6 +5,7 @@ import { useToast } from '../context/useToast.js'
 import { useTheme } from '../context/useTheme.js'
 import { createTheme, updateTheme, deleteTheme, PUBLIC_THEME_OWNER } from '../api/themes.js'
 import apiClient from '../api/client.js'
+import './AccountSettings.css'
 import './AdminThemes.css'
 
 const MAX_NAME_LENGTH = 255
