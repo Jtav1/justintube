@@ -733,11 +733,31 @@ function VideoPlayer({
   }, [memoizedSrc])
 
   /**
-   * Opens the browser's Chromecast/Remote Playback device picker. Rejection
-   * just means the user dismissed it, or no device was chosen.
+   * Opens the browser's Chromecast/Remote Playback device picker. Dismissing
+   * the picker is a normal outcome and stays silent; every other rejection is
+   * reported, since a picker that never appears is otherwise indistinguishable
+   * from a button that does nothing.
    */
-  function handleRemotePlayback() {
-    videoRef.current?.remote?.prompt().catch(() => {})
+  async function handleRemotePlayback() {
+    const el = videoRef.current
+    if (!el?.remote || typeof el.remote.prompt !== 'function') {
+      toastError("This browser can't cast this video.")
+      return
+    }
+    try {
+      await el.remote.prompt()
+    } catch (err) {
+      // The user closed the picker without choosing a device.
+      if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+        return
+      }
+      console.error('Remote playback prompt failed:', err)
+      toastError(
+        err?.name === 'NotFoundError'
+          ? 'No cast devices found on this network.'
+          : 'Could not open the cast picker.',
+      )
+    }
   }
 
   /**
