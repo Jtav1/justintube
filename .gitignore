@@ -26,3 +26,5 @@ migration-tools/node_modules
 
 .vscode/
 .claude/
+
+db/dump-justintube-pre-2.3.sql
