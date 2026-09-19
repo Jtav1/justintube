@@ -867,11 +867,16 @@ export async function kickMember({ session, actingUser, targetUserId }) {
 /**
  * Marks the caller's own membership as `"left"`. Harmless (and allowed) even
  * after the session has ended; a no-op if the caller wasn't an active member.
+ * If that was the last active member (which includes the owner - owner is a
+ * member like anyone else), the session is auto-ended the same way
+ * {@link endSession} would, so an abandoned session doesn't linger forever
+ * waiting for someone to come back and end it manually.
  *
  * @param {object} params
  * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
  * @param {import('sequelize').Model} params.user Authenticated user leaving.
- * @returns {Promise<object>} The updated session's {@link loadSessionSnapshot} result.
+ * @returns {Promise<{snapshot: object, ended: boolean}>} The updated session's
+ *   {@link loadSessionSnapshot} result, and whether this call auto-ended it.
  */
 export async function leaveSession({ session, user }) {
   const member = await CastSessionMember.findOne({
@@ -882,7 +887,24 @@ export async function leaveSession({ session, user }) {
     member.leftAt = new Date();
     await member.save();
   }
-  return loadSessionSnapshot(session);
+
+  let ended = false;
+  if (session.status === "active") {
+    const remainingActive = await CastSessionMember.count({
+      where: { castSessionId: session.id, status: "active" },
+    });
+    if (remainingActive === 0) {
+      session.playbackPositionSeconds = effectivePosition(session);
+      session.playbackStatus = "paused";
+      session.playbackUpdatedAt = new Date();
+      session.status = "ended";
+      session.endedAt = new Date();
+      await session.save();
+      ended = true;
+    }
+  }
+
+  return { snapshot: await loadSessionSnapshot(session), ended };
 }
 
 /**
