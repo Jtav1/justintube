@@ -3,6 +3,7 @@ import { CastQueueItem, CastSession } from "../../lib/models/index.js";
 import {
   controlPlayback,
   effectivePosition,
+  endInactiveSessions,
   playbackSnapshot,
   promoteNextQueuedItemIfIdle,
   reorderQueueItem,
@@ -252,6 +253,68 @@ describe("lib/cast/queue-service.js", () => {
       await expect(
         controlPlayback({ session: sessionRow, action: "play" }),
       ).rejects.toMatchObject({ status: 409, code: "session_ended" });
+    });
+  });
+
+  describe("endInactiveSessions", () => {
+    const NINE_HOURS_AGO = new Date(Date.now() - 9 * 60 * 60 * 1000);
+    const ONE_HOUR_AGO = new Date(Date.now() - 60 * 60 * 1000);
+
+    test("ends an active session whose lastActivityAt is past the 8-hour threshold", async () => {
+      const owner = await seedUser();
+      const stale = await seedCastSession({
+        ownerUserId: owner.id,
+        lastActivityAt: NINE_HOURS_AGO,
+      });
+
+      const endedIds = await endInactiveSessions();
+
+      expect(endedIds).toContain(stale.id);
+      const row = await CastSession.findByPk(stale.id);
+      expect(row.status).toBe("ended");
+      expect(row.endedAt).not.toBeNull();
+    });
+
+    test("leaves a session alone whose lastActivityAt is within the threshold", async () => {
+      const owner = await seedUser();
+      const fresh = await seedCastSession({
+        ownerUserId: owner.id,
+        lastActivityAt: ONE_HOUR_AGO,
+      });
+
+      const endedIds = await endInactiveSessions();
+
+      expect(endedIds).not.toContain(fresh.id);
+      const row = await CastSession.findByPk(fresh.id);
+      expect(row.status).toBe("active");
+    });
+
+    test("falls back to createdAt when lastActivityAt was never set", async () => {
+      const owner = await seedUser();
+      const stale = await seedCastSession({ ownerUserId: owner.id });
+      // seedCastSession doesn't expose createdAt directly - back-date it
+      // directly to simulate a pre-existing row with no recorded activity.
+      await CastSession.update(
+        { createdAt: NINE_HOURS_AGO },
+        { where: { id: stale.id }, silent: true },
+      );
+
+      const endedIds = await endInactiveSessions();
+
+      expect(endedIds).toContain(stale.id);
+    });
+
+    test("does not touch an already-ended session", async () => {
+      const owner = await seedUser();
+      const ended = await seedCastSession({
+        ownerUserId: owner.id,
+        status: "ended",
+        lastActivityAt: NINE_HOURS_AGO,
+      });
+
+      const endedIds = await endInactiveSessions();
+
+      expect(endedIds).not.toContain(ended.id);
     });
   });
 });

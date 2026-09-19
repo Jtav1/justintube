@@ -59,6 +59,29 @@ function assertSessionActive(session) {
 }
 
 /**
+ * How long a session may go without a member-driven action before the
+ * inactivity sweep ({@link endInactiveSessions}) ends it.
+ *
+ * @type {number}
+ */
+const INACTIVITY_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * Stamps `lastActivityAt` and persists it. Called after any member-driven
+ * mutation that doesn't already save the session row for its own reasons
+ * (queue changes, join, kick, rename) - playback-control actions and
+ * playback auto-advance set the field directly instead, since they already
+ * save `session` themselves.
+ *
+ * @param {import('sequelize').Model} session CAST_SESSIONS row.
+ * @returns {Promise<void>} Resolves once saved.
+ */
+async function touchActivity(session) {
+  session.lastActivityAt = new Date();
+  await session.save();
+}
+
+/**
  * Computes a session's current effective playback position: the stored
  * position plus elapsed wall-clock time since it was last updated, while
  * playing. Paused sessions (or sessions that have never started playing)
@@ -393,6 +416,7 @@ export async function advanceOnPlaybackEnd({ session }) {
   session.playbackStatus = "paused";
   session.playbackPositionSeconds = 0;
   session.playbackUpdatedAt = new Date();
+  session.lastActivityAt = new Date();
   await session.save();
 
   await promoteNextQueuedItemIfIdle(session);
@@ -467,6 +491,7 @@ export async function createSession({ user, role, sourceType, playlistId, videoI
     title: `${ownerName}'s Watch Party`,
     playbackStatus: "paused",
     playbackPositionSeconds: 0,
+    lastActivityAt: new Date(),
   });
 
   await CastSessionMember.create({
@@ -552,6 +577,7 @@ export async function joinSessionByCode({ code, user }) {
     });
   }
 
+  await touchActivity(session);
   return loadSessionSnapshot(session);
 }
 
@@ -593,6 +619,7 @@ export async function addQueueItem({ session, user, role, videoIdentifier }) {
   });
 
   await promoteNextQueuedItemIfIdle(session);
+  await touchActivity(session);
   return loadSessionSnapshot(session);
 }
 
@@ -637,6 +664,7 @@ export async function addPlaylistToQueue({ session, user, role, playlistId }) {
       })),
     );
     await promoteNextQueuedItemIfIdle(session);
+    await touchActivity(session);
   }
 
   return {
@@ -674,6 +702,7 @@ export async function removeQueueItem({ session, queueItemId }) {
   if (wasPlaying) {
     await promoteNextQueuedItemIfIdle(session);
   }
+  await touchActivity(session);
   return loadSessionSnapshot(session);
 }
 
@@ -718,6 +747,7 @@ export async function reorderQueueItem({ session, queueItemId, toIndex }) {
     }
   }
 
+  await touchActivity(session);
   return loadSessionSnapshot(session);
 }
 
@@ -784,6 +814,7 @@ async function playPreviousQueueItem(session) {
  */
 export async function controlPlayback({ session, action, seconds }) {
   assertSessionActive(session);
+  session.lastActivityAt = new Date();
 
   if (action === "play") {
     session.playbackStatus = "playing";
@@ -861,6 +892,7 @@ export async function kickMember({ session, actingUser, targetUserId }) {
   member.leftAt = new Date();
   await member.save();
 
+  await touchActivity(session);
   return loadSessionSnapshot(session);
 }
 
@@ -944,6 +976,41 @@ export async function endSession({ session, actingUser, actingRole }) {
 }
 
 /**
+ * Ends every active session whose `lastActivityAt` (or `createdAt`, for
+ * sessions predating that column) is older than {@link INACTIVITY_TIMEOUT_MS}
+ * - regardless of whether members are still present. Called periodically by
+ * the realtime layer's sweep interval; safe to call with nobody connected
+ * (e.g. in a test) since it only touches the DB. Callers are responsible for
+ * broadcasting `session:ended` for each returned id, same as any other end.
+ *
+ * @returns {Promise<number[]>} Ids of the sessions that were ended.
+ */
+export async function endInactiveSessions() {
+  const cutoff = new Date(Date.now() - INACTIVITY_TIMEOUT_MS);
+  const staleSessions = await CastSession.findAll({
+    where: {
+      status: "active",
+      [Op.or]: [
+        { lastActivityAt: { [Op.lt]: cutoff } },
+        { lastActivityAt: null, createdAt: { [Op.lt]: cutoff } },
+      ],
+    },
+  });
+
+  const endedIds = [];
+  for (const session of staleSessions) {
+    session.playbackPositionSeconds = effectivePosition(session);
+    session.playbackStatus = "paused";
+    session.playbackUpdatedAt = new Date();
+    session.status = "ended";
+    session.endedAt = new Date();
+    await session.save();
+    endedIds.push(session.id);
+  }
+  return endedIds;
+}
+
+/**
  * Renames a session (owner or admin). The caller is expected to have already
  * validated and trimmed `title`; the realtime layer re-broadcasts the snapshot
  * so connected members see the new name without a refetch.
@@ -971,6 +1038,7 @@ export async function renameSession({ session, actingUser, actingRole, title }) 
   }
 
   session.title = title;
+  session.lastActivityAt = new Date();
   await session.save();
 
   return loadSessionSnapshot(session);

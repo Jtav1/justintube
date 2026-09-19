@@ -11,6 +11,7 @@ import {
   addQueueItem,
   advanceOnPlaybackEnd,
   controlPlayback,
+  endInactiveSessions,
   loadActiveMembership,
   loadSessionById,
   loadSessionSnapshot,
@@ -60,6 +61,16 @@ let tickInterval = null;
  * @type {number}
  */
 let tickCount = 0;
+
+/**
+ * How often (in ticks, ~1s each) the inactivity sweep checks for sessions
+ * that have gone 8+ hours without a member-driven action. Every 5 minutes is
+ * frequent enough that a stale session doesn't linger much past the
+ * threshold, without hammering the DB with a full-table scan every second.
+ *
+ * @type {number}
+ */
+const INACTIVITY_SWEEP_INTERVAL_TICKS = 300;
 
 /**
  * In-memory presence: CAST_SESSIONS id -> (user id -> set of live socket
@@ -288,13 +299,20 @@ async function withSessionAction(socket, ack, mutate, activity) {
  * (i.e. present in `presenceBySession`) that's currently playing, broadcasts
  * `player:tick` with the freshly-computed effective position, and every 5th
  * tick also persists that position to CAST_SESSIONS so a restart doesn't
- * lose more than a few seconds of progress.
+ * lose more than a few seconds of progress. Every
+ * {@link INACTIVITY_SWEEP_INTERVAL_TICKS}th tick, also runs
+ * {@link sweepInactiveSessions} - which covers sessions with no live
+ * connection at all, unlike the rest of this function.
  *
- * @returns {Promise<void>} Resolves once every live session's tick has been processed.
+ * @returns {Promise<void>} Resolves once every live session's tick (and, on sweep ticks, the inactivity sweep) has been processed.
  */
 async function runTick() {
   tickCount += 1;
   const persistThisTick = tickCount % 5 === 0;
+
+  if (tickCount % INACTIVITY_SWEEP_INTERVAL_TICKS === 0) {
+    await sweepInactiveSessions();
+  }
 
   for (const sessionId of Array.from(presenceBySession.keys())) {
     let session;
@@ -319,6 +337,27 @@ async function runTick() {
       session.playbackUpdatedAt = new Date(playback.serverTime);
       await session.save();
     }
+  }
+}
+
+/**
+ * Ends every session that's gone 8+ hours without a member-driven action -
+ * regardless of whether anyone is still connected to it - and broadcasts
+ * `session:ended` for each one so any live viewers are notified and dropped
+ * from the room the same way a manual end works.
+ *
+ * @returns {Promise<void>} Resolves once every stale session has been ended and broadcast.
+ */
+async function sweepInactiveSessions() {
+  let endedIds;
+  try {
+    endedIds = await endInactiveSessions();
+  } catch (err) {
+    logger.error({ err }, "CAST inactivity sweep failed");
+    return;
+  }
+  for (const sessionId of endedIds) {
+    notifySessionEnded(sessionId);
   }
 }
 
