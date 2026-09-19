@@ -10,7 +10,6 @@ import {
   updateTranscodeProfile,
   deleteTranscodeProfile,
 } from '../api/transcode-profiles.js'
-import './AccountSettings.css'
 import './AdminThemes.css'
 import './AdminTranscodeProfiles.css'
 
