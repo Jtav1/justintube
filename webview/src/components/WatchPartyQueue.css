@@ -1,20 +1,20 @@
-.cast-queue {
+.watch-party-queue {
   width: 100%;
   flex-shrink: 0;
 }
 
-.cast-queue-header {
+.watch-party-queue-header {
   margin-bottom: 8px;
 }
 
-.cast-queue-header-row {
+.watch-party-queue-header-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
 
-.cast-queue-title {
+.watch-party-queue-title {
   margin: 0;
   font-size: 18px;
   font-weight: 500;
@@ -25,7 +25,7 @@
   min-width: 0;
 }
 
-.cast-queue-rename-btn {
+.watch-party-queue-rename-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -38,19 +38,19 @@
   cursor: pointer;
 }
 
-.cast-queue-rename-btn:hover {
+.watch-party-queue-rename-btn:hover {
   background: var(--accent-bg);
   color: var(--text-h);
 }
 
 /* Takes the whole header row while editing - the End button is hidden during
    a rename, so there's nothing to sit beside. */
-.cast-queue-rename {
+.watch-party-queue-rename {
   flex: 1;
   min-width: 0;
 }
 
-.cast-queue-rename input {
+.watch-party-queue-rename input {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--accent-border);
@@ -61,13 +61,13 @@
   box-sizing: border-box;
 }
 
-.cast-queue-rename-actions {
+.watch-party-queue-rename-actions {
   display: flex;
   gap: 6px;
   margin-top: 6px;
 }
 
-.cast-queue-rename-actions button {
+.watch-party-queue-rename-actions button {
   flex: 1;
   padding: 6px 10px;
   border: 1px solid var(--accent-border);
@@ -78,16 +78,16 @@
   cursor: pointer;
 }
 
-.cast-queue-rename-actions button:hover:not(:disabled) {
+.watch-party-queue-rename-actions button:hover:not(:disabled) {
   background: var(--accent-bg);
 }
 
-.cast-queue-rename-actions button:disabled {
+.watch-party-queue-rename-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.cast-queue-end {
+.watch-party-queue-end {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -101,23 +101,23 @@
   cursor: pointer;
 }
 
-.cast-queue-end:hover {
+.watch-party-queue-end:hover {
   background: var(--error-bg);
 }
 
-.cast-queue-meta {
+.watch-party-queue-meta {
   margin: 2px 0 0;
   font-size: 13px;
   color: var(--text);
 }
 
-.cast-queue-meta code {
+.watch-party-queue-meta code {
   padding: 1px 6px;
   font-size: 13px;
   letter-spacing: 1px;
 }
 
-.cast-queue-controls {
+.watch-party-queue-controls {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -125,7 +125,7 @@
   margin: 12px 0;
 }
 
-.cast-queue-transport {
+.watch-party-queue-transport {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -138,11 +138,11 @@
   cursor: pointer;
 }
 
-.cast-queue-transport:hover {
+.watch-party-queue-transport:hover {
   border-color: var(--accent-border);
 }
 
-.cast-queue-transport-primary {
+.watch-party-queue-transport-primary {
   width: 44px;
   height: 44px;
   background: var(--accent);
@@ -150,7 +150,7 @@
   color: #fff;
 }
 
-.cast-queue-section-label {
+.watch-party-queue-section-label {
   margin: 12px 0 6px;
   font-size: 12px;
   font-weight: 600;
@@ -159,16 +159,16 @@
   color: var(--text);
 }
 
-.cast-queue-now-playing .video-card-horizontal .video-card-thumb {
+.watch-party-queue-now-playing .video-card-horizontal .video-card-thumb {
   width: 120px;
 }
 
-.cast-queue-add {
+.watch-party-queue-add {
   position: relative;
   margin-top: 12px;
 }
 
-.cast-queue-add-input {
+.watch-party-queue-add-input {
   width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;
@@ -179,12 +179,12 @@
   font: inherit;
 }
 
-.cast-queue-add-input:focus {
+.watch-party-queue-add-input:focus {
   outline: none;
   border-color: var(--accent-border);
 }
 
-.cast-queue-add-dropdown {
+.watch-party-queue-add-dropdown {
   position: absolute;
   z-index: 5;
   top: calc(100% + 4px);
@@ -201,7 +201,7 @@
   overflow-y: auto;
 }
 
-.cast-queue-add-dropdown li button {
+.watch-party-queue-add-dropdown li button {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -215,21 +215,21 @@
   cursor: pointer;
 }
 
-.cast-queue-add-dropdown li button:hover {
+.watch-party-queue-add-dropdown li button:hover {
   background: var(--accent-bg);
 }
 
-.cast-queue-add-dropdown-title {
+.watch-party-queue-add-dropdown-title {
   font-size: 14px;
   color: var(--text-h);
 }
 
-.cast-queue-add-dropdown-meta {
+.watch-party-queue-add-dropdown-meta {
   font-size: 12px;
   color: var(--text);
 }
 
-.cast-queue-list {
+.watch-party-queue-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -238,33 +238,33 @@
   padding-right: 4px;
 }
 
-.cast-queue-empty {
+.watch-party-queue-empty {
   font-size: 13px;
   color: var(--text);
   padding: 8px 0;
 }
 
-.cast-queue-item {
+.watch-party-queue-item {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.cast-queue-item .video-card-horizontal .video-card-thumb {
+.watch-party-queue-item .video-card-horizontal .video-card-thumb {
   width: 100px;
 }
 
-.cast-queue-item .video-card-title {
+.watch-party-queue-item .video-card-title {
   font-size: 14px;
 }
 
-.cast-queue-item-actions {
+.watch-party-queue-item-actions {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
 }
 
-.cast-queue-item-actions button {
+.watch-party-queue-item-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -277,12 +277,13 @@
   cursor: pointer;
 }
 
-.cast-queue-item-actions button:hover:not(:disabled) {
+.watch-party-queue-item-actions button:hover:not(:disabled) {
   background: var(--accent-bg);
   color: var(--text-h);
 }
 
-.cast-queue-item-actions button:disabled {
+.watch-party-queue-item-actions button:disabled {
   opacity: 0.3;
   cursor: default;
 }
+

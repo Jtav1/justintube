@@ -12,7 +12,7 @@ const DRIFT_THRESHOLD_SECONDS = 1.5
  * @param {{status: string, positionSeconds: number, updatedAt: string|null}} playback
  * @returns {number}
  */
-export function computeCastEffectivePosition(playback) {
+export function computeWatchPartyEffectivePosition(playback) {
   if (playback.status !== 'playing' || !playback.updatedAt) {
     return playback.positionSeconds
   }
@@ -21,16 +21,16 @@ export function computeCastEffectivePosition(playback) {
 }
 
 /**
- * Drives a VideoPlayer imperative-handle ref to follow a CAST session's
+ * Drives a VideoPlayer imperative-handle ref to follow a Watch Party's
  * server-authoritative playback clock: a full seek/load when `nowPlaying`
  * changes video, and periodic drift correction while the same video keeps
- * playing. Shared by CastPage and CastDisplayPage so both stay in sync the
- * same way.
+ * playing. Shared by WatchPartyPage and WatchPartyDisplayPage so both stay in
+ * sync the same way.
  * @param {{current: {play: Function, pause: Function, seek: Function, getState: Function}|null}} videoPlayerRef
- * @param {object|null} nowPlaying `useCast().nowPlaying`.
- * @param {{status: string, positionSeconds: number, updatedAt: string|null}} playback `useCast().playback`.
+ * @param {object|null} nowPlaying `useWatchParty().nowPlaying`.
+ * @param {{status: string, positionSeconds: number, updatedAt: string|null}} playback `useWatchParty().playback`.
  */
-export function useCastPlaybackSync(videoPlayerRef, nowPlaying, playback) {
+export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback) {
   const lastVideoIdRef = useRef(null)
 
   // Video changed (or first loaded): (re)seek to the server clock and match
@@ -43,7 +43,7 @@ export function useCastPlaybackSync(videoPlayerRef, nowPlaying, playback) {
       return
     }
     lastVideoIdRef.current = videoId
-    videoPlayerRef.current?.seek(computeCastEffectivePosition(playback), {
+    videoPlayerRef.current?.seek(computeWatchPartyEffectivePosition(playback), {
       play: playback.status === 'playing',
     })
     // Only re-run when the video itself changes - the effect below handles
@@ -63,12 +63,12 @@ export function useCastPlaybackSync(videoPlayerRef, nowPlaying, playback) {
     if (!state) {
       return
     }
-    const target = computeCastEffectivePosition(playback)
+    const target = computeWatchPartyEffectivePosition(playback)
     if (Math.abs(state.currentTime - target) > DRIFT_THRESHOLD_SECONDS) {
       videoPlayerRef.current?.seek(target, { play: playback.status === 'playing' })
     } else if (playback.status === 'playing' && state.paused) {
       // Swallowed here (unlike the page-level autoplay-block detection in
-      // CastDisplayPage) - this hook has no UI of its own to react with.
+      // WatchPartyDisplayPage) - this hook has no UI of its own to react with.
       videoPlayerRef.current?.play()?.catch(() => {})
     } else if (playback.status === 'paused' && !state.paused) {
       videoPlayerRef.current?.pause()

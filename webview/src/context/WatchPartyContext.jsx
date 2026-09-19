@@ -1,42 +1,44 @@
 import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import apiClient from '../api/client.js'
-import * as castApi from '../api/cast.js'
-import { CastContext } from './cast-context.js'
+import * as watchPartyApi from '../api/watch-party.js'
+import { WatchPartyContext } from './watch-party-context.js'
 import { useAuth } from './useAuth.js'
 import { useToast } from './useToast.js'
-import { readActiveCastSessionId, writeActiveCastSessionId } from '../lib/cast-session.js'
+import { readActiveWatchPartySessionId, writeActiveWatchPartySessionId } from '../lib/watch-party-session.js'
 
 const MAX_ACTIVITY_ENTRIES = 50
 
 const EMPTY_PLAYBACK = { status: 'paused', positionSeconds: 0, updatedAt: null }
 
 /**
- * Owns the live CAST session state and its socket.io-client connection to
- * the `/cast` namespace. The socket only exists while `activeSessionId` is
- * set - set by `createFromPlaylist`/`createFromVideo`/`createEmpty`/
- * `joinByCode` (REST calls that also create the underlying membership) or by
- * `enterSession` (for a page landing directly on `/cast/:id`, e.g. a reload,
- * where membership already exists). Every mutating action is a thin wrapper
- * either over `webview/src/api/cast.js` (REST: create/join/kick/end) or a
+ * Owns the live Watch Party session state and its socket.io-client
+ * connection to the `/cast` namespace (unchanged on the wire - this is the
+ * backend's real-time transport, not user-facing naming). The socket only
+ * exists while `activeSessionId` is set - set by
+ * `createFromPlaylist`/`createFromVideo`/`createEmpty`/`joinByCode` (REST
+ * calls that also create the underlying membership) or by `enterSession`
+ * (for a page landing directly on `/cast/:id`, e.g. a reload, where
+ * membership already exists). Every mutating action is a thin wrapper either
+ * over `webview/src/api/watch-party.js` (REST: create/join/kick/end) or a
  * socket emit-with-ack (queue/playback/reactions) - see
  * `webapi/lib/cast/realtime.js` for the server-side event catalog this
  * mirrors.
  */
-export function CastProvider({ children }) {
+export function WatchPartyProvider({ children }) {
   const { user } = useAuth()
   const { error: toastError, info: toastInfo } = useToast()
 
   // Seeded from localStorage so a reload rejoins the session the user was in,
   // rather than silently dropping them out of the party. The socket's join ack
   // rejects a stale or ended id, which clears it through the usual path.
-  const [activeSessionId, setActiveSessionId] = useState(readActiveCastSessionId)
+  const [activeSessionId, setActiveSessionId] = useState(readActiveWatchPartySessionId)
   const [connected, setConnected] = useState(false)
   // Set whenever a join attempt fails or a live session goes away out from
   // under the caller (kicked, or otherwise no longer a member) - the one
-  // signal CastPage/CastDisplayPage watch to redirect away, covering both
-  // "never got in" and "was in, then kicked" without needing to distinguish
-  // them separately.
+  // signal WatchPartyPage/WatchPartyDisplayPage watch to redirect away,
+  // covering both "never got in" and "was in, then kicked" without needing
+  // to distinguish them separately.
   const [joinError, setJoinError] = useState(null)
   // Set when the session the caller was in ended normally (owner or admin),
   // as opposed to joinError's "you can't be here" cases. Kept separate so the
@@ -51,7 +53,7 @@ export function CastProvider({ children }) {
   // to null, since that's exactly what happens *when* a session goes away
   // (handleConnect's ack failure, handleKicked and handleEnded all null it
   // out in the same batch), which would otherwise erase the signal before
-  // CastPage/CastDisplayPage's effect ever saw it.
+  // WatchPartyPage/WatchPartyDisplayPage's effect ever saw it.
   const [clearedFor, setClearedFor] = useState(null)
   if (activeSessionId != null && activeSessionId !== clearedFor) {
     setClearedFor(activeSessionId)
@@ -98,7 +100,7 @@ export function CastProvider({ children }) {
   // up. Writing an external store from an effect is exactly what effects are
   // for, so this stays out of the setters themselves.
   useEffect(() => {
-    writeActiveCastSessionId(activeSessionId)
+    writeActiveWatchPartySessionId(activeSessionId)
   }, [activeSessionId])
 
   // Opens (and tears down) the socket connection whenever activeSessionId
@@ -116,7 +118,7 @@ export function CastProvider({ children }) {
       setConnected(true)
       socket.emit('session:join', { sessionId: activeSessionId }, (ack) => {
         if (!ack?.ok) {
-          const message = ack?.error?.message || 'Failed to join CAST session.'
+          const message = ack?.error?.message || 'Failed to join the Watch Party.'
           toastError(message)
           setJoinError(message)
           setActiveSessionId(null)
@@ -153,7 +155,7 @@ export function CastProvider({ children }) {
       })
     }
     function handleKicked() {
-      const message = 'You were removed from this CAST session.'
+      const message = 'You were removed from this Watch Party.'
       toastError(message)
       setJoinError(message)
       setActiveSessionId(null)
@@ -161,10 +163,11 @@ export function CastProvider({ children }) {
     }
     // Mirrors handleKicked: the session is gone, so every trace of it has to
     // go too. Patching status in place used to leave `session` truthy, which
-    // kept StartCastPopover showing the QR code and join link for a dead
-    // session app-wide (it lives in the TopBar, so it outlives the cast page).
+    // kept StartWatchPartyPopover showing the QR code and join link for a dead
+    // session app-wide (it lives in the TopBar, so it outlives the watch
+    // party page).
     function handleEnded() {
-      toastInfo('This CAST session has ended.')
+      toastInfo('This Watch Party has ended.')
       setEnded(true)
       setActiveSessionId(null)
       resetState()
@@ -199,7 +202,7 @@ export function CastProvider({ children }) {
   async function createFromPlaylist(playlistId) {
     setLoading(true)
     try {
-      const result = await castApi.createCastSession({ sourceType: 'playlist', playlistId })
+      const result = await watchPartyApi.createWatchParty({ sourceType: 'playlist', playlistId })
       applySnapshot(result)
       setActiveSessionId(result.session.id)
       return result
@@ -216,7 +219,7 @@ export function CastProvider({ children }) {
   async function createFromVideo(videoId) {
     setLoading(true)
     try {
-      const result = await castApi.createCastSession({ sourceType: 'video', videoId })
+      const result = await watchPartyApi.createWatchParty({ sourceType: 'video', videoId })
       applySnapshot(result)
       setActiveSessionId(result.session.id)
       return result
@@ -232,7 +235,7 @@ export function CastProvider({ children }) {
   async function createEmpty() {
     setLoading(true)
     try {
-      const result = await castApi.createCastSession({ sourceType: 'empty' })
+      const result = await watchPartyApi.createWatchParty({ sourceType: 'empty' })
       applySnapshot(result)
       setActiveSessionId(result.session.id)
       return result
@@ -249,7 +252,7 @@ export function CastProvider({ children }) {
   async function joinByCode(code) {
     setLoading(true)
     try {
-      const result = await castApi.joinCastSession(code)
+      const result = await watchPartyApi.joinWatchParty(code)
       applySnapshot(result)
       setActiveSessionId(result.session.id)
       return result
@@ -290,7 +293,7 @@ export function CastProvider({ children }) {
    */
   async function leaveSession() {
     if (!session) return
-    await castApi.leaveCastSession(session.id)
+    await watchPartyApi.leaveWatchParty(session.id)
     setActiveSessionId(null)
     resetState()
   }
@@ -304,7 +307,7 @@ export function CastProvider({ children }) {
    */
   async function renameSession(title) {
     if (!session) return
-    await castApi.renameCastSession(session.id, title)
+    await watchPartyApi.renameWatchParty(session.id, title)
   }
 
   /**
@@ -317,7 +320,7 @@ export function CastProvider({ children }) {
     return new Promise((resolve, reject) => {
       const socket = socketRef.current
       if (!socket || !socket.connected) {
-        reject(new Error('Not connected to the CAST session.'))
+        reject(new Error('Not connected to the Watch Party.'))
         return
       }
       socket.emit(event, payload, (ack) => {
@@ -399,7 +402,7 @@ export function CastProvider({ children }) {
    */
   async function kickMember(userId) {
     if (!session) return
-    await castApi.kickCastMember(session.id, userId)
+    await watchPartyApi.kickWatchPartyMember(session.id, userId)
   }
 
   /**
@@ -411,7 +414,7 @@ export function CastProvider({ children }) {
    */
   async function endActiveSession() {
     if (!session) return
-    await castApi.endCastSession(session.id)
+    await watchPartyApi.endWatchParty(session.id)
     setEnded(true)
     setActiveSessionId(null)
     resetState()
@@ -423,7 +426,7 @@ export function CastProvider({ children }) {
   const canManageSession = Boolean(session && (isOwner || user?.role === 'admin'))
 
   return (
-    <CastContext.Provider
+    <WatchPartyContext.Provider
       value={{
         connected,
         joinError,
@@ -463,6 +466,6 @@ export function CastProvider({ children }) {
       }}
     >
       {children}
-    </CastContext.Provider>
+    </WatchPartyContext.Provider>
   )
 }

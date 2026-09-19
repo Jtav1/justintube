@@ -99,7 +99,7 @@ function VideoPlayer({
   onToggleExpand,
   onVideoEnded,
   onVideoError,
-  onAddToCastQueue,
+  onAddToWatchPartyQueue,
   onPlaybackIntent,
   ref,
 }) {
@@ -146,10 +146,18 @@ function VideoPlayer({
   const [delisted, setDelisted] = useState(false)
   const [delistPending, setDelistPending] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
-  const [castQueued, setCastQueued] = useState(false)
-  // Device-casting availability. Both are feature-detected and start false, so
-  // the buttons stay hidden on browsers/networks with no targets rather than
-  // offering an action that would do nothing.
+  const [watchPartyQueued, setWatchPartyQueued] = useState(false)
+  // remotePlaybackSupported reflects whether the browser implements the
+  // Remote Playback API at all - not whether a device is currently
+  // available. Chrome's watchAvailability() is known to be unreliable in
+  // practice (it often reports no receiver even when Chrome's own separate
+  // Cast menu finds one fine), so the Cast button's visibility is gated on
+  // API *support*, not on this signal. remotePlaybackAvailable is kept only
+  // as a hint for the device-list dropdown (shown when deviceCastEnabled is
+  // also on) - remote.prompt() (behind the button itself) does the real
+  // "is anything actually there" check via Chrome's own reliable picker,
+  // which requires a genuine user gesture to open.
+  const [remotePlaybackSupported, setRemotePlaybackSupported] = useState(false)
   const [remotePlaybackAvailable, setRemotePlaybackAvailable] = useState(false)
   const [airplayAvailable, setAirplayAvailable] = useState(false)
   const [castMenuOpen, setCastMenuOpen] = useState(false)
@@ -211,7 +219,8 @@ function VideoPlayer({
   })
   const measureCanvasRef = useRef(null)
 
-  // External imperative control surface for CAST (see CastPage/CastDisplayPage):
+  // External imperative control surface for Watch Party (see
+  // WatchPartyPage/WatchPartyDisplayPage):
   // synced playback needs to drive play/pause/seek from outside this
   // component's own controls. `seek` reuses the exact same
   // resumeStateRef/handleLoadedMetadata mechanism the quality-switch flow
@@ -221,7 +230,7 @@ function VideoPlayer({
   // against an element that hasn't loaded anything yet.
   useImperativeHandle(ref, () => ({
     // Deliberately does not swallow a rejection here (unlike the internal
-    // autoplay/seek call sites below) - CastDisplayPage needs to detect an
+    // autoplay/seek call sites below) - WatchPartyDisplayPage needs to detect an
     // autoplay-block rejection to show its "click to enable" overlay.
     // Callers that don't care can just add their own .catch(() => {}).
     play() {
@@ -591,6 +600,7 @@ function VideoPlayer({
     // Chromecast (and other Remote Playback targets) in Chrome/Edge. Requires
     // a secure context, so this stays silent over plain http on a LAN.
     if (el.remote && typeof el.remote.watchAvailability === 'function') {
+      setRemotePlaybackSupported(true)
       el.remote
         .watchAvailability((available) => {
           if (!cancelled) {
@@ -893,13 +903,13 @@ function VideoPlayer({
     }
   }
 
-  async function handleAddToCastQueue() {
+  async function handleAddToWatchPartyQueue() {
     try {
-      await onAddToCastQueue()
-      setCastQueued(true)
-      setTimeout(() => setCastQueued(false), 1500)
+      await onAddToWatchPartyQueue()
+      setWatchPartyQueued(true)
+      setTimeout(() => setWatchPartyQueued(false), 1500)
     } catch (err) {
-      toastError(err.message || 'Failed to add to the CAST queue.')
+      toastError(err.message || 'Failed to add to the Watch Party queue.')
     }
   }
 
@@ -1051,18 +1061,18 @@ function VideoPlayer({
           >
             <Repeat size={18} />
           </button>
-          {onAddToCastQueue && (
+          {onAddToWatchPartyQueue && (
             <button
               type="button"
               className="video-player-icon-btn"
-              aria-label={castQueued ? 'Added to CAST queue' : 'Add to CAST queue'}
-              title={castQueued ? 'Added to CAST queue' : 'Add to CAST queue'}
-              onClick={handleAddToCastQueue}
+              aria-label={watchPartyQueued ? 'Added to Watch Party queue' : 'Add to Watch Party queue'}
+              title={watchPartyQueued ? 'Added to Watch Party queue' : 'Add to Watch Party queue'}
+              onClick={handleAddToWatchPartyQueue}
             >
               <ListPlus size={18} />
             </button>
           )}
-          {(deviceCastEnabled || remotePlaybackAvailable) && (
+          {(deviceCastEnabled || remotePlaybackSupported) && (
             <div className="video-player-cast" ref={castMenuRef}>
               <button
                 type="button"

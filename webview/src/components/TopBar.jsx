@@ -10,7 +10,7 @@ import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import SearchAutocomplete from './SearchAutocomplete.jsx'
 import ThemeSelector from './ThemeSelector.jsx'
 import NotificationBell from './NotificationBell.jsx'
-import StartCastPopover from './StartCastPopover.jsx'
+import StartWatchPartyPopover from './StartWatchPartyPopover.jsx'
 import './TopBar.css'
 
 /**
@@ -45,7 +45,7 @@ function reportContextFor(pathname, searchParams) {
 
 function TopBar({ onToggleSidebar, backgroundUrl }) {
   const { user, logout } = useAuth()
-  const { livestreamEnabled, castEnabled } = useSiteConfig()
+  const { livestreamEnabled, watchPartyEnabled } = useSiteConfig()
   const { error: toastError } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
@@ -267,7 +267,7 @@ function TopBar({ onToggleSidebar, backgroundUrl }) {
             <span>Go Live</span>
           </Link>
         )}
-        {user && castEnabled && <StartCastPopover />}
+        {user && watchPartyEnabled && <StartWatchPartyPopover />}
         <button
           type="button"
           className="topbar-random-btn"
