@@ -225,9 +225,29 @@
 }
 
 .watch-party-popover-qr {
+  display: inline-block;
   padding: 10px;
   background: #fff;
   border-radius: 8px;
+}
+
+/* The reveal toggle sits beside the QR rather than under it, so the popover
+   keeps the same height whether the code is showing or not. */
+.watch-party-popover-qr-reveal {
+  align-items: flex-start;
+}
+
+.watch-party-popover-qr-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 180px;
+  height: 180px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: normal;
 }
 
 .watch-party-popover-code-label {
@@ -243,6 +263,12 @@
   font-weight: 600;
   letter-spacing: 3px;
   color: var(--text-h);
+}
+
+/* The toggle inherits the code's 22px mono, which is far too big for an icon. */
+.watch-party-popover-code .revealable-secret-toggle {
+  font-size: 14px;
+  letter-spacing: normal;
 }
 
 .watch-party-popover-copy,

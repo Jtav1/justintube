@@ -54,6 +54,19 @@ export async function addWatchPartyQueueItem(id, videoId) {
 }
 
 /**
+ * Appends every video of a playlist the caller can watch to the end of a
+ * Watch Party's queue, in playlist order. Videos they can't see are skipped,
+ * so `addedCount` may be lower than the playlist's length.
+ * @param {string|number} id
+ * @param {number} playlistId
+ * @returns {Promise<object>} Updated session snapshot, plus `addedCount`.
+ */
+export async function addWatchPartyQueuePlaylist(id, playlistId) {
+  const res = await apiClient.post(`/api/v1/cast/${id}/queue/playlist`, { playlistId })
+  return res.data
+}
+
+/**
  * Removes an item from a Watch Party's queue.
  * @param {string|number} id
  * @param {string|number} itemId

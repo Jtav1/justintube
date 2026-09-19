@@ -50,8 +50,12 @@ export const CastSession = sequelize.define(
       allowNull: false,
       defaultValue: 0,
     },
+    // DATE(3), not plain DATE: MySQL's DATETIME defaults to second precision,
+    // which rounds away the milliseconds `effectivePosition` subtracts against
+    // and leaves up to half a second of noise in every member's sync target.
+    // SQLite stores ISO strings, so the precision arg is a no-op there.
     playbackUpdatedAt: {
-      type: DataTypes.DATE,
+      type: DataTypes.DATE(3),
       allowNull: true,
     },
     endedAt: {

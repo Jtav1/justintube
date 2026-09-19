@@ -1,78 +1,296 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
-// Local player position is only hard-corrected once it drifts from the
-// server clock by more than this, so small natural jitter (buffering,
-// tick timing) doesn't cause a visible stutter on every tick.
-const DRIFT_THRESHOLD_SECONDS = 1.5
+// How often drift is evaluated. Deliberately decoupled from the rate events
+// arrive at: the server ticks once a second but also broadcasts a full
+// state:sync on every queue edit, member join and rename, and correcting once
+// per inbound event meant a burst of edits became a burst of seeks.
+const EVALUATE_INTERVAL_MS = 500
+
+// Drift below this is left alone entirely. Wide enough to cover ordinary
+// decode/tick jitter, narrow enough that nobody can perceive the difference.
+const DEAD_BAND_SECONDS = 0.25
+
+// Between the dead band and this, drift is corrected by nudging playbackRate
+// instead of seeking - inaudible at these magnitudes and, unlike a seek, it
+// costs no range request and never rebuffers. Past it, only a seek will do.
+const SOFT_BAND_SECONDS = 1.5
+
+// Proportional gain and clamp for the rate nudge. 10% closes the full soft
+// band in ~15s, and typical steady-state drift in far less.
+const RATE_GAIN = 0.12
+const MAX_RATE_ADJUST = 0.1
+
+// A paused session has no clock running, so there is nothing to nudge towards -
+// only worth a seek, and only once the gap is clearly not just jitter.
+const PAUSED_SEEK_THRESHOLD_SECONDS = 0.5
+
+// After a hard seek, stop correcting for this long: the element needs to
+// actually buffer and settle at the new position, and measuring it mid-flight
+// is what turns one correction into a seek storm.
+const SEEK_COOLDOWN_MS = 2000
+
+// After the local user plays, pauses or scrubs, their own intent wins for this
+// long - enough for the emit to reach the server and the authoritative state to
+// come back, so the correction loop does not undo them in the meantime.
+const LOCAL_INTENT_GRACE_MS = 1200
+
+// HAVE_CURRENT_DATA. Below this the element cannot act on a seek or a rate
+// change in any meaningful way, so corrections are skipped rather than stacked.
+const MIN_READY_STATE = 2
 
 /**
- * Computes the server clock's current effective position, mirroring
- * webapi's lib/cast/queue-service.js `effectivePosition` - the stored
- * position plus elapsed wall-clock time since it was last updated, while playing.
- * @param {{status: string, positionSeconds: number, updatedAt: string|null}} playback
- * @returns {number}
+ * Computes the server clock's current effective position from a playback
+ * payload.
+ *
+ * `positionSeconds` is the position as of `playback.serverTime` (see webapi's
+ * lib/cast/queue-service.js `playbackSnapshot`), so the elapsed time is measured
+ * from *that* stamp - not from `updatedAt`, which is the older "when a control
+ * action last moved the clock" timestamp and would count the same elapsed
+ * seconds a second time.
+ *
+ * @param {{status: string, positionSeconds: number, serverTime: string|null, updatedAt: string|null}} playback Playback payload from the session.
+ * @param {number} serverNowMs The server's current time, as epoch ms (see `useWatchParty().getServerNow`).
+ * @returns {number} The position the local player should be at, in seconds.
  */
-export function computeWatchPartyEffectivePosition(playback) {
-  if (playback.status !== 'playing' || !playback.updatedAt) {
+export function computeWatchPartyEffectivePosition(playback, serverNowMs) {
+  if (playback.status !== 'playing') {
     return playback.positionSeconds
   }
-  const elapsed = (Date.now() - new Date(playback.updatedAt).getTime()) / 1000
+  // A payload with no `serverTime` (EMPTY_PLAYBACK before the first snapshot)
+  // cannot be advanced safely, so it is taken at face value.
+  if (!playback.serverTime) {
+    return playback.positionSeconds
+  }
+  const elapsed = (serverNowMs - new Date(playback.serverTime).getTime()) / 1000
   return playback.positionSeconds + Math.max(0, elapsed)
 }
 
 /**
- * Drives a VideoPlayer imperative-handle ref to follow a Watch Party's
- * server-authoritative playback clock: a full seek/load when `nowPlaying`
- * changes video, and periodic drift correction while the same video keeps
- * playing. Shared by WatchPartyPage and WatchPartyDisplayPage so both stay in
- * sync the same way.
- * @param {{current: {play: Function, pause: Function, seek: Function, getState: Function}|null}} videoPlayerRef
- * @param {object|null} nowPlaying `useWatchParty().nowPlaying`.
- * @param {{status: string, positionSeconds: number, updatedAt: string|null}} playback `useWatchParty().playback`.
+ * Clamps a value into a range.
+ *
+ * @param {number} value Value to clamp.
+ * @param {number} min Lower bound.
+ * @param {number} max Upper bound.
+ * @returns {number} The clamped value.
  */
-export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback) {
-  const lastVideoIdRef = useRef(null)
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value))
+}
 
-  // Video changed (or first loaded): (re)seek to the server clock and match
-  // its play/pause state. VideoPlayer's internal <video> element remounts
-  // (key={memoizedSrc}) when its `video` prop changes, so this seek is
-  // likely queued (see VideoPlayer's seek()) until metadata loads.
+/**
+ * Keeps a VideoPlayer following a Watch Party's server-authoritative playback
+ * clock, and mediates in the other direction too: the returned handlers turn the
+ * member's own play/pause/scrub into session commands while suppressing the echo
+ * of this hook's own corrections. Shared by WatchPartyPage and
+ * WatchPartyDisplayPage so both behave identically.
+ *
+ * Correction is banded - ignore, nudge playbackRate, or seek - because a hard
+ * seek is the only visible kind: it jumps the picture and re-requests the byte
+ * range. Small drift is therefore absorbed by playing imperceptibly fast or
+ * slow, and seeking is reserved for gaps too large to close that way. The hook
+ * owns `playbackRate` for as long as the session lasts, so a speed chosen from
+ * the browser's own controls menu will be overridden - unavoidable when every
+ * member has to stay on the same frame.
+ *
+ * @param {{current: {play: Function, pause: Function, seek: Function, setPlaybackRate: Function, getState: Function}|null}} videoPlayerRef Ref to the VideoPlayer's imperative handle.
+ * @param {object|null} nowPlaying `useWatchParty().nowPlaying`.
+ * @param {{status: string, positionSeconds: number, serverTime: string|null, updatedAt: string|null}} playback `useWatchParty().playback`.
+ * @param {{play: Function, pause: Function, seek: Function, getServerNow: Function}} commands Session commands from `useWatchParty()`.
+ * @returns {{onPlaybackIntent: (paused: boolean) => void, onSeekIntent: (seconds: number) => void}} Handlers to pass to VideoPlayer.
+ */
+export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, commands) {
+  const lastVideoIdRef = useRef(null)
+  const seekCooldownUntilRef = useRef(0)
+  const localIntentUntilRef = useRef(0)
+  const appliedRateRef = useRef(1)
+
+  // The evaluation loop below runs on a timer, so it reads the latest playback
+  // state and commands from refs instead of being torn down and restarted every
+  // time a tick arrives. Mirrored in an effect (rather than assigned during
+  // render) because a ref write during render is not safe under concurrent
+  // rendering - the render may be thrown away.
+  const playbackRef = useRef(playback)
+  const nowPlayingRef = useRef(nowPlaying)
+  const commandsRef = useRef(commands)
+  useEffect(() => {
+    playbackRef.current = playback
+    nowPlayingRef.current = nowPlaying
+    commandsRef.current = commands
+  })
+
+  /**
+   * Applies a playback rate, if it is not already the one in effect.
+   *
+   * @param {number} rate The rate to apply.
+   * @returns {void}
+   */
+  const applyRate = useCallback((rate) => {
+    if (Math.abs(appliedRateRef.current - rate) < 0.005) {
+      return
+    }
+    appliedRateRef.current = rate
+    videoPlayerRef.current?.setPlaybackRate?.(rate)
+  }, [videoPlayerRef])
+
+  /**
+   * Seeks the element and opens the cooldown window, so the next few
+   * evaluations leave it alone while it buffers at the new position.
+   *
+   * @param {number} target Position to seek to, in seconds.
+   * @param {boolean} shouldPlay Whether to play after seeking.
+   * @returns {void}
+   */
+  const hardSeek = useCallback((target, shouldPlay) => {
+    applyRate(1)
+    seekCooldownUntilRef.current = Date.now() + SEEK_COOLDOWN_MS
+    videoPlayerRef.current?.seek(target, { play: shouldPlay })
+  }, [applyRate, videoPlayerRef])
+
+  // Video changed (or first loaded): jump straight to the server clock and match
+  // its play/pause state. VideoPlayer's <video> remounts (key={memoizedSrc})
+  // when its `video` prop changes, so this seek is likely queued (see
+  // VideoPlayer's seek()) until metadata loads.
   useEffect(() => {
     const videoId = nowPlaying?.video?.videoId
     if (!videoId || videoId === lastVideoIdRef.current) {
       return
     }
     lastVideoIdRef.current = videoId
-    videoPlayerRef.current?.seek(computeWatchPartyEffectivePosition(playback), {
-      play: playback.status === 'playing',
-    })
-    // Only re-run when the video itself changes - the effect below handles
-    // ongoing playback updates for the same video.
+    // Put the rate back explicitly rather than just assuming the new element
+    // starts at 1: VideoPlayer re-applies the last rate it was given after a
+    // remount, so leaving a nudge in place there would strand it permanently -
+    // the dead band's applyRate(1) would think it had nothing to do.
+    appliedRateRef.current = 1
+    videoPlayerRef.current?.setPlaybackRate?.(1)
+    hardSeek(
+      computeWatchPartyEffectivePosition(playback, commands.getServerNow()),
+      playback.status === 'playing',
+    )
+    // Only re-run when the video itself changes - the loop below handles ongoing
+    // playback updates for the same video.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nowPlaying?.video?.videoId])
 
-  // Drift correction: on every playback update (roughly once a second while
-  // playing, per lib/cast/realtime.js's tick), compare the local player's
-  // actual position/pause-state against the server clock and correct if
-  // they've meaningfully diverged.
   useEffect(() => {
-    if (!nowPlaying) {
+    const interval = setInterval(() => {
+      const currentNowPlaying = nowPlayingRef.current
+      const currentPlayback = playbackRef.current
+      if (!currentNowPlaying) {
+        return
+      }
+      const state = videoPlayerRef.current?.getState()
+      if (!state) {
+        return
+      }
+
+      const now = Date.now()
+      if (now < localIntentUntilRef.current) {
+        return
+      }
+      // Mid-seek or starved of data, the element cannot honour anything asked of
+      // it - and its currentTime is not meaningful to measure against either.
+      if (state.seeking || (state.readyState ?? 0) < MIN_READY_STATE) {
+        return
+      }
+
+      const target = computeWatchPartyEffectivePosition(
+        currentPlayback,
+        commandsRef.current.getServerNow(),
+      )
+      const drift = state.currentTime - target
+
+      if (currentPlayback.status === 'paused') {
+        applyRate(1)
+        if (!state.paused) {
+          videoPlayerRef.current?.pause()
+        }
+        if (
+          Math.abs(drift) > PAUSED_SEEK_THRESHOLD_SECONDS
+          && now >= seekCooldownUntilRef.current
+        ) {
+          hardSeek(target, false)
+        }
+        return
+      }
+
+      // Server says playing. Start it if it is not - WatchPartyDisplayPage
+      // watches for the rejection separately to show its "click to enable"
+      // overlay, so any failure here is deliberately swallowed.
+      if (state.paused) {
+        applyRate(1)
+        videoPlayerRef.current?.play()?.catch(() => {})
+        return
+      }
+
+      const magnitude = Math.abs(drift)
+      if (magnitude <= DEAD_BAND_SECONDS) {
+        applyRate(1)
+        return
+      }
+      if (magnitude <= SOFT_BAND_SECONDS) {
+        // Behind the server (drift < 0) means play slightly faster.
+        applyRate(1 - clamp(drift * RATE_GAIN, -MAX_RATE_ADJUST, MAX_RATE_ADJUST))
+        return
+      }
+      if (now >= seekCooldownUntilRef.current) {
+        hardSeek(target, true)
+      }
+    }, EVALUATE_INTERVAL_MS)
+
+    return () => clearInterval(interval)
+  }, [applyRate, hardSeek, videoPlayerRef])
+
+  // Put the rate back when this hook stops driving the element, so a session
+  // leftover cannot follow the user onto an ordinary watch page.
+  useEffect(() => () => {
+    if (appliedRateRef.current !== 1) {
+      videoPlayerRef.current?.setPlaybackRate?.(1)
+    }
+  }, [videoPlayerRef])
+
+  /**
+   * Turns a play/pause from the player's own controls into a session command, so
+   * the transport rail is not the only thing that works. Any member may control
+   * playback (controlPlayback enforces no ownership), matching the rail's
+   * ungated buttons.
+   *
+   * Only acts when the local element has diverged from the server clock: when
+   * this hook plays or pauses the element to follow the session, the resulting
+   * event already agrees with `playback`, so nothing is emitted and there is no
+   * feedback loop.
+   *
+   * @param {boolean} paused The element's new paused state.
+   * @returns {void}
+   */
+  const onPlaybackIntent = useCallback((paused) => {
+    const currentPlayback = playbackRef.current
+    if (paused && currentPlayback.status === 'playing') {
+      localIntentUntilRef.current = Date.now() + LOCAL_INTENT_GRACE_MS
+      commandsRef.current.pause().catch(() => {})
+    } else if (!paused && currentPlayback.status === 'paused') {
+      localIntentUntilRef.current = Date.now() + LOCAL_INTENT_GRACE_MS
+      commandsRef.current.play().catch(() => {})
+    }
+  }, [])
+
+  /**
+   * Turns the member's own scrub into a session seek, moving everyone together.
+   * VideoPlayer only reports seeks it did not make itself, so this hook's own
+   * corrections cannot come back round as session-wide seeks.
+   *
+   * @param {number} seconds The position the user scrubbed to.
+   * @returns {void}
+   */
+  const onSeekIntent = useCallback((seconds) => {
+    if (!Number.isFinite(seconds)) {
       return
     }
-    const state = videoPlayerRef.current?.getState()
-    if (!state) {
-      return
-    }
-    const target = computeWatchPartyEffectivePosition(playback)
-    if (Math.abs(state.currentTime - target) > DRIFT_THRESHOLD_SECONDS) {
-      videoPlayerRef.current?.seek(target, { play: playback.status === 'playing' })
-    } else if (playback.status === 'playing' && state.paused) {
-      // Swallowed here (unlike the page-level autoplay-block detection in
-      // WatchPartyDisplayPage) - this hook has no UI of its own to react with.
-      videoPlayerRef.current?.play()?.catch(() => {})
-    } else if (playback.status === 'paused' && !state.paused) {
-      videoPlayerRef.current?.pause()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playback, nowPlaying])
+    // Hold off correction until the server's answer arrives - the round trip is
+    // long enough that the old position would otherwise pull them back.
+    localIntentUntilRef.current = Date.now() + LOCAL_INTENT_GRACE_MS
+    applyRate(1)
+    commandsRef.current.seek(seconds).catch(() => {})
+  }, [applyRate])
+
+  return { onPlaybackIntent, onSeekIntent }
 }

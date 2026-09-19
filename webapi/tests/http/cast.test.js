@@ -359,6 +359,121 @@ describe("CAST endpoints (CAST_SESSIONS + CAST_QUEUE_ITEMS + CAST_SESSION_MEMBER
       expect(res.status).toBe(403);
     });
 
+    test("appends a whole playlist to the queue in playlist order", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "queue-pl-1");
+      const session = await createSession("queue-pl-1");
+      const existing = await seedVideo();
+      await client
+        .post(`/api/v1/cast/${session.session.id}/queue`)
+        .set("Authorization", "Bearer queue-pl-1")
+        .send({ videoId: String(existing.id) });
+
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+      const videoA = await seedVideo();
+      const videoB = await seedVideo();
+      await seedPlaylistItem(playlist.id, videoA.id, { position: 0 });
+      await seedPlaylistItem(playlist.id, videoB.id, { position: 1 });
+
+      const res = await client
+        .post(`/api/v1/cast/${session.session.id}/queue/playlist`)
+        .set("Authorization", "Bearer queue-pl-1")
+        .send({ playlistId: playlist.id });
+
+      expect(res.status).toBe(201);
+      expect(res.body.addedCount).toBe(2);
+      // The already-playing item keeps playing; the playlist lands behind it.
+      expect(res.body.nowPlaying.video.id).toBe(existing.id);
+      expect(res.body.queue.map((item) => item.video.id)).toEqual([videoA.id, videoB.id]);
+    });
+
+    test("starts playing the playlist's first video when the queue was idle", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "queue-pl-2");
+      const session = await createSession("queue-pl-2");
+      const playlist = await seedPlaylist({ userId: owner.id });
+      const videoA = await seedVideo();
+      const videoB = await seedVideo();
+      await seedPlaylistItem(playlist.id, videoA.id, { position: 0 });
+      await seedPlaylistItem(playlist.id, videoB.id, { position: 1 });
+
+      const res = await client
+        .post(`/api/v1/cast/${session.session.id}/queue/playlist`)
+        .set("Authorization", "Bearer queue-pl-2")
+        .send({ playlistId: playlist.id });
+
+      expect(res.status).toBe(201);
+      expect(res.body.nowPlaying.video.id).toBe(videoA.id);
+      expect(res.body.queue.map((item) => item.video.id)).toEqual([videoB.id]);
+      expect(res.body.playback.status).toBe("playing");
+    });
+
+    test("skips playlist videos the caller can't view rather than failing", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "queue-pl-3");
+      const session = await createSession("queue-pl-3");
+      const videoOwner = await seedUserWithRoleAndKey("viewer", "queue-pl-3b");
+      const playlist = await seedPlaylist({ userId: owner.id });
+      const publicVideo = await seedVideo({ visibility: "public" });
+      const privateVideo = await seedUpload({ userId: videoOwner.id });
+      await seedMetadata(privateVideo.id, { visibility: "private" });
+      await seedPlaylistItem(playlist.id, publicVideo.id, { position: 0 });
+      await seedPlaylistItem(playlist.id, privateVideo.id, { position: 1 });
+
+      const res = await client
+        .post(`/api/v1/cast/${session.session.id}/queue/playlist`)
+        .set("Authorization", "Bearer queue-pl-3")
+        .send({ playlistId: playlist.id });
+
+      expect(res.status).toBe(201);
+      expect(res.body.addedCount).toBe(1);
+      expect(res.body.nowPlaying.video.id).toBe(publicVideo.id);
+      expect(res.body.queue).toHaveLength(0);
+    });
+
+    test("404s adding a private playlist the caller can't view", async () => {
+      await seedUserWithRoleAndKey("viewer", "queue-pl-4");
+      const session = await createSession("queue-pl-4");
+      const playlistOwner = await seedUserWithRoleAndKey("viewer", "queue-pl-4b");
+      const playlist = await seedPlaylist({
+        userId: playlistOwner.id,
+        visibility: "private",
+      });
+      const video = await seedVideo();
+      await seedPlaylistItem(playlist.id, video.id, { position: 0 });
+
+      const res = await client
+        .post(`/api/v1/cast/${session.session.id}/queue/playlist`)
+        .set("Authorization", "Bearer queue-pl-4")
+        .send({ playlistId: playlist.id });
+
+      expect(res.status).toBe(404);
+    });
+
+    test("rejects a non-member adding a playlist with 403", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "queue-pl-5");
+      const session = await createSession("queue-pl-5");
+      await seedUserWithRoleAndKey("viewer", "queue-pl-5b");
+      const playlist = await seedPlaylist({ userId: owner.id, visibility: "public" });
+
+      const res = await client
+        .post(`/api/v1/cast/${session.session.id}/queue/playlist`)
+        .set("Authorization", "Bearer queue-pl-5b")
+        .send({ playlistId: playlist.id });
+
+      expect(res.status).toBe(403);
+    });
+
+    test("400s on a missing or non-numeric playlistId", async () => {
+      await seedUserWithRoleAndKey("viewer", "queue-pl-6");
+      const session = await createSession("queue-pl-6");
+
+      const res = await client
+        .post(`/api/v1/cast/${session.session.id}/queue/playlist`)
+        .set("Authorization", "Bearer queue-pl-6")
+        .send({ playlistId: "not-a-number" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_body");
+    });
+
     test("removes a queue item", async () => {
       await seedUserWithRoleAndKey("viewer", "queue-key-4");
       const session = await createSession("queue-key-4");

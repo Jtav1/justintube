@@ -3,6 +3,7 @@ import { CastQueueItem, CastSession } from "../../lib/models/index.js";
 import {
   controlPlayback,
   effectivePosition,
+  playbackSnapshot,
   promoteNextQueuedItemIfIdle,
   reorderQueueItem,
 } from "../../lib/cast/queue-service.js";
@@ -76,6 +77,47 @@ describe("lib/cast/queue-service.js", () => {
       // direction and rough magnitude of the elapsed-time addition matter here.
       expect(position).toBeGreaterThanOrEqual(14.5);
       expect(position).toBeLessThanOrEqual(16);
+    });
+
+    test("evaluates at an injected instant rather than now", () => {
+      const updatedAt = new Date("2026-01-01T00:00:00.000Z");
+      const session = CastSession.build({
+        playbackStatus: "playing",
+        playbackPositionSeconds: 10,
+        playbackUpdatedAt: updatedAt,
+      });
+      expect(effectivePosition(session, updatedAt.getTime() + 3_000)).toBe(13);
+    });
+  });
+
+  describe("playbackSnapshot", () => {
+    test("reports a position that is true as of its own serverTime", () => {
+      // The regression test for the stutter: clients advance positionSeconds
+      // from serverTime, so the two must describe the same instant. When the
+      // payload carried an already-advanced position next to an older stamp,
+      // every client added the same elapsed seconds a second time and its sync
+      // target ran at twice real speed.
+      const session = CastSession.build({
+        playbackStatus: "playing",
+        playbackPositionSeconds: 30,
+        playbackUpdatedAt: new Date(Date.now() - 4_000),
+      });
+
+      const snapshot = playbackSnapshot(session);
+      const recomputed = effectivePosition(session, new Date(snapshot.serverTime).getTime());
+
+      expect(snapshot.positionSeconds).toBeCloseTo(recomputed, 3);
+      expect(snapshot.status).toBe("playing");
+      expect(snapshot.updatedAt).toEqual(session.playbackUpdatedAt);
+    });
+
+    test("does not advance a paused session", () => {
+      const session = CastSession.build({
+        playbackStatus: "paused",
+        playbackPositionSeconds: 12.5,
+        playbackUpdatedAt: new Date(Date.now() - 60_000),
+      });
+      expect(playbackSnapshot(session).positionSeconds).toBe(12.5);
     });
   });
 

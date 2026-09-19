@@ -11,7 +11,7 @@ import './WatchPartyReactionBar.css'
 const EmojiPicker = lazy(() => import('emoji-picker-react'))
 
 const PICKER_WIDTH = 340
-const PICKER_HEIGHT = 420
+const PICKER_MAX_HEIGHT = 420
 const VIEWPORT_MARGIN = 12
 
 /**
@@ -24,24 +24,28 @@ const VIEWPORT_MARGIN = 12
 const FALLBACK_EMOJI = ['👍', '😂', '😮', '❤️', '🎉', '👎']
 
 /**
- * Positions the picker panel above the trigger where there's room, flipping
- * below when there isn't, and clamped to the viewport. Same rect-based
- * approach as StartWatchPartyPopover.
+ * Positions the picker panel: right-aligned to the viewport rather than to the
+ * trigger, and above it where there's room. The reaction bar sits directly under
+ * the player with the session sidebar to its right, so hugging the right edge
+ * puts the panel over the sidebar instead of over the video - the panel used to
+ * open squarely on top of the picture. Height shrinks to whatever the viewport
+ * actually has, so it never needs clamping into the middle of the player either.
  *
  * @param {DOMRect} rect The trigger button's bounding rect.
- * @returns {{top: number, left: number, width: number}} Fixed-position style values.
+ * @returns {{top: number, left: number, width: number, height: number}} Fixed-position style values.
  */
 function computePickerPosition(rect) {
   const width = Math.min(PICKER_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2)
-  const fitsAbove = rect.top >= PICKER_HEIGHT + VIEWPORT_MARGIN
+  const height = Math.min(PICKER_MAX_HEIGHT, window.innerHeight - VIEWPORT_MARGIN * 2)
+  const fitsAbove = rect.top >= height + VIEWPORT_MARGIN
   const top = fitsAbove
-    ? rect.top - PICKER_HEIGHT - 6
-    : Math.min(rect.bottom + 6, window.innerHeight - PICKER_HEIGHT - VIEWPORT_MARGIN)
-  const maxLeft = window.innerWidth - width - VIEWPORT_MARGIN
+    ? rect.top - height - 6
+    : Math.min(rect.bottom + 6, window.innerHeight - height - VIEWPORT_MARGIN)
   return {
     top: Math.max(VIEWPORT_MARGIN, top),
-    left: Math.max(VIEWPORT_MARGIN, Math.min(rect.left, maxLeft)),
+    left: Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN),
     width,
+    height,
   }
 }
 
@@ -80,27 +84,22 @@ function WatchPartyReactionBar() {
     }
   }, [refreshKey])
 
+  // Reposition on resize *and* scroll: the panel is position:fixed, so a scroll
+  // leaves it stranded away from the trigger it's anchored to.
   useEffect(() => {
     if (!pickerOpen) {
       return undefined
     }
-    function handleClickOutside(event) {
-      const clickedTrigger = toggleRef.current?.contains(event.target)
-      const clickedPanel = panelRef.current?.contains(event.target)
-      if (!clickedTrigger && !clickedPanel) {
-        setPickerOpen(false)
-      }
-    }
-    function handleResize() {
+    function reposition() {
       if (toggleRef.current) {
         setPickerPosition(computePickerPosition(toggleRef.current.getBoundingClientRect()))
       }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    window.addEventListener('resize', handleResize)
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
     }
   }, [pickerOpen])
 
@@ -131,7 +130,12 @@ function WatchPartyReactionBar() {
       return
     }
     sendReaction(picked)
-    setPickerOpen(false)
+    // Closed on the next frame, not synchronously: emoji-picker-react handles
+    // the pick from its own passive native listener, so tearing the panel out
+    // from under the pointer mid-gesture lets the rest of the click land on
+    // whatever is beneath - and on Windows a click on the video surface is a
+    // native play/pause toggle, which then pauses the session for everyone.
+    requestAnimationFrame(() => setPickerOpen(false))
     if (!emoji.includes(picked)) {
       setRefreshKey((key) => key + 1)
     }
@@ -163,30 +167,42 @@ function WatchPartyReactionBar() {
         <SmilePlus size={18} />
       </button>
       {pickerOpen && pickerPosition && createPortal(
-        <div
-          className="watch-party-reaction-picker"
-          ref={panelRef}
-          style={{
-            position: 'fixed',
-            top: pickerPosition.top,
-            left: pickerPosition.left,
-            width: pickerPosition.width,
-          }}
-        >
-          <Suspense fallback={<p className="watch-party-reaction-picker-loading">Loading emoji…</p>}>
-            {/* native: renders with the system emoji font instead of fetching
-                images from a CDN, which a self-hosted instance shouldn't depend
-                on (and which would break offline). */}
-            <EmojiPicker
-              onEmojiClick={handlePick}
-              emojiStyle="native"
-              lazyLoadEmojis
-              width="100%"
-              height={PICKER_HEIGHT}
-              previewConfig={{ showPreview: false }}
-            />
-          </Suspense>
-        </div>,
+        <>
+          {/* Swallows every pointer event outside the panel while it's open.
+              Load-bearing, not decoration: without it a click that misses (or
+              slips out of) the panel reaches the video underneath, and the
+              browser's native click-to-pause then pauses the whole session.
+              It doubles as the click-outside-to-close handler. */}
+          <div
+            className="watch-party-reaction-picker-backdrop"
+            onMouseDown={() => setPickerOpen(false)}
+          />
+          <div
+            className="watch-party-reaction-picker"
+            ref={panelRef}
+            style={{
+              position: 'fixed',
+              top: pickerPosition.top,
+              left: pickerPosition.left,
+              width: pickerPosition.width,
+            }}
+          >
+            <Suspense fallback={<p className="watch-party-reaction-picker-loading">Loading emoji…</p>}>
+              {/* native: renders with the system emoji font instead of fetching
+                  images from a CDN, which a self-hosted instance shouldn't depend
+                  on (and which would break offline). */}
+              <EmojiPicker
+                onEmojiClick={handlePick}
+                emojiStyle="native"
+                lazyLoadEmojis
+                autoFocusSearch={false}
+                width="100%"
+                height={pickerPosition.height}
+                previewConfig={{ showPreview: false }}
+              />
+            </Suspense>
+          </div>
+        </>,
         document.body,
       )}
     </div>

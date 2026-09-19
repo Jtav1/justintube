@@ -9,7 +9,22 @@ import { readActiveWatchPartySessionId, writeActiveWatchPartySessionId } from '.
 
 const MAX_ACTIVITY_ENTRIES = 50
 
-const EMPTY_PLAYBACK = { status: 'paused', positionSeconds: 0, updatedAt: null }
+const EMPTY_PLAYBACK = { status: 'paused', positionSeconds: 0, updatedAt: null, serverTime: null }
+
+// Clock handshake tuning. A burst on connect gets an offset estimate in place
+// before the first player:tick arrives; the slow refresh afterwards tracks drift
+// between the two machines' clocks over a long session.
+const CLOCK_BURST_SAMPLES = 5
+const CLOCK_BURST_INTERVAL_MS = 250
+const CLOCK_REFRESH_INTERVAL_MS = 30000
+// Only the lowest-RTT samples are trusted: round-trip delay is asymmetric under
+// queueing, and a slow sample's error lands entirely in the offset.
+const CLOCK_SAMPLE_WINDOW = 8
+
+// How long to wait for a session snapshot before giving up on the join. Without
+// this, a socket that never connects (or a stale session id out of
+// localStorage) leaves the Watch Party page sitting on "Joining Watch Party…" forever.
+const JOIN_TIMEOUT_MS = 15000
 
 /**
  * Owns the live Watch Party session state and its socket.io-client
@@ -59,6 +74,7 @@ export function WatchPartyProvider({ children }) {
     setClearedFor(activeSessionId)
     setJoinError(null)
     setEnded(false)
+    setLeft(false)
   }
   const [session, setSession] = useState(null)
   const [queue, setQueue] = useState([])
@@ -68,11 +84,26 @@ export function WatchPartyProvider({ children }) {
   const [members, setMembers] = useState([])
   const [presence, setPresence] = useState([])
   const [activity, setActivity] = useState([])
+  // Set when the caller deliberately left the session (as opposed to it ending
+  // or them being kicked). Mirrors `ended`: the session state is torn down
+  // either way, so without a distinct signal CastPage can't tell "just left"
+  // from "still joining" and strands the user on the joining message.
+  const [left, setLeft] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const socketRef = useRef(null)
+  // Estimated offset from the server's clock, in ms: serverNow ≈ Date.now() +
+  // offsetMs. A ref, not state - it's read by the playback sync loop on every
+  // evaluation and must never cause a re-render. `samples` keeps the most recent
+  // round trips so the lowest-RTT one can be picked (see CLOCK_SAMPLE_WINDOW).
+  const clockRef = useRef({ offsetMs: 0, rttMs: null, samples: [] })
+  // Whether a snapshot has landed for the current session, read by the join
+  // timeout below. A ref rather than reading `session`, so the timeout doesn't
+  // need to be torn down and rescheduled on every state change.
+  const snapshotArrivedRef = useRef(false)
 
   function applySnapshot(snapshot) {
+    snapshotArrivedRef.current = true
     setSession(snapshot.session)
     setQueue(snapshot.queue ?? [])
     setHistory(snapshot.history ?? [])
@@ -82,6 +113,7 @@ export function WatchPartyProvider({ children }) {
   }
 
   function resetState() {
+    snapshotArrivedRef.current = false
     setSession(null)
     setQueue([])
     setHistory([])
@@ -113,9 +145,53 @@ export function WatchPartyProvider({ children }) {
 
     const socket = io(`${apiClient.defaults.baseURL}/cast`, { withCredentials: true })
     socketRef.current = socket
+    clockRef.current = { offsetMs: 0, rttMs: null, samples: [] }
+
+    // The burst is re-armed on every connect (including reconnects); the refresh
+    // interval is created once, below, so reconnecting can't stack up intervals.
+    let burstTimers = []
+
+    /**
+     * Takes one `time:sync` round trip and folds it into the offset estimate.
+     * `offset = serverTime + rtt / 2 - now` assumes a symmetric round trip,
+     * which is only roughly true - hence keeping a window of samples and
+     * trusting the one with the lowest RTT, the least distorted by queueing.
+     *
+     * @returns {void}
+     */
+    function sampleClock() {
+      if (!socket.connected) {
+        return
+      }
+      const clientSent = Date.now()
+      socket.emit('time:sync', { clientSent }, (ack) => {
+        const serverTime = Number(ack?.serverTime)
+        if (!Number.isFinite(serverTime)) {
+          return
+        }
+        const now = Date.now()
+        const rttMs = now - clientSent
+        const samples = [
+          ...clockRef.current.samples,
+          { offsetMs: serverTime + rttMs / 2 - now, rttMs },
+        ].slice(-CLOCK_SAMPLE_WINDOW)
+        const best = samples.reduce((a, b) => (b.rttMs < a.rttMs ? b : a))
+        clockRef.current = { offsetMs: best.offsetMs, rttMs: best.rttMs, samples }
+      })
+    }
 
     function handleConnect() {
       setConnected(true)
+      // A burst on (re)connect, so an offset is in place before the first
+      // player:tick and a new connection's latency is measured fresh.
+      for (const timer of burstTimers) {
+        clearTimeout(timer)
+      }
+      burstTimers = []
+      for (let i = 0; i < CLOCK_BURST_SAMPLES; i += 1) {
+        burstTimers.push(setTimeout(sampleClock, i * CLOCK_BURST_INTERVAL_MS))
+      }
+
       socket.emit('session:join', { sessionId: activeSessionId }, (ack) => {
         if (!ack?.ok) {
           const message = ack?.error?.message || 'Failed to join the Watch Party.'
@@ -129,6 +205,11 @@ export function WatchPartyProvider({ children }) {
     function handleDisconnect() {
       setConnected(false)
     }
+    // socket.io keeps retrying on its own, so this doesn't give up - it just
+    // makes the failure visible instead of leaving the page on "Joining…".
+    function handleConnectError(err) {
+      console.error('CAST socket connection failed:', err?.message || err)
+    }
     function handleStateSync(snapshot) {
       applySnapshot(snapshot)
     }
@@ -137,6 +218,7 @@ export function WatchPartyProvider({ children }) {
         status: tick.status,
         positionSeconds: tick.positionSeconds,
         updatedAt: tick.updatedAt,
+        serverTime: tick.serverTime,
       })
     }
     function handleActivity(entry) {
@@ -174,6 +256,7 @@ export function WatchPartyProvider({ children }) {
     }
 
     socket.on('connect', handleConnect)
+    socket.on('connect_error', handleConnectError)
     socket.on('disconnect', handleDisconnect)
     socket.on('state:sync', handleStateSync)
     socket.on('player:tick', handleTick)
@@ -183,7 +266,30 @@ export function WatchPartyProvider({ children }) {
     socket.on('session:kicked', handleKicked)
     socket.on('session:ended', handleEnded)
 
+    // Nothing above ever fires if the socket can't connect at all, or if the
+    // stored session id is stale, so bound the wait: joinError is the signal
+    // WatchPartyPage/WatchPartyDisplayPage already redirect on.
+    const joinTimeout = setTimeout(() => {
+      if (snapshotArrivedRef.current) {
+        return
+      }
+      const message = 'Could not join the Watch Party. It may have ended.'
+      toastError(message)
+      setJoinError(message)
+      setActiveSessionId(null)
+      resetState()
+    }, JOIN_TIMEOUT_MS)
+
+    // Created once for the life of this socket - the two clocks drift apart over
+    // a long session, so the estimate needs refreshing even without a reconnect.
+    const clockRefreshTimer = setInterval(sampleClock, CLOCK_REFRESH_INTERVAL_MS)
+
     return () => {
+      clearTimeout(joinTimeout)
+      clearInterval(clockRefreshTimer)
+      for (const timer of burstTimers) {
+        clearTimeout(timer)
+      }
       socket.disconnect()
       socketRef.current = null
       setConnected(false)
@@ -280,6 +386,7 @@ export function WatchPartyProvider({ children }) {
    * @returns {void}
    */
   function leaveActiveSession() {
+    setLeft(true)
     setActiveSessionId(null)
     resetState()
   }
@@ -294,6 +401,7 @@ export function WatchPartyProvider({ children }) {
   async function leaveSession() {
     if (!session) return
     await watchPartyApi.leaveWatchParty(session.id)
+    setLeft(true)
     setActiveSessionId(null)
     resetState()
   }
@@ -308,6 +416,18 @@ export function WatchPartyProvider({ children }) {
   async function renameSession(title) {
     if (!session) return
     await watchPartyApi.renameWatchParty(session.id, title)
+  }
+
+  /**
+   * The server's current clock, in epoch ms, per the latest `time:sync`
+   * estimate. Every CAST playback calculation goes through this rather than
+   * `Date.now()` - a client whose wall clock is off by a few seconds would
+   * otherwise fold that error straight into its seek target.
+   *
+   * @returns {number} Estimated server time as epoch ms.
+   */
+  function getServerNow() {
+    return Date.now() + clockRef.current.offsetMs
   }
 
   /**
@@ -336,6 +456,17 @@ export function WatchPartyProvider({ children }) {
   /** @param {string} videoId @returns {Promise<object>} */
   function addToQueue(videoId) {
     return emitWithAck('queue:add', { videoId })
+  }
+
+  /**
+   * Appends a whole playlist to the queue. The ack carries `addedCount`, which
+   * can be lower than the playlist's length - videos the caller can't see are
+   * skipped rather than failing the add.
+   * @param {number} playlistId
+   * @returns {Promise<object>}
+   */
+  function addPlaylistToQueue(playlistId) {
+    return emitWithAck('queue:add-playlist', { playlistId })
   }
 
   /** @param {string|number} queueItemId @returns {Promise<object>} */
@@ -431,6 +562,7 @@ export function WatchPartyProvider({ children }) {
         connected,
         joinError,
         ended,
+        left,
         session,
         queue,
         history,
@@ -442,6 +574,7 @@ export function WatchPartyProvider({ children }) {
         loading,
         isOwner,
         canManageSession,
+        getServerNow,
         createFromPlaylist,
         createFromVideo,
         createEmpty,
@@ -451,6 +584,7 @@ export function WatchPartyProvider({ children }) {
         leaveSession,
         renameSession,
         addToQueue,
+        addPlaylistToQueue,
         removeFromQueue,
         moveInQueue,
         play,

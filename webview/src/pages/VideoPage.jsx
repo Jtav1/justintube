@@ -6,6 +6,7 @@ import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
 import { prefetchVideo, getVideoOrPrefetched } from '../lib/videoPrefetchCache.js'
 import { useToast } from '../context/useToast.js'
 import { useIsMobile } from '../lib/viewport.js'
+import { useDocumentTitle } from '../hooks/useDocumentTitle.js'
 import apiClient from '../api/client.js'
 import { useWatchParty } from '../context/useWatchParty.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
@@ -38,6 +39,10 @@ function VideoPage() {
   const [playlist, setPlaylist] = useState(null)
   const [reloadCount, setReloadCount] = useState(0)
   const [autoplayEnabled, setAutoplayEnabled] = useState(() => readAutoplayEnabled())
+
+  // The video's own name, not the route's generic "Watch" - this is also what
+  // Safari hands an AirPlay receiver, so an Apple TV shows the right thing.
+  useDocumentTitle(video?.title)
   // Mirrors VideoSuggested's loaded suggestions so autoplay-next can pick a
   // random one without VideoSuggested needing to own navigation itself.
   const [suggestions, setSuggestions] = useState([])

@@ -3,8 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
 import { useWatchParty } from '../context/useWatchParty.js'
 import { useWatchPartyPlaybackSync } from '../hooks/useWatchPartyPlaybackSync.js'
+import { useDocumentTitle } from '../hooks/useDocumentTitle.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import WatchPartyReactions from '../components/WatchPartyReactions.jsx'
+import RevealableSecret from '../components/RevealableSecret.jsx'
 import './WatchPartyDisplayPage.css'
 
 // Mirrors the dixtube-live prototype's HUD auto-hide delay.
@@ -30,15 +32,23 @@ function WatchPartyDisplayPage() {
     members,
     joinError,
     ended,
+    left,
     enterSession,
     play,
     pause,
+    seek,
+    getServerNow,
   } = useWatchParty()
 
   const videoPlayerRef = useRef(null)
   const [hudVisible, setHudVisible] = useState(true)
   const [autoplayBlocked, setAutoplayBlocked] = useState(false)
   const hudTimeoutRef = useRef(null)
+
+  // This view is the one people actually cast to a TV, so the title matters most
+  // here - it's what the receiver shows. Outside AppLayout, so useRouteAnnouncer
+  // never ran for it and nothing set a title at all before.
+  useDocumentTitle(nowPlaying?.video?.title ?? session?.title)
 
   // Resets the "blocked" flag whenever there's a new play attempt to
   // evaluate (a new video, or a play/pause/seek). Adjusted during render
@@ -72,24 +82,22 @@ function WatchPartyDisplayPage() {
     }
   }, [joinError, navigate])
 
-  useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback)
-
-  /**
-   * Mirrors WatchPartyPage: a pause/play on this screen's own controls drives
-   * the session rather than being instantly reverted by the sync hook. Emits
-   * only when the element has diverged from the server clock, so the hook's
-   * own corrections don't echo back.
-   *
-   * @param {boolean} paused The element's new paused state.
-   * @returns {void}
-   */
-  function handlePlaybackIntent(paused) {
-    if (paused && playback.status === 'playing') {
-      pause().catch(() => {})
-    } else if (!paused && playback.status === 'paused') {
-      play().catch(() => {})
+  // Leaving from elsewhere in the app (the TopBar popover) clears the session
+  // with no error, so this screen has to get itself out of the way too.
+  useEffect(() => {
+    if (left) {
+      navigate('/')
     }
-  }
+  }, [left, navigate])
+
+  // Same both-directions wiring as WatchPartyPage - see the hook for why the
+  // intent handlers live there rather than being duplicated per page.
+  const { onPlaybackIntent, onSeekIntent } = useWatchPartyPlaybackSync(
+    videoPlayerRef,
+    nowPlaying,
+    playback,
+    { play, pause, seek, getServerNow },
+  )
 
   // Detects an autoplay-block: whenever the server clock says "playing" but
   // the local element is paused, try to start it and surface a full-screen
@@ -156,7 +164,8 @@ function WatchPartyDisplayPage() {
         <VideoPlayer
           ref={videoPlayerRef}
           video={nowPlaying.video}
-          onPlaybackIntent={handlePlaybackIntent}
+          onPlaybackIntent={onPlaybackIntent}
+          onSeekIntent={onSeekIntent}
         />
       ) : (
         <p className="watch-party-display-empty">Waiting for a video…</p>
@@ -172,7 +181,11 @@ function WatchPartyDisplayPage() {
       <div className={`watch-party-display-hud${hudVisible ? '' : ' watch-party-display-hud-hidden'}`}>
         <p className="watch-party-display-title">{session?.title}</p>
         <p className="watch-party-display-meta">
-          Code <strong>{session?.code}</strong> · {members.length} watching
+          Code{' '}
+          <RevealableSecret label="join code">
+            <strong>{session?.code}</strong>
+          </RevealableSecret>
+          {' '}· {members.length} watching
         </p>
       </div>
     </div>
