@@ -147,9 +147,17 @@ function VideoPlayer({
   const [delistPending, setDelistPending] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
   const [watchPartyQueued, setWatchPartyQueued] = useState(false)
-  // Device-casting availability. Both are feature-detected and start false, so
-  // the buttons stay hidden on browsers/networks with no targets rather than
-  // offering an action that would do nothing.
+  // remotePlaybackSupported reflects whether the browser implements the
+  // Remote Playback API at all - not whether a device is currently
+  // available. Chrome's watchAvailability() is known to be unreliable in
+  // practice (it often reports no receiver even when Chrome's own separate
+  // Cast menu finds one fine), so the Cast button's visibility is gated on
+  // API *support*, not on this signal. remotePlaybackAvailable is kept only
+  // as a hint for the device-list dropdown (shown when deviceCastEnabled is
+  // also on) - remote.prompt() (behind the button itself) does the real
+  // "is anything actually there" check via Chrome's own reliable picker,
+  // which requires a genuine user gesture to open.
+  const [remotePlaybackSupported, setRemotePlaybackSupported] = useState(false)
   const [remotePlaybackAvailable, setRemotePlaybackAvailable] = useState(false)
   const [airplayAvailable, setAirplayAvailable] = useState(false)
   const [castMenuOpen, setCastMenuOpen] = useState(false)
@@ -592,6 +600,7 @@ function VideoPlayer({
     // Chromecast (and other Remote Playback targets) in Chrome/Edge. Requires
     // a secure context, so this stays silent over plain http on a LAN.
     if (el.remote && typeof el.remote.watchAvailability === 'function') {
+      setRemotePlaybackSupported(true)
       el.remote
         .watchAvailability((available) => {
           if (!cancelled) {
@@ -1063,7 +1072,7 @@ function VideoPlayer({
               <ListPlus size={18} />
             </button>
           )}
-          {(deviceCastEnabled || remotePlaybackAvailable) && (
+          {(deviceCastEnabled || remotePlaybackSupported) && (
             <div className="video-player-cast" ref={castMenuRef}>
               <button
                 type="button"
