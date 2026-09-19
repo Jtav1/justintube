@@ -18,6 +18,8 @@ import { formatRelativeDate } from '../lib/format.js'
 import { JOB_KINDS, colorForJobKind, labelForJobKind } from '../lib/jobKinds.js'
 import ChipInput from '../components/ChipInput.jsx'
 import SegmentedProgressBar from '../components/SegmentedProgressBar.jsx'
+import AdminCastSessionsCard from '../components/AdminCastSessionsCard.jsx'
+import './AccountSettings.css'
 import './AdminPanel.css'
 import './AdminThemes.css'
 import './AdminTranscodeProfiles.css'
@@ -114,7 +116,7 @@ function AdminPanel() {
   const { user, loading: authLoading } = useAuth()
   const { success, error: toastError } = useToast()
   const { themes, loading: themesLoading, refreshThemes } = useTheme()
-  const { transcodingEnabled } = useSiteConfig()
+  const { transcodingEnabled, castEnabled } = useSiteConfig()
 
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
@@ -498,6 +500,8 @@ function AdminPanel() {
             </button>
           </form>
         </div>
+
+        {castEnabled && <AdminCastSessionsCard />}
 
         <div className="settings-card">
           <h2>Manage Themes</h2>
