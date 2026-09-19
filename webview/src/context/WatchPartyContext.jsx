@@ -60,6 +60,13 @@ export function WatchPartyProvider({ children }) {
   // pages can show "this session has ended" rather than an error, while the
   // session state itself is cleared out from under them - see handleEnded.
   const [ended, setEnded] = useState(false)
+  // Set when the caller deliberately left the session (as opposed to it ending
+  // or them being kicked). Mirrors `ended`: the session state is torn down
+  // either way, so without a distinct signal WatchPartyPage can't tell "just
+  // left" from "still joining" and strands the user on the joining message.
+  // Declared above the render-body block below, which calls setLeft - a `const`
+  // read before its declaration is a temporal-dead-zone ReferenceError.
+  const [left, setLeft] = useState(false)
   // Adjusted during render (not the connect effect below) so starting a
   // fresh attempt clears any previous error/ended flag without a synchronous
   // setState-in-effect - same pattern as SearchAutocomplete's `clearedFor`.
@@ -84,11 +91,6 @@ export function WatchPartyProvider({ children }) {
   const [members, setMembers] = useState([])
   const [presence, setPresence] = useState([])
   const [activity, setActivity] = useState([])
-  // Set when the caller deliberately left the session (as opposed to it ending
-  // or them being kicked). Mirrors `ended`: the session state is torn down
-  // either way, so without a distinct signal CastPage can't tell "just left"
-  // from "still joining" and strands the user on the joining message.
-  const [left, setLeft] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const socketRef = useRef(null)
