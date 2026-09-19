@@ -1,10 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { SmilePlus } from 'lucide-react'
-import { listReactionEmoji } from '../api/cast.js'
-import { useCast } from '../context/useCast.js'
+import { listReactionEmoji } from '../api/watch-party.js'
+import { useWatchParty } from '../context/useWatchParty.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
-import './CastReactionBar.css'
+import './WatchPartyReactionBar.css'
 
 // Loaded only when the picker is first opened: the emoji dataset is large and
 // most sessions never open it, so it has no business in the main chunk.
@@ -26,7 +26,7 @@ const FALLBACK_EMOJI = ['👍', '😂', '😮', '❤️', '🎉', '👎']
 /**
  * Positions the picker panel above the trigger where there's room, flipping
  * below when there isn't, and clamped to the viewport. Same rect-based
- * approach as StartCastPopover.
+ * approach as StartWatchPartyPopover.
  *
  * @param {DOMRect} rect The trigger button's bounding rect.
  * @returns {{top: number, left: number, width: number}} Fixed-position style values.
@@ -46,13 +46,13 @@ function computePickerPosition(rect) {
 }
 
 /**
- * The CAST session's reaction bar: the instance's most-used emoji (ranked
+ * The Watch Party's reaction bar: the instance's most-used emoji (ranked
  * server-side, so everyone sees the same row) plus a picker for anything else.
  * Reactions themselves are fire-and-forget over the socket; the floating
- * animation is CastReactions' job.
+ * animation is WatchPartyReactions' job.
  */
-function CastReactionBar() {
-  const { sendReaction } = useCast()
+function WatchPartyReactionBar() {
+  const { sendReaction } = useWatchParty()
   const [emoji, setEmoji] = useState(FALLBACK_EMOJI)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerPosition, setPickerPosition] = useState(null)
@@ -138,12 +138,12 @@ function CastReactionBar() {
   }
 
   return (
-    <div className="cast-reaction-bar">
+    <div className="watch-party-reaction-bar">
       {emoji.map((value) => (
         <button
           key={value}
           type="button"
-          className="cast-reaction-bar-btn"
+          className="watch-party-reaction-bar-btn"
           onClick={() => sendReaction(value)}
           aria-label={`React with ${value}`}
         >
@@ -152,7 +152,7 @@ function CastReactionBar() {
       ))}
       <button
         type="button"
-        className="cast-reaction-bar-btn cast-reaction-bar-more"
+        className="watch-party-reaction-bar-btn watch-party-reaction-bar-more"
         onClick={handleTogglePicker}
         aria-label="React with any emoji"
         title="React with any emoji"
@@ -164,7 +164,7 @@ function CastReactionBar() {
       </button>
       {pickerOpen && pickerPosition && createPortal(
         <div
-          className="cast-reaction-picker"
+          className="watch-party-reaction-picker"
           ref={panelRef}
           style={{
             position: 'fixed',
@@ -173,7 +173,7 @@ function CastReactionBar() {
             width: pickerPosition.width,
           }}
         >
-          <Suspense fallback={<p className="cast-reaction-picker-loading">Loading emoji…</p>}>
+          <Suspense fallback={<p className="watch-party-reaction-picker-loading">Loading emoji…</p>}>
             {/* native: renders with the system emoji font instead of fetching
                 images from a CDN, which a self-hosted instance shouldn't depend
                 on (and which would break offline). */}
@@ -193,4 +193,4 @@ function CastReactionBar() {
   )
 }
 
-export default CastReactionBar
+export default WatchPartyReactionBar

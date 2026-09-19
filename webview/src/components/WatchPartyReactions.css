@@ -1,4 +1,4 @@
-.cast-reactions {
+.watch-party-reactions {
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -6,15 +6,15 @@
   z-index: 4;
 }
 
-.cast-reaction-float {
+.watch-party-reaction-float {
   position: absolute;
   bottom: 8%;
   font-size: 32px;
   line-height: 1;
-  animation: cast-reaction-rise 2.5s ease-out forwards;
+  animation: watch-party-reaction-rise 2.5s ease-out forwards;
 }
 
-@keyframes cast-reaction-rise {
+@keyframes watch-party-reaction-rise {
   0% {
     transform: translateY(0) scale(0.6);
     opacity: 0;
@@ -28,3 +28,5 @@
     opacity: 0;
   }
 }
+
+

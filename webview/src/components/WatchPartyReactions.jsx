@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
-import { useCast } from '../context/useCast.js'
-import './CastReactions.css'
+import { useWatchParty } from '../context/useWatchParty.js'
+import './WatchPartyReactions.css'
 
 const FLOAT_DURATION_MS = 2500
 
 let floatIdCounter = 0
 
 /**
- * Floating emoji overlay: watches `useCast().activity` for newly-appended
- * `reaction` entries (skipping whatever was already in the feed at mount, so
- * reopening this component doesn't replay history) and spawns a transient,
- * self-removing floating node for each one. Meant to sit absolutely
- * positioned over the video player.
+ * Floating emoji overlay: watches `useWatchParty().activity` for
+ * newly-appended `reaction` entries (skipping whatever was already in the
+ * feed at mount, so reopening this component doesn't replay history) and
+ * spawns a transient, self-removing floating node for each one. Meant to sit
+ * absolutely positioned over the video player.
  */
-function CastReactions() {
-  const { activity } = useCast()
+function WatchPartyReactions() {
+  const { activity } = useWatchParty()
   const [floats, setFloats] = useState([])
   const seenCountRef = useRef(activity.length)
 
@@ -47,9 +47,9 @@ function CastReactions() {
   }, [activity])
 
   return (
-    <div className="cast-reactions" aria-hidden="true">
+    <div className="watch-party-reactions" aria-hidden="true">
       {floats.map((float) => (
-        <span key={float.id} className="cast-reaction-float" style={{ left: `${float.left}%` }}>
+        <span key={float.id} className="watch-party-reaction-float" style={{ left: `${float.left}%` }}>
           {float.emoji}
         </span>
       ))}
@@ -57,4 +57,4 @@ function CastReactions() {
   )
 }
 
-export default CastReactions
+export default WatchPartyReactions

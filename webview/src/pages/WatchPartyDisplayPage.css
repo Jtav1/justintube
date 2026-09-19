@@ -1,4 +1,4 @@
-.cast-display {
+.watch-party-display {
   position: fixed;
   inset: 0;
   display: flex;
@@ -8,16 +8,16 @@
   overflow: hidden;
 }
 
-.cast-display .video-player {
+.watch-party-display .video-player {
   width: 100%;
 }
 
-.cast-display-empty {
+.watch-party-display-empty {
   color: #fff;
   font-size: 20px;
 }
 
-.cast-display-enable {
+.watch-party-display-enable {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -32,7 +32,7 @@
   cursor: pointer;
 }
 
-.cast-display-hud {
+.watch-party-display-hud {
   position: absolute;
   top: 0;
   left: 0;
@@ -44,19 +44,20 @@
   z-index: 5;
 }
 
-.cast-display-hud-hidden {
+.watch-party-display-hud-hidden {
   opacity: 0;
   pointer-events: none;
 }
 
-.cast-display-title {
+.watch-party-display-title {
   margin: 0;
   font-size: 22px;
   font-weight: 600;
 }
 
-.cast-display-meta {
+.watch-party-display-meta {
   margin: 4px 0 0;
   font-size: 14px;
   opacity: 0.85;
 }
+

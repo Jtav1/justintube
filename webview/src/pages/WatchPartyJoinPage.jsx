@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
-import { useCast } from '../context/useCast.js'
+import { useWatchParty } from '../context/useWatchParty.js'
 import './AuthForm.css'
 
 /**
@@ -12,9 +12,9 @@ import './AuthForm.css'
  * falls back to a manual code-entry form, since a plain popover can't own a
  * shareable URL the way this route does.
  */
-function CastJoinPage() {
+function WatchPartyJoinPage() {
   const { user, loading: authLoading } = useAuth()
-  const { joinByCode } = useCast()
+  const { joinByCode } = useWatchParty()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const codeFromUrl = (searchParams.get('code') || '').toUpperCase()
@@ -25,7 +25,7 @@ function CastJoinPage() {
   const autoJoinAttemptedRef = useRef(false)
 
   useEffect(() => {
-    document.title = 'Join CAST session - Justintube'
+    document.title = 'Join Watch Party - Justintube'
   }, [])
 
   useEffect(() => {
@@ -44,7 +44,7 @@ function CastJoinPage() {
       const result = await joinByCode(value)
       navigate(`/cast/${result.session.id}`)
     } catch (err) {
-      setError(err.message || 'Failed to join CAST session.')
+      setError(err.message || 'Failed to join the Watch Party.')
     } finally {
       setSubmitting(false)
     }
@@ -78,25 +78,25 @@ function CastJoinPage() {
   return (
     <section id="auth-center">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <h1>Join CAST session</h1>
+        <h1>Join Watch Party</h1>
         <p>Enter the session code shown on the host&apos;s screen.</p>
-        <label htmlFor="cast-join-code">
+        <label htmlFor="watch-party-join-code">
           Code <span className="required-mark" aria-hidden="true">*</span>
         </label>
         <input
-          id="cast-join-code"
+          id="watch-party-join-code"
           name="code"
           type="text"
           autoComplete="off"
           value={code}
           onChange={(event) => setCode(event.target.value.toUpperCase())}
           maxLength={8}
-          aria-describedby={error ? 'cast-join-error' : undefined}
+          aria-describedby={error ? 'watch-party-join-error' : undefined}
           aria-invalid={error ? 'true' : undefined}
           required
         />
         {error && (
-          <p id="cast-join-error" className="auth-error" role="alert">
+          <p id="watch-party-join-error" className="auth-error" role="alert">
             {error}
           </p>
         )}
@@ -111,4 +111,4 @@ function CastJoinPage() {
   )
 }
 
-export default CastJoinPage
+export default WatchPartyJoinPage

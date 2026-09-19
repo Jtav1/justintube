@@ -39,7 +39,7 @@ function LoginPage() {
     setError(null)
     try {
       await login(username, password)
-      // A handful of pages (currently just the CAST join link) bounce here
+      // A handful of pages (currently just the Watch Party join link) bounce here
       // with a return destination in location.state so scanning a QR code
       // while logged out lands back on the thing being joined, not the
       // homepage - every other entry point to this page omits `from`, so

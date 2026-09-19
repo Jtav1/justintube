@@ -1,8 +1,8 @@
-.cast-activity {
+.watch-party-activity {
   width: 100%;
 }
 
-.cast-activity-title {
+.watch-party-activity-title {
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 600;
@@ -11,7 +11,7 @@
   color: var(--text);
 }
 
-.cast-activity-list {
+.watch-party-activity-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -22,12 +22,12 @@
   overflow-y: auto;
 }
 
-.cast-activity-empty {
+.watch-party-activity-empty {
   font-size: 13px;
   color: var(--text);
 }
 
-.cast-activity-item {
+.watch-party-activity-item {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -36,8 +36,9 @@
   color: var(--text-h);
 }
 
-.cast-activity-time {
+.watch-party-activity-time {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--text);
 }
+

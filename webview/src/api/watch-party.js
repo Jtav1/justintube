@@ -1,33 +1,33 @@
 import apiClient from './client.js'
 
 /**
- * Creates a new CAST session, seeding its queue from a playlist (a filtered
- * copy), a single video, or nothing. The caller becomes the session's owner.
+ * Creates a new Watch Party, seeding its queue from a playlist (a filtered
+ * copy), a single video, or nothing. The caller becomes the party's owner.
  * @param {{ sourceType: 'playlist'|'video'|'empty', playlistId?: number, videoId?: string }} body
  * @returns {Promise<object>} The new session snapshot, including its join code.
  */
-export async function createCastSession(body) {
+export async function createWatchParty(body) {
   const res = await apiClient.post('/api/v1/cast', body)
   return res.data
 }
 
 /**
- * Joins (or rejoins) a CAST session by its join code.
+ * Joins (or rejoins) a Watch Party by its join code.
  * @param {string} code
  * @returns {Promise<object>} The joined session snapshot.
  */
-export async function joinCastSession(code) {
+export async function joinWatchParty(code) {
   const res = await apiClient.post('/api/v1/cast/join', { code })
   return res.data
 }
 
 /**
- * Fetches a session's full snapshot (queue, history, nowPlaying, playback
+ * Fetches a Watch Party's full snapshot (queue, history, nowPlaying, playback
  * clock, members). Caller must be an active member.
  * @param {string|number} id
  * @returns {Promise<object>} Session snapshot.
  */
-export async function getCastSession(id) {
+export async function getWatchParty(id) {
   const res = await apiClient.get(`/api/v1/cast/${id}`)
   return res.data
 }
@@ -37,29 +37,29 @@ export async function getCastSession(id) {
  * @param {string|number} id
  * @returns {Promise<object>} Session snapshot.
  */
-export async function getCastDisplay(id) {
+export async function getWatchPartyDisplay(id) {
   const res = await apiClient.get(`/api/v1/cast/${id}/display`)
   return res.data
 }
 
 /**
- * Adds a video to the end of a session's queue.
+ * Adds a video to the end of a Watch Party's queue.
  * @param {string|number} id
  * @param {string} videoId
  * @returns {Promise<object>} Updated session snapshot.
  */
-export async function addCastQueueItem(id, videoId) {
+export async function addWatchPartyQueueItem(id, videoId) {
   const res = await apiClient.post(`/api/v1/cast/${id}/queue`, { videoId })
   return res.data
 }
 
 /**
- * Removes an item from a session's queue.
+ * Removes an item from a Watch Party's queue.
  * @param {string|number} id
  * @param {string|number} itemId
  * @returns {Promise<void>}
  */
-export async function removeCastQueueItem(id, itemId) {
+export async function removeWatchPartyQueueItem(id, itemId) {
   await apiClient.delete(`/api/v1/cast/${id}/queue/${itemId}`)
 }
 
@@ -70,58 +70,58 @@ export async function removeCastQueueItem(id, itemId) {
  * @param {number} toIndex
  * @returns {Promise<object>} Updated session snapshot.
  */
-export async function moveCastQueueItem(id, itemId, toIndex) {
+export async function moveWatchPartyQueueItem(id, itemId, toIndex) {
   const res = await apiClient.patch(`/api/v1/cast/${id}/queue/${itemId}/move`, { toIndex })
   return res.data
 }
 
 /**
- * Lists a session's active members.
+ * Lists a Watch Party's active members.
  * @param {string|number} id
  * @returns {Promise<{items: object[]}>}
  */
-export async function listCastMembers(id) {
+export async function listWatchPartyMembers(id) {
   const res = await apiClient.get(`/api/v1/cast/${id}/members`)
   return res.data
 }
 
 /**
- * Removes a member from a session. Owner only.
+ * Removes a member from a Watch Party. Owner only.
  * @param {string|number} id
  * @param {string|number} userId
  * @returns {Promise<void>}
  */
-export async function kickCastMember(id, userId) {
+export async function kickWatchPartyMember(id, userId) {
   await apiClient.delete(`/api/v1/cast/${id}/members/${userId}`)
 }
 
 /**
- * Ends a session. Owner or admin.
+ * Ends a Watch Party. Owner or admin.
  * @param {string|number} id
  * @returns {Promise<void>}
  */
-export async function endCastSession(id) {
+export async function endWatchParty(id) {
   await apiClient.post(`/api/v1/cast/${id}/end`)
 }
 
 /**
- * Renames a session. Owner or admin.
+ * Renames a Watch Party. Owner or admin.
  * @param {string|number} id
  * @param {string} title
  * @returns {Promise<object>} Updated session snapshot.
  */
-export async function renameCastSession(id, title) {
+export async function renameWatchParty(id, title) {
   const res = await apiClient.patch(`/api/v1/cast/${id}`, { title })
   return res.data
 }
 
 /**
- * Leaves a session, dropping the caller's own membership. The session keeps
+ * Leaves a Watch Party, dropping the caller's own membership. The party keeps
  * running for everyone else.
  * @param {string|number} id
  * @returns {Promise<void>}
  */
-export async function leaveCastSession(id) {
+export async function leaveWatchParty(id) {
   await apiClient.post(`/api/v1/cast/${id}/leave`)
 }
 

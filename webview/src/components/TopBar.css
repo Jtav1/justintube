@@ -182,7 +182,7 @@
   background: var(--accent-bg);
 }
 
-.topbar-cast-btn {
+.topbar-watch-party-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -195,8 +195,8 @@
   cursor: pointer;
 }
 
-.topbar-cast-btn:hover,
-.topbar-cast-btn[aria-expanded='true'] {
+.topbar-watch-party-btn:hover,
+.topbar-watch-party-btn[aria-expanded='true'] {
   background: var(--accent-bg);
 }
 

@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { useToast } from '../context/useToast.js'
-import { adminEndCastSession, adminListCastSessions } from '../api/admin.js'
-import { renameCastSession } from '../api/cast.js'
+import { adminEndWatchParty, adminListWatchParties } from '../api/admin.js'
+import { renameWatchParty } from '../api/watch-party.js'
 import { formatRelativeDate } from '../lib/format.js'
-import './AdminCastSessionsCard.css'
+import './AdminWatchPartySessionsCard.css'
 
 /**
- * Admin Panel card listing every active CAST session, with the ability to
+ * Admin Panel card listing every active Watch Party, with the ability to
  * stop (which also removes it from this list - "active" is the only status
- * adminListCastSessions returns) or rename any of them regardless of owner.
+ * adminListWatchParties returns) or rename any of them regardless of owner.
  * Authorization is enforced server-side by requireAdmin on
  * /admin/cast/sessions; AdminPanel itself already gates the whole page to
  * admins before this card is ever mounted.
  */
-function AdminCastSessionsCard() {
+function AdminWatchPartySessionsCard() {
   const { success, error: toastError } = useToast()
 
   const [sessions, setSessions] = useState([])
@@ -31,13 +31,13 @@ function AdminCastSessionsCard() {
     let cancelled = false
     async function loadSessions() {
       try {
-        const data = await adminListCastSessions()
+        const data = await adminListWatchParties()
         if (!cancelled) {
           setSessions(data.items ?? [])
         }
       } catch {
         if (!cancelled) {
-          toastError('Failed to load active CAST sessions.')
+          toastError('Failed to load active Watch Parties.')
         }
       } finally {
         if (!cancelled) {
@@ -61,7 +61,7 @@ function AdminCastSessionsCard() {
       return
     }
     try {
-      await renameCastSession(renamingId, title)
+      await renameWatchParty(renamingId, title)
       setRenamingId(null)
       setRefreshKey((key) => key + 1)
     } catch {
@@ -80,7 +80,7 @@ function AdminCastSessionsCard() {
     }
     setEndingId(session.id)
     try {
-      await adminEndCastSession(session.id)
+      await adminEndWatchParty(session.id)
       success(`Stopped "${label}".`)
       setRefreshKey((key) => key + 1)
     } catch {
@@ -91,9 +91,9 @@ function AdminCastSessionsCard() {
   }
 
   return (
-    <div className="settings-card admin-cast-card">
-      <h2>Manage CAST Sessions</h2>
-      <p className="admin-cast-intro">
+    <div className="settings-card admin-watch-party-card">
+      <h2>Manage Watch Parties</h2>
+      <p className="admin-watch-party-intro">
         Every shared watch session currently running. Stopping one disconnects everybody watching
         it and deletes the session.
       </p>
@@ -101,29 +101,29 @@ function AdminCastSessionsCard() {
       {loading && <p className="settings-status">Loading sessions...</p>}
 
       {!loading && sessions.length === 0 && (
-        <p className="settings-status">There are no active CAST sessions.</p>
+        <p className="settings-status">There are no active Watch Parties.</p>
       )}
 
       {!loading && sessions.length > 0 && (
-        <div className="admin-cast-table-wrap">
-          <table className="admin-cast-table">
+        <div className="admin-watch-party-table-wrap">
+          <table className="admin-watch-party-table">
             <thead>
               <tr>
-                <th className="admin-cast-wrap">Session</th>
+                <th className="admin-watch-party-wrap">Session</th>
                 <th>Code</th>
                 <th>Owner</th>
                 <th>Watching</th>
-                <th className="admin-cast-wrap">Now playing</th>
+                <th className="admin-watch-party-wrap">Now playing</th>
                 <th>Started</th>
-                <th className="admin-cast-actions" aria-label="Actions" />
+                <th className="admin-watch-party-actions" aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
               {sessions.map((session) => (
                 <tr key={session.id}>
-                  <td className="admin-cast-wrap">
+                  <td className="admin-watch-party-wrap">
                     {renamingId === session.id ? (
-                      <form className="admin-cast-rename" onSubmit={handleRenameSubmit}>
+                      <form className="admin-watch-party-rename" onSubmit={handleRenameSubmit}>
                         <input
                           type="text"
                           value={titleDraft}
@@ -140,11 +140,11 @@ function AdminCastSessionsCard() {
                         </button>
                       </form>
                     ) : (
-                      <span className="admin-cast-title">
+                      <span className="admin-watch-party-title">
                         {session.title || '—'}
                         <button
                           type="button"
-                          className="admin-cast-rename-btn"
+                          className="admin-watch-party-rename-btn"
                           aria-label={`Rename ${session.title || session.code}`}
                           title="Rename session"
                           onClick={() => {
@@ -158,7 +158,7 @@ function AdminCastSessionsCard() {
                     )}
                   </td>
                   <td>
-                    <code className="admin-cast-code">{session.code}</code>
+                    <code className="admin-watch-party-code">{session.code}</code>
                   </td>
                   <td>
                     {session.owner
@@ -166,12 +166,12 @@ function AdminCastSessionsCard() {
                       : '—'}
                   </td>
                   <td>{session.memberCount}</td>
-                  <td className="admin-cast-wrap">{session.nowPlayingTitle || '—'}</td>
+                  <td className="admin-watch-party-wrap">{session.nowPlayingTitle || '—'}</td>
                   <td>{formatRelativeDate(session.createdAt)}</td>
-                  <td className="admin-cast-actions">
+                  <td className="admin-watch-party-actions">
                     <button
                       type="button"
-                      className="admin-cast-end"
+                      className="admin-watch-party-end"
                       disabled={endingId === session.id}
                       onClick={() => handleStop(session)}
                     >
@@ -188,4 +188,4 @@ function AdminCastSessionsCard() {
   )
 }
 
-export default AdminCastSessionsCard
+export default AdminWatchPartySessionsCard

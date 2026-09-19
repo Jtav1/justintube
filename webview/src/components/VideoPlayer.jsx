@@ -99,7 +99,7 @@ function VideoPlayer({
   onToggleExpand,
   onVideoEnded,
   onVideoError,
-  onAddToCastQueue,
+  onAddToWatchPartyQueue,
   onPlaybackIntent,
   ref,
 }) {
@@ -146,7 +146,7 @@ function VideoPlayer({
   const [delisted, setDelisted] = useState(false)
   const [delistPending, setDelistPending] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
-  const [castQueued, setCastQueued] = useState(false)
+  const [watchPartyQueued, setWatchPartyQueued] = useState(false)
   // Device-casting availability. Both are feature-detected and start false, so
   // the buttons stay hidden on browsers/networks with no targets rather than
   // offering an action that would do nothing.
@@ -211,7 +211,8 @@ function VideoPlayer({
   })
   const measureCanvasRef = useRef(null)
 
-  // External imperative control surface for CAST (see CastPage/CastDisplayPage):
+  // External imperative control surface for Watch Party (see
+  // WatchPartyPage/WatchPartyDisplayPage):
   // synced playback needs to drive play/pause/seek from outside this
   // component's own controls. `seek` reuses the exact same
   // resumeStateRef/handleLoadedMetadata mechanism the quality-switch flow
@@ -221,7 +222,7 @@ function VideoPlayer({
   // against an element that hasn't loaded anything yet.
   useImperativeHandle(ref, () => ({
     // Deliberately does not swallow a rejection here (unlike the internal
-    // autoplay/seek call sites below) - CastDisplayPage needs to detect an
+    // autoplay/seek call sites below) - WatchPartyDisplayPage needs to detect an
     // autoplay-block rejection to show its "click to enable" overlay.
     // Callers that don't care can just add their own .catch(() => {}).
     play() {
@@ -893,13 +894,13 @@ function VideoPlayer({
     }
   }
 
-  async function handleAddToCastQueue() {
+  async function handleAddToWatchPartyQueue() {
     try {
-      await onAddToCastQueue()
-      setCastQueued(true)
-      setTimeout(() => setCastQueued(false), 1500)
+      await onAddToWatchPartyQueue()
+      setWatchPartyQueued(true)
+      setTimeout(() => setWatchPartyQueued(false), 1500)
     } catch (err) {
-      toastError(err.message || 'Failed to add to the CAST queue.')
+      toastError(err.message || 'Failed to add to the Watch Party queue.')
     }
   }
 
@@ -1051,13 +1052,13 @@ function VideoPlayer({
           >
             <Repeat size={18} />
           </button>
-          {onAddToCastQueue && (
+          {onAddToWatchPartyQueue && (
             <button
               type="button"
               className="video-player-icon-btn"
-              aria-label={castQueued ? 'Added to CAST queue' : 'Add to CAST queue'}
-              title={castQueued ? 'Added to CAST queue' : 'Add to CAST queue'}
-              onClick={handleAddToCastQueue}
+              aria-label={watchPartyQueued ? 'Added to Watch Party queue' : 'Add to Watch Party queue'}
+              title={watchPartyQueued ? 'Added to Watch Party queue' : 'Add to Watch Party queue'}
+              onClick={handleAddToWatchPartyQueue}
             >
               <ListPlus size={18} />
             </button>

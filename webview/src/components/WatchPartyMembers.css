@@ -1,8 +1,8 @@
-.cast-members {
+.watch-party-members {
   width: 100%;
 }
 
-.cast-members-title {
+.watch-party-members-title {
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 600;
@@ -11,7 +11,7 @@
   color: var(--text);
 }
 
-.cast-members-list {
+.watch-party-members-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -22,28 +22,28 @@
   overflow-y: auto;
 }
 
-.cast-member-row {
+.watch-party-member-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 0;
 }
 
-.cast-member-avatar-wrap {
+.watch-party-member-avatar-wrap {
   position: relative;
   flex-shrink: 0;
   width: 28px;
   height: 28px;
 }
 
-.cast-member-avatar {
+.watch-party-member-avatar {
   width: 28px;
   height: 28px;
   border-radius: 999px;
   object-fit: cover;
 }
 
-.cast-member-avatar-placeholder {
+.watch-party-member-avatar-placeholder {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -51,7 +51,7 @@
   color: var(--accent);
 }
 
-.cast-member-dot {
+.watch-party-member-dot {
   position: absolute;
   right: -1px;
   bottom: -1px;
@@ -63,12 +63,12 @@
   border: 2px solid var(--bg);
 }
 
-.cast-member-dot-online {
+.watch-party-member-dot-online {
   background: var(--success);
   opacity: 1;
 }
 
-.cast-member-name {
+.watch-party-member-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -78,12 +78,12 @@
   color: var(--text-h);
 }
 
-.cast-member-owner-icon {
+.watch-party-member-owner-icon {
   flex-shrink: 0;
   color: var(--accent);
 }
 
-.cast-member-kick {
+.watch-party-member-kick {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -97,7 +97,8 @@
   cursor: pointer;
 }
 
-.cast-member-kick:hover {
+.watch-party-member-kick:hover {
   background: var(--error-bg);
   color: var(--error);
 }
+

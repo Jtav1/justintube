@@ -1,21 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Pause, Pencil, Play, SkipBack, SkipForward, Square, X } from 'lucide-react'
 import { suggestSearch } from '../api/search.js'
-import { useCast } from '../context/useCast.js'
+import { useWatchParty } from '../context/useWatchParty.js'
 import { useToast } from '../context/useToast.js'
 import VideoCard from './VideoCard.jsx'
-import './CastQueue.css'
+import './WatchPartyQueue.css'
 
 const SUGGESTION_LIMIT = 8
 const DEBOUNCE_MS = 250
 
 /**
- * The CAST session's live queue rail: now-playing, up-next list (with
+ * The Watch Party's live queue rail: now-playing, up-next list (with
  * per-item remove/reorder — every member can use these, per the session's
  * shared-control model), playback transport, a debounced "add a video"
  * search, and an owner-only "End session" action.
  */
-function CastQueue() {
+function WatchPartyQueue() {
   const {
     session,
     nowPlaying,
@@ -32,7 +32,7 @@ function CastQueue() {
     endActiveSession,
     canManageSession,
     renameSession,
-  } = useCast()
+  } = useWatchParty()
   const { error: toastError } = useToast()
 
   const [renaming, setRenaming] = useState(false)
@@ -157,7 +157,7 @@ function CastQueue() {
   }
 
   async function handleEndSession() {
-    if (!window.confirm('End this CAST session for everyone?')) {
+    if (!window.confirm('End this Watch Party for everyone?')) {
       return
     }
     try {
@@ -168,11 +168,11 @@ function CastQueue() {
   }
 
   return (
-    <aside className="cast-queue">
-      <div className="cast-queue-header">
-        <div className="cast-queue-header-row">
+    <aside className="watch-party-queue">
+      <div className="watch-party-queue-header">
+        <div className="watch-party-queue-header-row">
           {renaming ? (
-            <form className="cast-queue-rename" onSubmit={handleRenameSubmit}>
+            <form className="watch-party-queue-rename" onSubmit={handleRenameSubmit}>
               <input
                 type="text"
                 value={titleDraft}
@@ -181,7 +181,7 @@ function CastQueue() {
                 aria-label="Session name"
                 autoFocus
               />
-              <div className="cast-queue-rename-actions">
+              <div className="watch-party-queue-rename-actions">
                 <button type="submit" disabled={renameBusy || !titleDraft.trim()}>
                   Save
                 </button>
@@ -191,12 +191,12 @@ function CastQueue() {
               </div>
             </form>
           ) : (
-            <p className="cast-queue-title">
-              {session?.title || 'CAST session'}
+            <p className="watch-party-queue-title">
+              {session?.title || 'Watch Party'}
               {canManageSession && (
                 <button
                   type="button"
-                  className="cast-queue-rename-btn"
+                  className="watch-party-queue-rename-btn"
                   aria-label="Rename session"
                   title="Rename session"
                   onClick={() => {
@@ -212,7 +212,7 @@ function CastQueue() {
           {isOwner && !renaming && (
             <button
               type="button"
-              className="cast-queue-end"
+              className="watch-party-queue-end"
               onClick={handleEndSession}
               aria-label="End session"
               title="End session"
@@ -221,15 +221,15 @@ function CastQueue() {
             </button>
           )}
         </div>
-        <p className="cast-queue-meta">
+        <p className="watch-party-queue-meta">
           Code <code>{session?.code}</code>
         </p>
       </div>
 
-      <div className="cast-queue-controls">
+      <div className="watch-party-queue-controls">
         <button
           type="button"
-          className="cast-queue-transport"
+          className="watch-party-queue-transport"
           onClick={handlePrevious}
           aria-label="Previous"
           title="Previous"
@@ -238,7 +238,7 @@ function CastQueue() {
         </button>
         <button
           type="button"
-          className="cast-queue-transport cast-queue-transport-primary"
+          className="watch-party-queue-transport watch-party-queue-transport-primary"
           onClick={handleTogglePlayback}
           aria-label={playback.status === 'playing' ? 'Pause' : 'Play'}
           title={playback.status === 'playing' ? 'Pause' : 'Play'}
@@ -247,7 +247,7 @@ function CastQueue() {
         </button>
         <button
           type="button"
-          className="cast-queue-transport"
+          className="watch-party-queue-transport"
           onClick={handleSkip}
           aria-label="Skip"
           title="Skip"
@@ -257,16 +257,16 @@ function CastQueue() {
       </div>
 
       {nowPlaying && (
-        <div className="cast-queue-now-playing">
-          <p className="cast-queue-section-label">Now playing</p>
+        <div className="watch-party-queue-now-playing">
+          <p className="watch-party-queue-section-label">Now playing</p>
           <VideoCard video={nowPlaying.video} orientation="horizontal" active hideMenu />
         </div>
       )}
 
-      <div className="cast-queue-add">
+      <div className="watch-party-queue-add">
         <input
           type="text"
-          className="cast-queue-add-input"
+          className="watch-party-queue-add-input"
           placeholder="Add a video…"
           value={addValue}
           onChange={(event) => setAddValue(event.target.value)}
@@ -274,13 +274,13 @@ function CastQueue() {
           aria-label="Search for a video to add"
         />
         {suggestOpen && suggestions.length > 0 && (
-          <ul className="cast-queue-add-dropdown">
+          <ul className="watch-party-queue-add-dropdown">
             {suggestions.map((suggestion) => (
               <li key={suggestion.id}>
                 <button type="button" onClick={() => handleAddSuggestion(suggestion)}>
-                  <span className="cast-queue-add-dropdown-title">{suggestion.title}</span>
+                  <span className="watch-party-queue-add-dropdown-title">{suggestion.title}</span>
                   {suggestion.uploader && (
-                    <span className="cast-queue-add-dropdown-meta">
+                    <span className="watch-party-queue-add-dropdown-meta">
                       {suggestion.uploader.displayName || suggestion.uploader.username}
                     </span>
                   )}
@@ -291,15 +291,15 @@ function CastQueue() {
         )}
       </div>
 
-      <p className="cast-queue-section-label">
+      <p className="watch-party-queue-section-label">
         Up next {queue.length > 0 && `(${queue.length})`}
       </p>
-      <div className="cast-queue-list">
-        {queue.length === 0 && <p className="cast-queue-empty">The queue is empty.</p>}
+      <div className="watch-party-queue-list">
+        {queue.length === 0 && <p className="watch-party-queue-empty">The queue is empty.</p>}
         {queue.map((item, index) => (
-          <div key={item.id} className="cast-queue-item">
+          <div key={item.id} className="watch-party-queue-item">
             <VideoCard video={item.video} orientation="horizontal" hideMenu />
-            <div className="cast-queue-item-actions">
+            <div className="watch-party-queue-item-actions">
               <button
                 type="button"
                 disabled={index === 0}
@@ -334,4 +334,4 @@ function CastQueue() {
   )
 }
 
-export default CastQueue
+export default WatchPartyQueue

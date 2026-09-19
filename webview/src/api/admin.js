@@ -64,20 +64,20 @@ export async function getAdminJobHistory({ page, limit } = {}) {
 }
 
 /**
- * Lists every active CAST session across all users (admin only).
+ * Lists every active Watch Party across all users (admin only).
  * @param {{limit?: number, offset?: number}} [params]
  * @returns {Promise<{items: object[], total: number, limit: number, offset: number}>}
  */
-export async function adminListCastSessions(params = {}) {
+export async function adminListWatchParties(params = {}) {
   const res = await apiClient.get('/api/v1/admin/cast/sessions', { params })
   return res.data
 }
 
 /**
- * Ends any CAST session administratively, disconnecting every participant.
- * @param {number} id CAST session id.
+ * Ends any Watch Party administratively, disconnecting every participant.
+ * @param {number} id Watch Party session id.
  * @returns {Promise<void>}
  */
-export async function adminEndCastSession(id) {
+export async function adminEndWatchParty(id) {
   await apiClient.post(`/api/v1/admin/cast/sessions/${id}/end`)
 }

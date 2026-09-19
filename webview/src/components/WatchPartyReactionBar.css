@@ -1,11 +1,11 @@
-.cast-reaction-bar {
+.watch-party-reaction-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
 }
 
-.cast-reaction-bar-btn {
+.watch-party-reaction-bar-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -19,29 +19,29 @@
   cursor: pointer;
 }
 
-.cast-reaction-bar-btn:hover {
+.watch-party-reaction-bar-btn:hover {
   border-color: var(--accent-border);
   background: var(--accent-bg);
 }
 
 /* The picker trigger carries an icon rather than an emoji face, so it takes
    the muted foreground the rest of the app's icon buttons use. */
-.cast-reaction-bar-more {
+.watch-party-reaction-bar-more {
   color: var(--text);
 }
 
-.cast-reaction-bar-more:hover {
+.watch-party-reaction-bar-more:hover {
   color: var(--text-h);
 }
 
-.cast-reaction-picker {
+.watch-party-reaction-picker {
   z-index: 30;
   border-radius: 8px;
   box-shadow: var(--shadow);
   overflow: hidden;
 }
 
-.cast-reaction-picker-loading {
+.watch-party-reaction-picker-loading {
   margin: 0;
   padding: 16px;
   border: 1px solid var(--border);
@@ -51,3 +51,5 @@
   font-size: 13px;
   text-align: center;
 }
+
+

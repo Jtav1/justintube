@@ -1,18 +1,18 @@
 import { Crown, UserRound, UserX } from 'lucide-react'
 import apiClient from '../api/client.js'
-import { useCast } from '../context/useCast.js'
+import { useWatchParty } from '../context/useWatchParty.js'
 import { useToast } from '../context/useToast.js'
-import './CastMembers.css'
+import './WatchPartyMembers.css'
 
 /**
- * The CAST session's member roster: avatar, name, owner badge, and an
+ * The Watch Party's member roster: avatar, name, owner badge, and an
  * online/offline dot sourced from the live `presence` list (distinct from
  * the durable `members` list itself - a member can be a durable participant
  * without currently having a live socket connected). The owner sees a kick
  * button on every other member.
  */
-function CastMembers() {
-  const { members, presence, isOwner, kickMember } = useCast()
+function WatchPartyMembers() {
+  const { members, presence, isOwner, kickMember } = useWatchParty()
   const { error: toastError } = useToast()
 
   const onlineUserIds = new Set(presence.map((entry) => entry.userId))
@@ -29,37 +29,37 @@ function CastMembers() {
   }
 
   return (
-    <div className="cast-members">
-      <p className="cast-members-title">Members ({members.length})</p>
-      <ul className="cast-members-list">
+    <div className="watch-party-members">
+      <p className="watch-party-members-title">Members ({members.length})</p>
+      <ul className="watch-party-members-list">
         {members.map((member) => {
           const avatarUrl = member.avatarFilename
             ? `${apiClient.defaults.baseURL}/api/v1/users/${member.username}/avatar`
             : null
           const name = member.displayName || member.username || 'Someone'
           return (
-            <li key={member.userId} className="cast-member-row">
-              <span className="cast-member-avatar-wrap">
+            <li key={member.userId} className="watch-party-member-row">
+              <span className="watch-party-member-avatar-wrap">
                 {avatarUrl ? (
-                  <img className="cast-member-avatar" src={avatarUrl} alt="" />
+                  <img className="watch-party-member-avatar" src={avatarUrl} alt="" />
                 ) : (
-                  <span className="cast-member-avatar cast-member-avatar-placeholder">
+                  <span className="watch-party-member-avatar watch-party-member-avatar-placeholder">
                     <UserRound size={16} />
                   </span>
                 )}
                 <span
-                  className={`cast-member-dot${onlineUserIds.has(member.userId) ? ' cast-member-dot-online' : ''}`}
+                  className={`watch-party-member-dot${onlineUserIds.has(member.userId) ? ' watch-party-member-dot-online' : ''}`}
                   title={onlineUserIds.has(member.userId) ? 'Online' : 'Offline'}
                 />
               </span>
-              <span className="cast-member-name">{name}</span>
+              <span className="watch-party-member-name">{name}</span>
               {member.role === 'owner' && (
-                <Crown size={14} className="cast-member-owner-icon" aria-label="Owner" />
+                <Crown size={14} className="watch-party-member-owner-icon" aria-label="Owner" />
               )}
               {isOwner && member.role !== 'owner' && (
                 <button
                   type="button"
-                  className="cast-member-kick"
+                  className="watch-party-member-kick"
                   onClick={() => handleKick(member)}
                   aria-label={`Remove ${name}`}
                   title={`Remove ${name}`}
@@ -75,4 +75,4 @@ function CastMembers() {
   )
 }
 
-export default CastMembers
+export default WatchPartyMembers

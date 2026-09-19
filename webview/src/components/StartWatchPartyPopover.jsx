@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Cast, Copy, Pencil, Play } from 'lucide-react'
+import { Copy, Pencil, Play, Users } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { listMyPlaylists } from '../api/playlists.js'
-import { useCast } from '../context/useCast.js'
+import { useWatchParty } from '../context/useWatchParty.js'
 import { useToast } from '../context/useToast.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
-import './StartCastPopover.css'
+import './StartWatchPartyPopover.css'
 
 const DROPDOWN_WIDTH = 300
 const VIEWPORT_MARGIN = 12
@@ -26,11 +26,11 @@ function computeDropdownPosition(rect) {
 }
 
 /**
- * TopBar's CAST entry point: a button that opens a dropdown to start a new
- * session (from a playlist, the current video, or empty) or join one by
+ * TopBar's Watch Party entry point: a button that opens a dropdown to start a
+ * new session (from a playlist, the current video, or empty) or join one by
  * code, and - once a session is active - shows its join code and QR code.
  */
-function StartCastPopover() {
+function StartWatchPartyPopover() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -45,7 +45,7 @@ function StartCastPopover() {
     leaveSession,
     renameSession,
     endActiveSession,
-  } = useCast()
+  } = useWatchParty()
 
   const [open, setOpen] = useState(false)
   const [dropdownPosition, setDropdownPosition] = useState(null)
@@ -119,7 +119,7 @@ function StartCastPopover() {
       setOpen(false)
       navigate(`/cast/${result.session.id}`)
     } catch (err) {
-      toastError(err.message || 'Failed to join CAST session.')
+      toastError(err.message || 'Failed to join the Watch Party.')
     } finally {
       setBusy(false)
     }
@@ -133,7 +133,7 @@ function StartCastPopover() {
       setOpen(false)
       navigate(`/cast/${result.session.id}`)
     } catch (err) {
-      toastError(err.message || 'Failed to start CAST session.')
+      toastError(err.message || 'Failed to start the Watch Party.')
     } finally {
       setBusy(false)
     }
@@ -171,7 +171,7 @@ function StartCastPopover() {
 
   async function handleEnd() {
     if (busy) return
-    if (!window.confirm('End this CAST session for everyone?')) {
+    if (!window.confirm('End this Watch Party for everyone?')) {
       return
     }
     setBusy(true)
@@ -194,22 +194,22 @@ function StartCastPopover() {
   const joinUrl = session ? `${window.location.origin}/cast/join?code=${session.code}` : ''
 
   return (
-    <div className="cast-popover" ref={menuRef}>
+    <div className="watch-party-popover" ref={menuRef}>
       <button
         type="button"
-        className="topbar-cast-btn"
+        className="topbar-watch-party-btn"
         onClick={handleToggle}
-        aria-label="Start or join a CAST session"
-        title="CAST"
+        aria-label="Start or join a Watch Party"
+        title="Watch Party"
         aria-haspopup="true"
         aria-expanded={open}
         ref={toggleRef}
       >
-        <Cast size={20} />
+        <Users size={20} />
       </button>
       {open && dropdownPosition && createPortal(
         <div
-          className="cast-popover-menu"
+          className="watch-party-popover-menu"
           role="menu"
           ref={dropdownRef}
           style={{
@@ -220,9 +220,9 @@ function StartCastPopover() {
           }}
         >
           {session ? (
-            <div className="cast-popover-active">
+            <div className="watch-party-popover-active">
               {renaming ? (
-                <form className="cast-popover-rename" onSubmit={handleRename}>
+                <form className="watch-party-popover-rename" onSubmit={handleRename}>
                   <input
                     type="text"
                     value={titleDraft}
@@ -231,7 +231,7 @@ function StartCastPopover() {
                     aria-label="Session name"
                     autoFocus
                   />
-                  <div className="cast-popover-rename-actions">
+                  <div className="watch-party-popover-rename-actions">
                     <button type="submit" disabled={busy || !titleDraft.trim()}>
                       Save
                     </button>
@@ -241,12 +241,12 @@ function StartCastPopover() {
                   </div>
                 </form>
               ) : (
-                <div className="cast-popover-title-row">
-                  <p className="cast-popover-heading">{session.title}</p>
+                <div className="watch-party-popover-title-row">
+                  <p className="watch-party-popover-heading">{session.title}</p>
                   {canManageSession && (
                     <button
                       type="button"
-                      className="cast-popover-rename-btn"
+                      className="watch-party-popover-rename-btn"
                       aria-label="Rename session"
                       title="Rename session"
                       onClick={() => {
@@ -259,17 +259,17 @@ function StartCastPopover() {
                   )}
                 </div>
               )}
-              <div className="cast-popover-qr">
+              <div className="watch-party-popover-qr">
                 <QRCodeSVG value={joinUrl} size={160} marginSize={2} />
               </div>
-              <p className="cast-popover-code-label">Join code</p>
-              <p className="cast-popover-code">{session.code}</p>
-              <button type="button" className="cast-popover-copy" onClick={handleCopyLink}>
+              <p className="watch-party-popover-code-label">Join code</p>
+              <p className="watch-party-popover-code">{session.code}</p>
+              <button type="button" className="watch-party-popover-copy" onClick={handleCopyLink}>
                 <Copy size={14} /> Copy join link
               </button>
               <button
                 type="button"
-                className="cast-popover-open"
+                className="watch-party-popover-open"
                 onClick={() => {
                   setOpen(false)
                   navigate(`/cast/${session.id}`)
@@ -279,7 +279,7 @@ function StartCastPopover() {
               </button>
               <button
                 type="button"
-                className="cast-popover-leave"
+                className="watch-party-popover-leave"
                 disabled={busy}
                 onClick={handleLeave}
               >
@@ -288,7 +288,7 @@ function StartCastPopover() {
               {canManageSession && (
                 <button
                   type="button"
-                  className="cast-popover-end"
+                  className="watch-party-popover-end"
                   disabled={busy}
                   onClick={handleEnd}
                 >
@@ -298,25 +298,25 @@ function StartCastPopover() {
             </div>
           ) : (
             <>
-              <form className="cast-popover-join" onSubmit={handleJoin}>
-                <p className="cast-popover-heading">Join by code</p>
-                <div className="cast-popover-join-row">
+              <form className="watch-party-popover-join" onSubmit={handleJoin}>
+                <p className="watch-party-popover-heading">Join by code</p>
+                <div className="watch-party-popover-join-row">
                   <input
                     type="text"
                     value={joinCode}
                     onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
                     placeholder="ABC123"
                     maxLength={8}
-                    aria-label="CAST join code"
+                    aria-label="Watch Party join code"
                   />
                   <button type="submit" disabled={busy || !joinCode.trim()}>Join</button>
                 </div>
               </form>
 
-              <div className="cast-popover-divider" />
+              <div className="watch-party-popover-divider" />
 
-              <p className="cast-popover-heading">Start a session</p>
-              <div className="cast-popover-start-list">
+              <p className="watch-party-popover-heading">Start a session</p>
+              <div className="watch-party-popover-start-list">
                 {currentVideoId && (
                   <button
                     type="button"
@@ -328,7 +328,7 @@ function StartCastPopover() {
                 )}
                 <button
                   type="button"
-                  className="cast-popover-start"
+                  className="watch-party-popover-start"
                   disabled={busy}
                   onClick={() => handleStart(createEmpty)}
                 >
@@ -337,7 +337,7 @@ function StartCastPopover() {
               </div>
 
               {playlists && playlists.length > 0 && (
-                <div className="cast-popover-playlist-row">
+                <div className="watch-party-popover-playlist-row">
                   <select
                     value={selectedPlaylistId}
                     onChange={(event) => setSelectedPlaylistId(event.target.value)}
@@ -368,4 +368,4 @@ function StartCastPopover() {
   )
 }
 
-export default StartCastPopover
+export default StartWatchPartyPopover

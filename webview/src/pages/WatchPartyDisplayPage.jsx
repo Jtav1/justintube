@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
-import { useCast } from '../context/useCast.js'
-import { useCastPlaybackSync } from '../hooks/useCastPlaybackSync.js'
+import { useWatchParty } from '../context/useWatchParty.js'
+import { useWatchPartyPlaybackSync } from '../hooks/useWatchPartyPlaybackSync.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
-import CastReactions from '../components/CastReactions.jsx'
-import './CastDisplayPage.css'
+import WatchPartyReactions from '../components/WatchPartyReactions.jsx'
+import './WatchPartyDisplayPage.css'
 
 // Mirrors the dixtube-live prototype's HUD auto-hide delay.
 const HUD_HIDE_DELAY_MS = 4000
@@ -13,13 +13,13 @@ const HUD_HIDE_DELAY_MS = 4000
 /**
  * Chrome-less, fullscreen "cast to a TV" view (`/cast/:id/display`, outside
  * AppLayout - a logged-in member opens this and tab-casts/fullscreens it).
- * Shares CastPage's playback-sync logic (useCastPlaybackSync) but adds two
- * things a TV display specifically needs: an autoplay-block "click to
- * enable" overlay (browsers block autoplay-with-sound without a prior user
- * gesture, so this is required, not optional, for a freshly-opened tab to
- * ever start) and a HUD that auto-hides after inactivity.
+ * Shares WatchPartyPage's playback-sync logic (useWatchPartyPlaybackSync) but
+ * adds two things a TV display specifically needs: an autoplay-block "click
+ * to enable" overlay (browsers block autoplay-with-sound without a prior
+ * user gesture, so this is required, not optional, for a freshly-opened tab
+ * to ever start) and a HUD that auto-hides after inactivity.
  */
-function CastDisplayPage() {
+function WatchPartyDisplayPage() {
   const { id } = useParams()
   const { user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
@@ -33,7 +33,7 @@ function CastDisplayPage() {
     enterSession,
     play,
     pause,
-  } = useCast()
+  } = useWatchParty()
 
   const videoPlayerRef = useRef(null)
   const [hudVisible, setHudVisible] = useState(true)
@@ -60,25 +60,25 @@ function CastDisplayPage() {
       return
     }
     enterSession(id)
-    // No cleanup here either - see CastPage for why.
+    // No cleanup here either - see WatchPartyPage for why.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user, authLoading])
 
-  // Covers both "never got in" and "was in, then kicked" - see CastPage's
-  // identical guard for the full rationale.
+  // Covers both "never got in" and "was in, then kicked" - see
+  // WatchPartyPage's identical guard for the full rationale.
   useEffect(() => {
     if (joinError) {
       navigate('/')
     }
   }, [joinError, navigate])
 
-  useCastPlaybackSync(videoPlayerRef, nowPlaying, playback)
+  useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback)
 
   /**
-   * Mirrors CastPage: a pause/play on this screen's own controls drives the
-   * session rather than being instantly reverted by the sync hook. Emits only
-   * when the element has diverged from the server clock, so the hook's own
-   * corrections don't echo back.
+   * Mirrors WatchPartyPage: a pause/play on this screen's own controls drives
+   * the session rather than being instantly reverted by the sync hook. Emits
+   * only when the element has diverged from the server clock, so the hook's
+   * own corrections don't echo back.
    *
    * @param {boolean} paused The element's new paused state.
    * @returns {void}
@@ -93,8 +93,8 @@ function CastDisplayPage() {
 
   // Detects an autoplay-block: whenever the server clock says "playing" but
   // the local element is paused, try to start it and surface a full-screen
-  // prompt on rejection (useCastPlaybackSync's own attempt at the same call
-  // swallows this, since it has no UI to react with).
+  // prompt on rejection (useWatchPartyPlaybackSync's own attempt at the same
+  // call swallows this, since it has no UI to react with).
   useEffect(() => {
     if (playback.status !== 'playing' || !nowPlaying) {
       return
@@ -139,18 +139,19 @@ function CastDisplayPage() {
     return null
   }
 
-  // No redirect here, unlike CastPage: this is the unattended TV view, where
-  // bouncing to the homepage would be less use than saying what happened.
+  // No redirect here, unlike WatchPartyPage: this is the unattended TV view,
+  // where bouncing to the homepage would be less use than saying what
+  // happened.
   if (ended) {
     return (
-      <div className="cast-display">
-        <p className="cast-display-empty">This CAST session has ended.</p>
+      <div className="watch-party-display">
+        <p className="watch-party-display-empty">This Watch Party has ended.</p>
       </div>
     )
   }
 
   return (
-    <div className="cast-display">
+    <div className="watch-party-display">
       {nowPlaying ? (
         <VideoPlayer
           ref={videoPlayerRef}
@@ -158,19 +159,19 @@ function CastDisplayPage() {
           onPlaybackIntent={handlePlaybackIntent}
         />
       ) : (
-        <p className="cast-display-empty">Waiting for a video…</p>
+        <p className="watch-party-display-empty">Waiting for a video…</p>
       )}
-      <CastReactions />
+      <WatchPartyReactions />
 
       {autoplayBlocked && (
-        <button type="button" className="cast-display-enable" onClick={handleEnablePlayback}>
+        <button type="button" className="watch-party-display-enable" onClick={handleEnablePlayback}>
           Click to enable playback
         </button>
       )}
 
-      <div className={`cast-display-hud${hudVisible ? '' : ' cast-display-hud-hidden'}`}>
-        <p className="cast-display-title">{session?.title}</p>
-        <p className="cast-display-meta">
+      <div className={`watch-party-display-hud${hudVisible ? '' : ' watch-party-display-hud-hidden'}`}>
+        <p className="watch-party-display-title">{session?.title}</p>
+        <p className="watch-party-display-meta">
           Code <strong>{session?.code}</strong> · {members.length} watching
         </p>
       </div>
@@ -178,4 +179,4 @@ function CastDisplayPage() {
   )
 }
 
-export default CastDisplayPage
+export default WatchPartyDisplayPage
