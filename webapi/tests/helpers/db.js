@@ -9,7 +9,11 @@ import { generateVideoId } from "../../lib/video-id.js";
 import {
   AccessPermission,
   ApiKeyScope,
+  CastQueueItem,
+  CastSession,
+  CastSessionMember,
   Comment,
+  EmojiReactionUsage,
   ContentTag,
   DuplicateUploadFlag,
   FeaturedVideo,
@@ -61,6 +65,10 @@ import { ensureUserNotificationSettings } from "../../lib/seed.js";
  * @type {import('sequelize').ModelStatic<import('sequelize').Model>[]}
  */
 const RESET_MODELS = [
+  EmojiReactionUsage,
+  CastQueueItem,
+  CastSessionMember,
+  CastSession,
   PlaylistItem,
   PlaylistAccess,
   FileVersion,
@@ -270,6 +278,80 @@ export async function seedPlaylistItem(playlistId, originalUploadId, overrides =
   };
 
   const row = await PlaylistItem.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a CAST_SESSIONS row, applying defaults for any omitted field.
+ *
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {number|null} [overrides.ownerUserId] Owning user id.
+ * @param {string} [overrides.code] Join code (defaults to a fresh random one).
+ * @param {string} [overrides.status] "active" or "ended" (defaults to "active").
+ * @param {number|null} [overrides.sourcePlaylistId] Source playlist id, if seeded from one.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded session's id and values.
+ */
+export async function seedCastSession(overrides = {}) {
+  const record = {
+    ownerUserId: null,
+    code: randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase(),
+    status: "active",
+    sourcePlaylistId: null,
+    title: null,
+    playbackStatus: "paused",
+    playbackPositionSeconds: 0,
+    ...overrides,
+  };
+
+  const row = await CastSession.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a CAST_QUEUE_ITEMS row linking a video into a CAST session's queue.
+ *
+ * @param {number} castSessionId Owning CAST_SESSIONS id.
+ * @param {number} originalUploadId Id of the linked ORIGINAL_UPLOADS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {number|null} [overrides.addedByUserId] User who added the item.
+ * @param {string} [overrides.status] Queue-item lifecycle status (defaults to "queued").
+ * @param {number|null} [overrides.position] Manual sort position.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded item's id and values.
+ */
+export async function seedCastQueueItem(castSessionId, originalUploadId, overrides = {}) {
+  const record = {
+    castSessionId,
+    originalUploadId,
+    addedByUserId: null,
+    status: "queued",
+    position: null,
+    ...overrides,
+  };
+
+  const row = await CastQueueItem.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a CAST_SESSION_MEMBERS row.
+ *
+ * @param {number} castSessionId Owning CAST_SESSIONS id.
+ * @param {number} userId Member's user id.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.role] "owner" or "member" (defaults to "member").
+ * @param {string} [overrides.status] "active", "left", or "kicked" (defaults to "active").
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded member row's id and values.
+ */
+export async function seedCastMember(castSessionId, userId, overrides = {}) {
+  const record = {
+    castSessionId,
+    userId,
+    role: "member",
+    status: "active",
+    ...overrides,
+  };
+
+  const row = await CastSessionMember.create(record);
   return asSeedResult(row, record);
 }
 

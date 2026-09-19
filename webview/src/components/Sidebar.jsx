@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, User, ListVideo, ThumbsUp, History, Star, Users, UsersRound, UserCheck, ShieldCheck, TriangleAlert, Braces } from 'lucide-react'
+import { Home, User, ListVideo, ThumbsUp, History, Star, Users, UsersRound, UserCheck, ShieldCheck, TriangleAlert, Braces, Cast } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
 import apiClient from '../api/client.js'
 import { formatRelativeDate } from '../lib/format.js'
 import './Sidebar.css'
@@ -27,6 +28,7 @@ function GithubIcon({ size = 20, title }) {
 
 function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
   const { user, previousLogIn } = useAuth()
+  const { castEnabled } = useSiteConfig()
   const location = useLocation()
 
   const ownProfilePath = user ? `/users/${user.username}` : null
@@ -39,6 +41,10 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
   const isOnSubscriptionsPath =
     location.pathname === '/subscriptions' || location.pathname.startsWith('/subscriptions/')
   const isOnUserProfilePath = isOwnProfilePath || location.pathname === '/settings/api-keys'
+  // CAST sessions lives under /control-panel, so plain prefix matching would
+  // light up "Admin Panel" too - its own subpages (themes, transcode profiles)
+  // still should.
+  const isOnCastSessionsPath = location.pathname === '/control-panel/cast-sessions'
   // Only verified uploaders may create/manage API keys (server-enforced too -
   // see requireUploader on POST /me/api-keys), so hide the link otherwise.
   const canManageApiKeys = Boolean(user?.uploader && user?.emailVerified)
@@ -79,7 +85,25 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
     { key: 'subscribers', label: 'Subscribers', icon: UserCheck, to: user ? '/subscribers' : null },
     { key: 'reports', label: 'Reports', icon: TriangleAlert, to: user ? '/reports' : null },
     ...(user?.role === 'admin'
-      ? [{ key: 'admin', label: 'Admin Panel', icon: ShieldCheck, to: '/control-panel' }]
+      ? [
+          {
+            key: 'admin',
+            label: 'Admin Panel',
+            icon: ShieldCheck,
+            to: '/control-panel',
+            isActiveOverride: (isActive) => isActive && !isOnCastSessionsPath,
+          },
+        ]
+      : []),
+    ...(user?.role === 'admin' && castEnabled
+      ? [
+          {
+            key: 'cast-sessions',
+            label: 'CAST Sessions',
+            icon: Cast,
+            to: '/control-panel/cast-sessions',
+          },
+        ]
       : []),
   ]
 

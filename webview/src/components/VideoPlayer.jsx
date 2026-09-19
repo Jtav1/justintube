@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
+  Airplay,
+  Cast,
   Captions,
   EyeOff,
   EyeClosed,
@@ -30,10 +32,12 @@ import {
   recordView,
   hideVideo,
 } from '../api/videos.js'
+import { listCastDevices, playOnCastDevice } from '../api/cast-devices.js'
 import { addVideoToPlaylist, listMyPlaylists } from '../api/playlists.js'
 import { getSubscriptionState, subscribeToUser, unsubscribeFromUser } from '../api/users.js'
 import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
+import { useSiteConfig } from '../context/useSiteConfig.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import { useTextOverflowShrink } from '../hooks/useTextOverflowShrink.js'
 import { readVolume, writeVolume } from '../lib/volume.js'
@@ -93,9 +97,15 @@ function VideoPlayer({
   autoplayOnLoad = false,
   expanded = false,
   onToggleExpand,
+  onVideoEnded,
+  onVideoError,
+  onAddToCastQueue,
+  onPlaybackIntent,
+  ref,
 }) {
   const { user } = useAuth()
   const { error: toastError } = useToast()
+  const { deviceCastEnabled } = useSiteConfig()
   const navigate = useNavigate()
   const renditions = video.renditions ?? []
   // Only ever set for an upload the server confirmed has no genuine video
@@ -136,6 +146,16 @@ function VideoPlayer({
   const [delisted, setDelisted] = useState(false)
   const [delistPending, setDelistPending] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
+  const [castQueued, setCastQueued] = useState(false)
+  // Device-casting availability. Both are feature-detected and start false, so
+  // the buttons stay hidden on browsers/networks with no targets rather than
+  // offering an action that would do nothing.
+  const [remotePlaybackAvailable, setRemotePlaybackAvailable] = useState(false)
+  const [airplayAvailable, setAirplayAvailable] = useState(false)
+  const [castMenuOpen, setCastMenuOpen] = useState(false)
+  // null = not fetched yet (renders "Looking for devices…"), [] = none found.
+  const [castDevices, setCastDevices] = useState(null)
+  const [castingTo, setCastingTo] = useState(null)
   const [subscribed, setSubscribed] = useState(null)
   const [subscribePending, setSubscribePending] = useState(false)
   const [hideError, setHideError] = useState(false)
@@ -172,6 +192,8 @@ function VideoPlayer({
   const videoRef = useRef(null)
   const qualityMenuRef = useRef(null)
   const qualityToggleRef = useRef(null)
+  const castMenuRef = useRef(null)
+  const castToggleRef = useRef(null)
   const captionsMenuRef = useRef(null)
   const captionsToggleRef = useRef(null)
   const playlistMenuRef = useRef(null)
@@ -187,6 +209,43 @@ function VideoPlayer({
     fontSize: TITLE_FONT_SIZE,
     fontWeight: TITLE_FONT_WEIGHT,
   })
+  const measureCanvasRef = useRef(null)
+
+  // External imperative control surface for CAST (see CastPage/CastDisplayPage):
+  // synced playback needs to drive play/pause/seek from outside this
+  // component's own controls. `seek` reuses the exact same
+  // resumeStateRef/handleLoadedMetadata mechanism the quality-switch flow
+  // above relies on, so a seek requested right as `video` changes (and the
+  // element remounts via `key={memoizedSrc}`, not yet ready) is queued and
+  // applied automatically once metadata loads, instead of silently no-oping
+  // against an element that hasn't loaded anything yet.
+  useImperativeHandle(ref, () => ({
+    // Deliberately does not swallow a rejection here (unlike the internal
+    // autoplay/seek call sites below) - CastDisplayPage needs to detect an
+    // autoplay-block rejection to show its "click to enable" overlay.
+    // Callers that don't care can just add their own .catch(() => {}).
+    play() {
+      return videoRef.current?.play()
+    },
+    pause() {
+      videoRef.current?.pause()
+    },
+    seek(seconds, { play: shouldPlay } = {}) {
+      const el = videoRef.current
+      if (!el) return
+      if (el.readyState >= 1) {
+        el.currentTime = seconds
+        if (shouldPlay === true) el.play().catch(() => {})
+        if (shouldPlay === false) el.pause()
+      } else {
+        resumeStateRef.current = { currentTime: seconds, wasPlaying: shouldPlay ?? false }
+      }
+    },
+    getState() {
+      const el = videoRef.current
+      return { currentTime: el?.currentTime ?? 0, paused: el?.paused ?? true }
+    },
+  }), [])
 
   const streamUrl = embedVideoUrl
     ? embedVideoUrl
@@ -258,6 +317,23 @@ function VideoPlayer({
   useDismissablePopover(qualityMenuOpen, () => setQualityMenuOpen(false), qualityToggleRef, {
     dismissRefs: [qualityMenuRef],
   })
+
+  useEffect(() => {
+    if (!castMenuOpen) {
+      return undefined
+    }
+
+    function handleClickOutside(event) {
+      if (castMenuRef.current && !castMenuRef.current.contains(event.target)) {
+        setCastMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [castMenuOpen])
+
+  useDismissablePopover(castMenuOpen, () => setCastMenuOpen(false), castToggleRef)
 
   // Refetches whenever the video itself changes (not on a quality switch -
   // the subtitle list is the same across renditions of the same video).
@@ -470,6 +546,7 @@ function VideoPlayer({
     }
 
     setPlaybackError(true)
+    onVideoError?.()
   }
 
   function handleRetryPlayback() {
@@ -498,6 +575,125 @@ function VideoPlayer({
       el.volume = readVolume()
     }
   }, [memoizedSrc])
+
+  // Watches for cast targets on both transports. Keyed on memoizedSrc because
+  // the media element remounts on every src/quality change, so the listeners
+  // have to be re-attached to the new element.
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) {
+      return undefined
+    }
+
+    let cancelled = false
+    let watchId = null
+
+    // Chromecast (and other Remote Playback targets) in Chrome/Edge. Requires
+    // a secure context, so this stays silent over plain http on a LAN.
+    if (el.remote && typeof el.remote.watchAvailability === 'function') {
+      el.remote
+        .watchAvailability((available) => {
+          if (!cancelled) {
+            setRemotePlaybackAvailable(available)
+          }
+        })
+        .then((id) => {
+          if (cancelled) {
+            el.remote.cancelWatchAvailability(id).catch(() => {})
+          } else {
+            watchId = id
+          }
+        })
+        .catch(() => {
+          // NotSupportedError on browsers without a remote playback backend.
+        })
+    }
+
+    // AirPlay is WebKit-only and predates the standard API, hence the separate
+    // vendor-prefixed event and picker.
+    const supportsAirplay = typeof el.webkitShowPlaybackTargetPicker === 'function'
+    function handleAirplayAvailability(event) {
+      if (!cancelled) {
+        setAirplayAvailable(event.availability === 'available')
+      }
+    }
+    if (supportsAirplay) {
+      el.addEventListener('webkitplaybacktargetavailabilitychanged', handleAirplayAvailability)
+    }
+
+    return () => {
+      cancelled = true
+      if (watchId != null && typeof el.remote?.cancelWatchAvailability === 'function') {
+        el.remote.cancelWatchAvailability(watchId).catch(() => {})
+      }
+      if (supportsAirplay) {
+        el.removeEventListener('webkitplaybacktargetavailabilitychanged', handleAirplayAvailability)
+      }
+    }
+  }, [memoizedSrc])
+
+  /**
+   * Opens the browser's Chromecast/Remote Playback device picker. Rejection
+   * just means the user dismissed it, or no device was chosen.
+   */
+  function handleRemotePlayback() {
+    videoRef.current?.remote?.prompt().catch(() => {})
+  }
+
+  /**
+   * Opens the cast menu. With server-side casting available the menu lists
+   * devices the API discovered; without it, there's nothing to list, so go
+   * straight to the browser's own picker.
+   */
+  function handleCastClick() {
+    if (!deviceCastEnabled) {
+      handleRemotePlayback()
+      return
+    }
+    if (castMenuOpen) {
+      setCastMenuOpen(false)
+      return
+    }
+    setCastMenuOpen(true)
+    setCastDevices(null)
+    listCastDevices()
+      .then((data) => setCastDevices(data.items ?? []))
+      .catch(() => {
+        setCastDevices([])
+        toastError('Failed to look for cast devices.')
+      })
+  }
+
+  /**
+   * Hands playback to a device. The server connects to it and tells it to
+   * fetch the media itself, so nothing streams through the browser.
+   *
+   * @param {{id: string, name: string}} device Target device.
+   */
+  async function handleCastToDevice(device) {
+    setCastingTo(device.id)
+    try {
+      await playOnCastDevice(device.id, video.videoId)
+      setCastMenuOpen(false)
+      videoRef.current?.pause()
+    } catch (err) {
+      const message = err.response?.data?.message
+      toastError(message || `Failed to cast to ${device.name}.`)
+    } finally {
+      setCastingTo(null)
+    }
+  }
+
+  /**
+   * Opens Safari's AirPlay target picker.
+   */
+  function handleAirPlay() {
+    try {
+      videoRef.current?.webkitShowPlaybackTargetPicker()
+    } catch {
+      toastError('Could not open the AirPlay picker.')
+    }
+  }
 
   function handleVolumeChange() {
     const el = videoRef.current
@@ -564,6 +760,7 @@ function VideoPlayer({
   }, [isAudio, selectedSubtitleId, subtitles, memoizedSrc])
 
   function handleFirstPlay() {
+    onPlaybackIntent?.(false)
     if (viewRecordedRef.current) {
       return
     }
@@ -571,7 +768,12 @@ function VideoPlayer({
     recordView(video.id).catch((err) => console.error('Failed to record view:', err))
   }
 
+  function handlePause() {
+    onPlaybackIntent?.(true)
+  }
+
   function handleEnded() {
+    onVideoEnded?.()
     if (autoplayEnabled) {
       setAutoplayCountdown(AUTOPLAY_COUNTDOWN_SECONDS)
     }
@@ -691,6 +893,16 @@ function VideoPlayer({
     }
   }
 
+  async function handleAddToCastQueue() {
+    try {
+      await onAddToCastQueue()
+      setCastQueued(true)
+      setTimeout(() => setCastQueued(false), 1500)
+    } catch (err) {
+      toastError(err.message || 'Failed to add to the CAST queue.')
+    }
+  }
+
   async function handleToggleSubscribe() {
     if (subscribePending || subscribed === null) {
       return
@@ -722,9 +934,11 @@ function VideoPlayer({
               controls
               loop={loop}
               crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
+              x-webkit-airplay="allow"
               className="video-player-audio-element"
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handleFirstPlay}
+              onPause={handlePause}
               onEnded={handleEnded}
               onTimeUpdate={handleTimeUpdate}
               onVolumeChange={handleVolumeChange}
@@ -751,8 +965,10 @@ function VideoPlayer({
             controls
             loop={loop}
             crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
+            x-webkit-airplay="allow"
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
+            onPause={handlePause}
             onEnded={handleEnded}
             onTimeUpdate={handleTimeUpdate}
             onVolumeChange={handleVolumeChange}
@@ -835,6 +1051,75 @@ function VideoPlayer({
           >
             <Repeat size={18} />
           </button>
+          {onAddToCastQueue && (
+            <button
+              type="button"
+              className="video-player-icon-btn"
+              aria-label={castQueued ? 'Added to CAST queue' : 'Add to CAST queue'}
+              title={castQueued ? 'Added to CAST queue' : 'Add to CAST queue'}
+              onClick={handleAddToCastQueue}
+            >
+              <ListPlus size={18} />
+            </button>
+          )}
+          {(deviceCastEnabled || remotePlaybackAvailable) && (
+            <div className="video-player-cast" ref={castMenuRef}>
+              <button
+                type="button"
+                className={`video-player-icon-btn${castMenuOpen ? ' video-player-icon-btn-active' : ''}`}
+                aria-label="Cast to a device"
+                title="Cast to a device"
+                onClick={handleCastClick}
+                ref={castToggleRef}
+              >
+                <Cast size={18} />
+              </button>
+              {castMenuOpen && (
+                <div className="video-player-cast-dropdown">
+                  {castDevices === null && (
+                    <p className="video-player-cast-status">Looking for devices…</p>
+                  )}
+                  {castDevices?.length === 0 && (
+                    <p className="video-player-cast-status">No devices found.</p>
+                  )}
+                  {castDevices?.map((device) => (
+                    <button
+                      key={device.id}
+                      type="button"
+                      className="video-player-cast-item"
+                      disabled={castingTo === device.id}
+                      onClick={() => handleCastToDevice(device)}
+                    >
+                      {castingTo === device.id ? `Casting to ${device.name}…` : device.name}
+                    </button>
+                  ))}
+                  {remotePlaybackAvailable && (
+                    <button
+                      type="button"
+                      className="video-player-cast-item"
+                      onClick={() => {
+                        setCastMenuOpen(false)
+                        handleRemotePlayback()
+                      }}
+                    >
+                      Use browser picker…
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {airplayAvailable && (
+            <button
+              type="button"
+              className="video-player-icon-btn"
+              aria-label="AirPlay"
+              title="AirPlay"
+              onClick={handleAirPlay}
+            >
+              <Airplay size={18} />
+            </button>
+          )}
           {subtitles.length > 0 && (
             <div className="video-player-captions" ref={captionsMenuRef}>
               <button

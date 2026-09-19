@@ -671,7 +671,7 @@ function serializeOriginalRendition(upload) {
  * @returns {Promise<object[]>} Serialized renditions, lowest resolution
  *   first, with the original upload last.
  */
-async function loadRenditions(upload) {
+export async function loadRenditions(upload) {
   const completeVersions = await FileVersion.findAll({
     where: { originalUploadId: upload.id, status: "complete" },
     order: [["videoHeight", "ASC"]],
@@ -1198,7 +1198,7 @@ async function loadUploadWithMetadataByVideoId(videoId) {
  * @returns {Promise<{upload: import('sequelize').Model, metadata: import('sequelize').Model}|null>}
  *   Pair when both rows exist; otherwise null.
  */
-async function loadUploadWithMetadataByIdentifier(raw) {
+export async function loadUploadWithMetadataByIdentifier(raw) {
   const id = parsePositiveInt(raw);
   if (id != null) {
     return loadUploadWithMetadata(id);
@@ -1218,7 +1218,7 @@ async function loadUploadWithMetadataByIdentifier(raw) {
  * @param {number|null|undefined} userId Authenticated user id.
  * @returns {Promise<import('sequelize').Model|null>} The grant row, or null.
  */
-async function loadAccessGrant(originalUploadId, userId) {
+export async function loadAccessGrant(originalUploadId, userId) {
   if (!userId) {
     return null;
   }

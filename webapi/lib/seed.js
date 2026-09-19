@@ -1,6 +1,7 @@
 import {
   AccessPermission,
   ApiKeyScope,
+  EmojiReactionUsage,
   NotificationType,
   Role,
   Theme,
@@ -9,6 +10,7 @@ import {
   UserNotificationSetting,
 } from "./models/index.js";
 import { hashPassword } from "./auth/password.js";
+import { DEFAULT_REACTION_EMOJI } from "./cast/emoji-usage.js";
 import { PUBLIC_THEME_OWNER } from "./models/theme.js";
 import { logger } from "./logger.js";
 
@@ -417,6 +419,27 @@ export async function seedThemes() {
 
     if (created) {
       logger.info(`[api]: seeded "${name}" theme`);
+    }
+  }
+}
+
+/**
+ * Seeds the CAST reaction bar's starting emoji at a zero count, so a fresh
+ * install shows the same six it always did and the list then evolves with
+ * actual usage rather than starting empty. Idempotent: existing rows (and
+ * their accumulated counts) are left alone.
+ *
+ * @returns {Promise<void>} Resolves once every default emoji exists.
+ */
+export async function seedReactionEmoji() {
+  for (const emoji of DEFAULT_REACTION_EMOJI) {
+    const [, created] = await EmojiReactionUsage.findOrCreate({
+      where: { emoji },
+      defaults: { emoji, useCount: 0 },
+    });
+
+    if (created) {
+      logger.info(`[api]: seeded "${emoji}" reaction emoji`);
     }
   }
 }

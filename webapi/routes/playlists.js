@@ -101,7 +101,7 @@ function serializePlaylist(playlist, itemCount, options = {}) {
  * @param {number|null|undefined} userId Authenticated user id.
  * @returns {Promise<import('sequelize').Model|null>} The grant row, or null.
  */
-async function loadAccessGrant(playlistId, userId) {
+export async function loadAccessGrant(playlistId, userId) {
   if (!userId) {
     return null;
   }
@@ -201,7 +201,7 @@ async function loadViewerPermissionsByPlaylistId(playlists, user, role) {
  * @param {import('sequelize').Model|null|undefined} role Authenticated role (optional).
  * @returns {Promise<import('sequelize').Model[]>} The subset of `items` the caller may view.
  */
-async function filterViewablePlaylistItems(items, user, role) {
+export async function filterViewablePlaylistItems(items, user, role) {
   const privateItems = items.filter(
     (item) => item.OriginalUpload.VideoMetadata.visibility === "private",
   );
