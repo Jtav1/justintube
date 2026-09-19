@@ -11,18 +11,28 @@
 }
 
 .admin-watch-party-table {
-  width: 100%;
+  width: auto;
   border-collapse: collapse;
   font-size: 14px;
 }
 
 .admin-watch-party-table th,
 .admin-watch-party-table td {
-  padding: 10px 12px;
+  padding: 10px 8px;
   text-align: left;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
   white-space: nowrap;
+}
+
+.admin-watch-party-table th:first-child,
+.admin-watch-party-table td:first-child {
+  padding-left: 0;
+}
+
+.admin-watch-party-table th:last-child,
+.admin-watch-party-table td:last-child {
+  padding-right: 0;
 }
 
 /* Free-text columns wrap instead of stretching the table, so the action
