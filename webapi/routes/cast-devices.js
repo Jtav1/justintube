@@ -73,7 +73,7 @@ export function createCastDevicesRouter() {
    */
   router.get("/cast-devices", requireAuth, async (req, res) => {
     try {
-      res.status(200).json({ items: await discoverCastDevices() });
+      res.status(200).json({ items: await discoverCastDevices(req.sessionID) });
     } catch (err) {
       logger.error({ err }, "listCastDevices failed");
       res.status(500).json({
@@ -120,6 +120,8 @@ export function createCastDevicesRouter() {
    *         description: Missing videoId
    *       "404":
    *         description: Device or video not found
+   *       "409":
+   *         description: Video is not public or unlisted, so a device can't fetch it
    *       "502":
    *         description: The device refused the request
    *       "504":
@@ -137,7 +139,7 @@ export function createCastDevicesRouter() {
         return;
       }
 
-      const device = await findCastDevice(String(req.params.id));
+      const device = await findCastDevice(String(req.params.id), req.sessionID);
       if (!device) {
         res.status(404).json({ error: "not_found", message: "Cast device not found." });
         return;
@@ -152,6 +154,18 @@ export function createCastDevicesRouter() {
       const hasGrant = await loadAccessGrant(upload.id, req.user.id);
       if (!canViewVideo(req.user, req.authRole, upload, metadata, Boolean(hasGrant))) {
         res.status(404).json({ error: "not_found", message: "Video not found." });
+        return;
+      }
+
+      // A device fetches the media URL itself, with no session cookie and no
+      // way for us to attach one - only visibilities the stream route already
+      // serves without auth are actually watchable once cast, regardless of
+      // whether the caster could otherwise view a private/hidden video.
+      if (metadata.visibility !== "public" && metadata.visibility !== "unlisted") {
+        res.status(409).json({
+          error: "not_castable",
+          message: "Only public or unlisted videos can be cast to a device.",
+        });
         return;
       }
 
@@ -238,7 +252,7 @@ export function createCastDevicesRouter() {
         return;
       }
 
-      const device = await findCastDevice(String(req.params.id));
+      const device = await findCastDevice(String(req.params.id), req.sessionID);
       if (!device) {
         res.status(404).json({ error: "not_found", message: "Cast device not found." });
         return;

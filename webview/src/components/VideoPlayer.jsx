@@ -246,7 +246,6 @@ function VideoPlayer({
       return { currentTime: el?.currentTime ?? 0, paused: el?.paused ?? true }
     },
   }), [])
-  const [titleShrunk, setTitleShrunk] = useState(false)
 
   const streamUrl = embedVideoUrl
     ? embedVideoUrl
@@ -319,8 +318,6 @@ function VideoPlayer({
     dismissRefs: [qualityMenuRef],
   })
 
-  // Refetches whenever the video itself changes (not on a quality switch -
-  // the subtitle list is the same across renditions of the same video).
   useEffect(() => {
     if (!castMenuOpen) {
       return undefined
@@ -338,6 +335,8 @@ function VideoPlayer({
 
   useDismissablePopover(castMenuOpen, () => setCastMenuOpen(false), castToggleRef)
 
+  // Refetches whenever the video itself changes (not on a quality switch -
+  // the subtitle list is the same across renditions of the same video).
   useEffect(() => {
     let cancelled = false
     setSubtitles([])
@@ -355,29 +354,6 @@ function VideoPlayer({
       })
     return () => {
       cancelled = true
-    }
-  }, [video.id])
-
-  useEffect(() => {
-    if (!castMenuOpen) {
-      return undefined
-    }
-
-    function handleClickOutside(event) {
-      if (castMenuRef.current && !castMenuRef.current.contains(event.target)) {
-        setCastMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [castMenuOpen])
-
-  useDismissablePopover(castMenuOpen, () => setCastMenuOpen(false), castToggleRef)
-
-  useEffect(() => {
-    if (!playlistMenuOpen) {
-      return undefined
     }
   }, [video.id])
 

@@ -5,6 +5,9 @@ import { logger } from "../logger.js";
 /**
  * How long to wait for a device to accept a TCP connection before giving up.
  * Chromecasts that have dropped off the network otherwise hang the request.
+ * Only guards the connect step - once `client.connect` calls back, the device
+ * is reachable and any further delay (launch, load, a transport command) is a
+ * real device/media concern, not a reachability one, so it isn't bounded here.
  *
  * @type {number}
  */
@@ -36,7 +39,7 @@ function withReceiver(device, run) {
     function finish(err, result) {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(connectTimer);
       try {
         client.close();
       } catch {
@@ -46,7 +49,7 @@ function withReceiver(device, run) {
       else resolve(result);
     }
 
-    const timer = setTimeout(() => {
+    const connectTimer = setTimeout(() => {
       finish(new CastServiceError(504, "device_unreachable", "The cast device did not respond."));
     }, CONNECT_TIMEOUT_MS);
 
@@ -56,6 +59,7 @@ function withReceiver(device, run) {
     });
 
     client.connect({ host: device.host, port: device.port }, () => {
+      clearTimeout(connectTimer);
       client.launch(DefaultMediaReceiver, (err, player) => {
         if (err) {
           finish(
@@ -108,21 +112,39 @@ export function playOnDevice({ device, mediaUrl, title, contentType = "video/mp4
 }
 
 /**
+ * Transport commands `controlDevice` knows how to send. Doubles as the
+ * command-to-method map, since the Media player's method names match ours.
+ *
+ * @type {Record<string, string>}
+ */
+const CONTROL_ACTIONS = { play: "play", pause: "pause", stop: "stop" };
+
+/**
  * Sends a transport command to whatever is already playing on a device.
+ * Route-level validation (`routes/cast-devices.js`) is expected to reject
+ * unknown commands before this is ever called, but an unrecognized command is
+ * logged and dropped here too rather than ever reaching `player[action]`,
+ * which would throw on an undefined method.
  *
  * @param {object} params
  * @param {{host: string, port: number}} params.device Target device.
  * @param {"play"|"pause"|"stop"} params.command Transport command.
- * @returns {Promise<object|null>} The device's media status, if it reported one.
+ * @returns {Promise<object|null>} The device's media status, if it reported
+ *   one, or null when the command was invalid and dropped.
  */
 export function controlDevice({ device, command }) {
+  const action = CONTROL_ACTIONS[command];
+  if (!action) {
+    logger.error({ command }, "[cast-devices] dropped an unrecognized control command");
+    return Promise.resolve(null);
+  }
+
   return withReceiver(device, (player, done) => {
     player.getStatus((statusErr, status) => {
       if (statusErr || !status) {
         done(new CastServiceError(409, "nothing_playing", "That device isn't playing anything."));
         return;
       }
-      const action = { play: "play", pause: "pause", stop: "stop" }[command];
       player[action]((err, updated) => {
         if (err) {
           done(new CastServiceError(502, "device_error", "The cast device refused the command."));
