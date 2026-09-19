@@ -8,7 +8,6 @@ import CastPage from './pages/CastPage.jsx'
 import CastJoinPage from './pages/CastJoinPage.jsx'
 import CastDisplayPage from './pages/CastDisplayPage.jsx'
 import VideoPage from './pages/VideoPage.jsx'
-import AdminCastSessionsPage from './pages/AdminCastSessions.jsx'
 import SearchResultsPage from './pages/SearchResults.jsx'
 import { useSiteConfig } from './context/useSiteConfig.js'
 import RouteLoadingFallback from './components/RouteLoadingFallback.jsx'
@@ -77,9 +76,6 @@ function App() {
           <Route path="/control-panel/themes/:id/edit" element={<AdminThemesPage />} />
           <Route path="/control-panel/transcode-profiles/new" element={<AdminTranscodeProfilesPage />} />
           <Route path="/control-panel/transcode-profiles/:id/edit" element={<AdminTranscodeProfilesPage />} />
-          {castEnabled && (
-            <Route path="/control-panel/cast-sessions" element={<AdminCastSessionsPage />} />
-          )}
           <Route path="/video" element={<VideoPage />} />
           <Route path="/users/:username" element={<ProfilePage />} />
           <Route path="/upload" element={<UploadPage />} />

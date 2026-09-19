@@ -4,6 +4,7 @@ import { useAuth } from '../context/useAuth.js'
 import { useToast } from '../context/useToast.js'
 import { useTheme } from '../context/useTheme.js'
 import { deleteTheme } from '../api/themes.js'
+import './AccountSettings.css'
 import './AdminThemes.css'
 
 /**

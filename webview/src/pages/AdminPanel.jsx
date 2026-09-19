@@ -18,6 +18,8 @@ import { formatRelativeDate } from '../lib/format.js'
 import { JOB_KINDS, colorForJobKind, labelForJobKind } from '../lib/jobKinds.js'
 import ChipInput from '../components/ChipInput.jsx'
 import SegmentedProgressBar from '../components/SegmentedProgressBar.jsx'
+import AdminCastSessionsCard from '../components/AdminCastSessionsCard.jsx'
+import './AccountSettings.css'
 import './AdminPanel.css'
 import './AdminThemes.css'
 import './AdminTranscodeProfiles.css'
@@ -114,7 +116,7 @@ function AdminPanel() {
   const { user, loading: authLoading } = useAuth()
   const { success, error: toastError } = useToast()
   const { themes, loading: themesLoading, refreshThemes } = useTheme()
-  const { transcodingEnabled } = useSiteConfig()
+  const { transcodingEnabled, castEnabled } = useSiteConfig()
 
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
@@ -427,10 +429,11 @@ function AdminPanel() {
 
   return (
     <section className="settings-page">
-      <div className="admin-panel-columns">
-        <div className="settings-card">
-          <h1>Admin Panel</h1>
-          <h2>Send a notification</h2>
+      <div className="admin-panel-wrap">
+        <h1 className="admin-panel-title">Admin Panel</h1>
+        <div className="admin-panel-columns">
+          <div className="settings-card">
+            <h2>Send a notification</h2>
 
           <form className="settings-form" onSubmit={handleSubmit}>
             <label htmlFor="admin-notify-audience">Send to</label>
@@ -498,6 +501,8 @@ function AdminPanel() {
             </button>
           </form>
         </div>
+
+        {castEnabled && <AdminCastSessionsCard />}
 
         <div className="settings-card">
           <h2>Manage Themes</h2>
@@ -751,6 +756,7 @@ function AdminPanel() {
             )}
           </div>
         </div>
+      </div>
       </div>
     </section>
   )
