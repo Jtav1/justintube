@@ -34,6 +34,15 @@
   color: var(--text-h);
 }
 
+/* Sits directly under the panel and over everything else on the page, so no
+   stray click can reach the video while the picker is open - see the comment on
+   the element itself in WatchPartyReactionBar.jsx. */
+.watch-party-reaction-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+}
+
 .watch-party-reaction-picker {
   z-index: 30;
   border-radius: 8px;

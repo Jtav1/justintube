@@ -65,15 +65,45 @@ function assertSessionActive(session) {
  * return the stored position unchanged. This is the server-authoritative
  * clock every connected member's player syncs against.
  *
+ * `nowMs` is injectable so a caller can compute the position and stamp the
+ * payload it goes out in from the *same* instant - see {@link playbackSnapshot},
+ * where a mismatch between the two is exactly what used to make clients
+ * double-count the elapsed time.
+ *
  * @param {import('sequelize').Model} session CAST_SESSIONS row.
+ * @param {number} [nowMs] The instant to evaluate the clock at, as epoch ms.
  * @returns {number} Effective playback position, in seconds.
  */
-export function effectivePosition(session) {
+export function effectivePosition(session, nowMs = Date.now()) {
   if (session.playbackStatus !== "playing" || !session.playbackUpdatedAt) {
     return session.playbackPositionSeconds;
   }
-  const elapsedSeconds = (Date.now() - new Date(session.playbackUpdatedAt).getTime()) / 1000;
+  const elapsedSeconds = (nowMs - new Date(session.playbackUpdatedAt).getTime()) / 1000;
   return session.playbackPositionSeconds + Math.max(0, elapsedSeconds);
+}
+
+/**
+ * Serializes a session's playback clock for the wire - the single shape both
+ * `state:sync`/REST snapshots and the `player:tick` broadcast use.
+ *
+ * The contract clients rely on: `positionSeconds` is the effective position
+ * **as of `serverTime`**, so a client advances it from `serverTime` (never from
+ * `updatedAt`, which is the older "when a control action last moved the clock"
+ * timestamp kept here only for change detection). Emitting an
+ * already-advanced position next to the stale `updatedAt` is what made every
+ * client's sync target run at 2x real time between persists.
+ *
+ * @param {import('sequelize').Model} session CAST_SESSIONS row.
+ * @returns {{status: string, positionSeconds: number, updatedAt: Date|null, serverTime: string}} Public playback payload.
+ */
+export function playbackSnapshot(session) {
+  const nowMs = Date.now();
+  return {
+    status: session.playbackStatus,
+    positionSeconds: effectivePosition(session, nowMs),
+    updatedAt: session.playbackUpdatedAt,
+    serverTime: new Date(nowMs).toISOString(),
+  };
 }
 
 /**
@@ -193,11 +223,7 @@ export async function loadSessionSnapshot(session) {
       sourcePlaylistId: session.sourcePlaylistId,
       createdAt: session.createdAt,
     },
-    playback: {
-      status: session.playbackStatus,
-      positionSeconds: effectivePosition(session),
-      updatedAt: session.playbackUpdatedAt,
-    },
+    playback: playbackSnapshot(session),
     nowPlaying: nowPlayingRow
       ? serializeQueueItem(nowPlayingRow, { renditions: nowPlayingRenditions })
       : null,
@@ -235,6 +261,72 @@ export async function loadActiveMembership(castSessionId, userId) {
   return CastSessionMember.findOne({
     where: { castSessionId, userId, status: "active" },
   });
+}
+
+/**
+ * Loads a playlist the caller is allowed to see, 404ing otherwise. Deliberately
+ * indistinguishable from "no such playlist" so a private playlist's existence
+ * isn't leaked by the error.
+ *
+ * @private
+ * @param {object} params
+ * @param {number} params.playlistId USER_PLAYLISTS id.
+ * @param {import('sequelize').Model} params.user Authenticated user.
+ * @param {import('sequelize').Model} params.role The user's role row.
+ * @returns {Promise<import('sequelize').Model>} The playlist row.
+ * @throws {CastServiceError} 404 "not_found" if missing or not viewable.
+ */
+async function loadViewablePlaylist({ playlistId, user, role }) {
+  const playlist = await UserPlaylist.findByPk(playlistId);
+  if (!playlist) {
+    throw new CastServiceError(404, "not_found", "Playlist not found.");
+  }
+  const grant = await loadPlaylistAccessGrant(playlist.id, user.id);
+  if (!canViewPlaylist(user, role, playlist, Boolean(grant))) {
+    throw new CastServiceError(404, "not_found", "Playlist not found.");
+  }
+  return playlist;
+}
+
+/**
+ * Expands a playlist into the ordered upload ids the caller may actually watch.
+ *
+ * Being able to see the playlist is not the same as being able to see every
+ * video in it, so `filterViewablePlaylistItems` runs per item as well - it drops
+ * hidden videos, private ones the caller has no claim on, and anything the
+ * caller has hidden for themselves. Ordering matches `GET /playlists/:id`.
+ *
+ * Shared by `createSession` (seeding a new session) and `addPlaylistToQueue`
+ * (appending to a running one) so the two can't disagree about either.
+ *
+ * @private
+ * @param {object} params
+ * @param {import('sequelize').Model} params.playlist The playlist row.
+ * @param {import('sequelize').Model} params.user Authenticated user.
+ * @param {import('sequelize').Model} params.role The user's role row.
+ * @returns {Promise<number[]>} ORIGINAL_UPLOADS ids, in playlist order.
+ */
+async function loadViewablePlaylistUploadIds({ playlist, user, role }) {
+  const items = await PlaylistItem.findAll({
+    where: { playlistId: playlist.id },
+    include: [
+      {
+        model: OriginalUpload,
+        required: true,
+        include: [
+          { model: VideoMetadata, as: "VideoMetadata", required: true },
+          { model: VideoThumbnail, required: false },
+          { model: User, required: false },
+        ],
+      },
+    ],
+    order: [
+      ["position", "ASC"],
+      ["addedAt", "DESC"],
+    ],
+  });
+  const viewableItems = await filterViewablePlaylistItems(items, user, role);
+  return viewableItems.map((item) => item.OriginalUpload.id);
 }
 
 /**
@@ -343,35 +435,8 @@ export async function createSession({ user, role, sourceType, playlistId, videoI
         'playlistId is required when sourceType is "playlist".',
       );
     }
-    const playlist = await UserPlaylist.findByPk(playlistId);
-    if (!playlist) {
-      throw new CastServiceError(404, "not_found", "Playlist not found.");
-    }
-    const grant = await loadPlaylistAccessGrant(playlist.id, user.id);
-    if (!canViewPlaylist(user, role, playlist, Boolean(grant))) {
-      throw new CastServiceError(404, "not_found", "Playlist not found.");
-    }
-
-    const items = await PlaylistItem.findAll({
-      where: { playlistId: playlist.id },
-      include: [
-        {
-          model: OriginalUpload,
-          required: true,
-          include: [
-            { model: VideoMetadata, as: "VideoMetadata", required: true },
-            { model: VideoThumbnail, required: false },
-            { model: User, required: false },
-          ],
-        },
-      ],
-      order: [
-        ["position", "ASC"],
-        ["addedAt", "DESC"],
-      ],
-    });
-    const viewableItems = await filterViewablePlaylistItems(items, user, role);
-    seedUploadIds = viewableItems.map((item) => item.OriginalUpload.id);
+    const playlist = await loadViewablePlaylist({ playlistId, user, role });
+    seedUploadIds = await loadViewablePlaylistUploadIds({ playlist, user, role });
     sourcePlaylistId = playlist.id;
   } else if (sourceType === "video") {
     if (!videoIdentifier) {
@@ -529,6 +594,56 @@ export async function addQueueItem({ session, user, role, videoIdentifier }) {
 
   await promoteNextQueuedItemIfIdle(session);
   return loadSessionSnapshot(session);
+}
+
+/**
+ * Appends every video of a playlist the caller may watch to the end of the
+ * queue, in playlist order.
+ *
+ * One `bulkCreate` rather than a loop over {@link addQueueItem}: that would
+ * re-run `loadSessionSnapshot` (three queries plus `loadRenditions`) once per
+ * video. Videos the caller can't see are skipped rather than failing the whole
+ * add, so `addedCount` can be lower than the playlist's length - the caller
+ * reports it so nobody is left wondering where the rest went. An empty result
+ * is not an error: a playlist of entirely unviewable videos is a legitimate
+ * no-op.
+ *
+ * @param {object} params
+ * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
+ * @param {import('sequelize').Model} params.user The member adding the playlist.
+ * @param {import('sequelize').Model} params.role The user's role row.
+ * @param {number} params.playlistId USER_PLAYLISTS id.
+ * @returns {Promise<{snapshot: object, addedCount: number, playlistTitle: string}>} The updated snapshot plus how much was added.
+ * @throws {CastServiceError} 404 if the playlist isn't viewable, 409 if the session has ended.
+ */
+export async function addPlaylistToQueue({ session, user, role, playlistId }) {
+  assertSessionActive(session);
+
+  const playlist = await loadViewablePlaylist({ playlistId, user, role });
+  const uploadIds = await loadViewablePlaylistUploadIds({ playlist, user, role });
+
+  if (uploadIds.length > 0) {
+    const maxPosition = await CastQueueItem.max("position", {
+      where: { castSessionId: session.id, status: "queued" },
+    });
+    const basePosition = typeof maxPosition === "number" ? maxPosition + 1 : 0;
+    await CastQueueItem.bulkCreate(
+      uploadIds.map((originalUploadId, index) => ({
+        castSessionId: session.id,
+        originalUploadId,
+        addedByUserId: user.id,
+        status: "queued",
+        position: basePosition + index,
+      })),
+    );
+    await promoteNextQueuedItemIfIdle(session);
+  }
+
+  return {
+    snapshot: await loadSessionSnapshot(session),
+    addedCount: uploadIds.length,
+    playlistTitle: playlist.title,
+  };
 }
 
 /**

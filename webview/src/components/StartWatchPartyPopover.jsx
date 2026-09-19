@@ -7,6 +7,7 @@ import { listMyPlaylists } from '../api/playlists.js'
 import { useWatchParty } from '../context/useWatchParty.js'
 import { useToast } from '../context/useToast.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
+import RevealableSecret from './RevealableSecret.jsx'
 import './StartWatchPartyPopover.css'
 
 const DROPDOWN_WIDTH = 300
@@ -259,11 +260,22 @@ function StartWatchPartyPopover() {
                   )}
                 </div>
               )}
-              <div className="watch-party-popover-qr">
-                <QRCodeSVG value={joinUrl} size={160} marginSize={2} />
-              </div>
+              {/* Both concealed by default: this popover is open on screen for
+                  as long as the session runs, screen shares included. */}
+              <RevealableSecret
+                as="div"
+                label="QR code"
+                className="watch-party-popover-qr-reveal"
+                masked={<span className="watch-party-popover-qr-placeholder">QR code hidden</span>}
+              >
+                <span className="watch-party-popover-qr">
+                  <QRCodeSVG value={joinUrl} size={160} marginSize={2} />
+                </span>
+              </RevealableSecret>
               <p className="watch-party-popover-code-label">Join code</p>
-              <p className="watch-party-popover-code">{session.code}</p>
+              <RevealableSecret as="p" label="join code" className="watch-party-popover-code">
+                {session.code}
+              </RevealableSecret>
               <button type="button" className="watch-party-popover-copy" onClick={handleCopyLink}>
                 <Copy size={14} /> Copy join link
               </button>

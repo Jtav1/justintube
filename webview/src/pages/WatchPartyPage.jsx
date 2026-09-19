@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
 import { useWatchParty } from '../context/useWatchParty.js'
 import { useWatchPartyPlaybackSync } from '../hooks/useWatchPartyPlaybackSync.js'
+import { useDocumentTitle } from '../hooks/useDocumentTitle.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import WatchPartyQueue from '../components/WatchPartyQueue.jsx'
 import WatchPartyMembers from '../components/WatchPartyMembers.jsx'
@@ -35,14 +36,19 @@ function WatchPartyPage() {
     playback,
     joinError,
     ended,
+    left,
     enterSession,
     reportEnded,
     reportError,
     play,
     pause,
+    seek,
+    getServerNow,
   } = useWatchParty()
 
   const videoPlayerRef = useRef(null)
+
+  useDocumentTitle(nowPlaying?.video?.title ?? session?.title)
 
   useEffect(() => {
     if (authLoading) {
@@ -69,6 +75,15 @@ function WatchPartyPage() {
     }
   }, [joinError, navigate])
 
+  // Leaving tears the session state down without any error, which would
+  // otherwise drop this page into its "Joining Watch Party…" branch and leave
+  // the user stranded there. The session keeps running for everyone else.
+  useEffect(() => {
+    if (left) {
+      navigate('/')
+    }
+  }, [left, navigate])
+
   // A normal end (owner or admin) rather than a failure: WatchPartyContext
   // has already cleared the session, so linger on the message just long
   // enough to read it, then get out of the dead page.
@@ -80,29 +95,15 @@ function WatchPartyPage() {
     return () => clearTimeout(timer)
   }, [ended, navigate])
 
-  useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback)
-
-  /**
-   * Turns a pause/play from the player's own controls into a session command,
-   * so the transport rail isn't the only thing that works. Any member may
-   * control playback (controlPlayback enforces no ownership), matching the
-   * rail's ungated buttons.
-   *
-   * Only acts when the local element has diverged from the server clock: when
-   * useWatchPartyPlaybackSync pauses or plays the element to follow the
-   * session, the resulting event already agrees with `playback`, so nothing
-   * is emitted and there's no feedback loop - no suppression flag needed.
-   *
-   * @param {boolean} paused The element's new paused state.
-   * @returns {void}
-   */
-  function handlePlaybackIntent(paused) {
-    if (paused && playback.status === 'playing') {
-      pause().catch(() => {})
-    } else if (!paused && playback.status === 'paused') {
-      play().catch(() => {})
-    }
-  }
+  // The hook owns both directions: it drives the element to follow the session
+  // clock, and hands back the handlers that turn this member's own play/pause
+  // and scrubbing into session commands without echoing its own corrections.
+  const { onPlaybackIntent, onSeekIntent } = useWatchPartyPlaybackSync(
+    videoPlayerRef,
+    nowPlaying,
+    playback,
+    { play, pause, seek, getServerNow },
+  )
 
   if (ended) {
     return (
@@ -131,7 +132,8 @@ function WatchPartyPage() {
                 video={nowPlaying.video}
                 onVideoEnded={() => reportEnded().catch(() => {})}
                 onVideoError={() => reportError().catch(() => {})}
-                onPlaybackIntent={handlePlaybackIntent}
+                onPlaybackIntent={onPlaybackIntent}
+                onSeekIntent={onSeekIntent}
               />
               <WatchPartyReactions />
             </div>

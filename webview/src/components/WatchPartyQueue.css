@@ -184,6 +184,43 @@
   border-color: var(--accent-border);
 }
 
+.watch-party-queue-add-playlist {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.watch-party-queue-add-playlist select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.watch-party-queue-add-playlist button {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.watch-party-queue-add-playlist button:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.watch-party-queue-add-playlist button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .watch-party-queue-add-dropdown {
   position: absolute;
   z-index: 5;

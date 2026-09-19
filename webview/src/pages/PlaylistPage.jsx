@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Play, UserRound } from 'lucide-react'
+import { ListPlus, Play, UserRound } from 'lucide-react'
 import apiClient from '../api/client.js'
 import { getPlaylist } from '../api/playlists.js'
 import { formatRelativeDate } from '../lib/format.js'
 import { useToast } from '../context/useToast.js'
+import { useWatchParty } from '../context/useWatchParty.js'
 import VideoCard from '../components/VideoCard.jsx'
 import './PlaylistPage.css'
 
@@ -17,11 +18,41 @@ import './PlaylistPage.css'
 function PlaylistPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { error: toastError } = useToast()
+  const { error: toastError, info: toastInfo } = useToast()
+  const { session: watchPartySession, addPlaylistToQueue } = useWatchParty()
 
   const [playlist, setPlaylist] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [addToWatchPartyBusy, setAddToWatchPartyBusy] = useState(false)
+
+  /**
+   * Appends this playlist to the running Watch Party's queue. The server
+   * reports how many videos actually landed - fewer than the playlist holds if
+   * some aren't visible to this member - so that difference is said out loud
+   * rather than looking like a failure.
+   *
+   * @returns {Promise<void>}
+   */
+  async function handleAddToWatchParty() {
+    if (addToWatchPartyBusy) {
+      return
+    }
+    setAddToWatchPartyBusy(true)
+    try {
+      const ack = await addPlaylistToQueue(Number(id))
+      const added = ack?.addedCount
+      if (added === 0) {
+        toastInfo('Nothing was added - none of this playlist is available to you.')
+      } else if (typeof added === 'number') {
+        toastInfo(`Added ${added} ${added === 1 ? 'video' : 'videos'} to the Watch Party queue.`)
+      }
+    } catch (err) {
+      toastError(err.message || 'Failed to add the playlist to the Watch Party queue.')
+    } finally {
+      setAddToWatchPartyBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -117,15 +148,31 @@ function PlaylistPage() {
             </span>
           </p>
         </div>
-        <button
-          type="button"
-          className="playlist-page-play-btn"
-          onClick={handlePlay}
-          disabled={!firstVideoId}
-        >
-          <Play size={18} />
-          Play
-        </button>
+        <div className="playlist-page-actions">
+          {/* Only while a session is actually running - with none there's
+              nothing to add to, and starting one from a playlist is already
+              offered by the TopBar Watch Party popover. */}
+          {watchPartySession && (
+            <button
+              type="button"
+              className="playlist-page-watch-party-btn"
+              onClick={handleAddToWatchParty}
+              disabled={addToWatchPartyBusy || playlist.items.length === 0}
+            >
+              <ListPlus size={18} />
+              Add to Watch Party queue
+            </button>
+          )}
+          <button
+            type="button"
+            className="playlist-page-play-btn"
+            onClick={handlePlay}
+            disabled={!firstVideoId}
+          >
+            <Play size={18} />
+            Play
+          </button>
+        </div>
       </div>
 
       {playlist.items.length > 0 ? (

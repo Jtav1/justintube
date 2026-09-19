@@ -4,6 +4,7 @@ import { requireAuth } from "../lib/auth/require-auth.js";
 import { CastServiceError } from "../lib/cast/errors.js";
 import { topReactionEmoji } from "../lib/cast/emoji-usage.js";
 import {
+  addPlaylistToQueue,
   addQueueItem,
   createSession,
   endSession,
@@ -450,6 +451,90 @@ export function createCastRouter() {
       if (handleServiceError(res, err)) return;
       logger.error({ err }, "addCastQueueItem failed");
       res.status(500).json({ error: "internal_error", message: "Failed to add queue item." });
+    }
+  });
+
+  /**
+   * Appends an entire playlist to a session's queue, in playlist order. Any
+   * active member may do this, matching the single-video add. Videos in the
+   * playlist the caller can't see are skipped rather than failing the request,
+   * so the response's `addedCount` may be lower than the playlist's length.
+   * POST /api/v1/cast/:id/queue/playlist
+   * Auth: required, active member.
+   *
+   * @openapi
+   * /api/v1/cast/{id}/queue/playlist:
+   *   post:
+   *     tags: [Cast]
+   *     summary: Add every video of a playlist to a CAST session's queue
+   *     operationId: addCastQueuePlaylist
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [playlistId]
+   *             properties:
+   *               playlistId:
+   *                 type: integer
+   *     responses:
+   *       "201":
+   *         description: Updated session snapshot, plus how many videos were added
+   *       "400":
+   *         description: Invalid id or playlistId
+   *       "403":
+   *         description: Caller is not a member of this session
+   *       "404":
+   *         description: Session or playlist not found (or the playlist isn't viewable)
+   *       "409":
+   *         description: The session has ended
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the updated session snapshot or an error response.
+   */
+  router.post("/cast/:id/queue/playlist", requireAuth, async (req, res) => {
+    try {
+      const session = await requireSessionMembership(req, res);
+      if (!session) return;
+
+      const playlistId = parsePositiveInt(req.body?.playlistId);
+      if (playlistId == null) {
+        res.status(400).json({
+          error: "invalid_body",
+          message: "playlistId must be a positive integer.",
+        });
+        return;
+      }
+
+      const { snapshot, addedCount } = await addPlaylistToQueue({
+        session,
+        user: req.user,
+        role: req.authRole,
+        playlistId,
+      });
+      await notifySessionChanged(session.id);
+      const name = displayNameFor(req.user);
+      notifyActivity(session.id, {
+        type: "queue_add",
+        actorName: name,
+        text: `${name} added ${addedCount} ${addedCount === 1 ? "video" : "videos"} from a playlist`,
+      });
+      res.status(201).json({ ...snapshot, addedCount });
+    } catch (err) {
+      if (handleServiceError(res, err)) return;
+      logger.error({ err }, "addCastQueuePlaylist failed");
+      res.status(500).json({ error: "internal_error", message: "Failed to add the playlist." });
     }
   });
 

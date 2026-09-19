@@ -7,13 +7,14 @@ import { CastSession } from "../models/index.js";
 import { isReactionEmoji, recordEmojiUse } from "./emoji-usage.js";
 import { CastServiceError } from "./errors.js";
 import {
+  addPlaylistToQueue,
   addQueueItem,
   advanceOnPlaybackEnd,
   controlPlayback,
-  effectivePosition,
   loadActiveMembership,
   loadSessionById,
   loadSessionSnapshot,
+  playbackSnapshot,
   promoteNextQueuedItemIfIdle,
   removeQueueItem,
   reorderQueueItem,
@@ -22,7 +23,8 @@ import {
 /**
  * lib/cast/realtime.js is the Socket.IO half of CAST: the `/cast` namespace,
  * one room per session (`cast:<id>`), presence tracking, the server-tick
- * playback clock, and every mutating socket event handler. Every mutation
+ * playback clock, the `time:sync` clock handshake clients measure their own
+ * offset against, and every mutating socket event handler. Every mutation
  * still goes through lib/cast/queue-service.js — this module's job is
  * transport (auth handshake, rooms, broadcasting) and the auto-advance
  * seams (`player:ended`/`player:error`) that only make sense as live events.
@@ -249,7 +251,7 @@ async function resolveJoinTarget({ code, sessionId } = {}) {
  * @param {import('socket.io').Socket} socket The event's socket.
  * @param {Function|undefined} ack Socket.IO ack callback, if the client provided one.
  * @param {(session: import('sequelize').Model) => Promise<unknown>} mutate Runs the actual queue-service mutation.
- * @param {{type: string, text: (name: string) => string}} [activity] Activity feed entry to broadcast on success.
+ * @param {{type: string, text: (name: string, result: unknown) => string}} [activity] Activity feed entry to broadcast on success; `text` also receives whatever `mutate` resolved to, for entries that need to mention it.
  * @returns {Promise<void>} Resolves once the ack has been sent.
  */
 async function withSessionAction(socket, ack, mutate, activity) {
@@ -264,12 +266,16 @@ async function withSessionAction(socket, ack, mutate, activity) {
       throw new CastServiceError(403, "forbidden", "You are not a member of this CAST session.");
     }
 
-    await mutate(session);
+    const result = await mutate(session);
 
     await broadcastState(session.id);
     if (activity) {
       const name = displayNameFor(socket.data.user);
-      broadcastActivity(session.id, { type: activity.type, actorName: name, text: activity.text(name) });
+      broadcastActivity(session.id, {
+        type: activity.type,
+        actorName: name,
+        text: activity.text(name, result),
+      });
     }
     ack?.({ ok: true });
   } catch (err) {
@@ -302,16 +308,15 @@ async function runTick() {
       continue;
     }
 
-    const positionSeconds = effectivePosition(session);
-    io.of("/cast").to(roomName(sessionId)).emit("player:tick", {
-      positionSeconds,
-      updatedAt: session.playbackUpdatedAt,
-      status: session.playbackStatus,
-    });
+    // playbackSnapshot stamps the position and the `serverTime` it's true for
+    // from one instant, which is what lets a client advance it without
+    // double-counting the elapsed time (see queue-service.js).
+    const playback = playbackSnapshot(session);
+    io.of("/cast").to(roomName(sessionId)).emit("player:tick", playback);
 
     if (persistThisTick) {
-      session.playbackPositionSeconds = positionSeconds;
-      session.playbackUpdatedAt = new Date();
+      session.playbackPositionSeconds = playback.positionSeconds;
+      session.playbackUpdatedAt = new Date(playback.serverTime);
       await session.save();
     }
   }
@@ -370,6 +375,21 @@ export function attachCastRealtime(httpServer) {
   });
 
   castNamespace.on("connection", (socket) => {
+    // Clock handshake. Deliberately session-independent (no membership check,
+    // not routed through withSessionAction) - it mutates nothing and answers
+    // before a join, so a client can have an offset estimate ready by the time
+    // the first `player:tick` lands. `clientSent` is echoed back untouched so
+    // the client can measure the round trip against its own clock and derive
+    // `offset = serverTime + rtt / 2 - now`; without it every client folds its
+    // own wall-clock skew straight into the seek target.
+    socket.on("time:sync", (payload, ack) => {
+      const clientSent = Number(payload?.clientSent);
+      ack?.({
+        clientSent: Number.isFinite(clientSent) ? clientSent : null,
+        serverTime: Date.now(),
+      });
+    });
+
     socket.on("session:join", async (payload, ack) => {
       try {
         const session = await resolveJoinTarget(payload);
@@ -419,6 +439,29 @@ export function attachCastRealtime(httpServer) {
             videoIdentifier: String(payload?.videoId ?? ""),
           }),
         { type: "queue_add", text: (name) => `${name} added a video to the queue` },
+      ),
+    );
+
+    socket.on("queue:add-playlist", (payload, ack) =>
+      withSessionAction(
+        socket,
+        ack,
+        (session) =>
+          addPlaylistToQueue({
+            session,
+            user: socket.data.user,
+            role: socket.data.role,
+            playlistId: Number(payload?.playlistId),
+          }),
+        {
+          type: "queue_add",
+          // Says how many actually landed, which can be fewer than the playlist
+          // holds - videos the adder can't see are skipped.
+          text: (name, result) => {
+            const count = result?.addedCount ?? 0;
+            return `${name} added ${count} ${count === 1 ? "video" : "videos"} from a playlist`;
+          },
+        },
       ),
     );
 

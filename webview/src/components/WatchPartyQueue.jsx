@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Pause, Pencil, Play, SkipBack, SkipForward, Square, X } from 'lucide-react'
 import { suggestSearch } from '../api/search.js'
+import { listMyPlaylists } from '../api/playlists.js'
 import { useWatchParty } from '../context/useWatchParty.js'
 import { useToast } from '../context/useToast.js'
 import VideoCard from './VideoCard.jsx'
+import RevealableSecret from './RevealableSecret.jsx'
 import './WatchPartyQueue.css'
 
 const SUGGESTION_LIMIT = 8
@@ -13,7 +15,8 @@ const DEBOUNCE_MS = 250
  * The Watch Party's live queue rail: now-playing, up-next list (with
  * per-item remove/reorder — every member can use these, per the session's
  * shared-control model), playback transport, a debounced "add a video"
- * search, and an owner-only "End session" action.
+ * search, an "add a whole playlist" picker, and an owner-only "End session"
+ * action.
  */
 function WatchPartyQueue() {
   const {
@@ -23,6 +26,7 @@ function WatchPartyQueue() {
     playback,
     isOwner,
     addToQueue,
+    addPlaylistToQueue,
     removeFromQueue,
     moveInQueue,
     play,
@@ -33,7 +37,7 @@ function WatchPartyQueue() {
     canManageSession,
     renameSession,
   } = useWatchParty()
-  const { error: toastError } = useToast()
+  const { error: toastError, info: toastInfo } = useToast()
 
   const [renaming, setRenaming] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -41,6 +45,9 @@ function WatchPartyQueue() {
   const [addValue, setAddValue] = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [suggestOpen, setSuggestOpen] = useState(false)
+  const [playlists, setPlaylists] = useState([])
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
+  const [playlistBusy, setPlaylistBusy] = useState(false)
   const debounceRef = useRef(null)
 
   const trimmedAddValue = addValue.trim()
@@ -52,6 +59,24 @@ function WatchPartyQueue() {
     setSuggestions([])
     setSuggestOpen(false)
   }
+
+  // Fetched on mount rather than when the picker is first touched: a native
+  // <select> opens its list on mousedown, so loading then would show an empty
+  // dropdown on the first click. This rail only renders inside a session.
+  useEffect(() => {
+    let cancelled = false
+    listMyPlaylists({ limit: 99 })
+      .then((data) => {
+        if (!cancelled) setPlaylists(data.items ?? [])
+      })
+      .catch(() => {
+        // A failed list just means no playlist shortcut - the video search above
+        // still works, so this isn't worth a toast.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const trimmed = addValue.trim()
@@ -87,6 +112,36 @@ function WatchPartyQueue() {
       await addToQueue(suggestion.videoId)
     } catch (err) {
       toastError(err.message || 'Failed to add video.')
+    }
+  }
+
+
+  /**
+   * Appends the chosen playlist to the queue. The server reports how many
+   * videos actually landed, which can be fewer than the playlist holds when some
+   * of them aren't visible to this member - said out loud so the difference
+   * doesn't look like a bug.
+   *
+   * @returns {Promise<void>}
+   */
+  async function handleAddPlaylist() {
+    if (!selectedPlaylistId || playlistBusy) {
+      return
+    }
+    setPlaylistBusy(true)
+    try {
+      const ack = await addPlaylistToQueue(Number(selectedPlaylistId))
+      setSelectedPlaylistId('')
+      const added = ack?.addedCount
+      if (added === 0) {
+        toastInfo('Nothing was added - none of that playlist is available to you.')
+      } else if (typeof added === 'number') {
+        toastInfo(`Added ${added} ${added === 1 ? 'video' : 'videos'} to the queue.`)
+      }
+    } catch (err) {
+      toastError(err.message || 'Failed to add the playlist.')
+    } finally {
+      setPlaylistBusy(false)
     }
   }
 
@@ -222,7 +277,10 @@ function WatchPartyQueue() {
           )}
         </div>
         <p className="watch-party-queue-meta">
-          Code <code>{session?.code}</code>
+          Code{' '}
+          <RevealableSecret label="join code">
+            <code>{session?.code}</code>
+          </RevealableSecret>
         </p>
       </div>
 
@@ -289,6 +347,28 @@ function WatchPartyQueue() {
             ))}
           </ul>
         )}
+      </div>
+
+      <div className="watch-party-queue-add-playlist">
+        <select
+          value={selectedPlaylistId}
+          onChange={(event) => setSelectedPlaylistId(event.target.value)}
+          aria-label="Choose a playlist to add to the queue"
+        >
+          <option value="">Add a playlist…</option>
+          {playlists.map((playlist) => (
+            <option key={playlist.id} value={playlist.id}>
+              {playlist.title}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={playlistBusy || !selectedPlaylistId}
+          onClick={handleAddPlaylist}
+        >
+          Add all
+        </button>
       </div>
 
       <p className="watch-party-queue-section-label">

@@ -8,6 +8,8 @@ import { EmojiReactionUsage, Role } from "../../lib/models/index.js";
 import {
   resetTables,
   seedMetadata,
+  seedPlaylist,
+  seedPlaylistItem,
   seedUpload,
   seedUser,
   seedUserApiKey,
@@ -210,6 +212,82 @@ describe("CAST realtime (Socket.IO /cast namespace)", () => {
     const tick = await waitForEvent(socket, "player:tick", 4000);
     expect(tick.status).toBe("playing");
     expect(typeof tick.positionSeconds).toBe("number");
+
+    // Clients advance positionSeconds from serverTime, so the tick has to say
+    // which instant the position belongs to. Without it (or with the older
+    // control-action timestamp in its place) every client counts the same
+    // elapsed seconds twice and its sync target runs at double speed.
+    expect(typeof tick.serverTime).toBe("string");
+    const tickAge = Date.now() - new Date(tick.serverTime).getTime();
+    expect(Math.abs(tickAge)).toBeLessThan(4000);
+  }, 10000);
+
+  test("time:sync acks the caller's stamp alongside the server's clock", async () => {
+    await seedUserWithKey("rt-key-clock-1");
+    const socket = connectSocket("rt-key-clock-1");
+    await waitForEvent(socket, "connect");
+
+    const clientSent = Date.now();
+    const ack = await emitWithAck(socket, "time:sync", { clientSent });
+
+    // Echoed back so the client can measure the round trip against its own
+    // clock, which is what the offset estimate is built from.
+    expect(ack.clientSent).toBe(clientSent);
+    expect(typeof ack.serverTime).toBe("number");
+    expect(ack.serverTime).toBeGreaterThanOrEqual(clientSent);
+
+    // Deliberately answerable before joining anything - a client wants an offset
+    // in hand before its first player:tick arrives.
+    expect(socket.connected).toBe(true);
+  }, 10000);
+
+  test("player:seek moves the session clock for every member", async () => {
+    await seedUserWithKey("rt-key-seek-1");
+    const session = await createSession("rt-key-seek-1");
+    const upload = await seedUpload();
+    await seedMetadata(upload.id);
+
+    const socket = connectSocket("rt-key-seek-1");
+    await waitForEvent(socket, "connect");
+    await emitWithAck(socket, "session:join", { sessionId: session.session.id });
+    await emitWithAck(socket, "queue:add", { videoId: String(upload.id) });
+
+    const statePromise = waitForEvent(socket, "state:sync");
+    const ack = await emitWithAck(socket, "player:seek", { seconds: 125.5 });
+    expect(ack.ok).toBe(true);
+
+    const state = await statePromise;
+    expect(state.playback.positionSeconds).toBeGreaterThanOrEqual(125.5);
+    expect(state.playback.positionSeconds).toBeLessThan(127);
+  }, 10000);
+
+  test("queue:add-playlist appends the playlist and reports the count in the activity feed", async () => {
+    const owner = await seedUserWithKey("rt-key-pl-1");
+    const session = await createSession("rt-key-pl-1");
+    const playlist = await seedPlaylist({ userId: owner.id, visibility: "private" });
+    const uploadA = await seedUpload();
+    await seedMetadata(uploadA.id);
+    const uploadB = await seedUpload();
+    await seedMetadata(uploadB.id);
+    await seedPlaylistItem(playlist.id, uploadA.id, { position: 0 });
+    await seedPlaylistItem(playlist.id, uploadB.id, { position: 1 });
+
+    const socket = connectSocket("rt-key-pl-1");
+    await waitForEvent(socket, "connect");
+    await emitWithAck(socket, "session:join", { sessionId: session.session.id });
+
+    const statePromise = waitForEvent(socket, "state:sync");
+    const activityPromise = waitForEvent(socket, "activity");
+    const ack = await emitWithAck(socket, "queue:add-playlist", { playlistId: playlist.id });
+    expect(ack.ok).toBe(true);
+
+    const state = await statePromise;
+    expect(state.nowPlaying.video.id).toBe(uploadA.id);
+    expect(state.queue.map((item) => item.video.id)).toEqual([uploadB.id]);
+
+    const activity = await activityPromise;
+    expect(activity.type).toBe("queue_add");
+    expect(activity.text).toContain("2 videos");
   }, 10000);
 
   test("react broadcasts a multi-codepoint emoji intact and records its use", async () => {

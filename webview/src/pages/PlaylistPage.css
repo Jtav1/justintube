@@ -113,6 +113,41 @@
   cursor: pointer;
 }
 
+.playlist-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* Secondary to Play: same shape, neutral colours. */
+.playlist-page-watch-party-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.playlist-page-watch-party-btn:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.playlist-page-watch-party-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .playlist-page-play-btn:hover:not(:disabled) {
   background: var(--accent-border);
   color: var(--text-h);

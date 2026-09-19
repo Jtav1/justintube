@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { SITE_NAME } from '../lib/document-title.js'
 import {
   Airplay,
   Cast,
@@ -101,6 +102,7 @@ function VideoPlayer({
   onVideoError,
   onAddToWatchPartyQueue,
   onPlaybackIntent,
+  onSeekIntent,
   ref,
 }) {
   const { user } = useAuth()
@@ -208,6 +210,32 @@ function VideoPlayer({
   const playlistToggleRef = useRef(null)
   const playlistDropdownRef = useRef(null)
   const resumeStateRef = useRef(null)
+  // Set while a seek this component initiated is in flight, so handleSeeked can
+  // tell its own work from the user dragging the progress bar.
+  const programmaticSeekRef = useRef(false)
+  // The playback rate an external controller asked for (CAST drift correction),
+  // re-applied after the element remounts.
+  const desiredRateRef = useRef(1)
+
+  /**
+   * Moves the playhead on this component's own behalf, flagging it so
+   * handleSeeked doesn't report it as the user scrubbing.
+   *
+   * Skips the assignment when the element is already there: that fires no
+   * `seeked` event, which would leave the flag raised and swallow the user's
+   * next real scrub.
+   *
+   * @param {HTMLMediaElement} el The media element.
+   * @param {number} seconds Target position.
+   * @returns {void}
+   */
+  function applyProgrammaticSeek(el, seconds) {
+    if (Math.abs(el.currentTime - seconds) < 0.01) {
+      return
+    }
+    programmaticSeekRef.current = true
+    el.currentTime = seconds
+  }
   const retryCountRef = useRef(0)
   const retryTimeoutRef = useRef(null)
   const viewRecordedRef = useRef(false)
@@ -243,16 +271,36 @@ function VideoPlayer({
       const el = videoRef.current
       if (!el) return
       if (el.readyState >= 1) {
-        el.currentTime = seconds
+        // Flagged so the resulting `seeked` event isn't mistaken for the user
+        // scrubbing - otherwise every CAST drift correction would echo straight
+        // back out as a session-wide seek.
+        applyProgrammaticSeek(el, seconds)
         if (shouldPlay === true) el.play().catch(() => {})
         if (shouldPlay === false) el.pause()
       } else {
         resumeStateRef.current = { currentTime: seconds, wasPlaying: shouldPlay ?? false }
       }
     },
+    setPlaybackRate(rate) {
+      // Remembered as well as applied: the element remounts on a video or
+      // quality change (key={memoizedSrc}), which resets rate to 1, and
+      // handleLoadedMetadata puts this back.
+      desiredRateRef.current = rate
+      const el = videoRef.current
+      if (el) el.playbackRate = rate
+    },
     getState() {
       const el = videoRef.current
-      return { currentTime: el?.currentTime ?? 0, paused: el?.paused ?? true }
+      return {
+        currentTime: el?.currentTime ?? 0,
+        paused: el?.paused ?? true,
+        // The caller needs these to know whether the element is in any state to
+        // be corrected - seeking or starved of data, measuring it is meaningless.
+        seeking: el?.seeking ?? false,
+        readyState: el?.readyState ?? 0,
+        playbackRate: el?.playbackRate ?? 1,
+        duration: Number.isFinite(el?.duration) ? el.duration : null,
+      }
     },
   }), [])
 
@@ -275,6 +323,29 @@ function VideoPlayer({
   const canEditTags = canAddTags || canRemoveTags
 
   const uploaderName = video.uploader?.displayName || video.uploader?.username
+
+  // Publishes what's playing to the OS/browser: the AirPlay receiver's "now
+  // playing" title, the lock screen, Control Center, media keys. Without it an
+  // Apple TV falls back to the page title, which used to be the generic route
+  // label. Artwork is fetched by the browser without credentials, so a private
+  // video's thumbnail may simply not load - the title still does.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) {
+      return undefined
+    }
+    navigator.mediaSession.metadata = new window.MediaMetadata({
+      title: video.title ?? '',
+      artist: uploaderName ?? '',
+      album: SITE_NAME,
+      artwork: video.thumbnailUrl
+        ? [{ src: `${apiClient.defaults.baseURL}${video.thumbnailUrl}` }]
+        : [],
+    })
+    return () => {
+      navigator.mediaSession.metadata = null
+    }
+  }, [video.title, video.thumbnailUrl, uploaderName])
+
   const avatarUrl = video.uploader?.username
     ? `${apiClient.defaults.baseURL}/api/v1/users/${video.uploader.username}/avatar`
     : null
@@ -513,14 +584,33 @@ function VideoPlayer({
     const resume = resumeStateRef.current
     retryCountRef.current = 0
     setPlaybackError(false)
-    if (!el || !resume) {
+    if (!el) {
       return
     }
-    el.currentTime = resume.currentTime
+    // A fresh element starts at rate 1, so an external controller's chosen rate
+    // (CAST drift correction) has to be re-applied on every remount.
+    if (desiredRateRef.current !== 1) {
+      el.playbackRate = desiredRateRef.current
+    }
+    if (!resume) {
+      return
+    }
+    applyProgrammaticSeek(el, resume.currentTime)
     if (resume.wasPlaying) {
       el.play().catch(() => {})
     }
     resumeStateRef.current = null
+  }
+
+  // A `seeked` this component caused (drift correction, a quality-switch resume)
+  // is not the user's intent, so only a genuine scrub is reported upwards - see
+  // the programmaticSeekRef comment on the imperative seek().
+  function handleSeeked(event) {
+    if (programmaticSeekRef.current) {
+      programmaticSeekRef.current = false
+      return
+    }
+    onSeekIntent?.(event.currentTarget.currentTime)
   }
 
   function clearPendingRetry() {
@@ -942,6 +1032,7 @@ function VideoPlayer({
               key={memoizedSrc}
               src={memoizedSrc}
               controls
+              title={video.title ?? undefined}
               loop={loop}
               crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
               x-webkit-airplay="allow"
@@ -949,6 +1040,7 @@ function VideoPlayer({
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handleFirstPlay}
               onPause={handlePause}
+              onSeeked={handleSeeked}
               onEnded={handleEnded}
               onTimeUpdate={handleTimeUpdate}
               onVolumeChange={handleVolumeChange}
@@ -973,12 +1065,16 @@ function VideoPlayer({
             key={memoizedSrc}
             src={memoizedSrc}
             controls
+            // Some AirPlay receivers read the element's own title rather than
+            // the Media Session metadata, so both are set.
+            title={video.title ?? undefined}
             loop={loop}
             crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
             x-webkit-airplay="allow"
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}
             onPause={handlePause}
+            onSeeked={handleSeeked}
             onEnded={handleEnded}
             onTimeUpdate={handleTimeUpdate}
             onVolumeChange={handleVolumeChange}
