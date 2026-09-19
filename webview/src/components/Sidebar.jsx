@@ -157,7 +157,7 @@ function Sidebar({ collapsed, backgroundUrl, onNavigate }) {
       <footer className="sidebar-footer">
         <hr className="sidebar-footer-divider" />
         <div className="sidebar-footer-row">
-          <span className="sidebar-footer-text">Justintube v2.2</span>
+          <span className="sidebar-footer-text">Justintube v2.3</span>
         </div>
         {user && previousLogIn && (
           <div className="sidebar-footer-row">
