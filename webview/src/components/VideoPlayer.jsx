@@ -738,7 +738,7 @@ function VideoPlayer({
       return
     }
     try {
-      await el?.play()
+      //await el?.play()
       const context = window.cast.framework.CastContext.getInstance()
       const requestError = await context.requestSession()
       if (requestError) {
