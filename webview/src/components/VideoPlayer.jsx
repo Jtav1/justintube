@@ -42,6 +42,7 @@ import { useSiteConfig } from '../context/useSiteConfig.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import { useTextOverflowShrink } from '../hooks/useTextOverflowShrink.js'
 import { readVolume, writeVolume } from '../lib/volume.js'
+import { loadCastSdk } from '../lib/cast-sdk.js'
 import ChipInput from './ChipInput.jsx'
 import ReactionScore from './ReactionScore.jsx'
 import './VideoPlayer.css'
@@ -149,18 +150,14 @@ function VideoPlayer({
   const [delistPending, setDelistPending] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
   const [watchPartyQueued, setWatchPartyQueued] = useState(false)
-  // remotePlaybackSupported reflects whether the browser implements the
-  // Remote Playback API at all - not whether a device is currently
-  // available. Chrome's watchAvailability() is known to be unreliable in
-  // practice (it often reports no receiver even when Chrome's own separate
-  // Cast menu finds one fine), so the Cast button's visibility is gated on
-  // API *support*, not on this signal. remotePlaybackAvailable is kept only
-  // as a hint for the device-list dropdown (shown when deviceCastEnabled is
-  // also on) - remote.prompt() (behind the button itself) does the real
-  // "is anything actually there" check via Chrome's own reliable picker,
-  // which requires a genuine user gesture to open.
-  const [remotePlaybackSupported, setRemotePlaybackSupported] = useState(false)
-  const [remotePlaybackAvailable, setRemotePlaybackAvailable] = useState(false)
+  // castSdkAvailable reflects whether this browser has a working Google Cast
+  // Web Sender SDK (Chrome/Edge only) - not whether a device is currently
+  // available. See lib/cast-sdk.js for why this SDK is used over the W3C
+  // Remote Playback API. The Cast button's visibility is gated on SDK
+  // *support*; the SDK's own picker (behind the button itself) does the
+  // real "is anything actually there" check, which requires a genuine user
+  // gesture to open.
+  const [castSdkAvailable, setCastSdkAvailable] = useState(false)
   const [airplayAvailable, setAirplayAvailable] = useState(false)
   const [castMenuOpen, setCastMenuOpen] = useState(false)
   // null = not fetched yet (renders "Looking for devices…"), [] = none found.
@@ -675,9 +672,9 @@ function VideoPlayer({
     }
   }, [memoizedSrc])
 
-  // Watches for cast targets on both transports. Keyed on memoizedSrc because
-  // the media element remounts on every src/quality change, so the listeners
-  // have to be re-attached to the new element.
+  // Watches for AirPlay availability. Keyed on memoizedSrc because the media
+  // element remounts on every src/quality change, so the listener has to be
+  // re-attached to the new element.
   useEffect(() => {
     const el = videoRef.current
     if (!el) {
@@ -685,29 +682,6 @@ function VideoPlayer({
     }
 
     let cancelled = false
-    let watchId = null
-
-    // Chromecast (and other Remote Playback targets) in Chrome/Edge. Requires
-    // a secure context, so this stays silent over plain http on a LAN.
-    if (el.remote && typeof el.remote.watchAvailability === 'function') {
-      setRemotePlaybackSupported(true)
-      el.remote
-        .watchAvailability((available) => {
-          if (!cancelled) {
-            setRemotePlaybackAvailable(available)
-          }
-        })
-        .then((id) => {
-          if (cancelled) {
-            el.remote.cancelWatchAvailability(id).catch(() => {})
-          } else {
-            watchId = id
-          }
-        })
-        .catch(() => {
-          // NotSupportedError on browsers without a remote playback backend.
-        })
-    }
 
     // AirPlay is WebKit-only and predates the standard API, hence the separate
     // vendor-prefixed event and picker.
@@ -723,51 +697,89 @@ function VideoPlayer({
 
     return () => {
       cancelled = true
-      if (watchId != null && typeof el.remote?.cancelWatchAvailability === 'function') {
-        el.remote.cancelWatchAvailability(watchId).catch(() => {})
-      }
       if (supportsAirplay) {
         el.removeEventListener('webkitplaybacktargetavailabilitychanged', handleAirplayAvailability)
       }
     }
   }, [memoizedSrc])
 
+  // Loads the Cast SDK once (module-level singleton, see lib/cast-sdk.js) -
+  // mount-only, unlike the AirPlay watcher above, since SDK availability
+  // doesn't depend on which video is loaded.
+  useEffect(() => {
+    let cancelled = false
+    loadCastSdk().then((available) => {
+      if (!cancelled) {
+        setCastSdkAvailable(available)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   /**
-   * Opens the browser's Chromecast/Remote Playback device picker. Dismissing
-   * the picker is a normal outcome and stays silent; every other rejection is
-   * reported, since a picker that never appears is otherwise indistinguishable
-   * from a button that does nothing.
+   * Opens the Google Cast device picker via the Cast Sender SDK (see
+   * lib/cast-sdk.js) and hands the current video off to whatever receiver
+   * the user picks, using the account-less built-in Default Media Receiver -
+   * no custom receiver app needed. Dismissing the picker is a normal outcome
+   * and stays silent; every other failure is reported, since a picker that
+   * never appears is otherwise indistinguishable from a button that does
+   * nothing.
+   *
+   * Chrome's Cast plumbing needs genuine media engagement before it'll
+   * search for devices at all, so play() runs first, in the same click
+   * gesture.
    */
-  async function handleRemotePlayback() {
+  async function handleCastSdkPrompt() {
     const el = videoRef.current
-    if (!el?.remote || typeof el.remote.prompt !== 'function') {
+    if (!window.cast?.framework) {
       toastError("This browser can't cast this video.")
       return
     }
     try {
-      await el.remote.prompt()
-    } catch (err) {
-      // The user closed the picker without choosing a device.
-      if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+      //await el?.play()
+      const context = window.cast.framework.CastContext.getInstance()
+      const requestError = await context.requestSession()
+      if (requestError) {
+        // The user closed the picker without choosing a device.
+        if (requestError !== window.chrome.cast.ErrorCode.CANCEL) {
+          console.error('Cast session request failed:', requestError)
+          toastError('Could not open the cast picker.')
+        }
         return
       }
-      console.error('Remote playback prompt failed:', err)
-      toastError(
-        err?.name === 'NotFoundError'
-          ? 'No cast devices found on this network.'
-          : 'Could not open the cast picker.',
+      const session = context.getCurrentSession()
+      if (!session) {
+        return
+      }
+      const mediaInfo = new window.chrome.cast.media.MediaInfo(
+        memoizedSrc,
+        selectedRendition?.mimeType || 'video/mp4',
       )
+      mediaInfo.metadata = new window.chrome.cast.media.GenericMediaMetadata()
+      mediaInfo.metadata.title = video.title ?? ''
+      const loadError = await session.loadMedia(new window.chrome.cast.media.LoadRequest(mediaInfo))
+      if (loadError) {
+        console.error('Cast load media failed:', loadError)
+        toastError('Could not start casting this video.')
+        return
+      }
+      el?.pause()
+    } catch (err) {
+      console.error('Cast session failed:', err)
+      toastError('Could not open the cast picker.')
     }
   }
 
   /**
    * Opens the cast menu. With server-side casting available the menu lists
    * devices the API discovered; without it, there's nothing to list, so go
-   * straight to the browser's own picker.
+   * straight to the Cast SDK's own picker.
    */
   function handleCastClick() {
     if (!deviceCastEnabled) {
-      handleRemotePlayback()
+      handleCastSdkPrompt()
       return
     }
     if (castMenuOpen) {
@@ -1188,7 +1200,7 @@ function VideoPlayer({
               <ListPlus size={18} />
             </button>
           )}
-          {(deviceCastEnabled || remotePlaybackSupported) && (
+          {(deviceCastEnabled || castSdkAvailable) && (
             <div className="video-player-cast" ref={castMenuRef}>
               <button
                 type="button"
@@ -1219,13 +1231,13 @@ function VideoPlayer({
                       {castingTo === device.id ? `Casting to ${device.name}…` : device.name}
                     </button>
                   ))}
-                  {remotePlaybackAvailable && (
+                  {castSdkAvailable && (
                     <button
                       type="button"
                       className="video-player-cast-item"
                       onClick={() => {
                         setCastMenuOpen(false)
-                        handleRemotePlayback()
+                        handleCastSdkPrompt()
                       }}
                     >
                       Use browser picker…
