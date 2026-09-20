@@ -377,17 +377,39 @@ export async function promoteNextQueuedItemIfIdle(session) {
  * should auto-advance rather than stall. There's no distinct "errored"
  * queue-item status; both outcomes just mean "this item's turn is over."
  *
+ * `queueItemId` is the item the reporting player actually finished, and makes
+ * this idempotent: every member's element fires `ended` at roughly the same
+ * moment, so without it the first report advances to item 2 and the second
+ * immediately retires item 2 and promotes item 3 — the queue silently skips a
+ * video for everyone, once per extra tab. A report for anything other than the
+ * row still marked `"playing"` is therefore a no-op. Omitted (an older client)
+ * falls back to the previous unconditional behaviour.
+ *
  * @param {object} params
  * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
+ * @param {number} [params.queueItemId] CAST_QUEUE_ITEMS id the reporter finished; ignored when absent.
  * @returns {Promise<object>} The updated session's {@link loadSessionSnapshot} result.
  */
-export async function advanceOnPlaybackEnd({ session }) {
+export async function advanceOnPlaybackEnd({ session, queueItemId }) {
   const current = await CastQueueItem.findOne({
     where: { castSessionId: session.id, status: "playing" },
   });
+  if (queueItemId != null && Number.isFinite(queueItemId) && current?.id !== queueItemId) {
+    return loadSessionSnapshot(session);
+  }
   if (current) {
-    current.status = "played";
-    await current.save();
+    // A conditional UPDATE rather than current.save(): every member's player
+    // ends at the same instant, and their handlers interleave across the awaits
+    // here, so two of them can read the same still-"playing" row before either
+    // writes. Only the update that actually flips the row wins; the loser sees
+    // no affected rows and returns without advancing anything.
+    const [affected] = await CastQueueItem.update(
+      { status: "played" },
+      { where: { id: current.id, status: "playing" } },
+    );
+    if (affected === 0) {
+      return loadSessionSnapshot(session);
+    }
   }
 
   session.playbackStatus = "paused";
