@@ -737,6 +737,12 @@ function VideoPlayer({
    * the picker is a normal outcome and stays silent; every other rejection is
    * reported, since a picker that never appears is otherwise indistinguishable
    * from a button that does nothing.
+   *
+   * Chrome refuses to run its device search at all - rejecting prompt() with
+   * the same NotAllowedError it uses for "the user dismissed the picker" -
+   * until the element has genuine media engagement, so a Cast click on a
+   * never-played video silently did nothing. play() first, in the same click
+   * gesture, satisfies that before prompt() is called.
    */
   async function handleRemotePlayback() {
     const el = videoRef.current
@@ -745,6 +751,7 @@ function VideoPlayer({
       return
     }
     try {
+      await el.play()
       await el.remote.prompt()
     } catch (err) {
       // The user closed the picker without choosing a device.
