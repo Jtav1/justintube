@@ -19,6 +19,7 @@ import { JOB_KINDS, colorForJobKind, labelForJobKind } from '../lib/jobKinds.js'
 import ChipInput from '../components/ChipInput.jsx'
 import SegmentedProgressBar from '../components/SegmentedProgressBar.jsx'
 import AdminWatchPartySessionsCard from '../components/AdminWatchPartySessionsCard.jsx'
+import AdminUsersCard from '../components/AdminUsersCard.jsx'
 import './AccountSettings.css'
 import './AdminPanel.css'
 import './AdminThemes.css'
@@ -501,6 +502,8 @@ function AdminPanel() {
             </button>
           </form>
         </div>
+
+        <AdminUsersCard />
 
         {watchPartyEnabled && <AdminWatchPartySessionsCard />}
 

@@ -1,0 +1,201 @@
+.admin-user-edit-banner {
+  position: relative;
+  min-height: 120px;
+  margin-bottom: 40px;
+  border-radius: 8px;
+  background-color: var(--accent-bg);
+  background-size: cover;
+  background-position: center;
+}
+
+.admin-user-edit-banner-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg);
+  color: var(--error);
+  cursor: pointer;
+}
+
+.admin-user-edit-banner-delete:hover:not(:disabled) {
+  background: var(--error-bg);
+}
+
+.admin-user-edit-banner-delete:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.admin-user-edit-avatar-wrap {
+  position: absolute;
+  left: 16px;
+  bottom: -28px;
+}
+
+.admin-user-edit-avatar {
+  display: block;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 4px solid var(--bg);
+  background: var(--accent-bg);
+}
+
+.admin-user-edit-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-h);
+}
+
+.admin-user-edit-avatar-delete {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--accent-border);
+  background: var(--bg);
+  color: var(--error);
+  cursor: pointer;
+}
+
+.admin-user-edit-avatar-delete:hover:not(:disabled) {
+  background: var(--error-bg);
+}
+
+.admin-user-edit-avatar-delete:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.admin-user-edit-status-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.admin-user-edit-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.admin-user-edit-status-icon-true {
+  color: #2e7d32;
+}
+
+.admin-user-edit-status-icon-false {
+  color: #d33;
+}
+
+.admin-user-edit-role-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.admin-user-edit-role-label select {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.admin-user-edit-role-label select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.admin-user-edit-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0 0 16px;
+}
+
+.admin-user-edit-submit {
+  font: inherit;
+  padding: 10px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  color: var(--accent);
+  background: var(--accent-bg);
+  cursor: pointer;
+  transition: border-color 0.3s;
+}
+
+.admin-user-edit-submit:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.admin-user-edit-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.admin-user-edit-password-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-user-edit-password-form label {
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.admin-user-edit-password-form input {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.admin-user-edit-password-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.admin-user-edit-password-actions .admin-user-edit-submit {
+  flex: 1;
+}
+
+.admin-user-edit-cancel {
+  font: inherit;
+  padding: 10px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.admin-user-edit-cancel:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.admin-user-edit-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
