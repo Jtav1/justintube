@@ -128,9 +128,15 @@ function VideoPlayer({
   const [reaction, setReaction] = useState(video.viewerReaction ?? null)
   const [reactionPending, setReactionPending] = useState(false)
   const [reactionDelta, setReactionDelta] = useState({ likeCount: 0, dislikeCount: 0 })
-  const [reactionDeltaVideoId, setReactionDeltaVideoId] = useState(video.id)
-  if (video.id !== reactionDeltaVideoId) {
-    setReactionDeltaVideoId(video.id)
+  // Reset per-video state together when `video` changes under a still-mounted
+  // player (Watch Party only; VideoPage remounts per video). Without resetting
+  // selectedRendition here, streamUrl kept pointing at the previous video's
+  // stream while title/description/metadata moved on.
+  const [perVideoStateId, setPerVideoStateId] = useState(video.id)
+  if (video.id !== perVideoStateId) {
+    setPerVideoStateId(video.id)
+    setSelectedRendition(pickDefaultRendition(renditions))
+    setReaction(video.viewerReaction ?? null)
     setReactionDelta({ likeCount: 0, dislikeCount: 0 })
   }
   const [displayedTags, setDisplayedTags] = useState(video.tags ?? [])
@@ -297,6 +303,13 @@ function VideoPlayer({
         readyState: el?.readyState ?? 0,
         playbackRate: el?.playbackRate ?? 1,
         duration: Number.isFinite(el?.duration) ? el.duration : null,
+        // Whether a remote device (AirPlay/Chromecast) is actively rendering
+        // this element, as opposed to merely available. Consumed by
+        // useWatchPartyPlaybackSync, which pauses rate-nudging while true
+        // since the receiver owns playback and re-syncs on every write.
+        remote: Boolean(
+          el?.webkitCurrentPlaybackTargetIsWireless || el?.remote?.state === 'connected',
+        ),
       }
     },
   }), [])

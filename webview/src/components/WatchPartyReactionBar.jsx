@@ -24,12 +24,12 @@ const VIEWPORT_MARGIN = 12
 const FALLBACK_EMOJI = ['👍', '😂', '😮', '❤️', '🎉', '👎']
 
 /**
- * Positions the picker panel: right-aligned to the viewport rather than to the
- * trigger, and above it where there's room. The reaction bar sits directly under
- * the player with the session sidebar to its right, so hugging the right edge
- * puts the panel over the sidebar instead of over the video - the panel used to
- * open squarely on top of the picture. Height shrinks to whatever the viewport
- * actually has, so it never needs clamping into the middle of the player either.
+ * Positions the picker panel: left-aligned to the trigger, then clamped into
+ * the viewport (same shape as NotificationBell's computeDropdownPosition).
+ * Previously pinned `left` to the viewport's right edge regardless of the
+ * trigger's position, parking the panel over the sidebar on wide screens.
+ * Vertically it prefers opening above the bar, falling below only when the
+ * viewport is too short.
  *
  * @param {DOMRect} rect The trigger button's bounding rect.
  * @returns {{top: number, left: number, width: number, height: number}} Fixed-position style values.
@@ -41,9 +41,10 @@ function computePickerPosition(rect) {
   const top = fitsAbove
     ? rect.top - height - 6
     : Math.min(rect.bottom + 6, window.innerHeight - height - VIEWPORT_MARGIN)
+  const maxLeft = window.innerWidth - width - VIEWPORT_MARGIN
   return {
     top: Math.max(VIEWPORT_MARGIN, top),
-    left: Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN),
+    left: Math.max(VIEWPORT_MARGIN, Math.min(rect.left, maxLeft)),
     width,
     height,
   }

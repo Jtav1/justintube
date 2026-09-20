@@ -330,6 +330,49 @@ describe("CAST realtime (Socket.IO /cast namespace)", () => {
     expect(rows.every((row) => Number(row.useCount) === 0)).toBe(true);
   }, 10000);
 
+  test("two members both reporting player:ended advance the queue exactly one item", async () => {
+    // Every member's <video> fires `ended` at once; queueItemId keeps the
+    // second report from retiring the item the first just promoted.
+    await seedUserWithKey("rt-key-end-a");
+    const session = await createSession("rt-key-end-a");
+    await seedUserWithKey("rt-key-end-b");
+    await request(app)
+      .post("/api/v1/cast/join")
+      .set("Authorization", "Bearer rt-key-end-b")
+      .send({ code: session.session.code });
+
+    const socketA = connectSocket("rt-key-end-a");
+    const socketB = connectSocket("rt-key-end-b");
+    await Promise.all([waitForEvent(socketA, "connect"), waitForEvent(socketB, "connect")]);
+    await emitWithAck(socketA, "session:join", { sessionId: session.session.id });
+    await emitWithAck(socketB, "session:join", { sessionId: session.session.id });
+
+    const uploads = [];
+    for (let i = 0; i < 3; i += 1) {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id);
+      uploads.push(upload);
+      await emitWithAck(socketA, "queue:add", { videoId: String(upload.id) });
+    }
+
+    const before = await request(app)
+      .get(`/api/v1/cast/${session.session.id}`)
+      .set("Authorization", "Bearer rt-key-end-a");
+    expect(before.body.nowPlaying.video.id).toBe(uploads[0].id);
+    const playingItemId = before.body.nowPlaying.id;
+
+    // Sequential, as real players a few ms apart would produce: B's report
+    // names an item that's no longer playing by the time it lands.
+    await emitWithAck(socketA, "player:ended", { queueItemId: playingItemId });
+    await emitWithAck(socketB, "player:ended", { queueItemId: playingItemId });
+
+    const after = await request(app)
+      .get(`/api/v1/cast/${session.session.id}`)
+      .set("Authorization", "Bearer rt-key-end-a");
+    expect(after.body.nowPlaying.video.id).toBe(uploads[1].id);
+    expect(after.body.queue.map((item) => item.video.id)).toEqual([uploads[2].id]);
+  }, 15000);
+
   test("a REST kick forcibly disconnects the kicked member's live socket", async () => {
     await seedUserWithKey("rt-key-4a");
     const session = await createSession("rt-key-4a");

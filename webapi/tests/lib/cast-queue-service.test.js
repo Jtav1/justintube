@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "@jest/globals";
 import { CastQueueItem, CastSession } from "../../lib/models/index.js";
 import {
+  advanceOnPlaybackEnd,
   controlPlayback,
   effectivePosition,
   endInactiveSessions,
@@ -223,6 +224,65 @@ describe("lib/cast/queue-service.js", () => {
       await expect(
         reorderQueueItem({ session: sessionRow, queueItemId: 999999, toIndex: 0 }),
       ).rejects.toMatchObject({ status: 404, code: "not_found" });
+    });
+  });
+
+  describe("advanceOnPlaybackEnd", () => {
+    test("retires the playing item and promotes the next one", async () => {
+      const { session } = await seedSessionWithOwner();
+      const uploadA = await seedQueuedVideo();
+      const uploadB = await seedQueuedVideo();
+      const playing = await seedCastQueueItem(session.id, uploadA.id, {
+        status: "playing",
+        position: null,
+      });
+      await seedCastQueueItem(session.id, uploadB.id, { status: "queued", position: 0 });
+      const sessionRow = await CastSession.findByPk(session.id);
+
+      await advanceOnPlaybackEnd({ session: sessionRow, queueItemId: playing.id });
+
+      const rows = await CastQueueItem.findAll({ where: { castSessionId: session.id } });
+      expect(rows.find((row) => row.id === playing.id).status).toBe("played");
+      expect(rows.find((row) => row.originalUploadId === uploadB.id).status).toBe("playing");
+    });
+
+    test("ignores a report for an item that is no longer the one playing", async () => {
+      // Without this guard, the duplicate report would retire B and promote
+      // C, skipping a video.
+      const { session } = await seedSessionWithOwner();
+      const uploadA = await seedQueuedVideo();
+      const uploadB = await seedQueuedVideo();
+      const uploadC = await seedQueuedVideo();
+      const itemA = await seedCastQueueItem(session.id, uploadA.id, {
+        status: "playing",
+        position: null,
+      });
+      await seedCastQueueItem(session.id, uploadB.id, { status: "queued", position: 0 });
+      await seedCastQueueItem(session.id, uploadC.id, { status: "queued", position: 1 });
+      const sessionRow = await CastSession.findByPk(session.id);
+
+      await advanceOnPlaybackEnd({ session: sessionRow, queueItemId: itemA.id });
+      // The duplicate, still naming the item it had been playing.
+      await advanceOnPlaybackEnd({ session: sessionRow, queueItemId: itemA.id });
+
+      const rows = await CastQueueItem.findAll({ where: { castSessionId: session.id } });
+      expect(rows.find((row) => row.originalUploadId === uploadB.id).status).toBe("playing");
+      expect(rows.find((row) => row.originalUploadId === uploadC.id).status).toBe("queued");
+    });
+
+    test("advances unconditionally when no queueItemId is supplied", async () => {
+      // Backwards compatibility with a client that predates the id.
+      const { session } = await seedSessionWithOwner();
+      const uploadA = await seedQueuedVideo();
+      const uploadB = await seedQueuedVideo();
+      await seedCastQueueItem(session.id, uploadA.id, { status: "playing", position: null });
+      await seedCastQueueItem(session.id, uploadB.id, { status: "queued", position: 0 });
+      const sessionRow = await CastSession.findByPk(session.id);
+
+      await advanceOnPlaybackEnd({ session: sessionRow });
+
+      const rows = await CastQueueItem.findAll({ where: { castSessionId: session.id } });
+      expect(rows.find((row) => row.originalUploadId === uploadB.id).status).toBe("playing");
     });
   });
 

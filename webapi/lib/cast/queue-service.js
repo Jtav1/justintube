@@ -399,17 +399,33 @@ export async function promoteNextQueuedItemIfIdle(session) {
  * should auto-advance rather than stall. There's no distinct "errored"
  * queue-item status; both outcomes just mean "this item's turn is over."
  *
+ * `queueItemId` identifies the item the reporter finished, so duplicate
+ * reports from other members' players (which all end at once) are no-ops
+ * instead of double-advancing the queue. Omitted falls back to unconditional
+ * behaviour for older clients.
+ *
  * @param {object} params
  * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
+ * @param {number} [params.queueItemId] CAST_QUEUE_ITEMS id the reporter finished; ignored when absent.
  * @returns {Promise<object>} The updated session's {@link loadSessionSnapshot} result.
  */
-export async function advanceOnPlaybackEnd({ session }) {
+export async function advanceOnPlaybackEnd({ session, queueItemId }) {
   const current = await CastQueueItem.findOne({
     where: { castSessionId: session.id, status: "playing" },
   });
+  if (queueItemId != null && Number.isFinite(queueItemId) && current?.id !== queueItemId) {
+    return loadSessionSnapshot(session);
+  }
   if (current) {
-    current.status = "played";
-    await current.save();
+    // Conditional UPDATE, not current.save(): concurrent reporters can race
+    // reading this row, so only the update that actually flips it wins.
+    const [affected] = await CastQueueItem.update(
+      { status: "played" },
+      { where: { id: current.id, status: "playing" } },
+    );
+    if (affected === 0) {
+      return loadSessionSnapshot(session);
+    }
   }
 
   session.playbackStatus = "paused";

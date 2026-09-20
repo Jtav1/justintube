@@ -20,6 +20,19 @@ const SOFT_BAND_SECONDS = 1.5
 const RATE_GAIN = 0.12
 const MAX_RATE_ADJUST = 0.1
 
+// A nudge stays in effect until drift is well inside the dead band, rather
+// than snapping back to 1.0 the instant it crosses 0.25 - otherwise the
+// controller limit-cycles across the band edge, writing playbackRate every
+// second or two.
+const RESYNC_EXIT_BAND_SECONDS = 0.1
+
+// While a remote device (AirPlay/Chromecast) is rendering, measured drift is
+// mostly the receiver's own buffer latency, not real desync, and every
+// playbackRate/currentTime write forces an audible re-sync stutter. So: no
+// rate nudging, and a seek only for a gap too large to be buffer latency.
+const REMOTE_SEEK_THRESHOLD_SECONDS = 5
+const REMOTE_SEEK_COOLDOWN_MS = 6000
+
 // A paused session has no clock running, so there is nothing to nudge towards -
 // only worth a seek, and only once the gap is clearly not just jitter.
 const PAUSED_SEEK_THRESHOLD_SECONDS = 0.5
@@ -92,6 +105,9 @@ function clamp(value, min, max) {
  * the browser's own controls menu will be overridden - unavoidable when every
  * member has to stay on the same frame.
  *
+ * Suspended while `getState().remote` reports a receiver rendering (AirPlay,
+ * Chromecast): only a gap of several seconds earns a seek, rate is untouched.
+ *
  * @param {{current: {play: Function, pause: Function, seek: Function, setPlaybackRate: Function, getState: Function}|null}} videoPlayerRef Ref to the VideoPlayer's imperative handle.
  * @param {object|null} nowPlaying `useWatchParty().nowPlaying`.
  * @param {{status: string, positionSeconds: number, serverTime: string|null, updatedAt: string|null}} playback `useWatchParty().playback`.
@@ -103,6 +119,8 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
   const seekCooldownUntilRef = useRef(0)
   const localIntentUntilRef = useRef(0)
   const appliedRateRef = useRef(1)
+  // Selects the wider exit threshold below - see RESYNC_EXIT_BAND_SECONDS.
+  const nudgingRef = useRef(false)
 
   // The evaluation loop below runs on a timer, so it reads the latest playback
   // state and commands from refs instead of being torn down and restarted every
@@ -138,11 +156,13 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
    *
    * @param {number} target Position to seek to, in seconds.
    * @param {boolean} shouldPlay Whether to play after seeking.
+   * @param {number} [cooldownMs] How long to leave the element alone afterwards; a remote receiver needs longer than a local element to settle.
    * @returns {void}
    */
-  const hardSeek = useCallback((target, shouldPlay) => {
+  const hardSeek = useCallback((target, shouldPlay, cooldownMs = SEEK_COOLDOWN_MS) => {
     applyRate(1)
-    seekCooldownUntilRef.current = Date.now() + SEEK_COOLDOWN_MS
+    nudgingRef.current = false
+    seekCooldownUntilRef.current = Date.now() + cooldownMs
     videoPlayerRef.current?.seek(target, { play: shouldPlay })
   }, [applyRate, videoPlayerRef])
 
@@ -161,6 +181,7 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
     // remount, so leaving a nudge in place there would strand it permanently -
     // the dead band's applyRate(1) would think it had nothing to do.
     appliedRateRef.current = 1
+    nudgingRef.current = false
     videoPlayerRef.current?.setPlaybackRate?.(1)
     hardSeek(
       computeWatchPartyEffectivePosition(playback, commands.getServerNow()),
@@ -201,14 +222,17 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
 
       if (currentPlayback.status === 'paused') {
         applyRate(1)
+        nudgingRef.current = false
         if (!state.paused) {
           videoPlayerRef.current?.pause()
         }
-        if (
-          Math.abs(drift) > PAUSED_SEEK_THRESHOLD_SECONDS
-          && now >= seekCooldownUntilRef.current
-        ) {
-          hardSeek(target, false)
+        // Pause propagates fine to a receiver; only the position correction
+        // costs a re-sync, so that alone takes the remote threshold.
+        const pausedThreshold = state.remote
+          ? REMOTE_SEEK_THRESHOLD_SECONDS
+          : PAUSED_SEEK_THRESHOLD_SECONDS
+        if (Math.abs(drift) > pausedThreshold && now >= seekCooldownUntilRef.current) {
+          hardSeek(target, false, state.remote ? REMOTE_SEEK_COOLDOWN_MS : SEEK_COOLDOWN_MS)
         }
         return
       }
@@ -223,12 +247,29 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
       }
 
       const magnitude = Math.abs(drift)
-      if (magnitude <= DEAD_BAND_SECONDS) {
+
+      // Receiver rendering: no rate nudging, seek only for a gap too large
+      // to be buffer latency. See REMOTE_* above.
+      if (state.remote) {
         applyRate(1)
+        nudgingRef.current = false
+        if (magnitude > REMOTE_SEEK_THRESHOLD_SECONDS && now >= seekCooldownUntilRef.current) {
+          hardSeek(target, true, REMOTE_SEEK_COOLDOWN_MS)
+        }
+        return
+      }
+
+      // Asymmetric band: 0.25s to start nudging, 0.1s to stop - see
+      // RESYNC_EXIT_BAND_SECONDS for why they must not be the same number.
+      const returnBand = nudgingRef.current ? RESYNC_EXIT_BAND_SECONDS : DEAD_BAND_SECONDS
+      if (magnitude <= returnBand) {
+        applyRate(1)
+        nudgingRef.current = false
         return
       }
       if (magnitude <= SOFT_BAND_SECONDS) {
         // Behind the server (drift < 0) means play slightly faster.
+        nudgingRef.current = true
         applyRate(1 - clamp(drift * RATE_GAIN, -MAX_RATE_ADJUST, MAX_RATE_ADJUST))
         return
       }

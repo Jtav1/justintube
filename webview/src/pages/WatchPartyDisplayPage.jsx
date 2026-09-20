@@ -38,6 +38,8 @@ function WatchPartyDisplayPage() {
     pause,
     seek,
     getServerNow,
+    reportEnded,
+    reportError,
   } = useWatchParty()
 
   const videoPlayerRef = useRef(null)
@@ -115,7 +117,10 @@ function WatchPartyDisplayPage() {
       ?.play()
       ?.then(() => setAutoplayBlocked(false))
       ?.catch(() => setAutoplayBlocked(true))
-  }, [playback, nowPlaying])
+    // Keyed on autoplayCheckKey, not `playback` itself: playback is a fresh
+    // object every server tick, which used to re-run this probe (and its
+    // play() call, racing the sync hook's own) every second.
+  }, [autoplayCheckKey, nowPlaying, playback.status])
 
   function handleEnablePlayback() {
     videoPlayerRef.current
@@ -164,6 +169,10 @@ function WatchPartyDisplayPage() {
         <VideoPlayer
           ref={videoPlayerRef}
           video={nowPlaying.video}
+          // This is the unattended TV view; without these the queue stalls
+          // when no member tab is open to report the video ending.
+          onVideoEnded={() => reportEnded(nowPlaying.id).catch(() => {})}
+          onVideoError={() => reportError(nowPlaying.id).catch(() => {})}
           onPlaybackIntent={onPlaybackIntent}
           onSeekIntent={onSeekIntent}
         />

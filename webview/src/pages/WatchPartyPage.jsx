@@ -130,8 +130,8 @@ function WatchPartyPage() {
               <VideoPlayer
                 ref={videoPlayerRef}
                 video={nowPlaying.video}
-                onVideoEnded={() => reportEnded().catch(() => {})}
-                onVideoError={() => reportError().catch(() => {})}
+                onVideoEnded={() => reportEnded(nowPlaying.id).catch(() => {})}
+                onVideoError={() => reportError(nowPlaying.id).catch(() => {})}
                 onPlaybackIntent={onPlaybackIntent}
                 onSeekIntent={onSeekIntent}
               />

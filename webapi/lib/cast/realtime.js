@@ -547,15 +547,20 @@ export function attachCastRealtime(httpServer) {
       withSessionAction(socket, ack, (session) => controlPlayback({ session, action: "previous" })),
     );
 
-    socket.on("player:ended", (_payload, ack) =>
-      withSessionAction(socket, ack, (session) => advanceOnPlaybackEnd({ session })),
+    // See advanceOnPlaybackEnd: queueItemId prevents N members' tabs each
+    // advancing the queue when they all report "ended" at once.
+    socket.on("player:ended", (payload, ack) =>
+      withSessionAction(socket, ack, (session) =>
+        advanceOnPlaybackEnd({ session, queueItemId: Number(payload?.queueItemId) }),
+      ),
     );
 
-    socket.on("player:error", (_payload, ack) =>
+    socket.on("player:error", (payload, ack) =>
       withSessionAction(
         socket,
         ack,
-        (session) => advanceOnPlaybackEnd({ session }),
+        (session) =>
+          advanceOnPlaybackEnd({ session, queueItemId: Number(payload?.queueItemId) }),
         { type: "playback_error", text: (name) => `${name}'s player hit an error, skipping` },
       ),
     );

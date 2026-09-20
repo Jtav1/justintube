@@ -506,14 +506,26 @@ export function WatchPartyProvider({ children }) {
     return emitWithAck('player:previous', {})
   }
 
-  /** Reports that the local player's current video finished naturally. @returns {Promise<object>} */
-  function reportEnded() {
-    return emitWithAck('player:ended', {})
+  /**
+   * Reports that the local player's current video finished naturally.
+   * `queueItemId` (`nowPlaying.id`) lets the server ignore duplicate reports
+   * from other members whose players end at the same moment.
+   *
+   * @param {number} queueItemId CAST_QUEUE_ITEMS id of the item that finished.
+   * @returns {Promise<object>}
+   */
+  function reportEnded(queueItemId) {
+    return emitWithAck('player:ended', { queueItemId })
   }
 
-  /** Reports that the local player's current video hit a playback error. @returns {Promise<object>} */
-  function reportError() {
-    return emitWithAck('player:error', {})
+  /**
+   * Reports that the local player's current video hit a playback error.
+   *
+   * @param {number} queueItemId CAST_QUEUE_ITEMS id of the item that failed.
+   * @returns {Promise<object>}
+   */
+  function reportError(queueItemId) {
+    return emitWithAck('player:error', { queueItemId })
   }
 
   /**

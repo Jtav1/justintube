@@ -231,25 +231,6 @@
   border-radius: 8px;
 }
 
-/* The reveal toggle sits beside the QR rather than under it, so the popover
-   keeps the same height whether the code is showing or not. */
-.watch-party-popover-qr-reveal {
-  align-items: flex-start;
-}
-
-.watch-party-popover-qr-placeholder {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 180px;
-  height: 180px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  font-size: 12px;
-  letter-spacing: normal;
-}
-
 .watch-party-popover-code-label {
   margin: 4px 0 0;
   font-size: 12px;
