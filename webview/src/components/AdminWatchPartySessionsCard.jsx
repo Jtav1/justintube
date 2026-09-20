@@ -1,18 +1,26 @@
 import { useEffect, useState } from 'react'
-import { Pencil } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pencil, Trash2, UserRound } from 'lucide-react'
 import { useToast } from '../context/useToast.js'
-import { adminEndWatchParty, adminListWatchParties } from '../api/admin.js'
+import {
+  adminEndWatchParty,
+  adminListWatchParties,
+  adminListWatchPartyMembers,
+} from '../api/admin.js'
 import { renameWatchParty } from '../api/watch-party.js'
 import { formatRelativeDate } from '../lib/format.js'
+import apiClient from '../api/client.js'
 import './AdminWatchPartySessionsCard.css'
 
 /**
  * Admin Panel card listing every active Watch Party, with the ability to
  * stop (which also removes it from this list - "active" is the only status
  * adminListWatchParties returns) or rename any of them regardless of owner.
- * Authorization is enforced server-side by requireAdmin on
- * /admin/cast/sessions; AdminPanel itself already gates the whole page to
- * admins before this card is ever mounted.
+ * Each row is collapsed to its essentials (name, owner, watcher count,
+ * actions) and can be expanded to reveal the join code, now-playing title,
+ * start time, and the live "who is watching" roster. Authorization is
+ * enforced server-side by requireAdmin on /admin/cast/sessions; AdminPanel
+ * itself already gates the whole page to admins before this card is ever
+ * mounted.
  */
 function AdminWatchPartySessionsCard() {
   const { success, error: toastError } = useToast()
@@ -22,6 +30,10 @@ function AdminWatchPartySessionsCard() {
   const [endingId, setEndingId] = useState(null)
   const [renamingId, setRenamingId] = useState(null)
   const [titleDraft, setTitleDraft] = useState('')
+
+  const [expandedId, setExpandedId] = useState(null)
+  const [membersById, setMembersById] = useState({})
+  const [membersLoadingId, setMembersLoadingId] = useState(null)
 
   // Bumped after a stop succeeds, to re-run the load effect below rather than
   // duplicating the fetch in the click handler.
@@ -90,6 +102,26 @@ function AdminWatchPartySessionsCard() {
     }
   }
 
+  async function handleToggleExpand(session) {
+    if (expandedId === session.id) {
+      setExpandedId(null)
+      return
+    }
+    setExpandedId(session.id)
+    if (membersById[session.id]) {
+      return
+    }
+    setMembersLoadingId(session.id)
+    try {
+      const data = await adminListWatchPartyMembers(session.id)
+      setMembersById((prev) => ({ ...prev, [session.id]: data.items ?? [] }))
+    } catch {
+      toastError('Failed to load who is watching.')
+    } finally {
+      setMembersLoadingId(null)
+    }
+  }
+
   return (
     <div className="settings-card admin-watch-party-card">
       <h2>Manage Watch Parties</h2>
@@ -105,23 +137,24 @@ function AdminWatchPartySessionsCard() {
       )}
 
       {!loading && sessions.length > 0 && (
-        <div className="admin-watch-party-table-wrap">
-          <table className="admin-watch-party-table">
-            <thead>
-              <tr>
-                <th className="admin-watch-party-wrap">Session</th>
-                <th>Code</th>
-                <th>Owner</th>
-                <th>Watching</th>
-                <th className="admin-watch-party-wrap">Now playing</th>
-                <th>Started</th>
-                <th className="admin-watch-party-actions" aria-label="Actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((session) => (
-                <tr key={session.id}>
-                  <td className="admin-watch-party-wrap">
+        <ul className="admin-watch-party-list">
+          {sessions.map((session) => {
+            const expanded = expandedId === session.id
+            const members = membersById[session.id]
+            return (
+              <li key={session.id} className="admin-watch-party-item">
+                <div className="admin-watch-party-row">
+                  <button
+                    type="button"
+                    className="admin-watch-party-expand-btn"
+                    aria-label={expanded ? 'Collapse details' : 'Expand details'}
+                    aria-expanded={expanded}
+                    onClick={() => handleToggleExpand(session)}
+                  >
+                    {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </button>
+
+                  <div className="admin-watch-party-name">
                     {renamingId === session.id ? (
                       <form className="admin-watch-party-rename" onSubmit={handleRenameSubmit}>
                         <input
@@ -156,33 +189,91 @@ function AdminWatchPartySessionsCard() {
                         </button>
                       </span>
                     )}
-                  </td>
-                  <td>
-                    <code className="admin-watch-party-code">{session.code}</code>
-                  </td>
-                  <td>
-                    {session.owner
-                      ? session.owner.displayName || session.owner.username
-                      : '—'}
-                  </td>
-                  <td>{session.memberCount}</td>
-                  <td className="admin-watch-party-wrap">{session.nowPlayingTitle || '—'}</td>
-                  <td>{formatRelativeDate(session.createdAt)}</td>
-                  <td className="admin-watch-party-actions">
+                  </div>
+
+                  <div className="admin-watch-party-owner">
+                    {session.owner ? session.owner.displayName || session.owner.username : '—'}
+                  </div>
+
+                  <div className="admin-watch-party-watching">{session.memberCount}</div>
+
+                  <div className="admin-watch-party-actions">
                     <button
                       type="button"
                       className="admin-watch-party-end"
                       disabled={endingId === session.id}
+                      aria-label={`Stop and delete ${session.title || session.code}`}
+                      title="Stop & delete"
                       onClick={() => handleStop(session)}
                     >
-                      {endingId === session.id ? 'Stopping…' : 'Stop & Delete'}
+                      <Trash2 size={16} />
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </div>
+
+                {expanded && (
+                  <div className="admin-watch-party-details">
+                    <dl className="admin-watch-party-detail-grid">
+                      <div>
+                        <dt>Code</dt>
+                        <dd>
+                          <code className="admin-watch-party-code">{session.code}</code>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Now playing</dt>
+                        <dd>{session.nowPlayingTitle || '—'}</dd>
+                      </div>
+                      <div>
+                        <dt>Started</dt>
+                        <dd>{formatRelativeDate(session.createdAt)}</dd>
+                      </div>
+                    </dl>
+
+                    <div className="admin-watch-party-who">
+                      <p className="admin-watch-party-who-title">Who is watching</p>
+                      {membersLoadingId === session.id && (
+                        <p className="settings-status">Loading…</p>
+                      )}
+                      {membersLoadingId !== session.id && members?.length === 0 && (
+                        <p className="settings-status">Nobody is currently watching.</p>
+                      )}
+                      {membersLoadingId !== session.id && members?.length > 0 && (
+                        <ul className="admin-watch-party-who-list">
+                          {members.map((member) => {
+                            const avatarUrl = member.avatarFilename
+                              ? `${apiClient.defaults.baseURL}/api/v1/users/${member.username}/avatar`
+                              : null
+                            const name = member.displayName || member.username || 'Someone'
+                            return (
+                              <li key={member.userId} className="admin-watch-party-who-row">
+                                {avatarUrl ? (
+                                  <img
+                                    className="admin-watch-party-who-avatar"
+                                    src={avatarUrl}
+                                    alt=""
+                                  />
+                                ) : (
+                                  <span className="admin-watch-party-who-avatar admin-watch-party-who-avatar-placeholder">
+                                    <UserRound size={14} />
+                                  </span>
+                                )}
+                                <span className="admin-watch-party-who-name">{name}</span>
+                                {member.role === 'owner' && (
+                                  <span className="admin-watch-party-who-owner">Owner</span>
+                                )}
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </ul>
       )}
     </div>
   )

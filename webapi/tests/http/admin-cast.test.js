@@ -153,6 +153,69 @@ describe("Admin CAST endpoints (routes/admin-cast.js)", () => {
     });
   });
 
+  describe("GET /admin/cast/sessions/:id/members (adminListCastSessionMembers)", () => {
+    test("401s without authentication", async () => {
+      const res = await client.get("/api/v1/admin/cast/sessions/1/members");
+      expect(res.status).toBe(401);
+    });
+
+    test("403s for a signed-in non-admin", async () => {
+      await seedUserWithRoleAndKey("viewer", "admin-cast-members-1");
+
+      const res = await client
+        .get("/api/v1/admin/cast/sessions/1/members")
+        .set("Authorization", "Bearer admin-cast-members-1");
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("forbidden");
+    });
+
+    test("lists the active members of a session the admin does not belong to", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "admin-cast-members-2");
+      await seedUserWithRoleAndKey("admin", "admin-cast-members-2-admin");
+      const createRes = await client
+        .post("/api/v1/cast")
+        .set("Authorization", "Bearer admin-cast-members-2")
+        .send({ sourceType: "empty" });
+      expect(createRes.status).toBe(201);
+
+      const res = await client
+        .get(`/api/v1/admin/cast/sessions/${createRes.body.session.id}/members`)
+        .set("Authorization", "Bearer admin-cast-members-2-admin");
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0]).toMatchObject({
+        userId: owner.id,
+        username: owner.username,
+        role: "owner",
+        status: "active",
+      });
+    });
+
+    test("404s for an unknown session", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-cast-members-3");
+
+      const res = await client
+        .get("/api/v1/admin/cast/sessions/999999/members")
+        .set("Authorization", "Bearer admin-cast-members-3");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("not_found");
+    });
+
+    test("400s on a non-numeric id", async () => {
+      await seedUserWithRoleAndKey("admin", "admin-cast-members-4");
+
+      const res = await client
+        .get("/api/v1/admin/cast/sessions/abc/members")
+        .set("Authorization", "Bearer admin-cast-members-4");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_id");
+    });
+  });
+
   describe("POST /admin/cast/sessions/:id/end (adminEndCastSession)", () => {
     test("an admin ends a session owned by someone else", async () => {
       await seedUserWithRoleAndKey("viewer", "admin-cast-end-1");
