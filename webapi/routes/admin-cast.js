@@ -5,7 +5,7 @@ import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
 import { CastServiceError } from "../lib/cast/errors.js";
-import { endSession, loadSessionById } from "../lib/cast/queue-service.js";
+import { endSession, loadSessionById, serializeMember } from "../lib/cast/queue-service.js";
 import { notifySessionEnded } from "../lib/cast/realtime.js";
 import {
   CastQueueItem,
@@ -240,6 +240,80 @@ export function createAdminCastRouter() {
         res.status(500).json({
           error: "internal_error",
           message: "Failed to list CAST sessions.",
+        });
+      }
+    },
+  );
+
+  /**
+   * Lists a session's active members, regardless of the admin's own
+   * membership - the member-facing GET /cast/:id/members requires active
+   * membership, which an admin inspecting someone else's session won't have.
+   * GET /api/v1/admin/cast/sessions/:id/members
+   * Auth: session cookie or Bearer API key; admin role required.
+   *
+   * @openapi
+   * /api/v1/admin/cast/sessions/{id}/members:
+   *   get:
+   *     tags: [Admin]
+   *     summary: List a CAST session's members as an admin
+   *     operationId: adminListCastSessionMembers
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - name: id
+   *         in: path
+   *         required: true
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *     responses:
+   *       200:
+   *         description: Active members
+   *       400:
+   *         description: Invalid id
+   *       401:
+   *         description: Not authenticated
+   *       403:
+   *         description: Not an admin
+   *       404:
+   *         description: No such session
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends `{ items }` or an error response.
+   */
+  router.get(
+    "/admin/cast/sessions/:id/members",
+    requireAuth,
+    requireAdmin,
+    requireApiKeyScope("full_access"),
+    async (req, res) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (id == null) {
+          res.status(400).json({ error: "invalid_id", message: "id must be a positive integer." });
+          return;
+        }
+
+        await loadSessionById(id);
+        const memberRows = await CastSessionMember.findAll({
+          where: { castSessionId: id, status: "active" },
+          include: [{ model: User, required: true }],
+          order: [["joinedAt", "ASC"]],
+        });
+
+        res.status(200).json({ items: memberRows.map(serializeMember) });
+      } catch (err) {
+        if (err instanceof CastServiceError) {
+          res.status(err.status).json({ error: err.code, message: err.message });
+          return;
+        }
+        logger.error({ err }, "adminListCastSessionMembers failed");
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to list CAST session members.",
         });
       }
     },

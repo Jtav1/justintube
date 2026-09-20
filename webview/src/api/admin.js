@@ -81,3 +81,14 @@ export async function adminListWatchParties(params = {}) {
 export async function adminEndWatchParty(id) {
   await apiClient.post(`/api/v1/admin/cast/sessions/${id}/end`)
 }
+
+/**
+ * Lists a Watch Party's active members as an admin, regardless of the
+ * caller's own membership in that session.
+ * @param {number} id Watch Party session id.
+ * @returns {Promise<{items: object[]}>}
+ */
+export async function adminListWatchPartyMembers(id) {
+  const res = await apiClient.get(`/api/v1/admin/cast/sessions/${id}/members`)
+  return res.data
+}

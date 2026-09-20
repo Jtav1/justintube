@@ -161,11 +161,10 @@ function serializeQueueItem(row, options = {}) {
  * Serializes a CAST_SESSION_MEMBERS row (with `User` preloaded) into the
  * public member shape.
  *
- * @private
  * @param {import('sequelize').Model} row CAST_SESSION_MEMBERS row.
  * @returns {object} Public member payload.
  */
-function serializeMember(row) {
+export function serializeMember(row) {
   return {
     userId: row.userId,
     username: row.User?.username ?? null,
