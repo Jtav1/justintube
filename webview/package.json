@@ -1,7 +1,7 @@
 {
   "name": "justintube-webview",
   "private": true,
-  "version": "2.2",
+  "version": "2.3",
   "type": "module",
   "engines": {
     "node": ">=20.6.0"
@@ -14,11 +14,14 @@
   },
   "dependencies": {
     "axios": "^1.18.1",
+    "emoji-picker-react": "^4.22.2",
     "hls.js": "^1.6.17",
     "lucide-react": "^1.27.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.1"
+    "react-router-dom": "^7.18.1",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

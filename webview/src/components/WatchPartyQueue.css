@@ -1,0 +1,326 @@
+.watch-party-queue {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.watch-party-queue-header {
+  margin-bottom: 8px;
+}
+
+.watch-party-queue-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.watch-party-queue-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text-h);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.watch-party-queue-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 3px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.watch-party-queue-rename-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+/* Takes the whole header row while editing - the End button is hidden during
+   a rename, so there's nothing to sit beside. */
+.watch-party-queue-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+.watch-party-queue-rename input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.watch-party-queue-rename-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.watch-party-queue-rename-actions button {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.watch-party-queue-rename-actions button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.watch-party-queue-rename-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.watch-party-queue-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--error);
+  cursor: pointer;
+}
+
+.watch-party-queue-end:hover {
+  background: var(--error-bg);
+}
+
+.watch-party-queue-meta {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.watch-party-queue-meta code {
+  padding: 1px 6px;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.watch-party-queue-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.watch-party-queue-transport {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.watch-party-queue-transport:hover {
+  border-color: var(--accent-border);
+}
+
+.watch-party-queue-transport-primary {
+  width: 44px;
+  height: 44px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.watch-party-queue-section-label {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.watch-party-queue-now-playing .video-card-horizontal .video-card-thumb {
+  width: 120px;
+}
+
+.watch-party-queue-add {
+  position: relative;
+  margin-top: 12px;
+}
+
+.watch-party-queue-add-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.watch-party-queue-add-input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+.watch-party-queue-add-playlist {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.watch-party-queue-add-playlist select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.watch-party-queue-add-playlist button {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.watch-party-queue-add-playlist button:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.watch-party-queue-add-playlist button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.watch-party-queue-add-dropdown {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.watch-party-queue-add-dropdown li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.watch-party-queue-add-dropdown li button:hover {
+  background: var(--accent-bg);
+}
+
+.watch-party-queue-add-dropdown-title {
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.watch-party-queue-add-dropdown-meta {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.watch-party-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(8 * 92px + 4 * 8px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.watch-party-queue-empty {
+  font-size: 13px;
+  color: var(--text);
+  padding: 8px 0;
+}
+
+.watch-party-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.watch-party-queue-item .video-card-horizontal .video-card-thumb {
+  width: 100px;
+}
+
+.watch-party-queue-item .video-card-title {
+  font-size: 14px;
+}
+
+.watch-party-queue-item-actions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.watch-party-queue-item-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.watch-party-queue-item-actions button:hover:not(:disabled) {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.watch-party-queue-item-actions button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+

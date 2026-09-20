@@ -231,6 +231,7 @@
   }
 
   input,
+  select,
   textarea {
     font: inherit;
     padding: 8px 10px;

@@ -1,0 +1,254 @@
+.admin-watch-party-intro {
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.admin-watch-party-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.admin-watch-party-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-watch-party-item:last-child {
+  border-bottom: none;
+}
+
+.admin-watch-party-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.admin-watch-party-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.admin-watch-party-expand-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.admin-watch-party-name {
+  flex: 2;
+  min-width: 0;
+}
+
+.admin-watch-party-owner {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.admin-watch-party-watching {
+  flex: 0 0 auto;
+  min-width: 32px;
+  text-align: center;
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.admin-watch-party-actions {
+  flex: 0 0 auto;
+}
+
+.admin-watch-party-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-h);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-watch-party-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.admin-watch-party-rename-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.admin-watch-party-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-watch-party-rename input {
+  flex: 1;
+  min-width: 120px;
+  padding: 4px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.admin-watch-party-rename button {
+  padding: 4px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-watch-party-rename button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.admin-watch-party-rename button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.admin-watch-party-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.admin-watch-party-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--error);
+  cursor: pointer;
+}
+
+.admin-watch-party-end:hover:not(:disabled) {
+  background: var(--error-bg);
+}
+
+.admin-watch-party-end:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.admin-watch-party-details {
+  padding: 0 0 16px 36px;
+}
+
+.admin-watch-party-detail-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin: 0 0 14px;
+}
+
+.admin-watch-party-detail-grid dt {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.admin-watch-party-detail-grid dd {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.admin-watch-party-who-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.admin-watch-party-who-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.admin-watch-party-who-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.admin-watch-party-who-avatar {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.admin-watch-party-who-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.admin-watch-party-who-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.admin-watch-party-who-owner {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}

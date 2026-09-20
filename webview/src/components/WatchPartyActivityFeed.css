@@ -1,0 +1,44 @@
+.watch-party-activity {
+  width: 100%;
+}
+
+.watch-party-activity-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.watch-party-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.watch-party-activity-empty {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.watch-party-activity-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.watch-party-activity-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text);
+}
+

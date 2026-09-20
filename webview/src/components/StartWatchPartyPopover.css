@@ -1,0 +1,276 @@
+.watch-party-popover {
+  position: relative;
+  display: flex;
+}
+
+.watch-party-popover-menu {
+  /* position: fixed + top/right/width are set inline in StartWatchPartyPopover.jsx,
+     computed and clamped from the toggle button's screen position - same
+     portal-to-<body> approach as NotificationBell. */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+
+.watch-party-popover-heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.watch-party-popover-join-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.watch-party-popover-join-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.watch-party-popover-join-row button,
+.watch-party-popover-start-list button,
+.watch-party-popover-playlist-row button,
+.watch-party-popover-open,
+.watch-party-popover-copy,
+.watch-party-popover-leave,
+.watch-party-popover-end {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.watch-party-popover-join-row button:hover:not(:disabled),
+.watch-party-popover-start-list button:hover:not(:disabled),
+.watch-party-popover-playlist-row button:hover:not(:disabled),
+.watch-party-popover-open:hover,
+.watch-party-popover-copy:hover {
+  background: var(--accent-bg);
+}
+
+.watch-party-popover-join-row button:disabled,
+.watch-party-popover-start-list button:disabled,
+.watch-party-popover-playlist-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Label-then-icon, so the play glyph sits after the text on its baseline
+   instead of hanging off the end of the line box. Scoped under the list so it
+   outranks the shared .watch-party-popover-start-list button rules above. */
+.watch-party-popover-start-list button.watch-party-popover-start {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-color: var(--success);
+  background: var(--success);
+  color: #fff;
+}
+
+.watch-party-popover-start-list button.watch-party-popover-start:hover:not(:disabled) {
+  background: var(--success);
+  filter: brightness(1.1);
+}
+
+/* --success lightens in dark mode, where white-on-green drops below a
+   readable contrast ratio - hold the darker green so the label stays legible. */
+@media (prefers-color-scheme: dark) {
+  .watch-party-popover-start-list button.watch-party-popover-start {
+    border-color: #2e7d32;
+    background: #2e7d32;
+  }
+}
+
+.watch-party-popover-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.watch-party-popover-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.watch-party-popover-rename-btn:hover {
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.watch-party-popover-rename input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.watch-party-popover-rename-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.watch-party-popover-rename-actions button {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.watch-party-popover-rename-actions button:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.watch-party-popover-rename-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.watch-party-popover-leave:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+/* Ending a session is destructive for everyone in it, so it carries the same
+   error treatment as WatchPartyQueue's end button rather than reading as a peer of
+   Leave. */
+.watch-party-popover-end {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.watch-party-popover-end:hover:not(:disabled) {
+  background: var(--error-bg);
+}
+
+.watch-party-popover-leave:disabled,
+.watch-party-popover-end:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.watch-party-popover-divider {
+  height: 1px;
+  background: var(--border);
+}
+
+.watch-party-popover-start-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.watch-party-popover-start-list button {
+  text-align: left;
+}
+
+.watch-party-popover-playlist-row {
+  display: flex;
+  gap: 8px;
+}
+
+.watch-party-popover-playlist-row select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.watch-party-popover-active {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.watch-party-popover-qr {
+  display: inline-block;
+  padding: 10px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.watch-party-popover-code-label {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.watch-party-popover-code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  color: var(--text-h);
+}
+
+/* The toggle inherits the code's 22px mono, which is far too big for an icon. */
+.watch-party-popover-code .revealable-secret-toggle {
+  font-size: 14px;
+  letter-spacing: normal;
+}
+
+.watch-party-popover-copy,
+.watch-party-popover-open,
+.watch-party-popover-leave,
+.watch-party-popover-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.watch-party-popover-open {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.watch-party-popover-open:hover {
+  opacity: 0.9;
+}
+

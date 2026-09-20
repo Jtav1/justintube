@@ -276,7 +276,10 @@ function ProfilePage() {
     setUpdatingRole(true)
     try {
       const updated = await adminUpdateUserRole(profile.user.id, role)
-      setProfile((prev) => ({ ...prev, user: { ...prev.user, role: updated.role } }))
+      setProfile((prev) => ({
+        ...prev,
+        user: { ...prev.user, role: updated.role, uploader: updated.uploader },
+      }))
       success('Role updated.')
     } catch {
       toastError('Failed to update role.')

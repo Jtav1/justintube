@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import cors from "cors";
 import express from "express";
@@ -8,6 +9,8 @@ import { apiReference } from "@scalar/express-api-reference";
 import { createCorsOptions } from "./lib/auth/cors.js";
 import { getAuthContext } from "./lib/auth/require-auth.js";
 import { logger } from "./lib/logger.js";
+import { castEnabled } from "./lib/cast-config.js";
+import { attachCastRealtime } from "./lib/cast/realtime.js";
 import { livestreamEnabled } from "./lib/livestream-config.js";
 import { createSessionMiddleware } from "./lib/auth/session.js";
 import { loadOpenApiDocument } from "./lib/loadOpenApi.js";
@@ -282,7 +285,17 @@ async function start() {
     process.exit(1);
   }
 
-  app.listen(PORT, () => {
+  // Socket.IO needs a raw http.Server to attach to, which is why this wraps
+  // `app` here instead of calling `app.listen()` directly - `createApp()`
+  // itself stays listen-free (see the isMain guard below) so
+  // tests/helpers/app.js's `supertest(createApp())` never boots a real
+  // socket server.
+  const httpServer = createServer(app);
+  if (castEnabled()) {
+    attachCastRealtime(httpServer);
+  }
+
+  httpServer.listen(PORT, () => {
     console.log(`Justintube API listening on http://localhost:${PORT}`);
     console.log(`Scalar docs: http://localhost:${PORT}/docs`);
     console.log(`OpenAPI:     http://localhost:${PORT}/openapi.json`);

@@ -408,6 +408,59 @@ describe("adminUpdateUser", () => {
     expect(updated.passwordExpired).toBe(true);
   });
 
+  test.each(["viewer", "locked"])(
+    "strips uploader access when role changes to %s",
+    async (roleName) => {
+      const client = createTestClient();
+      const rawKey = `jt_test_admin_update_user_strip_${roleName}`;
+      await seedUserWithRoleAndKey("admin", rawKey);
+      const target = await seedUser({ uploader: true });
+
+      const res = await client
+        .patch(`/api/v1/admin/users/${target.id}`)
+        .set("Authorization", `Bearer ${rawKey}`)
+        .send({ role: roleName });
+
+      expect(res.status).toBe(200);
+      expect(res.body.uploader).toBe(false);
+      expect(res.body.role).toBe(roleName);
+
+      const updated = await User.findByPk(target.id);
+      expect(updated.uploader).toBe(false);
+    },
+  );
+
+  test("an explicit uploader:true is overridden when the role also changes to viewer/locked", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_update_user_strip_override";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const target = await seedUser({ uploader: false });
+
+    const res = await client
+      .patch(`/api/v1/admin/users/${target.id}`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ uploader: true, role: "locked" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.uploader).toBe(false);
+    expect(res.body.role).toBe("locked");
+  });
+
+  test("does not strip uploader access when role changes to a non-viewer/locked role", async () => {
+    const client = createTestClient();
+    const rawKey = "jt_test_admin_update_user_no_strip";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const target = await seedUser({ uploader: true });
+
+    const res = await client
+      .patch(`/api/v1/admin/users/${target.id}`)
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ role: "moderator" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.uploader).toBe(true);
+  });
+
   test("notifies the user on an uploader grant and a role change, but not on idempotent re-saves", async () => {
     const client = createTestClient();
     const rawKey = "jt_test_admin_update_user_notify";

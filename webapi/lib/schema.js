@@ -7,6 +7,7 @@ import {
   seedAdminUser,
   seedDemoUsers,
   seedThemes,
+  seedReactionEmoji,
   seedTranscodeProfiles,
   seedNotificationTypes,
   shouldSeedDemoUsers,
@@ -336,6 +337,11 @@ async function ensureSqliteMissingColumns() {
       table: "ORIGINAL_UPLOADS",
       column: "has_video_stream",
       ddl: "`has_video_stream` TINYINT(1) NULL",
+    },
+    {
+      table: "CAST_SESSIONS",
+      column: "last_activity_at",
+      ddl: "`last_activity_at` DATETIME NULL",
     },
   ];
 
@@ -927,6 +933,7 @@ export async function ensureSchema() {
     await seedDemoUsers();
   }
   await seedThemes();
+  await seedReactionEmoji();
   if (shouldSeedDefaultTranscodeProfiles()) {
     await seedTranscodeProfiles();
   }

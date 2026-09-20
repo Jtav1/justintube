@@ -6,7 +6,9 @@ import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
 import { prefetchVideo, getVideoOrPrefetched } from '../lib/videoPrefetchCache.js'
 import { useToast } from '../context/useToast.js'
 import { useIsMobile } from '../lib/viewport.js'
+import { useDocumentTitle } from '../hooks/useDocumentTitle.js'
 import apiClient from '../api/client.js'
+import { useWatchParty } from '../context/useWatchParty.js'
 import VideoPlayer from '../components/VideoPlayer.jsx'
 import VideoComments from '../components/VideoComments.jsx'
 import VideoSuggested from '../components/VideoSuggested.jsx'
@@ -16,6 +18,7 @@ import './VideoPage.css'
 
 function VideoPage() {
   const { error: toastError } = useToast()
+  const { session: watchPartySession, addToQueue } = useWatchParty()
   const navigate = useNavigate()
   const isMobile = useIsMobile()
   const [searchParams] = useSearchParams()
@@ -36,6 +39,10 @@ function VideoPage() {
   const [playlist, setPlaylist] = useState(null)
   const [reloadCount, setReloadCount] = useState(0)
   const [autoplayEnabled, setAutoplayEnabled] = useState(() => readAutoplayEnabled())
+
+  // The video's own name, not the route's generic "Watch" - this is also what
+  // Safari hands an AirPlay receiver, so an Apple TV shows the right thing.
+  useDocumentTitle(video?.title)
   // Mirrors VideoSuggested's loaded suggestions so autoplay-next can pick a
   // random one without VideoSuggested needing to own navigation itself.
   const [suggestions, setSuggestions] = useState([])
@@ -182,6 +189,27 @@ function VideoPage() {
   const canEditPlaylist = Boolean(playlist)
     && (playlist.viewerPermission === 'owner' || playlist.viewerPermission === 'edit')
 
+  /**
+   * Adds the video being watched to the active Watch Party's queue. Takes the
+   * public videoId string (not the numeric id) because that's what the socket's
+   * queue:add event expects. Errors propagate so VideoPlayer can toast them.
+   * @returns {Promise<void>}
+   */
+  function handleAddToWatchPartyQueue() {
+    return addToQueue(video.videoId)
+  }
+
+  function handleReport() {
+    navigate('/reports/new', {
+      state: {
+        reportType: 'video',
+        videoId: video.id,
+        playlistId: playlist?.id,
+        link: window.location.href,
+      },
+    })
+  }
+
   async function handleRemoveFromPlaylist() {
     try {
       await removePlaylistItem(playlist.id, video.id)
@@ -232,6 +260,7 @@ function VideoPage() {
               autoplayOnLoad={autoplayOnLoad}
               expanded={expanded && !isMobile}
               onToggleExpand={isMobile ? undefined : () => setExpanded((prev) => !prev)}
+              onAddToWatchPartyQueue={watchPartySession ? handleAddToWatchPartyQueue : undefined}
             />
             <VideoComments video={video} />
           </div>

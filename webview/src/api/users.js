@@ -109,6 +109,28 @@ export async function adminGrantUploader(userId) {
 }
 
 /**
+ * Grants or revokes an arbitrary user's uploader access, on an admin's behalf.
+ * @param {number} userId
+ * @param {boolean} uploader
+ * @returns {Promise<object>} The updated user record.
+ */
+export async function adminSetUserUploader(userId, uploader) {
+  const res = await apiClient.patch(`/api/v1/admin/users/${userId}`, { uploader })
+  return res.data
+}
+
+/**
+ * Sets an arbitrary user's email-verified status, on an admin's behalf.
+ * @param {number} userId
+ * @param {boolean} emailVerified
+ * @returns {Promise<object>} The updated user record.
+ */
+export async function adminSetUserEmailVerified(userId, emailVerified) {
+  const res = await apiClient.patch(`/api/v1/admin/users/${userId}`, { emailVerified })
+  return res.data
+}
+
+/**
  * Updates an arbitrary user's role, on an admin's behalf.
  * @param {number} userId
  * @param {string} role One of USER_ROLES (see ../lib/roles.js).
@@ -128,6 +150,17 @@ export async function adminUpdateUserRole(userId, role) {
  */
 export async function adminResetUserPassword(userId, newPassword) {
   const res = await apiClient.post(`/api/v1/admin/users/${userId}/password`, { newPassword })
+  return res.data
+}
+
+/**
+ * Fetches a page of every user (including admin-only fields and timestamps),
+ * on an admin's behalf.
+ * @param {{ limit: number, offset?: number }} params
+ * @returns {Promise<{items: object[], total: number, limit: number, offset: number}>}
+ */
+export async function getAdminUsers({ limit, offset } = {}) {
+  const res = await apiClient.get('/api/v1/admin/users', { params: { limit, offset } })
   return res.data
 }
 

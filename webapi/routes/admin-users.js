@@ -36,6 +36,14 @@ const MAX_LIST_LIMIT = 100;
 const PASSWORD_BODY_KEYS = ["password", "passwordHash", "newPassword"];
 
 /**
+ * Role names that strip uploader access whenever a role change lands the
+ * user on one of them.
+ *
+ * @type {string[]}
+ */
+const ROLES_WITHOUT_UPLOADER_ACCESS = ["viewer", "locked"];
+
+/**
  * Parses a route `:id` param as a positive integer primary key.
  *
  * @param {unknown} raw Route parameter value.
@@ -94,6 +102,7 @@ function parsePagination(rawLimit, rawOffset) {
 function serializeAdminUser(user) {
   return {
     ...serializeUser(user),
+    bannerFilename: user.bannerFilename ?? null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -319,6 +328,10 @@ async function parseAdminUserUpdate(body) {
       }
       patch.roleId = role.id;
     }
+  }
+
+  if (role && ROLES_WITHOUT_UPLOADER_ACCESS.includes(role.name)) {
+    patch.uploader = false;
   }
 
   if (Object.keys(patch).length === 0) {

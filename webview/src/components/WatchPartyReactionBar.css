@@ -1,0 +1,64 @@
+.watch-party-reaction-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.watch-party-reaction-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  font-size: 20px;
+  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.watch-party-reaction-bar-btn:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+/* The picker trigger carries an icon rather than an emoji face, so it takes
+   the muted foreground the rest of the app's icon buttons use. */
+.watch-party-reaction-bar-more {
+  color: var(--text);
+}
+
+.watch-party-reaction-bar-more:hover {
+  color: var(--text-h);
+}
+
+/* Sits directly under the panel and over everything else on the page, so no
+   stray click can reach the video while the picker is open - see the comment on
+   the element itself in WatchPartyReactionBar.jsx. */
+.watch-party-reaction-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+}
+
+.watch-party-reaction-picker {
+  z-index: 30;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.watch-party-reaction-picker-loading {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
+

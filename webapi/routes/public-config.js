@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { castEnabled } from "../lib/cast-config.js";
+import { deviceCastEnabled } from "../lib/cast-devices/config.js";
 import { livestreamEnabled } from "../lib/livestream-config.js";
 import { transcodingEnabled } from "../lib/processing-features-config.js";
 
@@ -35,15 +37,22 @@ export function createPublicConfigRouter() {
    *                   type: boolean
    *                 transcodingEnabled:
    *                   type: boolean
+   *                 castEnabled:
+   *                   type: boolean
+   *                 deviceCastEnabled:
+   *                   type: boolean
    *
    * @param {import('express').Request} _req Incoming request (unused).
    * @param {import('express').Response} res Express response.
-   * @returns {void} Sends `{ livestreamEnabled, transcodingEnabled }`.
+   * @returns {void} Sends `{ livestreamEnabled, transcodingEnabled, castEnabled,
+   *   deviceCastEnabled }`.
    */
   router.get("/config", (_req, res) => {
     res.json({
       livestreamEnabled: livestreamEnabled(),
       transcodingEnabled: transcodingEnabled(),
+      castEnabled: castEnabled(),
+      deviceCastEnabled: deviceCastEnabled(),
     });
   });
 
