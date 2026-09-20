@@ -9,14 +9,9 @@ import './RevealableSecret.css'
  * a session runs - including on a screen share or a stream, where anyone
  * watching could otherwise read the code and walk in.
  *
- * Two shapes, because a join code and a QR code want different treatment:
- *
- * - `variant="swap"` (default) replaces the content with a short mask and puts
- *   the toggle beside it. Right for a code sitting inline in a sentence, where
- *   the surrounding text must not reflow when it's revealed.
- * - `variant="blur"` keeps the content in place and blurs it, with the toggle
- *   centred on top. Right for a block like a QR code, where there is room to
- *   click into and a dashed placeholder box just looks broken.
+ * Two variants: `"swap"` (default) replaces the content with a short inline
+ * mask, for text that must not reflow when revealed. `"blur"` keeps the
+ * content in place and blurs it, for a block like a QR code.
  *
  * @param {object} props
  * @param {import('react').ReactNode} props.children The secret to conceal.
@@ -41,8 +36,7 @@ function RevealableSecret({
 
   let body
   if (blur) {
-    // Rendered either way - blurring in place is the whole point, and it keeps
-    // the block's size identical revealed or not.
+    // Rendered either way to keep the block's size identical revealed or not.
     body = revealed ? children : (
       <span className="revealable-secret-blurred" aria-hidden="true">
         {children}

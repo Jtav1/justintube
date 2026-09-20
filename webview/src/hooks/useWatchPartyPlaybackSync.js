@@ -20,23 +20,16 @@ const SOFT_BAND_SECONDS = 1.5
 const RATE_GAIN = 0.12
 const MAX_RATE_ADJUST = 0.1
 
-// Once a nudge is in effect it stays in effect until drift is well inside the
-// dead band, rather than snapping back to 1.0 the instant it crosses 0.25.
-// Without this gap the controller limit-cycles across the band edge: correct,
-// snap to 1.0, immediately drift back out, correct again - a playbackRate write
-// every second or two forever, each one a chance for the audio time-stretcher
-// to click.
+// A nudge stays in effect until drift is well inside the dead band, rather
+// than snapping back to 1.0 the instant it crosses 0.25 - otherwise the
+// controller limit-cycles across the band edge, writing playbackRate every
+// second or two.
 const RESYNC_EXIT_BAND_SECONDS = 0.1
 
-// While a remote device is rendering (AirPlay receiver, Chromecast) the numbers
-// above are the wrong ones to use. The receiver buffers a second or two behind
-// the local element, so most of the measured drift is structural rather than
-// real, and it cannot be corrected away - while every playbackRate or
-// currentTime write forces the receiver to re-sync, which is exactly the
-// stutter an Apple TV shows during a Watch Party (and never shows for an
-// ordinary video, which has no sync loop writing to the element at all). So:
-// no rate nudging whatsoever, and a seek only for a gap far too large to be
-// buffer latency.
+// While a remote device (AirPlay/Chromecast) is rendering, measured drift is
+// mostly the receiver's own buffer latency, not real desync, and every
+// playbackRate/currentTime write forces an audible re-sync stutter. So: no
+// rate nudging, and a seek only for a gap too large to be buffer latency.
 const REMOTE_SEEK_THRESHOLD_SECONDS = 5
 const REMOTE_SEEK_COOLDOWN_MS = 6000
 
@@ -112,9 +105,8 @@ function clamp(value, min, max) {
  * the browser's own controls menu will be overridden - unavoidable when every
  * member has to stay on the same frame.
  *
- * All of that is suspended while `getState().remote` reports a receiver is
- * rendering (AirPlay, Chromecast): there the correction is worse than the drift,
- * so only a gap of several seconds earns a seek and the rate is never touched.
+ * Suspended while `getState().remote` reports a receiver rendering (AirPlay,
+ * Chromecast): only a gap of several seconds earns a seek, rate is untouched.
  *
  * @param {{current: {play: Function, pause: Function, seek: Function, setPlaybackRate: Function, getState: Function}|null}} videoPlayerRef Ref to the VideoPlayer's imperative handle.
  * @param {object|null} nowPlaying `useWatchParty().nowPlaying`.
@@ -127,8 +119,7 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
   const seekCooldownUntilRef = useRef(0)
   const localIntentUntilRef = useRef(0)
   const appliedRateRef = useRef(1)
-  // Whether a rate nudge is currently in effect, which selects the wider exit
-  // threshold below - see RESYNC_EXIT_BAND_SECONDS.
+  // Selects the wider exit threshold below - see RESYNC_EXIT_BAND_SECONDS.
   const nudgingRef = useRef(false)
 
   // The evaluation loop below runs on a timer, so it reads the latest playback
@@ -235,8 +226,8 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
         if (!state.paused) {
           videoPlayerRef.current?.pause()
         }
-        // Pausing itself still propagates to a receiver; it's only the position
-        // correction that costs a re-sync, so that takes the remote threshold.
+        // Pause propagates fine to a receiver; only the position correction
+        // costs a re-sync, so that alone takes the remote threshold.
         const pausedThreshold = state.remote
           ? REMOTE_SEEK_THRESHOLD_SECONDS
           : PAUSED_SEEK_THRESHOLD_SECONDS
@@ -257,8 +248,8 @@ export function useWatchPartyPlaybackSync(videoPlayerRef, nowPlaying, playback, 
 
       const magnitude = Math.abs(drift)
 
-      // A receiver is rendering: hands off the rate entirely, and only step in
-      // for a gap that cannot be explained by its buffer. See REMOTE_* above.
+      // Receiver rendering: no rate nudging, seek only for a gap too large
+      // to be buffer latency. See REMOTE_* above.
       if (state.remote) {
         applyRate(1)
         nudgingRef.current = false

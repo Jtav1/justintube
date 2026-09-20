@@ -246,10 +246,8 @@ describe("lib/cast/queue-service.js", () => {
     });
 
     test("ignores a report for an item that is no longer the one playing", async () => {
-      // Every member's player fires `ended` at the same moment. Without this
-      // guard the first report advances to item B and the second immediately
-      // retires B and promotes C, so the party silently skips a video for
-      // every extra tab that was open.
+      // Without this guard, the duplicate report would retire B and promote
+      // C, skipping a video.
       const { session } = await seedSessionWithOwner();
       const uploadA = await seedQueuedVideo();
       const uploadB = await seedQueuedVideo();

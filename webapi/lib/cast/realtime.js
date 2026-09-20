@@ -508,9 +508,8 @@ export function attachCastRealtime(httpServer) {
       withSessionAction(socket, ack, (session) => controlPlayback({ session, action: "previous" })),
     );
 
-    // `queueItemId` is what the reporting player actually finished. Every
-    // member's element ends at once, so it's what stops N tabs advancing the
-    // queue N times - see advanceOnPlaybackEnd.
+    // See advanceOnPlaybackEnd: queueItemId prevents N members' tabs each
+    // advancing the queue when they all report "ended" at once.
     socket.on("player:ended", (payload, ack) =>
       withSessionAction(socket, ack, (session) =>
         advanceOnPlaybackEnd({ session, queueItemId: Number(payload?.queueItemId) }),

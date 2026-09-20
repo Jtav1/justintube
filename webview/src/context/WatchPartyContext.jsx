@@ -506,11 +506,8 @@ export function WatchPartyProvider({ children }) {
 
   /**
    * Reports that the local player's current video finished naturally.
-   *
-   * `queueItemId` (`nowPlaying.id`) says *which* item finished, so the server
-   * can ignore a duplicate report - every member's element ends at the same
-   * moment, and without it each extra tab advances the queue again and skips a
-   * video for the whole party.
+   * `queueItemId` (`nowPlaying.id`) lets the server ignore duplicate reports
+   * from other members whose players end at the same moment.
    *
    * @param {number} queueItemId CAST_QUEUE_ITEMS id of the item that finished.
    * @returns {Promise<object>}

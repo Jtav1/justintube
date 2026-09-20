@@ -117,12 +117,9 @@ function WatchPartyDisplayPage() {
       ?.play()
       ?.then(() => setAutoplayBlocked(false))
       ?.catch(() => setAutoplayBlocked(true))
-    // Keyed on autoplayCheckKey, not on `playback` itself: the server ticks once
-    // a second and hands back a fresh playback object every time, so this probe
-    // - and the play() call in it, racing the sync hook's own - used to re-run
-    // every single second. The key only changes on something worth re-probing:
-    // a new video, or a real play/pause/seek. (playback.status is listed too
-    // because the rule requires it; being a primitive, it costs nothing.)
+    // Keyed on autoplayCheckKey, not `playback` itself: playback is a fresh
+    // object every server tick, which used to re-run this probe (and its
+    // play() call, racing the sync hook's own) every second.
   }, [autoplayCheckKey, nowPlaying, playback.status])
 
   function handleEnablePlayback() {
@@ -172,9 +169,8 @@ function WatchPartyDisplayPage() {
         <VideoPlayer
           ref={videoPlayerRef}
           video={nowPlaying.video}
-          // Without these the queue stalls on a display-only setup: this is the
-          // unattended TV view, so there may be no member tab open anywhere to
-          // notice the video ended and tell the server to advance.
+          // This is the unattended TV view; without these the queue stalls
+          // when no member tab is open to report the video ending.
           onVideoEnded={() => reportEnded(nowPlaying.id).catch(() => {})}
           onVideoError={() => reportError(nowPlaying.id).catch(() => {})}
           onPlaybackIntent={onPlaybackIntent}

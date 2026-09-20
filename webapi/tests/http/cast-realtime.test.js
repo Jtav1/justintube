@@ -331,10 +331,8 @@ describe("CAST realtime (Socket.IO /cast namespace)", () => {
   }, 10000);
 
   test("two members both reporting player:ended advance the queue exactly one item", async () => {
-    // Every member's <video> fires `ended` at the same moment, so the server
-    // gets one report per open tab. Before `queueItemId` the second report
-    // retired the item the first had just promoted, and the party skipped a
-    // video for every extra member.
+    // Every member's <video> fires `ended` at once; queueItemId keeps the
+    // second report from retiring the item the first just promoted.
     await seedUserWithKey("rt-key-end-a");
     const session = await createSession("rt-key-end-a");
     await seedUserWithKey("rt-key-end-b");
@@ -363,10 +361,8 @@ describe("CAST realtime (Socket.IO /cast namespace)", () => {
     expect(before.body.nowPlaying.video.id).toBe(uploads[0].id);
     const playingItemId = before.body.nowPlaying.id;
 
-    // One after the other, which is what two real players a few milliseconds
-    // apart produce: by the time B's report lands, A's has already promoted the
-    // next item. B is reporting the item it was playing, which is no longer the
-    // one playing, so it must change nothing.
+    // Sequential, as real players a few ms apart would produce: B's report
+    // names an item that's no longer playing by the time it lands.
     await emitWithAck(socketA, "player:ended", { queueItemId: playingItemId });
     await emitWithAck(socketB, "player:ended", { queueItemId: playingItemId });
 

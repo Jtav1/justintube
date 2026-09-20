@@ -260,8 +260,7 @@ function StartWatchPartyPopover() {
                   )}
                 </div>
               )}
-              {/* Both concealed by default: this popover is open on screen for
-                  as long as the session runs, screen shares included. */}
+              {/* Concealed by default: this popover stays open on screen, screen shares included. */}
               <RevealableSecret as="div" label="QR code" variant="blur">
                 <span className="watch-party-popover-qr">
                   <QRCodeSVG value={joinUrl} size={160} marginSize={2} />

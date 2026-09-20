@@ -127,13 +127,10 @@ function VideoPlayer({
   const [reaction, setReaction] = useState(video.viewerReaction ?? null)
   const [reactionPending, setReactionPending] = useState(false)
   const [reactionDelta, setReactionDelta] = useState({ likeCount: 0, dislikeCount: 0 })
-  // State derived from the video itself, reset together whenever the `video`
-  // prop changes under a still-mounted player. That only happens in a Watch
-  // Party - VideoPage remounts this component per video - and a stale
-  // selectedRendition there left `streamUrl` (and with it the element's
-  // key/src) pointing at the *previous* video while the title, description and
-  // media-session metadata all moved on: the queue looked like it advanced
-  // while the same picture kept playing.
+  // Reset per-video state together when `video` changes under a still-mounted
+  // player (Watch Party only; VideoPage remounts per video). Without resetting
+  // selectedRendition here, streamUrl kept pointing at the previous video's
+  // stream while title/description/metadata moved on.
   const [perVideoStateId, setPerVideoStateId] = useState(video.id)
   if (video.id !== perVideoStateId) {
     setPerVideoStateId(video.id)
@@ -309,14 +306,10 @@ function VideoPlayer({
         readyState: el?.readyState ?? 0,
         playbackRate: el?.playbackRate ?? 1,
         duration: Number.isFinite(el?.duration) ? el.duration : null,
-        // Whether a remote device (AirPlay receiver, Chromecast) is currently
-        // *rendering* this element - not merely available, which is what the
-        // airplayAvailable/remotePlaybackAvailable state below tracks for the
-        // toolbar buttons. Read live rather than kept in state because the only
-        // caller is useWatchPartyPlaybackSync's evaluation loop, which polls
-        // getState() anyway. While this is true the receiver owns playback and
-        // every playbackRate or currentTime write forces it to re-sync, so the
-        // sync hook stops nudging (see the hook's REMOTE_* bands).
+        // Whether a remote device (AirPlay/Chromecast) is actively rendering
+        // this element, as opposed to merely available. Consumed by
+        // useWatchPartyPlaybackSync, which pauses rate-nudging while true
+        // since the receiver owns playback and re-syncs on every write.
         remote: Boolean(
           el?.webkitCurrentPlaybackTargetIsWireless || el?.remote?.state === 'connected',
         ),
