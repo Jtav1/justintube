@@ -65,7 +65,7 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         {watchPartyEnabled && <Route path="/cast/join" element={<WatchPartyJoinPage />} />}
-        {watchPartyEnabled && <Route path="/cast/:id/display" element={<WatchPartyDisplayPage />} />}
+        {watchPartyEnabled && <Route path="/cast/:code/display" element={<WatchPartyDisplayPage />} />}
         <Route element={<AppLayout />}>
           <Route path="/" element={<VideoListing />} />
           <Route path="/reports" element={<ReportsPage />} />
@@ -81,7 +81,7 @@ function App() {
           <Route path="/upload" element={<UploadPage />} />
           {livestreamEnabled && <Route path="/go-live" element={<GoLivePage />} />}
           {livestreamEnabled && <Route path="/live/:id" element={<LiveWatchPage />} />}
-          {watchPartyEnabled && <Route path="/cast/:id" element={<WatchPartyPage />} />}
+          {watchPartyEnabled && <Route path="/cast/:code" element={<WatchPartyPage />} />}
           <Route path="/playlists/new" element={<CreatePlaylistPage />} />
           <Route path="/playlists/:id/edit" element={<CreatePlaylistPage />} />
           <Route path="/playlists/:id" element={<PlaylistPage />} />
