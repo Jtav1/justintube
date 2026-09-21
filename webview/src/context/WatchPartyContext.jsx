@@ -30,11 +30,12 @@ const JOIN_TIMEOUT_MS = 15000
  * Owns the live Watch Party session state and its socket.io-client
  * connection to the `/cast` namespace (unchanged on the wire - this is the
  * backend's real-time transport, not user-facing naming). The socket only
- * exists while `activeSessionId` is set - set by
+ * exists while `joinTarget` is set - set by
  * `createFromPlaylist`/`createFromVideo`/`createEmpty`/`joinByCode` (REST
- * calls that also create the underlying membership) or by `enterSession`
- * (for a page landing directly on `/cast/:id`, e.g. a reload, where
- * membership already exists). Every mutating action is a thin wrapper either
+ * calls that also create the underlying membership, and already know the
+ * session's numeric id) or by `enterSession` (for a page landing directly on
+ * `/cast/:code`, e.g. a reload or a shared link, where membership already
+ * exists but only the join code is known). Every mutating action is a thin wrapper either
  * over `webview/src/api/watch-party.js` (REST: create/join/kick/end) or a
  * socket emit-with-ack (queue/playback/reactions) - see
  * `webapi/lib/cast/realtime.js` for the server-side event catalog this
@@ -47,7 +48,14 @@ export function WatchPartyProvider({ children }) {
   // Seeded from localStorage so a reload rejoins the session the user was in,
   // rather than silently dropping them out of the party. The socket's join ack
   // rejects a stale or ended id, which clears it through the usual path.
-  const [activeSessionId, setActiveSessionId] = useState(readActiveWatchPartySessionId)
+  // Shape: `{ sessionId } | { code } | null` - matches the `session:join`
+  // socket payload directly (see `resolveJoinTarget` server-side), since a
+  // page landing on the shareable `/cast/:code` URL only has the code, while
+  // a fresh create/join already knows the numeric id.
+  const [joinTarget, setJoinTarget] = useState(() => {
+    const sessionId = readActiveWatchPartySessionId()
+    return sessionId != null ? { sessionId } : null
+  })
   const [connected, setConnected] = useState(false)
   // Set whenever a join attempt fails or a live session goes away out from
   // under the caller (kicked, or otherwise no longer a member) - the one
@@ -70,15 +78,18 @@ export function WatchPartyProvider({ children }) {
   // Adjusted during render (not the connect effect below) so starting a
   // fresh attempt clears any previous error/ended flag without a synchronous
   // setState-in-effect - same pattern as SearchAutocomplete's `clearedFor`.
-  // Deliberately only fires when activeSessionId becomes a new *non-null*
-  // value (a new attempt) - it must NOT fire when activeSessionId goes back
+  // Deliberately only fires when joinTarget becomes a new *non-null*
+  // value (a new attempt) - it must NOT fire when joinTarget goes back
   // to null, since that's exactly what happens *when* a session goes away
   // (handleConnect's ack failure, handleKicked and handleEnded all null it
   // out in the same batch), which would otherwise erase the signal before
-  // WatchPartyPage/WatchPartyDisplayPage's effect ever saw it.
+  // WatchPartyPage/WatchPartyDisplayPage's effect ever saw it. Comparing by
+  // reference is fine: joinTarget is only ever replaced wholesale (never
+  // mutated), and enterSession/create/join dedupe against an unchanged
+  // target so this doesn't fire on every unrelated re-render.
   const [clearedFor, setClearedFor] = useState(null)
-  if (activeSessionId != null && activeSessionId !== clearedFor) {
-    setClearedFor(activeSessionId)
+  if (joinTarget != null && joinTarget !== clearedFor) {
+    setClearedFor(joinTarget)
     setJoinError(null)
     setEnded(false)
     setLeft(false)
@@ -130,18 +141,29 @@ export function WatchPartyProvider({ children }) {
     setActivity((prev) => [...prev.slice(-(MAX_ACTIVITY_ENTRIES - 1)), entry])
   }
 
-  // Mirror the active session into localStorage so a reload can pick it back
-  // up. Writing an external store from an effect is exactly what effects are
-  // for, so this stays out of the setters themselves.
+  // Mirror the active session's numeric id into localStorage so a reload can
+  // pick it back up, regardless of whether this browser joined via a numeric
+  // id (create/join) or a join code (a page landing on `/cast/:code`) - once
+  // a snapshot lands, `session.id` is always known. Before that snapshot
+  // arrives, fall back to `joinTarget.sessionId` when the join itself already
+  // knew the id, so a reload mid-connect still has something to retry.
+  // Writing an external store from an effect is exactly what effects are for,
+  // so this stays out of the setters themselves.
   useEffect(() => {
-    writeActiveWatchPartySessionId(activeSessionId)
-  }, [activeSessionId])
+    if (session) {
+      writeActiveWatchPartySessionId(session.id)
+    } else if (joinTarget?.sessionId != null) {
+      writeActiveWatchPartySessionId(joinTarget.sessionId)
+    } else if (joinTarget == null) {
+      writeActiveWatchPartySessionId(null)
+    }
+  }, [joinTarget, session])
 
-  // Opens (and tears down) the socket connection whenever activeSessionId
+  // Opens (and tears down) the socket connection whenever joinTarget
   // changes - this is the "lazy connect" seam: no socket exists at all until
   // a session is created/joined/entered.
   useEffect(() => {
-    if (activeSessionId == null || !user) {
+    if (joinTarget == null || !user) {
       return undefined
     }
 
@@ -194,12 +216,12 @@ export function WatchPartyProvider({ children }) {
         burstTimers.push(setTimeout(sampleClock, i * CLOCK_BURST_INTERVAL_MS))
       }
 
-      socket.emit('session:join', { sessionId: activeSessionId }, (ack) => {
+      socket.emit('session:join', joinTarget, (ack) => {
         if (!ack?.ok) {
           const message = ack?.error?.message || 'Failed to join the Watch Party.'
           toastError(message)
           setJoinError(message)
-          setActiveSessionId(null)
+          setJoinTarget(null)
           resetState()
         }
       })
@@ -242,7 +264,7 @@ export function WatchPartyProvider({ children }) {
       const message = 'You were removed from this Watch Party.'
       toastError(message)
       setJoinError(message)
-      setActiveSessionId(null)
+      setJoinTarget(null)
       resetState()
     }
     // Mirrors handleKicked: the session is gone, so every trace of it has to
@@ -253,7 +275,7 @@ export function WatchPartyProvider({ children }) {
     function handleEnded() {
       toastInfo('This Watch Party has ended.')
       setEnded(true)
-      setActiveSessionId(null)
+      setJoinTarget(null)
       resetState()
     }
 
@@ -278,7 +300,7 @@ export function WatchPartyProvider({ children }) {
       const message = 'Could not join the Watch Party. It may have ended.'
       toastError(message)
       setJoinError(message)
-      setActiveSessionId(null)
+      setJoinTarget(null)
       resetState()
     }, JOIN_TIMEOUT_MS)
 
@@ -300,7 +322,7 @@ export function WatchPartyProvider({ children }) {
     // that would tear down and reopen the socket on every ToastProvider
     // re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId, user])
+  }, [joinTarget, user])
 
   /**
    * Creates a session seeded from a playlist and makes it the active one.
@@ -312,7 +334,7 @@ export function WatchPartyProvider({ children }) {
     try {
       const result = await watchPartyApi.createWatchParty({ sourceType: 'playlist', playlistId })
       applySnapshot(result)
-      setActiveSessionId(result.session.id)
+      setJoinTarget({ sessionId: result.session.id })
       return result
     } finally {
       setLoading(false)
@@ -329,7 +351,7 @@ export function WatchPartyProvider({ children }) {
     try {
       const result = await watchPartyApi.createWatchParty({ sourceType: 'video', videoId })
       applySnapshot(result)
-      setActiveSessionId(result.session.id)
+      setJoinTarget({ sessionId: result.session.id })
       return result
     } finally {
       setLoading(false)
@@ -345,7 +367,7 @@ export function WatchPartyProvider({ children }) {
     try {
       const result = await watchPartyApi.createWatchParty({ sourceType: 'empty' })
       applySnapshot(result)
-      setActiveSessionId(result.session.id)
+      setJoinTarget({ sessionId: result.session.id })
       return result
     } finally {
       setLoading(false)
@@ -362,7 +384,7 @@ export function WatchPartyProvider({ children }) {
     try {
       const result = await watchPartyApi.joinWatchParty(code)
       applySnapshot(result)
-      setActiveSessionId(result.session.id)
+      setJoinTarget({ sessionId: result.session.id })
       return result
     } finally {
       setLoading(false)
@@ -371,13 +393,18 @@ export function WatchPartyProvider({ children }) {
 
   /**
    * Makes an already-joined session (membership already exists) the active
-   * one, for a page landing directly on `/cast/:id` - a reload, or a link
-   * shared after the fact - without re-running create/join.
-   * @param {string|number} sessionId
+   * one, for a page landing directly on `/cast/:code` - a reload, or a link
+   * shared after the fact - without re-running create/join. Takes the join
+   * code (that's all the URL carries) rather than the numeric id; the socket
+   * resolves it server-side the same way a REST join-by-code would.
+   * @param {string} code
    * @returns {void}
    */
-  function enterSession(sessionId) {
-    setActiveSessionId(Number(sessionId))
+  function enterSession(code) {
+    // Dedupe against the current target so effects that re-run for unrelated
+    // reasons (e.g. `user` refreshing) don't tear down and reopen the socket
+    // when the code hasn't actually changed.
+    setJoinTarget((prev) => (prev?.code === code ? prev : { code }))
   }
 
   /**
@@ -389,7 +416,7 @@ export function WatchPartyProvider({ children }) {
    */
   function leaveActiveSession() {
     setLeft(true)
-    setActiveSessionId(null)
+    setJoinTarget(null)
     resetState()
   }
 
@@ -404,7 +431,7 @@ export function WatchPartyProvider({ children }) {
     if (!session) return
     await watchPartyApi.leaveWatchParty(session.id)
     setLeft(true)
-    setActiveSessionId(null)
+    setJoinTarget(null)
     resetState()
   }
 
@@ -553,7 +580,7 @@ export function WatchPartyProvider({ children }) {
   /**
    * Ends the active session (owner or admin) via REST, then clears local
    * state. It can't wait for its own `session:ended` broadcast to do the
-   * clearing: nulling activeSessionId tears the socket down in the connect
+   * clearing: nulling joinTarget tears the socket down in the connect
    * effect's cleanup, which races the inbound event.
    * @returns {Promise<void>}
    */
@@ -561,7 +588,7 @@ export function WatchPartyProvider({ children }) {
     if (!session) return
     await watchPartyApi.endWatchParty(session.id)
     setEnded(true)
-    setActiveSessionId(null)
+    setJoinTarget(null)
     resetState()
   }
 

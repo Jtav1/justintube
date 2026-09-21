@@ -21,13 +21,13 @@ import './WatchPartyPage.css'
 const ENDED_REDIRECT_MS = 2000
 
 /**
- * The member-facing Watch Party page (`/cast/:id`, rendered inside
+ * The member-facing Watch Party page (`/cast/:code`, rendered inside
  * AppLayout). Drives a VideoPlayer imperatively (via its ref) to follow the
  * session's server-authoritative playback clock - see
  * useWatchPartyPlaybackSync, shared with WatchPartyDisplayPage.
  */
 function WatchPartyPage() {
-  const { id } = useParams()
+  const { code } = useParams()
   const { user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
   const {
@@ -58,12 +58,12 @@ function WatchPartyPage() {
       navigate('/login')
       return undefined
     }
-    enterSession(id)
+    enterSession(code)
     // Deliberately no cleanup: the session must outlive this page so it stays
     // in the TopBar popover while the user browses. Leaving is now an explicit
     // action (leaveSession), not a side effect of navigating away.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, user, authLoading])
+  }, [code, user, authLoading])
 
   // Covers both "never got in" (an immediate join-ack failure) and "was in,
   // then kicked" (a live session:kicked event) - WatchPartyContext sets

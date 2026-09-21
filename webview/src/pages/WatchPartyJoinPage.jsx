@@ -42,7 +42,7 @@ function WatchPartyJoinPage() {
     setError(null)
     try {
       const result = await joinByCode(value)
-      navigate(`/cast/${result.session.id}`)
+      navigate(`/cast/${result.session.code}`)
     } catch (err) {
       setError(err.message || 'Failed to join the Watch Party.')
     } finally {

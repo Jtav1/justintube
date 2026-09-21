@@ -13,7 +13,7 @@ import './WatchPartyDisplayPage.css'
 const HUD_HIDE_DELAY_MS = 4000
 
 /**
- * Chrome-less, fullscreen "cast to a TV" view (`/cast/:id/display`, outside
+ * Chrome-less, fullscreen "cast to a TV" view (`/cast/:code/display`, outside
  * AppLayout - a logged-in member opens this and tab-casts/fullscreens it).
  * Shares WatchPartyPage's playback-sync logic (useWatchPartyPlaybackSync) but
  * adds two things a TV display specifically needs: an autoplay-block "click
@@ -22,7 +22,7 @@ const HUD_HIDE_DELAY_MS = 4000
  * to ever start) and a HUD that auto-hides after inactivity.
  */
 function WatchPartyDisplayPage() {
-  const { id } = useParams()
+  const { code } = useParams()
   const { user, loading: authLoading } = useAuth()
   const navigate = useNavigate()
   const {
@@ -68,13 +68,13 @@ function WatchPartyDisplayPage() {
       return
     }
     if (!user) {
-      navigate('/login', { state: { from: `/cast/${id}/display` } })
+      navigate('/login', { state: { from: `/cast/${code}/display` } })
       return
     }
-    enterSession(id)
+    enterSession(code)
     // No cleanup here either - see WatchPartyPage for why.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, user, authLoading])
+  }, [code, user, authLoading])
 
   // Covers both "never got in" and "was in, then kicked" - see
   // WatchPartyPage's identical guard for the full rationale.

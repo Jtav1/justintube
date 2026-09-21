@@ -118,7 +118,7 @@ function StartWatchPartyPopover() {
     try {
       const result = await joinByCode(joinCode.trim())
       setOpen(false)
-      navigate(`/cast/${result.session.id}`)
+      navigate(`/cast/${result.session.code}`)
     } catch (err) {
       toastError(err.message || 'Failed to join the Watch Party.')
     } finally {
@@ -132,7 +132,7 @@ function StartWatchPartyPopover() {
     try {
       const result = await action()
       setOpen(false)
-      navigate(`/cast/${result.session.id}`)
+      navigate(`/cast/${result.session.code}`)
     } catch (err) {
       toastError(err.message || 'Failed to start the Watch Party.')
     } finally {
@@ -278,7 +278,7 @@ function StartWatchPartyPopover() {
                 className="watch-party-popover-open"
                 onClick={() => {
                   setOpen(false)
-                  navigate(`/cast/${session.id}`)
+                  navigate(`/cast/${session.code}`)
                 }}
               >
                 Open session
