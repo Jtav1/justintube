@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Copy, Pencil, Play, Users } from 'lucide-react'
+import { Copy, Pencil, Play, Users, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { listMyPlaylists } from '../api/playlists.js'
 import { useWatchParty } from '../context/useWatchParty.js'
@@ -9,6 +9,11 @@ import { useToast } from '../context/useToast.js'
 import { useDismissablePopover } from '../hooks/useDismissablePopover.js'
 import RevealableSecret from './RevealableSecret.jsx'
 import './StartWatchPartyPopover.css'
+
+// Fixed pixel size the QR is rendered at internally; the enlarged modal scales
+// it back down (or up) to fit the viewport via CSS, since QRCodeSVG draws a
+// real viewBox rather than a raster image - see the `qr-scan-modal-qr` rule.
+const QR_MODAL_RENDER_SIZE = 1024
 
 const DROPDOWN_WIDTH = 300
 const VIEWPORT_MARGIN = 12
@@ -57,10 +62,12 @@ function StartWatchPartyPopover() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  const [qrModalOpen, setQrModalOpen] = useState(false)
 
   const menuRef = useRef(null)
   const toggleRef = useRef(null)
   const dropdownRef = useRef(null)
+  const qrTriggerRef = useRef(null)
 
   const currentVideoId = location.pathname === '/video' ? searchParams.get('v') : null
 
@@ -80,6 +87,25 @@ function StartWatchPartyPopover() {
   }, [open])
 
   useDismissablePopover(open, () => setOpen(false), toggleRef)
+
+  // Capture phase + stopPropagation so Escape closes only the enlarged QR
+  // modal, not the whole popover underneath it - both listen on `document`,
+  // and the popover's own Escape handler above (bubble phase) would otherwise
+  // fire too and close both at once.
+  useEffect(() => {
+    if (!qrModalOpen) {
+      return undefined
+    }
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        setQrModalOpen(false)
+        qrTriggerRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [qrModalOpen])
 
   useEffect(() => {
     if (!open) {
@@ -272,9 +298,16 @@ function StartWatchPartyPopover() {
                   </span>
                 </RevealableSecret>
               ) : (
-                <span className="watch-party-popover-qr">
+                <button
+                  type="button"
+                  className="watch-party-popover-qr watch-party-popover-qr-button"
+                  ref={qrTriggerRef}
+                  onClick={() => setQrModalOpen(true)}
+                  aria-label="Enlarge QR code for scanning"
+                  title="Enlarge for scanning"
+                >
                   <QRCodeSVG value={joinUrl} size={160} marginSize={2} />
-                </span>
+                </button>
               )}
               <p className="watch-party-popover-code-label">Join code</p>
               {hideJoinInfo ? (
@@ -381,6 +414,39 @@ function StartWatchPartyPopover() {
               )}
             </>
           )}
+        </div>,
+        document.body,
+      )}
+      {qrModalOpen && session && createPortal(
+        <div
+          className="qr-scan-modal-overlay"
+          onClick={() => setQrModalOpen(false)}
+        >
+          <div
+            className="qr-scan-modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Watch Party QR code"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="qr-scan-modal-close"
+              onClick={() => setQrModalOpen(false)}
+              aria-label="Close"
+            >
+              <X size={24} />
+            </button>
+            <div className="qr-scan-modal-qr">
+              <QRCodeSVG
+                value={joinUrl}
+                size={QR_MODAL_RENDER_SIZE}
+                marginSize={2}
+                style={{ width: '100%', height: '100%' }}
+              />
+            </div>
+            <p className="qr-scan-modal-code">{session.code}</p>
+          </div>
         </div>,
         document.body,
       )}

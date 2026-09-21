@@ -231,6 +231,18 @@
   border-radius: 8px;
 }
 
+.watch-party-popover-qr-button {
+  border: none;
+  cursor: pointer;
+  line-height: 0;
+  transition: opacity 0.15s;
+}
+
+.watch-party-popover-qr-button:hover,
+.watch-party-popover-qr-button:focus-visible {
+  opacity: 0.85;
+}
+
 .watch-party-popover-code-label {
   margin: 4px 0 0;
   font-size: 12px;
@@ -272,5 +284,70 @@
 
 .watch-party-popover-open:hover {
   opacity: 0.9;
+}
+
+/* Enlarged, distance-scannable QR code - a plain white card sized to 90% of
+   the viewport in both dimensions (capped square, since a QR must stay
+   square to scan) rather than the app's usual dark-mode-aware surface: it
+   needs to read the same on a projector or TV as it does here. */
+.qr-scan-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 90;
+}
+
+.qr-scan-modal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  width: 90vw;
+  height: 90vh;
+  padding: 24px;
+  box-sizing: border-box;
+  background: #fff;
+  border-radius: 16px;
+}
+
+.qr-scan-modal-qr {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: 100%;
+  aspect-ratio: 1;
+}
+
+.qr-scan-modal-code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: clamp(24px, 4vw, 56px);
+  font-weight: 600;
+  letter-spacing: 4px;
+  color: #111;
+}
+
+.qr-scan-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #111;
+  cursor: pointer;
+}
+
+.qr-scan-modal-close:hover {
+  background: rgba(0, 0, 0, 0.08);
 }
 
