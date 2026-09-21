@@ -4,19 +4,36 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth.js'
 import { readPlaylistShuffleEnabled, writePlaylistShuffleEnabled } from '../lib/playlist-shuffle.js'
 import VideoCard from './VideoCard.jsx'
+import ToggleSwitch from './ToggleSwitch.jsx'
 import './PlaylistQueue.css'
 
 /**
  * Playlist queue rail shown alongside the video player in place of
  * VideoSuggested when the current video is being watched as part of a
  * playlist. Items are newest-added-first, per the `getPlaylist` response.
- * @param {{playlist: object, currentVideoId: string, editable?: boolean, onRemoveItem?: Function}} props
- *   `playlist` is the full getPlaylist(id) response; `currentVideoId` is the
- *   public videoId of the video currently playing. When `editable` is true,
- *   each item's menu gets a "Remove from Playlist" action calling
- *   `onRemoveItem(uploadId)`.
+ * @param {{
+ *   playlist: object,
+ *   currentVideoId: string,
+ *   editable?: boolean,
+ *   onRemoveItem?: Function,
+ *   autoplayEnabled?: boolean,
+ *   onAutoplayChange?: (enabled: boolean) => void,
+ * }} props `playlist` is the full getPlaylist(id) response; `currentVideoId`
+ *   is the public videoId of the video currently playing. When `editable` is
+ *   true, each item's menu gets a "Remove from Playlist" action calling
+ *   `onRemoveItem(uploadId)`. `autoplayEnabled`/`onAutoplayChange` are the
+ *   Autoplay toggle's current value and setter (owned by VideoPage, persisted
+ *   per playlist - see lib/playlist-autoplay.js); omitted by CreatePlaylistPage's
+ *   editor reuse of this component, which hides the toggle entirely.
  */
-function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveItem }) {
+function PlaylistQueue({
+  playlist,
+  currentVideoId,
+  editable = false,
+  onRemoveItem,
+  autoplayEnabled,
+  onAutoplayChange,
+}) {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [shuffleEnabled, setShuffleEnabled] = useState(() => readPlaylistShuffleEnabled())
@@ -89,6 +106,15 @@ function PlaylistQueue({ playlist, currentVideoId, editable = false, onRemoveIte
         <p className="playlist-queue-meta">
           {items.length} {items.length === 1 ? 'video' : 'videos'}
         </p>
+        {onAutoplayChange && (
+          <ToggleSwitch
+            id="playlist-autoplay"
+            className="playlist-queue-autoplay"
+            label="Autoplay"
+            checked={autoplayEnabled}
+            onChange={onAutoplayChange}
+          />
+        )}
       </div>
       <div className="playlist-queue-controls">
         <button

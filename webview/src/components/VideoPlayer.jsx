@@ -219,6 +219,57 @@ function VideoPlayer({
   // The playback rate an external controller asked for (CAST drift correction),
   // re-applied after the element remounts.
   const desiredRateRef = useRef(1)
+  // Shared, CastContext-wide objects (see the effect below) that mirror
+  // whatever session is connected, not necessarily one this component started.
+  const castRemotePlayerRef = useRef(null)
+  const castRemotePlayerControllerRef = useRef(null)
+  // Set before this component writes to the RemotePlayer, so the resulting
+  // IS_PAUSED_CHANGED isn't mistaken for the receiver's own remote - mirrors programmaticSeekRef.
+  const castProgrammaticChangeRef = useRef(false)
+  // Set before zeroing the local element's volume on cast start, so
+  // handleVolumeChange doesn't persist that zero as the saved preference.
+  const programmaticVolumeRef = useRef(false)
+  // True while the video-change effect below is (re-)loading the next video
+  // onto an already-connected Cast session - see shouldDeferToCast.
+  const castContinuationPendingRef = useRef(false)
+  // Mirrors memoizedSrc for isCastingThisVideo, which is called from the
+  // imperative handle's stable ([]) closure.
+  const memoizedSrcRef = useRef(null)
+  // Mirrored for the Cast effect below, which isn't re-subscribed on every render.
+  const onPlaybackIntentRef = useRef(onPlaybackIntent)
+  useEffect(() => {
+    onPlaybackIntentRef.current = onPlaybackIntent
+  })
+
+  /**
+   * Whether an active Cast session has *this* video's stream loaded on the
+   * receiver, not just connected - e.g. a session left over from a previous
+   * video that auto-joined this page. Checked against the receiver's own
+   * loaded contentId on every call, so a Watch Party advancing to the next
+   * video without re-casting it falls back to the local element instead of
+   * seeking a receiver still playing the old one.
+   *
+   * @returns {boolean} True when the imperative handle should drive the Cast receiver.
+   */
+  function isCastingThisVideo() {
+    const player = castRemotePlayerRef.current
+    if (!player?.isConnected || !player?.isMediaLoaded) {
+      return false
+    }
+    const session = window.cast?.framework?.CastContext?.getInstance()?.getCurrentSession()
+    const contentId = session?.getMediaSession()?.media?.contentId
+    return contentId === memoizedSrcRef.current
+  }
+
+  /**
+   * Whether local playback should stay inert because casting is active for
+   * this video, or a continuation onto the next one is still in flight.
+   *
+   * @returns {boolean} True when the imperative handle/local autoplay should defer to the receiver.
+   */
+  function shouldDeferToCast() {
+    return castContinuationPendingRef.current || isCastingThisVideo()
+  }
 
   /**
    * Moves the playhead on this component's own behalf, flagging it so
@@ -265,12 +316,53 @@ function VideoPlayer({
     // autoplay-block rejection to show its "click to enable" overlay.
     // Callers that don't care can just add their own .catch(() => {}).
     play() {
+      if (castContinuationPendingRef.current) {
+        return Promise.resolve()
+      }
+      if (isCastingThisVideo()) {
+        const player = castRemotePlayerRef.current
+        if (player?.isPaused) {
+          castProgrammaticChangeRef.current = true
+          castRemotePlayerControllerRef.current.playOrPause()
+        }
+        // The receiver isn't subject to the browser's autoplay-block policy,
+        // so there's no rejection here for WatchPartyDisplayPage to detect.
+        return Promise.resolve()
+      }
       return videoRef.current?.play()
     },
     pause() {
+      if (castContinuationPendingRef.current) {
+        return
+      }
+      if (isCastingThisVideo()) {
+        const player = castRemotePlayerRef.current
+        if (player && !player.isPaused) {
+          castProgrammaticChangeRef.current = true
+          castRemotePlayerControllerRef.current.playOrPause()
+        }
+        return
+      }
       videoRef.current?.pause()
     },
     seek(seconds, { play: shouldPlay } = {}) {
+      if (castContinuationPendingRef.current) {
+        return
+      }
+      if (isCastingThisVideo()) {
+        const player = castRemotePlayerRef.current
+        const controller = castRemotePlayerControllerRef.current
+        player.currentTime = seconds
+        controller.seek()
+        if (shouldPlay === true && player.isPaused) {
+          castProgrammaticChangeRef.current = true
+          controller.playOrPause()
+        } else if (shouldPlay === false && !player.isPaused) {
+          castProgrammaticChangeRef.current = true
+          controller.playOrPause()
+        }
+        return
+      }
       const el = videoRef.current
       if (!el) return
       if (el.readyState >= 1) {
@@ -289,10 +381,36 @@ function VideoPlayer({
       // quality change (key={memoizedSrc}), which resets rate to 1, and
       // handleLoadedMetadata puts this back.
       desiredRateRef.current = rate
+      // No-op while casting: Chromecast has no reliable rate control, and the
+      // sync hook never asks for non-1 while getState().remote is true.
+      if (shouldDeferToCast()) return
       const el = videoRef.current
       if (el) el.playbackRate = rate
     },
     getState() {
+      if (castContinuationPendingRef.current) {
+        return {
+          currentTime: 0,
+          paused: true,
+          seeking: false,
+          readyState: 0,
+          playbackRate: 1,
+          duration: null,
+          remote: true,
+        }
+      }
+      if (isCastingThisVideo()) {
+        const player = castRemotePlayerRef.current
+        return {
+          currentTime: player.currentTime ?? 0,
+          paused: player.isPaused ?? true,
+          seeking: player.playerState === window.cast?.framework?.PlayerState?.BUFFERING,
+          readyState: player.isMediaLoaded ? 4 : 0,
+          playbackRate: 1,
+          duration: Number.isFinite(player.duration) ? player.duration : null,
+          remote: true,
+        }
+      }
       const el = videoRef.current
       return {
         currentTime: el?.currentTime ?? 0,
@@ -312,6 +430,7 @@ function VideoPlayer({
         ),
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [])
 
   const streamUrl = embedVideoUrl
@@ -374,9 +493,13 @@ function VideoPlayer({
       return undefined
     }
     const timeout = setTimeout(() => {
+      // A Cast continuation may still be starting up the receiver for this
+      // video - don't also start local playback (and its audio) underneath it.
+      if (shouldDeferToCast()) return
       videoRef.current?.play().catch(() => {})
     }, AUTOPLAY_ON_LOAD_DELAY_MS)
     return () => clearTimeout(timeout)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoplayOnLoad])
 
   useEffect(() => {
@@ -670,6 +793,49 @@ function VideoPlayer({
 
   const memoizedSrc = useMemo(() => streamUrl, [streamUrl])
 
+  useEffect(() => {
+    memoizedSrcRef.current = memoizedSrc
+  }, [memoizedSrc])
+
+  // Continues an already-connected Cast session onto this video (never starts
+  // one). Keyed on video.id so a same-video quality switch doesn't restart it.
+  useEffect(() => {
+    const session = window.cast?.framework
+      ? window.cast.framework.CastContext.getInstance().getCurrentSession()
+      : null
+    // Also clears a stale in-flight continuation's pending flag if its
+    // session ended before the cancelled guard below could.
+    if (!memoizedSrc || !session || session.getMediaSession()?.media?.contentId === memoizedSrc) {
+      castContinuationPendingRef.current = false
+      return undefined
+    }
+    let cancelled = false
+    castContinuationPendingRef.current = true
+    videoRef.current?.pause()
+    const mediaInfo = new window.chrome.cast.media.MediaInfo(
+      memoizedSrc,
+      selectedRendition?.mimeType || 'video/mp4',
+    )
+    mediaInfo.metadata = new window.chrome.cast.media.GenericMediaMetadata()
+    mediaInfo.metadata.title = video.title ?? ''
+    session
+      .loadMedia(new window.chrome.cast.media.LoadRequest(mediaInfo))
+      .then((loadError) => {
+        if (loadError) {
+          console.error('Failed to continue casting the next video:', loadError)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          castContinuationPendingRef.current = false
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.id])
+
   // Element remounts on src change (key={memoizedSrc}) - drop any retry
   // timeout scheduled against the outgoing element.
   useEffect(() => clearPendingRetry, [memoizedSrc])
@@ -731,6 +897,38 @@ function VideoPlayer({
     }
   }, [])
 
+  // Wires up the RemotePlayer the imperative handle drives (isCastingThisVideo)
+  // and reports a pause/resume from the receiver's own remote as a playback intent.
+  useEffect(() => {
+    if (!castSdkAvailable || !window.cast?.framework) {
+      return undefined
+    }
+    const remotePlayer = new window.cast.framework.RemotePlayer()
+    const controller = new window.cast.framework.RemotePlayerController(remotePlayer)
+    castRemotePlayerRef.current = remotePlayer
+    castRemotePlayerControllerRef.current = controller
+
+    function handlePausedChanged() {
+      if (castProgrammaticChangeRef.current) {
+        castProgrammaticChangeRef.current = false
+        return
+      }
+      if (!isCastingThisVideo()) {
+        return
+      }
+      onPlaybackIntentRef.current?.(remotePlayer.isPaused)
+    }
+
+    const { IS_PAUSED_CHANGED } = window.cast.framework.RemotePlayerEventType
+    controller.addEventListener(IS_PAUSED_CHANGED, handlePausedChanged)
+
+    return () => {
+      controller.removeEventListener(IS_PAUSED_CHANGED, handlePausedChanged)
+      castRemotePlayerRef.current = null
+      castRemotePlayerControllerRef.current = null
+    }
+  }, [castSdkAvailable])
+
   /**
    * Opens the Google Cast device picker via the Cast Sender SDK (see
    * lib/cast-sdk.js) and hands the current video off to whatever receiver
@@ -779,6 +977,10 @@ function VideoPlayer({
         return
       }
       el?.pause()
+      if (el) {
+        programmaticVolumeRef.current = true
+        el.volume = 0
+      }
     } catch (err) {
       console.error('Cast session failed:', err)
       toastError('Could not open the cast picker.')
@@ -820,7 +1022,13 @@ function VideoPlayer({
     try {
       await playOnCastDevice(device.id, video.videoId)
       setCastMenuOpen(false)
-      videoRef.current?.pause()
+      const el = videoRef.current
+      el?.pause()
+      if (el) {
+        // See handleCastSdkPrompt - only at the moment casting starts.
+        programmaticVolumeRef.current = true
+        el.volume = 0
+      }
     } catch (err) {
       const message = err.response?.data?.message
       toastError(message || `Failed to cast to ${device.name}.`)
@@ -841,6 +1049,10 @@ function VideoPlayer({
   }
 
   function handleVolumeChange() {
+    if (programmaticVolumeRef.current) {
+      programmaticVolumeRef.current = false
+      return
+    }
     const el = videoRef.current
     if (el) {
       writeVolume(el.volume)

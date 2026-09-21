@@ -33,6 +33,7 @@ function WatchPartyPage() {
   const {
     session,
     nowPlaying,
+    queue,
     playback,
     joinError,
     ended,
@@ -137,6 +138,10 @@ function WatchPartyPage() {
               />
               <WatchPartyReactions />
             </div>
+          ) : queue.length > 0 ? (
+            <p className="watch-party-page-status">
+              Autoplay is off - use Skip in the queue to play the next video.
+            </p>
           ) : (
             <p className="watch-party-page-status">The queue is empty. Add a video to get started.</p>
           )}
