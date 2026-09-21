@@ -5,10 +5,12 @@ import {
 import {
   buildEmbedFfmpegArgs,
   buildFfmpegArgs,
+  buildHlsFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildOutputFilename,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  HLS_OUTPUT_FILENAMES,
   getTranscodeConfig,
   parseHardwareEncoders,
   resolveAudioEncoder,
@@ -268,6 +270,32 @@ describe("thumbnail job validation and ffmpeg args", () => {
       outputFilename: "abc123",
       kind: "subtitle",
     });
+  });
+
+  test("validateTranscodeJob accepts an hls job with only jobId + outputFilename, no profile", () => {
+    const jobId = "hls-abc123";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "42/abc123.hls", kind: "hls" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/abc123.hls",
+      kind: "hls",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for hls jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          { jobId: "hls-abc123", outputFilename: "abc123.hls", kind: "hls" },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
   });
 
   test("validateTranscodeBatchRequest accepts a batch with a normalize job", () => {
@@ -920,5 +948,47 @@ describe("buildEmbedFfmpegArgs", () => {
 
     expect(args).not.toContain("copy");
     expect(args).toContain("aac");
+  });
+});
+
+describe("buildHlsFfmpegArgs", () => {
+  test("remuxes (never re-encodes) into single-file fMP4 HLS", () => {
+    const args = buildHlsFfmpegArgs({
+      inputPath: "/media/transcoded/42/rendition-abc.mp4",
+      outputDir: "/media/transcoded/42/rendition-abc.hls",
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/transcoded/42/rendition-abc.mp4",
+      "-c",
+      "copy",
+      "-f",
+      "hls",
+      "-hls_time",
+      "6",
+      "-hls_playlist_type",
+      "vod",
+      "-hls_segment_type",
+      "fmp4",
+      "-hls_fmp4_init_filename",
+      HLS_OUTPUT_FILENAMES.init,
+      "-hls_flags",
+      "single_file+independent_segments",
+      "-hls_segment_filename",
+      expect.stringContaining(HLS_OUTPUT_FILENAMES.media),
+      expect.stringContaining(HLS_OUTPUT_FILENAMES.playlist),
+    ]);
+  });
+
+  test("never re-encodes - always a pure remux (-c copy)", () => {
+    const args = buildHlsFfmpegArgs({
+      inputPath: "/media/transcoded/in.mp4",
+      outputDir: "/media/transcoded/out.hls",
+    });
+
+    expect(args).toContain("copy");
+    expect(args).not.toContain("libx264");
   });
 });

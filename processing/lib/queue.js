@@ -7,6 +7,8 @@ import {
   notifyEmbedVideoFailed,
   notifyFileVersionComplete,
   notifyFileVersionFailed,
+  notifyHlsComplete,
+  notifyHlsFailed,
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
   notifySubtitleComplete,
@@ -15,11 +17,13 @@ import {
   notifyThumbnailFailed,
 } from "./api-client.js";
 import {
+  resolveHlsOutputDir,
   resolveNormalizedOutputPath,
   resolveOriginalInputPath,
   resolveSubtitleOutputPath,
   resolveThumbnailInputPath,
   resolveThumbnailOutputPath,
+  resolveTranscodedInputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
 import {
@@ -27,6 +31,7 @@ import {
   computeContentHash,
   probeAllSubtitleStreams,
   probeEmbeddedThumbnailStream,
+  probeFormatBitRate,
   probeHasVideoStream,
   probeStreamCodecs,
 } from "./probe.js";
@@ -34,9 +39,11 @@ import {
   buildEmbedFfmpegArgs,
   buildEmbeddedThumbnailFfmpegArgs,
   buildFfmpegArgs,
+  buildHlsFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  HLS_OUTPUT_FILENAMES,
   runFfmpeg,
 } from "./transcode.js";
 import { logger } from "./logger.js";
@@ -70,11 +77,13 @@ export const MAX_HASH_JOB_RUNS = 7;
  * transcodes come next. Subtitle extraction is deliberately the
  * second-to-lowest priority — cheap, but not urgent, and never something a
  * user is actively waiting on the way they are a thumbnail/rendition — and
- * duplicate-upload hash probes always sort dead last. Priority only affects
- * ordering among jobs already waiting - it does not preempt a job a worker
- * has already started.
+ * duplicate-upload hash probes always sort dead last. `hls` packaging is tied
+ * with `subtitle` - it never blocks anything user-facing, since the flat MP4
+ * rendition it derives from is already complete and playable by the time an
+ * `hls` job is even enqueued. Priority only affects ordering among jobs
+ * already waiting - it does not preempt a job a worker has already started.
  *
- * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
@@ -82,6 +91,7 @@ export const JOB_PRIORITY_BY_KIND = {
   rendition: 3,
   embed: 3,
   subtitle: 4,
+  hls: 4,
   hash: 5,
 };
 
@@ -574,6 +584,73 @@ async function processNormalizeJob(job) {
 }
 
 /**
+ * Processes a single HLS-packaging job: remux an already-completed rendition
+ * (under `/media/transcoded`, not `/media/original` - see
+ * `resolveTranscodedInputPath`) into single-file byte-range fMP4 HLS. Unlike
+ * every other job kind, this one's input is a *derived* artifact (another
+ * job's output), not the original upload's source file - `inputFilename`
+ * here is the rendition's own relative storage path, threaded through as
+ * this (single-job) batch's shared `filename` by the caller.
+ *
+ * A bitrate probe failure is non-fatal - the job still completes and reports
+ * `bitRateBps: null`, letting the API fall back to an estimate for the master
+ * playlist's `BANDWIDTH` value rather than failing HLS packaging entirely
+ * over a missing metric.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` (a rendition's relative path) and `outputFilename` (the
+ *   job's output directory, not a file - see `resolveHlsOutputDir`).
+ * @returns {Promise<{ playlistPath: string, bitRateBps: number|null }>}
+ *   Result payload stored on the completed job.
+ * @throws {Error} When the input is missing or ffmpeg fails.
+ */
+async function processHlsJob(job) {
+  const { inputFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[hls ${jobId}] processing started: ${inputFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveTranscodedInputPath(inputFilename);
+  const outputDir = resolveHlsOutputDir(outputFilename);
+  const args = buildHlsFfmpegArgs({ inputPath, outputDir });
+
+  await job.updateProgress(40);
+  await runFfmpeg(args);
+  await job.updateProgress(75);
+
+  let bitRateBps = null;
+  try {
+    bitRateBps = await probeFormatBitRate(inputPath);
+  } catch (err) {
+    logger.error(
+      { err },
+      `[hls ${jobId}] bitrate probe failed; completing without it`,
+    );
+  }
+
+  const playlistPath = `${outputFilename}/${HLS_OUTPUT_FILENAMES.playlist}`;
+
+  const notify = await notifyHlsComplete(jobId, { playlistPath, bitRateBps });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed hls packaging ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[hls ${jobId}] processing completed: ${playlistPath}`);
+
+  return { playlistPath, bitRateBps };
+}
+
+/**
  * Processes a single embed job: mux an audio-only upload with its thumbnail
  * image into a real MP4, for link-unfurl bots (Discord in particular) that
  * only render `og:video`. Unlike rendition/normalize jobs there's no
@@ -739,6 +816,9 @@ export async function processTranscodeJob(job, token) {
   if (kind === "embed") {
     return processEmbedJob(job);
   }
+  if (kind === "hls") {
+    return processHlsJob(job);
+  }
   return processRenditionJob(job);
 }
 
@@ -824,7 +904,9 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
                 ? "ffmpeg-subtitle"
                 : job.kind === "embed"
                   ? "ffmpeg-embed"
-                  : "ffmpeg-transcode",
+                  : job.kind === "hls"
+                    ? "ffmpeg-hls"
+                    : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -1189,6 +1271,18 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed embed video job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "hls") {
+    logger.error({ message }, `[hls ${jobId}] processing failed`);
+    const notify = await notifyHlsFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed hls job ${jobId}`,
       );
     }
     return;

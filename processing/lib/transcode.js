@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { execFile } from "node:child_process";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { TranscodeValidationError, validateRelativeMediaPath } from "./media-paths.js";
@@ -76,7 +77,7 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} jobId Stable BullMQ job id.
  * @property {string} [outputFilename] Basename under the job kind's output
  *   directory. Absent when `kind === "hash"` (no output file is written).
- * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"} kind Job kind.
+ * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"|"hls"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  * @property {string} [thumbnailFilename] Present when `kind === "embed"` — relative
@@ -359,7 +360,11 @@ function validateOptionalTimestampSeconds(value, fieldName) {
  * hardware/mode gating (it always runs in software). `"embed"` (mux an
  * audio-only upload with its thumbnail image into a playable MP4, for link
  * unfurlers that only render `og:video`) needs `jobId` + `outputFilename` +
- * `thumbnailFilename` - no profile, no gating.
+ * `thumbnailFilename` - no profile, no gating. `"hls"` (remux an already-
+ * completed rendition into single-file byte-range fMP4 HLS) needs only
+ * `jobId` + `outputFilename` (a directory, not a file - see
+ * `resolveHlsOutputDir`) - like `"normalize"`, no profile, no gating, always
+ * software (`-c copy`, a remux).
  *
  * `outputFilename` (and `thumbnailFilename`) are validated with
  * {@link validateRelativeMediaPath} rather than {@link requireSafeToken} -
@@ -397,6 +402,10 @@ export function validateTranscodeJob(job, index) {
 
   if (body.kind === "subtitle") {
     return { jobId, outputFilename, kind: "subtitle" };
+  }
+
+  if (body.kind === "hls") {
+    return { jobId, outputFilename, kind: "hls" };
   }
 
   if (body.kind === "embed") {
@@ -664,6 +673,71 @@ export function buildNormalizeFfmpegArgs({ inputPath, outputPath, codecs }) {
 
   args.push("-f", "mp4", outputPath);
   return args;
+}
+
+/**
+ * Target segment duration, in seconds, for HLS packaging. Only matters for
+ * `EXT-X-BYTERANGE` boundary granularity within the single fMP4 media file
+ * (`-hls_flags single_file`) — there's no per-segment file count cost to
+ * weigh here, unlike classic multi-file HLS.
+ *
+ * @type {number}
+ */
+const HLS_SEGMENT_DURATION_SECONDS = 6;
+
+/**
+ * Fixed basenames written into an `"hls"` job's output directory (see
+ * `resolveHlsOutputDir`) — always the same three names regardless of input,
+ * since each rendition gets its own directory.
+ *
+ * @type {{ init: string, media: string, playlist: string }}
+ */
+export const HLS_OUTPUT_FILENAMES = {
+  init: "init.mp4",
+  media: "stream.m4s",
+  playlist: "variant.m3u8",
+};
+
+/**
+ * Builds the ffmpeg argument list for packaging an already-transcoded
+ * rendition into single-file byte-range fMP4 HLS (`"hls"` job kind). Always a
+ * remux (`-c copy`) — the input is a rendition ffmpeg already encoded once;
+ * re-encoding it again would just lose quality for no benefit. `single_file`
+ * flag keeps the whole rendition's media in one `stream.m4s`, referenced via
+ * `EXT-X-BYTERANGE` in the variant playlist, instead of many small segment
+ * files — deliberately traded off against per-segment CDN cacheability, since
+ * this is a single self-hosted volume, not a CDN-fronted deployment, and file/
+ * inode count matters more here.
+ *
+ * @param {object} options HLS packaging execution options.
+ * @param {string} options.inputPath Absolute path to the source rendition file.
+ * @param {string} options.outputDir Absolute path to the job's output
+ *   directory (see `resolveHlsOutputDir`) — must already exist.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildHlsFfmpegArgs({ inputPath, outputDir }) {
+  return [
+    "-y",
+    "-i",
+    inputPath,
+    "-c",
+    "copy",
+    "-f",
+    "hls",
+    "-hls_time",
+    String(HLS_SEGMENT_DURATION_SECONDS),
+    "-hls_playlist_type",
+    "vod",
+    "-hls_segment_type",
+    "fmp4",
+    "-hls_fmp4_init_filename",
+    HLS_OUTPUT_FILENAMES.init,
+    "-hls_flags",
+    "single_file+independent_segments",
+    "-hls_segment_filename",
+    join(outputDir, HLS_OUTPUT_FILENAMES.media),
+    join(outputDir, HLS_OUTPUT_FILENAMES.playlist),
+  ];
 }
 
 /**

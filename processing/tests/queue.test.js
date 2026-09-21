@@ -21,8 +21,14 @@ const buildThumbnailFfmpegArgs = jest.fn();
 const buildEmbeddedThumbnailFfmpegArgs = jest.fn();
 const buildEmbedFfmpegArgs = jest.fn();
 const buildSubtitleFfmpegArgs = jest.fn();
+const buildHlsFfmpegArgs = jest.fn();
 const runFfmpeg = jest.fn();
 const stat = jest.fn();
+const probeFormatBitRate = jest.fn();
+const notifyHlsComplete = jest.fn();
+const notifyHlsFailed = jest.fn();
+const resolveTranscodedInputPath = jest.fn();
+const resolveHlsOutputDir = jest.fn();
 
 // Must run before any import of lib/queue.js (which imports these modules at
 // load time) - mock registration has to precede the dynamic import below
@@ -34,6 +40,7 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   probeEmbeddedThumbnailStream,
   probeHasVideoStream,
   probeAllSubtitleStreams,
+  probeFormatBitRate,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -48,6 +55,8 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifySubtitleFailed,
   notifyEmbedVideoComplete,
   notifyEmbedVideoFailed: jest.fn(),
+  notifyHlsComplete,
+  notifyHlsFailed,
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveOriginalInputPath: jest.fn((filename) => `/media/original/${filename}`),
@@ -56,6 +65,8 @@ jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveTranscodedOutputPath,
   resolveNormalizedOutputPath: jest.fn(),
   resolveSubtitleOutputPath,
+  resolveTranscodedInputPath,
+  resolveHlsOutputDir,
 }));
 jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildFfmpegArgs: jest.fn(),
@@ -64,6 +75,8 @@ jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildEmbedFfmpegArgs,
   buildNormalizeFfmpegArgs: jest.fn(),
   buildSubtitleFfmpegArgs,
+  buildHlsFfmpegArgs,
+  HLS_OUTPUT_FILENAMES: { init: "init.mp4", media: "stream.m4s", playlist: "variant.m3u8" },
   runFfmpeg,
 }));
 jest.unstable_mockModule("node:fs/promises", () => ({
@@ -380,6 +393,94 @@ describe("processTranscodeJob (kind: embed)", () => {
 
     await expect(processTranscodeJob(job)).rejects.toThrow("ffmpeg exited with code 1");
     expect(notifyEmbedVideoComplete).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Builds a fake BullMQ job for an "hls" kind job.
+ *
+ * @param {object} [dataOverrides] Overrides merged into `job.data`.
+ * @returns {object} Fake job.
+ */
+function makeHlsJob(dataOverrides = {}) {
+  return {
+    id: "hls-abc123",
+    data: {
+      kind: "hls",
+      inputFilename: "42/rendition-uuid.mp4",
+      outputFilename: "42/rendition-uuid.hls",
+      ...dataOverrides,
+    },
+    updateProgress: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe("processTranscodeJob (kind: hls)", () => {
+  beforeEach(() => {
+    resolveTranscodedInputPath.mockReset().mockImplementation((f) => `/media/transcoded/${f}`);
+    resolveHlsOutputDir.mockReset().mockImplementation((f) => `/media/transcoded/${f}`);
+    buildHlsFfmpegArgs.mockReset().mockReturnValue(["hls-args"]);
+    runFfmpeg.mockReset().mockResolvedValue(undefined);
+    probeFormatBitRate.mockReset().mockResolvedValue(2_500_000);
+    notifyHlsComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("remuxes the rendition input into HLS and reports the result", async () => {
+    const job = makeHlsJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(resolveTranscodedInputPath).toHaveBeenCalledWith("42/rendition-uuid.mp4");
+    expect(resolveHlsOutputDir).toHaveBeenCalledWith("42/rendition-uuid.hls");
+    expect(buildHlsFfmpegArgs).toHaveBeenCalledWith({
+      inputPath: "/media/transcoded/42/rendition-uuid.mp4",
+      outputDir: "/media/transcoded/42/rendition-uuid.hls",
+    });
+    expect(runFfmpeg).toHaveBeenCalledWith(["hls-args"]);
+    expect(probeFormatBitRate).toHaveBeenCalledWith("/media/transcoded/42/rendition-uuid.mp4");
+    expect(notifyHlsComplete).toHaveBeenCalledWith("hls-abc123", {
+      playlistPath: "42/rendition-uuid.hls/variant.m3u8",
+      bitRateBps: 2_500_000,
+    });
+    expect(result).toEqual({
+      playlistPath: "42/rendition-uuid.hls/variant.m3u8",
+      bitRateBps: 2_500_000,
+    });
+  });
+
+  test("completes with bitRateBps: null when the probe fails", async () => {
+    probeFormatBitRate.mockReset().mockRejectedValue(new Error("ffprobe failed"));
+    const job = makeHlsJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(notifyHlsComplete).toHaveBeenCalledWith("hls-abc123", {
+      playlistPath: "42/rendition-uuid.hls/variant.m3u8",
+      bitRateBps: null,
+    });
+    expect(result.bitRateBps).toBeNull();
+  });
+
+  test("propagates an ffmpeg failure instead of notifying completion", async () => {
+    runFfmpeg.mockReset().mockRejectedValue(new Error("ffmpeg exited with code 1"));
+    const job = makeHlsJob();
+
+    await expect(processTranscodeJob(job)).rejects.toThrow("ffmpeg exited with code 1");
+    expect(notifyHlsComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe("notifyTranscodeJobFailed (kind: hls)", () => {
+  beforeEach(() => {
+    notifyHlsFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("calls back to the API so the FILE_VERSION_HLS row can be marked failed", async () => {
+    const job = { id: "hls-abc123", data: { kind: "hls" } };
+
+    await notifyTranscodeJobFailed(job, new Error("ffmpeg exited with code 1"));
+
+    expect(notifyHlsFailed).toHaveBeenCalledWith("hls-abc123", "ffmpeg exited with code 1");
   });
 });
 

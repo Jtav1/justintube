@@ -403,6 +403,36 @@ export async function probeVideoDuration(filePath) {
 }
 
 /**
+ * Probes a media file's overall bitrate via ffprobe's `format=bit_rate`.
+ * Used by the `"hls"` job to report an honest `BANDWIDTH` value for the
+ * master playlist's `EXT-X-STREAM-INF` line, rather than a guessed constant.
+ *
+ * @param {string} filePath Absolute path to the media file.
+ * @returns {Promise<number|null>} Bitrate in bits per second, or null when
+ *   ffprobe fails or the container doesn't report one.
+ */
+export async function probeFormatBitRate(filePath) {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "format=bit_rate", "-of", "json", filePath],
+    { maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+
+  const bitRateBps = Number(parsed?.format?.bit_rate);
+  if (!Number.isFinite(bitRateBps) || bitRateBps <= 0) {
+    return null;
+  }
+  return Math.round(bitRateBps);
+}
+
+/**
  * Computes a content-based hash of a media file's primary stream via
  * ffmpeg's `hash` muxer. Unlike a raw file checksum, this hashes decoded
  * frame/sample data, so it stays stable across container remuxes or

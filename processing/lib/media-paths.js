@@ -152,6 +152,31 @@ export function resolveOriginalInputPath(filename) {
 }
 
 /**
+ * Resolves a transcoded-rendition relative path to an absolute path under
+ * `transcodedDir` and confirms the file is readable. Read-only, like
+ * `resolveOriginalInputPath` — used by the `"hls"` job kind, whose input is
+ * an already-completed rendition output rather than the original source file.
+ *
+ * @param {string} filename Validated relative path under `/media/transcoded`.
+ * @returns {string} Absolute path to the readable rendition file.
+ * @throws {TranscodeValidationError} When the file is missing or unreadable.
+ */
+export function resolveTranscodedInputPath(filename) {
+  const safeName = validateRelativeMediaPath(filename, "filename");
+  const absolutePath = join(transcodedDir, safeName);
+
+  try {
+    accessSync(absolutePath, constants.R_OK);
+  } catch {
+    throw new TranscodeValidationError(
+      `input file not found in transcoded/: ${safeName}`,
+    );
+  }
+
+  return absolutePath;
+}
+
+/**
  * Resolves a thumbnail-image relative path to an absolute path under
  * `thumbnailsDir` and confirms the file is readable. Read-only, like
  * `resolveOriginalInputPath` — a missing subfolder means "not found", not
@@ -240,4 +265,21 @@ export function resolveThumbnailOutputPath(outputFilename) {
  */
 export function resolveSubtitleOutputPath(outputFilename) {
   return resolveOutputPath(subtitlesDir, outputFilename, "outputFilename");
+}
+
+/**
+ * Validates `outputFilename` and resolves it to an absolute directory path
+ * under `transcodedDir`, creating the directory itself (not just its parent)
+ * — unlike every other output resolver in this file, an `"hls"` job's
+ * `outputFilename` names a directory it writes multiple files into
+ * (`init.mp4`, `stream.m4s`, `variant.m3u8`), not a single output file.
+ *
+ * @param {string} outputFilename Relative directory path under `/media/transcoded`.
+ * @returns {string} Absolute directory path, already created.
+ */
+export function resolveHlsOutputDir(outputFilename) {
+  const safeName = validateRelativeMediaPath(outputFilename, "outputFilename");
+  const absolutePath = join(transcodedDir, safeName);
+  mkdirSync(absolutePath, { recursive: true });
+  return absolutePath;
 }

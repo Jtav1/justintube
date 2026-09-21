@@ -302,3 +302,36 @@ export async function notifyEmbedVideoFailed(jobId, error) {
     error,
   });
 }
+
+/**
+ * Notifies the API that a rendition's HLS packaging job completed successfully.
+ *
+ * @param {string} jobId BullMQ job id (`hls-<versionUuid>`, one per FILE_VERSIONS row).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.playlistPath Relative path (under `transcoded/`) to the
+ *   variant `.m3u8` playlist.
+ * @param {number|null} metadata.bitRateBps Probed source bitrate, for the master
+ *   playlist's `BANDWIDTH` value (null when ffprobe couldn't determine one).
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyHlsComplete(jobId, metadata) {
+  return postInternal(`/internal/hls/${encodeURIComponent(jobId)}/complete`, {
+    playlistPath: metadata.playlistPath,
+    bitRateBps: metadata.bitRateBps,
+  });
+}
+
+/**
+ * Notifies the API that a rendition's HLS packaging job failed.
+ *
+ * @param {string} jobId BullMQ job id (`hls-<versionUuid>`, one per FILE_VERSIONS row).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyHlsFailed(jobId, error) {
+  return postInternal(`/internal/hls/${encodeURIComponent(jobId)}/fail`, {
+    error,
+  });
+}
