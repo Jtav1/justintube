@@ -229,6 +229,9 @@ function VideoPlayer({
   // Set before zeroing the local element's volume on cast start, so
   // handleVolumeChange doesn't persist that zero as the saved preference.
   const programmaticVolumeRef = useRef(false)
+  // True while the video-change effect below is (re-)loading the next video
+  // onto an already-connected Cast session - see shouldDeferToCast.
+  const castContinuationPendingRef = useRef(false)
   // Mirrors memoizedSrc for isCastingThisVideo, which is called from the
   // imperative handle's stable ([]) closure.
   const memoizedSrcRef = useRef(null)
@@ -256,6 +259,16 @@ function VideoPlayer({
     const session = window.cast?.framework?.CastContext?.getInstance()?.getCurrentSession()
     const contentId = session?.getMediaSession()?.media?.contentId
     return contentId === memoizedSrcRef.current
+  }
+
+  /**
+   * Whether local playback should stay inert because casting is active for
+   * this video, or a continuation onto the next one is still in flight.
+   *
+   * @returns {boolean} True when the imperative handle/local autoplay should defer to the receiver.
+   */
+  function shouldDeferToCast() {
+    return castContinuationPendingRef.current || isCastingThisVideo()
   }
 
   /**
@@ -303,6 +316,9 @@ function VideoPlayer({
     // autoplay-block rejection to show its "click to enable" overlay.
     // Callers that don't care can just add their own .catch(() => {}).
     play() {
+      if (castContinuationPendingRef.current) {
+        return Promise.resolve()
+      }
       if (isCastingThisVideo()) {
         const player = castRemotePlayerRef.current
         if (player?.isPaused) {
@@ -316,6 +332,9 @@ function VideoPlayer({
       return videoRef.current?.play()
     },
     pause() {
+      if (castContinuationPendingRef.current) {
+        return
+      }
       if (isCastingThisVideo()) {
         const player = castRemotePlayerRef.current
         if (player && !player.isPaused) {
@@ -327,6 +346,9 @@ function VideoPlayer({
       videoRef.current?.pause()
     },
     seek(seconds, { play: shouldPlay } = {}) {
+      if (castContinuationPendingRef.current) {
+        return
+      }
       if (isCastingThisVideo()) {
         const player = castRemotePlayerRef.current
         const controller = castRemotePlayerControllerRef.current
@@ -361,11 +383,22 @@ function VideoPlayer({
       desiredRateRef.current = rate
       // No-op while casting: Chromecast has no reliable rate control, and the
       // sync hook never asks for non-1 while getState().remote is true.
-      if (isCastingThisVideo()) return
+      if (shouldDeferToCast()) return
       const el = videoRef.current
       if (el) el.playbackRate = rate
     },
     getState() {
+      if (castContinuationPendingRef.current) {
+        return {
+          currentTime: 0,
+          paused: true,
+          seeking: false,
+          readyState: 0,
+          playbackRate: 1,
+          duration: null,
+          remote: true,
+        }
+      }
       if (isCastingThisVideo()) {
         const player = castRemotePlayerRef.current
         return {
@@ -397,6 +430,7 @@ function VideoPlayer({
         ),
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [])
 
   const streamUrl = embedVideoUrl
@@ -459,9 +493,13 @@ function VideoPlayer({
       return undefined
     }
     const timeout = setTimeout(() => {
+      // A Cast continuation may still be starting up the receiver for this
+      // video - don't also start local playback (and its audio) underneath it.
+      if (shouldDeferToCast()) return
       videoRef.current?.play().catch(() => {})
     }, AUTOPLAY_ON_LOAD_DELAY_MS)
     return () => clearTimeout(timeout)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoplayOnLoad])
 
   useEffect(() => {
@@ -758,6 +796,45 @@ function VideoPlayer({
   useEffect(() => {
     memoizedSrcRef.current = memoizedSrc
   }, [memoizedSrc])
+
+  // Continues an already-connected Cast session onto this video (never starts
+  // one). Keyed on video.id so a same-video quality switch doesn't restart it.
+  useEffect(() => {
+    const session = window.cast?.framework
+      ? window.cast.framework.CastContext.getInstance().getCurrentSession()
+      : null
+    // Also clears a stale in-flight continuation's pending flag if its
+    // session ended before the cancelled guard below could.
+    if (!memoizedSrc || !session || session.getMediaSession()?.media?.contentId === memoizedSrc) {
+      castContinuationPendingRef.current = false
+      return undefined
+    }
+    let cancelled = false
+    castContinuationPendingRef.current = true
+    videoRef.current?.pause()
+    const mediaInfo = new window.chrome.cast.media.MediaInfo(
+      memoizedSrc,
+      selectedRendition?.mimeType || 'video/mp4',
+    )
+    mediaInfo.metadata = new window.chrome.cast.media.GenericMediaMetadata()
+    mediaInfo.metadata.title = video.title ?? ''
+    session
+      .loadMedia(new window.chrome.cast.media.LoadRequest(mediaInfo))
+      .then((loadError) => {
+        if (loadError) {
+          console.error('Failed to continue casting the next video:', loadError)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          castContinuationPendingRef.current = false
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.id])
 
   // Element remounts on src change (key={memoizedSrc}) - drop any retry
   // timeout scheduled against the outgoing element.
