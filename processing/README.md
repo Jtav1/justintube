@@ -87,9 +87,21 @@ hardware-accelerated transcoding availability:
 Not gated by the internal token. Polled by the Web API's
 `GET /admin/transcode-profiles/hardware-status` to shape the admin profile UI.
 
+### Shared yt-dlp options
+
+Every route in this section accepts these optional fields alongside `url`:
+
+- `cookies` — raw Netscape-format `cookies.txt` content (e.g. exported from a
+  browser extension), for sites/videos that need an authenticated session.
+  Written to a `0600` temp file for the single yt-dlp invocation that needs
+  it, then deleted immediately afterward — success or failure. Never logged,
+  never echoed back, never persisted anywhere else. Capped at ~1MB.
+- `rateLimit` — `--limit-rate` value, e.g. `"2M"` or `"500K"`.
+- `retries` — `--retries` value, capped by `MAX_YTDLP_RETRIES` (default 20).
+
 ### `POST /download`
 
-JSON body `{ "url": "https://..." }`
+JSON body `{ "url": "https://...", "cookies"?: "...", "rateLimit"?: "2M", "retries"?: 5 }`
 
 ```bash
 curl -X POST http://localhost:3001/download \
@@ -106,6 +118,113 @@ format selector falls back to `bestaudio` for audio-only sources). webapi prefer
 ffprobe-based signal over sniffing the file extension, since an audio-only download can land
 in an ambiguous container (e.g. opus-in-webm) that extension alone can't distinguish from a
 video webm.
+
+### `POST /download/audio`
+
+JSON body `{ "url": "https://...", "audioFormat"?: "mp3" }` (plus the shared yt-dlp options above).
+
+Downloads only the audio from a URL — no video stream, no muxed container. Uses yt-dlp's
+`-f bestaudio/best -x --audio-format <audioFormat>` (ffmpeg-backed extraction under the hood),
+preferring a genuinely audio-only source format so no video is even downloaded in the first
+place; only falls back to downloading combined video+audio and extracting when a source has no
+separate audio-only format. `audioFormat` defaults to `"best"` (remux into whatever container
+matches the source's native codec, no re-encode) — one of `best`, `aac`, `alac`, `flac`, `m4a`,
+`mp3`, `opus`, `vorbis`, `wav`.
+
+```bash
+curl -X POST http://localhost:3001/download/audio \
+  -H "Authorization: Bearer $INTERNAL_SERVICE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/watch?v=…","audioFormat":"mp3"}'
+```
+
+Success: `{ "success": true, "filename": "<epoch>.<ext>" }`  
+Error: `{ "success": false, "error": "…" }`
+
+### `POST /download/probe`
+
+JSON body `{ "url": "https://..." }` (plus the shared yt-dlp options above).
+
+Fetches metadata without downloading anything (`yt-dlp --skip-download -J`), so a caller can
+preview a title/thumbnail/duration and available formats before committing to `POST /download`.
+Always resolves a single video, even for a playlist URL (`--no-playlist`, same as `/download`) —
+use `/download/playlist/probe` to enumerate a playlist.
+
+```bash
+curl -X POST http://localhost:3001/download/probe \
+  -H "Authorization: Bearer $INTERNAL_SERVICE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/watch?v=…"}'
+```
+
+Success (`200`):
+
+```json
+{
+  "success": true,
+  "id": "abc123",
+  "title": "…",
+  "description": "…",
+  "uploader": "…",
+  "durationSeconds": 213,
+  "thumbnail": "https://…",
+  "webpageUrl": "https://…",
+  "extractor": "youtube",
+  "formats": [
+    { "formatId": "137", "ext": "mp4", "height": 1080, "width": 1920, "vcodec": "avc1…", "acodec": null, "fps": 30, "filesizeBytes": 12345678, "tbr": 4500, "formatNote": "1080p" }
+  ]
+}
+```
+
+### `POST /download/playlist/probe`
+
+JSON body `{ "url": "https://...", "limit"?: 50 }` (plus the shared yt-dlp options above).
+
+Enumerates a playlist/channel URL's entries via yt-dlp's flat-playlist mode — fast, since it
+doesn't fetch each entry's full metadata. `limit` is clamped to `MAX_PLAYLIST_PROBE_ITEMS`
+(default 200).
+
+Success (`200`):
+
+```json
+{
+  "success": true,
+  "playlistTitle": "…",
+  "playlistId": "…",
+  "entryCount": 2,
+  "truncated": false,
+  "entries": [
+    { "url": "https://…", "id": "abc123", "title": "…", "durationSeconds": 213, "uploader": "…" }
+  ]
+}
+```
+
+### `POST /download/playlist`
+
+JSON body `{ "url": "https://...", "limit"?: 10 }` (plus the shared yt-dlp options above).
+
+Enumerates the playlist/channel (same as `/download/playlist/probe`, capped by
+`MAX_PLAYLIST_DOWNLOAD_ITEMS`, default 25) and downloads each entry **sequentially** with
+`downloadUrl`, one HTTP request in and one HTTP response out. This is not queued — kept
+deliberately small/synchronous like `/download` itself. One entry failing doesn't abort the
+rest; each is reported individually.
+
+Success (`200`):
+
+```json
+{
+  "success": true,
+  "playlistTitle": "…",
+  "playlistId": "…",
+  "total": 2,
+  "succeeded": 1,
+  "failed": 1,
+  "results": [
+    { "url": "https://…", "title": "…", "success": true, "filename": "1700000000.mp4", "hasVideo": true },
+    { "url": "https://…", "title": "…", "success": false, "error": "…" }
+  ]
+}
+```
 
 ### `POST /transcode`
 
