@@ -219,47 +219,34 @@ function VideoPlayer({
   // The playback rate an external controller asked for (CAST drift correction),
   // re-applied after the element remounts.
   const desiredRateRef = useRef(1)
-  // The Cast SDK's RemotePlayer/RemotePlayerController (see the effect below) -
-  // shared, CastContext-wide objects that mirror whatever session is currently
-  // connected, not necessarily one this component started.
+  // Shared, CastContext-wide objects (see the effect below) that mirror
+  // whatever session is connected, not necessarily one this component started.
   const castRemotePlayerRef = useRef(null)
   const castRemotePlayerControllerRef = useRef(null)
-  // Set right before this component writes to the RemotePlayer itself, so the
-  // resulting IS_PAUSED_CHANGED isn't mistaken for the receiver's own remote
-  // (Google Home app, hardware remote) being used - mirrors programmaticSeekRef.
+  // Set before this component writes to the RemotePlayer, so the resulting
+  // IS_PAUSED_CHANGED isn't mistaken for the receiver's own remote - mirrors programmaticSeekRef.
   const castProgrammaticChangeRef = useRef(false)
-  // Set right before zeroing the local element's volume when casting starts,
-  // so handleVolumeChange doesn't persist that zero as the user's saved
-  // volume preference - mirrors programmaticSeekRef.
+  // Set before zeroing the local element's volume on cast start, so
+  // handleVolumeChange doesn't persist that zero as the saved preference.
   const programmaticVolumeRef = useRef(false)
-  // Mirrors memoizedSrc (declared further down, after streamUrl) - read from
-  // isCastingThisVideo below, which is called from the imperative handle's
-  // stable ([]) closure and so cannot close over the render-scoped constant
-  // directly.
+  // Mirrors memoizedSrc for isCastingThisVideo, which is called from the
+  // imperative handle's stable ([]) closure.
   const memoizedSrcRef = useRef(null)
-  // Mirrored so the Cast RemotePlayerController listener (a mount-time effect,
-  // not re-subscribed on every render) always calls the latest prop. There's
-  // no receiver-side equivalent for onSeekIntent: Cast's CURRENT_TIME_CHANGED
-  // fires continuously during ordinary playback, not just on a user scrub, so
-  // it can't be turned into a seek intent without a lot more machinery -
-  // position sync stays one-way (Watch Party clock -> receiver) for now.
+  // Mirrored for the Cast effect below, which isn't re-subscribed on every render.
   const onPlaybackIntentRef = useRef(onPlaybackIntent)
   useEffect(() => {
     onPlaybackIntentRef.current = onPlaybackIntent
   })
 
   /**
-   * Whether an active Cast session currently has *this* video's stream loaded
-   * on the receiver, as opposed to being merely connected - e.g. a session
-   * left over from a previous video (or another page) that the origin-scoped
-   * auto-join policy reattached to. Checked fresh on every call against the
-   * receiver's own loaded contentId rather than cached from Cast's events, so
-   * a Watch Party advancing to the next video without re-casting it falls
-   * back to driving the local element instead of seeking a receiver that's
-   * still playing the old one.
+   * Whether an active Cast session has *this* video's stream loaded on the
+   * receiver, not just connected - e.g. a session left over from a previous
+   * video that auto-joined this page. Checked against the receiver's own
+   * loaded contentId on every call, so a Watch Party advancing to the next
+   * video without re-casting it falls back to the local element instead of
+   * seeking a receiver still playing the old one.
    *
-   * @returns {boolean} True when the imperative handle below should drive the
-   *   Cast receiver instead of the local media element.
+   * @returns {boolean} True when the imperative handle should drive the Cast receiver.
    */
   function isCastingThisVideo() {
     const player = castRemotePlayerRef.current
@@ -372,9 +359,8 @@ function VideoPlayer({
       // quality change (key={memoizedSrc}), which resets rate to 1, and
       // handleLoadedMetadata puts this back.
       desiredRateRef.current = rate
-      // Chromecast's Default Media Receiver has no reliable continuous rate
-      // control - moot anyway, since useWatchPartyPlaybackSync never asks for
-      // a non-1 rate while getState().remote is true.
+      // No-op while casting: Chromecast has no reliable rate control, and the
+      // sync hook never asks for non-1 while getState().remote is true.
       if (isCastingThisVideo()) return
       const el = videoRef.current
       if (el) el.playbackRate = rate
@@ -834,13 +820,8 @@ function VideoPlayer({
     }
   }, [])
 
-  // Wires up the Cast SDK's RemotePlayer/RemotePlayerController - the same
-  // shared, CastContext-wide objects that mirror whatever session
-  // handleCastSdkPrompt's session.loadMedia() starts - so the imperative
-  // handle above can drive the receiver directly (see isCastingThisVideo),
-  // and so a pause/resume from the receiver's own remote (Google Home app,
-  // hardware remote) is reported back as a normal playback intent instead of
-  // silently diverging from the Watch Party.
+  // Wires up the RemotePlayer the imperative handle drives (isCastingThisVideo)
+  // and reports a pause/resume from the receiver's own remote as a playback intent.
   useEffect(() => {
     if (!castSdkAvailable || !window.cast?.framework) {
       return undefined
@@ -920,9 +901,6 @@ function VideoPlayer({
       }
       el?.pause()
       if (el) {
-        // Only at the moment casting starts - not persisted as the user's
-        // saved volume preference (see handleVolumeChange), and never reapplied
-        // afterwards, so they're free to raise it again.
         programmaticVolumeRef.current = true
         el.volume = 0
       }
