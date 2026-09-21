@@ -5,7 +5,7 @@ import { listMyPlaylists } from '../api/playlists.js'
 import { useWatchParty } from '../context/useWatchParty.js'
 import { useToast } from '../context/useToast.js'
 import VideoCard from './VideoCard.jsx'
-import RevealableSecret from './RevealableSecret.jsx'
+import ToggleSwitch from './ToggleSwitch.jsx'
 import './WatchPartyQueue.css'
 
 const SUGGESTION_LIMIT = 8
@@ -25,6 +25,8 @@ function WatchPartyQueue() {
     queue,
     playback,
     isOwner,
+    hideJoinInfo,
+    setHideJoinInfo,
     addToQueue,
     addPlaylistToQueue,
     removeFromQueue,
@@ -278,10 +280,19 @@ function WatchPartyQueue() {
         </div>
         <p className="watch-party-queue-meta">
           Code{' '}
-          <RevealableSecret label="join code">
+          {hideJoinInfo ? (
+            <span className="watch-party-queue-code-masked" aria-label="Join code hidden">••••••</span>
+          ) : (
             <code>{session?.code}</code>
-          </RevealableSecret>
+          )}
         </p>
+        <ToggleSwitch
+          id="watch-party-hide-join-info"
+          className="watch-party-queue-hide-join-info"
+          label="Hide Join Info"
+          checked={hideJoinInfo}
+          onChange={setHideJoinInfo}
+        />
       </div>
 
       <div className="watch-party-queue-controls">

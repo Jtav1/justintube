@@ -117,6 +117,15 @@
   letter-spacing: 1px;
 }
 
+.watch-party-queue-code-masked {
+  letter-spacing: 2px;
+  color: var(--text-h);
+}
+
+.watch-party-queue-hide-join-info {
+  margin-top: 6px;
+}
+
 .watch-party-queue-controls {
   display: flex;
   align-items: center;

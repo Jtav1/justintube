@@ -39,6 +39,7 @@ function StartWatchPartyPopover() {
   const {
     session,
     canManageSession,
+    hideJoinInfo,
     createFromPlaylist,
     createFromVideo,
     createEmpty,
@@ -260,16 +261,29 @@ function StartWatchPartyPopover() {
                   )}
                 </div>
               )}
-              {/* Concealed by default: this popover stays open on screen, screen shares included. */}
-              <RevealableSecret as="div" label="QR code" variant="blur">
+              {/* Concealed behind a click-to-reveal toggle when "Hide Join
+                  Info" (set on the Watch Party page) is on - this popover
+                  stays open on screen, screen shares included. Shown plainly
+                  when it's off. */}
+              {hideJoinInfo ? (
+                <RevealableSecret as="div" label="QR code" variant="blur">
+                  <span className="watch-party-popover-qr">
+                    <QRCodeSVG value={joinUrl} size={160} marginSize={2} />
+                  </span>
+                </RevealableSecret>
+              ) : (
                 <span className="watch-party-popover-qr">
                   <QRCodeSVG value={joinUrl} size={160} marginSize={2} />
                 </span>
-              </RevealableSecret>
+              )}
               <p className="watch-party-popover-code-label">Join code</p>
-              <RevealableSecret as="p" label="join code" className="watch-party-popover-code">
-                {session.code}
-              </RevealableSecret>
+              {hideJoinInfo ? (
+                <RevealableSecret as="p" label="join code" className="watch-party-popover-code">
+                  {session.code}
+                </RevealableSecret>
+              ) : (
+                <p className="watch-party-popover-code">{session.code}</p>
+              )}
               <button type="button" className="watch-party-popover-copy" onClick={handleCopyLink}>
                 <Copy size={14} /> Copy join link
               </button>

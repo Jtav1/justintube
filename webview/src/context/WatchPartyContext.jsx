@@ -6,6 +6,7 @@ import { WatchPartyContext } from './watch-party-context.js'
 import { useAuth } from './useAuth.js'
 import { useToast } from './useToast.js'
 import { readActiveWatchPartySessionId, writeActiveWatchPartySessionId } from '../lib/watch-party-session.js'
+import { readHideJoinInfo, writeHideJoinInfo } from '../lib/watch-party-hide-join-info.js'
 
 const MAX_ACTIVITY_ENTRIES = 50
 
@@ -103,6 +104,30 @@ export function WatchPartyProvider({ children }) {
   const [presence, setPresence] = useState([])
   const [activity, setActivity] = useState([])
   const [loading, setLoading] = useState(false)
+
+  // Whether the join code/QR should stay concealed (behind a click-to-reveal
+  // toggle) everywhere they're shown - the Watch Party page's sidebar and the
+  // TopBar popover both read this from here so a single "Hide Join Info"
+  // switch controls both. Persisted per session code (see
+  // watch-party-hide-join-info.js) rather than at initial state, since the
+  // code isn't known until the session snapshot arrives - adjusted during
+  // render, same pattern as `clearedFor` above.
+  const [hideJoinInfo, setHideJoinInfoState] = useState(false)
+  const [hideJoinInfoLoadedFor, setHideJoinInfoLoadedFor] = useState(null)
+  if (session?.code && session.code !== hideJoinInfoLoadedFor) {
+    setHideJoinInfoLoadedFor(session.code)
+    setHideJoinInfoState(readHideJoinInfo(session.code))
+  }
+
+  /**
+   * Sets and persists whether the join code/QR should stay concealed.
+   * @param {boolean} hidden
+   * @returns {void}
+   */
+  function setHideJoinInfo(hidden) {
+    setHideJoinInfoState(hidden)
+    writeHideJoinInfo(session?.code, hidden)
+  }
 
   const socketRef = useRef(null)
   // Estimated offset from the server's clock, in ms: serverNow ≈ Date.now() +
@@ -605,6 +630,8 @@ export function WatchPartyProvider({ children }) {
         ended,
         left,
         session,
+        hideJoinInfo,
+        setHideJoinInfo,
         queue,
         history,
         nowPlaying,
