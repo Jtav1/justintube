@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   DownloadValidationError,
   downloadAudioOnly,
+  downloadFormat,
   downloadPlaylist,
   downloadUrl,
   parseYtDlpOptions,
@@ -82,6 +83,34 @@ export function createDownloadRouter() {
       res.status(200).json({ success: true, filename });
     } catch (err) {
       sendDownloadError(res, "[download-audio]", err);
+    }
+  });
+
+  /**
+   * Downloads a URL in a specific, caller-chosen format id (re-validated
+   * against a live probe — see `downloadFormat`) and returns the saved
+   * basename.
+   *
+   * @param {import('express').Request} req Incoming request with
+   *   `{ url, formatId, cookies?, rateLimit?, retries? }`.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends JSON success or error payload.
+   */
+  router.post("/format", async (req, res) => {
+    logger.info(
+      `[download-format] request received: ${req.body?.url} (formatId=${req.body?.formatId})`,
+    );
+    try {
+      const options = parseYtDlpOptions(req.body);
+      const { filename, hasVideo } = await downloadFormat(
+        req.body?.url,
+        req.body?.formatId,
+        options,
+      );
+      logger.info(`[download-format] request succeeded: ${filename} (hasVideo=${hasVideo})`);
+      res.status(200).json({ success: true, filename, hasVideo });
+    } catch (err) {
+      sendDownloadError(res, "[download-format]", err);
     }
   });
 

@@ -141,6 +141,34 @@ curl -X POST http://localhost:3001/download/audio \
 Success: `{ "success": true, "filename": "<epoch>.<ext>" }`  
 Error: `{ "success": false, "error": "…" }`
 
+### `POST /download/format`
+
+JSON body `{ "url": "https://...", "formatId": "137" }` (plus the shared yt-dlp options above).
+
+Downloads a URL in a specific, caller-chosen format — as opposed to `POST /download`'s fixed
+≤1080p auto-selection. `formatId` must be one of the `formatId` values `POST /download/probe`
+returned for this same URL; **this is re-checked against a live probe on every request**, not
+trusted from whatever the caller last saw — formats vary per video and change over time. If
+`formatId` isn't currently available, the request fails with `400` and a message pointing back
+at `/download/probe`:
+
+```json
+{ "success": false, "error": "formatId \"999\" is not currently available for this URL — call POST /download/probe first to determine valid formats" }
+```
+
+When the chosen format is video-only (common for high-resolution formats), it's automatically
+paired with the best available audio track for muxing.
+
+```bash
+curl -X POST http://localhost:3001/download/format \
+  -H "Authorization: Bearer $INTERNAL_SERVICE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/watch?v=…","formatId":"137"}'
+```
+
+Success: `{ "success": true, "filename": "<epoch>.<ext>", "hasVideo": true|false }`  
+Error: `{ "success": false, "error": "…" }`
+
 ### `POST /download/probe`
 
 JSON body `{ "url": "https://..." }` (plus the shared yt-dlp options above).

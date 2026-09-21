@@ -62,6 +62,17 @@ const ALLOWED_AUDIO_FORMATS = new Set([
 ]);
 
 /**
+ * Allowed pattern for a yt-dlp format id (e.g. `"137"`, `"audio_only-0"`,
+ * `"hls-2500"`) — built directly into a `-f` selector string, so this both
+ * rejects obvious garbage and keeps that string free of selector syntax
+ * (spaces, `+`, `/`, brackets, quotes) a caller could otherwise use to widen
+ * the selection beyond the single id they claim to be requesting.
+ *
+ * @type {RegExp}
+ */
+const FORMAT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+/**
  * Format selector: best video+audio at 1080p or lower, with fallbacks. The
  * final `bestaudio` alternative lets audio-only sources (no format carries a
  * `height`) resolve instead of failing outright — `--merge-output-format`
@@ -213,6 +224,27 @@ export function validateOptionalAudioFormat(value) {
     );
   }
   return value.trim().toLowerCase();
+}
+
+/**
+ * Validates a `formatId` for {@link downloadFormat} — required, a non-empty
+ * string matching {@link FORMAT_ID_PATTERN}. Whether it's actually an
+ * available format for a given URL is checked separately, against a live
+ * probe, inside {@link downloadFormat} itself.
+ *
+ * @param {unknown} value Raw value from the request body.
+ * @returns {string} Trimmed, validated format id.
+ * @throws {DownloadValidationError} When missing or malformed.
+ */
+export function validateFormatId(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new DownloadValidationError("formatId is required and must be a string");
+  }
+  const trimmed = value.trim();
+  if (!FORMAT_ID_PATTERN.test(trimmed)) {
+    throw new DownloadValidationError("formatId contains unsupported characters");
+  }
+  return trimmed;
 }
 
 /**
@@ -476,6 +508,98 @@ export async function downloadAudioOnly(url, options = {}) {
   logger.info(`[import-audio ${stem}] completed: ${filename}`);
 
   return { filename };
+}
+
+/**
+ * Downloads a URL in a specific, caller-chosen format (by `formatId`), as
+ * opposed to `downloadUrl`'s fixed `FORMAT_SELECTOR` (≤1080p, automatic best
+ * pick). Always re-probes the URL first and rejects a `formatId` that isn't
+ * in the live result — formats aren't a fixed catalog per site, they vary
+ * per video and change over time, so the only reliable check is a fresh one
+ * right before downloading, not trusting whatever the caller last saw from
+ * `POST /download/probe`.
+ *
+ * When the chosen format is video-only (common for high-resolution adaptive
+ * formats), pairs it with the best available audio via a `"<formatId>+bestaudio/<formatId>"`
+ * selector — the `/` fallback still resolves to the plain format alone if
+ * the merge attempt isn't possible for some reason.
+ *
+ * @param {string} url Absolute http(s) URL to download.
+ * @param {string} formatId yt-dlp format id, validated against a live probe.
+ * @param {object} [options] Optional yt-dlp options (see {@link parseYtDlpOptions}).
+ * @returns {Promise<{ filename: string, hasVideo: boolean }>} Saved basename
+ *   (name + extension) and whether a video stream was found.
+ * @throws {DownloadValidationError} When `url`/`formatId` is invalid, or
+ *   `formatId` isn't currently available for this URL.
+ * @throws {Error} When yt-dlp fails or the output file is missing.
+ */
+export async function downloadFormat(url, formatId, options = {}) {
+  const validatedUrl = validateDownloadUrl(url);
+  const validatedFormatId = validateFormatId(formatId);
+  const { cookies, rateLimit, retries } = options;
+
+  const info = await probeUrl(validatedUrl, { cookies, rateLimit, retries });
+  const isAvailable = info.formats.some((format) => format.formatId === validatedFormatId);
+  if (!isAvailable) {
+    throw new DownloadValidationError(
+      `formatId "${validatedFormatId}" is not currently available for this URL — ` +
+        "call POST /download/probe first to determine valid formats",
+    );
+  }
+
+  const epoch = String(Math.floor(Date.now() / 1000));
+  const stem = nextEpochStem(epoch);
+  const outputTemplate = join(originalDir, `${stem}.%(ext)s`);
+
+  logger.info(
+    `[import-format ${stem}] started: ${validatedUrl} (formatId=${validatedFormatId})`,
+  );
+
+  const baseArgs = [
+    "--js-runtimes",
+    "node",
+    "--no-playlist",
+    "-f",
+    `${validatedFormatId}+bestaudio/${validatedFormatId}`,
+    "--merge-output-format",
+    "mp4",
+    ...buildOptionalYtDlpArgs({ rateLimit, retries }),
+    "-o",
+    outputTemplate,
+  ];
+
+  try {
+    await withCookiesFile(cookies, (cookieArgs) =>
+      execFileAsync("yt-dlp", [...baseArgs, ...cookieArgs, "--", validatedUrl], {
+        maxBuffer: 10 * 1024 * 1024,
+      }),
+    );
+  } catch (err) {
+    const stderr =
+      typeof err?.stderr === "string" && err.stderr.trim()
+        ? err.stderr.trim()
+        : err instanceof Error
+          ? err.message
+          : "yt-dlp failed";
+    logger.error({ stderr }, `[import-format ${stem}] failed`);
+    throw new Error(stderr);
+  }
+
+  const filename = findStemFile(stem);
+  if (!filename) {
+    const message = "yt-dlp finished but no output file was found";
+    logger.error({ message }, `[import-format ${stem}] failed`);
+    throw new Error(message);
+  }
+
+  const { videoWidth, videoHeight } = await probeVideoDimensions(
+    join(originalDir, filename),
+  );
+  const hasVideo = videoWidth != null && videoHeight != null;
+
+  logger.info(`[import-format ${stem}] completed: ${filename} (hasVideo=${hasVideo})`);
+
+  return { filename, hasVideo };
 }
 
 /**

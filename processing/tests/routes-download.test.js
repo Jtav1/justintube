@@ -4,6 +4,7 @@ import request from "supertest";
 
 const mockDownloadUrl = jest.fn();
 const mockDownloadAudioOnly = jest.fn();
+const mockDownloadFormat = jest.fn();
 const mockProbeUrl = jest.fn();
 const mockProbePlaylist = jest.fn();
 const mockDownloadPlaylist = jest.fn();
@@ -15,6 +16,7 @@ jest.unstable_mockModule("../lib/download.js", () => ({
   DownloadValidationError: class DownloadValidationError extends Error {},
   downloadUrl: mockDownloadUrl,
   downloadAudioOnly: mockDownloadAudioOnly,
+  downloadFormat: mockDownloadFormat,
   probeUrl: mockProbeUrl,
   probePlaylist: mockProbePlaylist,
   downloadPlaylist: mockDownloadPlaylist,
@@ -46,6 +48,7 @@ describe("POST /download", () => {
   afterEach(() => {
     mockDownloadUrl.mockReset();
     mockDownloadAudioOnly.mockReset();
+    mockDownloadFormat.mockReset();
     mockProbeUrl.mockReset();
     mockProbePlaylist.mockReset();
     mockDownloadPlaylist.mockReset();
@@ -139,6 +142,68 @@ describe("POST /download/audio", () => {
     const res = await request(createTestApp())
       .post("/download/audio")
       .send({ url: "https://example.com/watch?v=abc" });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ success: false, error: "yt-dlp failed" });
+  });
+});
+
+describe("POST /download/format", () => {
+  afterEach(() => {
+    mockDownloadFormat.mockReset();
+  });
+
+  test("passes url/formatId through and returns the saved filename", async () => {
+    mockDownloadFormat.mockResolvedValue({ filename: "123.mp4", hasVideo: true });
+
+    const res = await request(createTestApp())
+      .post("/download/format")
+      .send({ url: "https://example.com/watch?v=abc", formatId: "137" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, filename: "123.mp4", hasVideo: true });
+    expect(mockDownloadFormat).toHaveBeenCalledWith(
+      "https://example.com/watch?v=abc",
+      "137",
+      expect.any(Object),
+    );
+  });
+
+  test("returns 400 with a probe-first message when the format isn't available", async () => {
+    mockDownloadFormat.mockRejectedValue(
+      new DownloadValidationError(
+        'formatId "999" is not currently available for this URL — call POST /download/probe first to determine valid formats',
+      ),
+    );
+
+    const res = await request(createTestApp())
+      .post("/download/format")
+      .send({ url: "https://example.com/watch?v=abc", formatId: "999" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error).toMatch(/POST \/download\/probe/);
+  });
+
+  test("returns 400 on a missing formatId", async () => {
+    mockDownloadFormat.mockRejectedValue(
+      new DownloadValidationError("formatId is required and must be a string"),
+    );
+
+    const res = await request(createTestApp())
+      .post("/download/format")
+      .send({ url: "https://example.com/watch?v=abc" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test("returns 500 on a generic download failure", async () => {
+    mockDownloadFormat.mockRejectedValue(new Error("yt-dlp failed"));
+
+    const res = await request(createTestApp())
+      .post("/download/format")
+      .send({ url: "https://example.com/watch?v=abc", formatId: "137" });
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ success: false, error: "yt-dlp failed" });

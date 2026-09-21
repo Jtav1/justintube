@@ -6,6 +6,7 @@ import {
   FORMAT_SELECTOR,
   parseYtDlpOptions,
   validateDownloadUrl,
+  validateFormatId,
   validateOptionalAudioFormat,
   validateOptionalCookies,
   validateOptionalLimit,
@@ -124,6 +125,26 @@ describe("validateOptionalAudioFormat", () => {
 
   test("rejects an unrecognized format", () => {
     expect(() => validateOptionalAudioFormat("wma")).toThrow(DownloadValidationError);
+  });
+});
+
+describe("validateFormatId", () => {
+  test("accepts a typical yt-dlp format id", () => {
+    expect(validateFormatId("137")).toBe("137");
+    expect(validateFormatId(" audio_only-0 ")).toBe("audio_only-0");
+    expect(validateFormatId("hls-2500")).toBe("hls-2500");
+  });
+
+  test("rejects a missing/empty value", () => {
+    expect(() => validateFormatId(undefined)).toThrow(DownloadValidationError);
+    expect(() => validateFormatId("")).toThrow(DownloadValidationError);
+  });
+
+  test("rejects selector-syntax injection attempts", () => {
+    expect(() => validateFormatId("137+140")).toThrow(DownloadValidationError);
+    expect(() => validateFormatId("best/worst")).toThrow(DownloadValidationError);
+    expect(() => validateFormatId("137 140")).toThrow(DownloadValidationError);
+    expect(() => validateFormatId("[height<=1080]")).toThrow(DownloadValidationError);
   });
 });
 
