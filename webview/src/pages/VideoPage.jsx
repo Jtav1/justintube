@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { unhideVideo } from '../api/videos.js'
 import { getPlaylist, removePlaylistItem } from '../api/playlists.js'
 import { readAutoplayEnabled, writeAutoplayEnabled } from '../lib/autoplay.js'
+import { readPlaylistAutoplayEnabled, writePlaylistAutoplayEnabled } from '../lib/playlist-autoplay.js'
+import { readPlaylistShuffleEnabled } from '../lib/playlist-shuffle.js'
 import { prefetchVideo, getVideoOrPrefetched } from '../lib/videoPrefetchCache.js'
 import { useToast } from '../context/useToast.js'
 import { useIsMobile } from '../lib/viewport.js'
@@ -39,6 +41,17 @@ function VideoPage() {
   const [playlist, setPlaylist] = useState(null)
   const [reloadCount, setReloadCount] = useState(0)
   const [autoplayEnabled, setAutoplayEnabled] = useState(() => readAutoplayEnabled())
+  // Playlist autoplay is scoped per playlist (unlike the single-video/random
+  // toggle above), so it's reloaded whenever the active playlist changes -
+  // adjusted during render, same pattern as lastForcedRandomVideoId below.
+  const [playlistAutoplayEnabled, setPlaylistAutoplayEnabled] = useState(() =>
+    playlistId ? readPlaylistAutoplayEnabled(playlistId) : false,
+  )
+  const [loadedPlaylistAutoplayId, setLoadedPlaylistAutoplayId] = useState(playlistId)
+  if (playlistId !== loadedPlaylistAutoplayId) {
+    setLoadedPlaylistAutoplayId(playlistId)
+    setPlaylistAutoplayEnabled(playlistId ? readPlaylistAutoplayEnabled(playlistId) : false)
+  }
 
   // The video's own name, not the route's generic "Watch" - this is also what
   // Safari hands an AirPlay receiver, so an Apple TV shows the right thing.
@@ -128,19 +141,24 @@ function VideoPage() {
     setAutoplayEnabled(enabled)
   }
 
-  // Picks the autoplay target and warms its metadata + thumbnail only
-  // (never the media stream, to avoid over-fetching an unwatched video).
-  function handleNearEnd() {
-    if (nextVideoRef.current || suggestions.length === 0) {
-      return
-    }
-    const next = suggestions[Math.floor(Math.random() * suggestions.length)]
+  // Warms the autoplay target's metadata + thumbnail only (never the media
+  // stream, to avoid over-fetching an unwatched video), and remembers it so
+  // the countdown navigates to the exact item that was pre-warmed.
+  function warmNextVideo(next) {
     nextVideoRef.current = next
     prefetchVideo(next.videoId)
     if (next.thumbnailUrl) {
       const img = new Image()
       img.src = `${apiClient.defaults.baseURL}${next.thumbnailUrl}`
     }
+  }
+
+  // Picks the autoplay target from the suggestions rail.
+  function handleNearEnd() {
+    if (nextVideoRef.current || suggestions.length === 0) {
+      return
+    }
+    warmNextVideo(suggestions[Math.floor(Math.random() * suggestions.length)])
   }
 
   function handleAutoplayNext() {
@@ -157,6 +175,56 @@ function VideoPage() {
     // is a plain link with neither param, so that kind of navigation
     // intentionally does not carry either forward.
     navigate(`/video?v=${next.videoId}&random=1&autoplay=1`)
+  }
+
+  /**
+   * Picks the item after the current one in the playlist - the next item in
+   * order, or (when the playlist's shuffle toggle is on, see PlaylistQueue) a
+   * random other item - mirroring PlaylistQueue's own "Next" button so
+   * autoplay and manual skip never disagree about what "next" means.
+   * @returns {object|null} The next playlist item, or null if there isn't one.
+   */
+  function pickNextPlaylistItem() {
+    const items = playlist?.items ?? []
+    const currentIndex = items.findIndex((item) => item.videoId === videoId)
+    if (readPlaylistShuffleEnabled()) {
+      if (items.length < 2) {
+        return null
+      }
+      let index = Math.floor(Math.random() * items.length)
+      if (index === currentIndex) {
+        index = (index + 1) % items.length
+      }
+      return items[index]
+    }
+    const nextIndex = currentIndex + 1
+    return nextIndex < items.length ? items[nextIndex] : null
+  }
+
+  // Picks the autoplay target from the playlist itself.
+  function handlePlaylistNearEnd() {
+    if (nextVideoRef.current) {
+      return
+    }
+    const next = pickNextPlaylistItem()
+    if (next) {
+      warmNextVideo(next)
+    }
+  }
+
+  function handlePlaylistAutoplayNext() {
+    const next = nextVideoRef.current ?? pickNextPlaylistItem()
+    if (!next) {
+      return
+    }
+    navigate(`/video?v=${next.videoId}&list=${playlist.id}&autoplay=1`)
+  }
+
+  function handlePlaylistAutoplayChange(enabled) {
+    setPlaylistAutoplayEnabled(enabled)
+    if (playlistId) {
+      writePlaylistAutoplayEnabled(playlistId, enabled)
+    }
   }
 
   useEffect(() => {
@@ -253,10 +321,14 @@ function VideoPage() {
             <VideoPlayer
               video={video}
               onRemoveFromPlaylist={canEditPlaylist ? handleRemoveFromPlaylist : undefined}
-              autoplayEnabled={!playlist && autoplayEnabled}
-              onAutoplayNext={handleAutoplayNext}
-              onAutoplayChange={handleAutoplayChange}
-              onNearEnd={!playlist && autoplayEnabled ? handleNearEnd : undefined}
+              autoplayEnabled={playlist ? playlistAutoplayEnabled : autoplayEnabled}
+              onAutoplayNext={playlist ? handlePlaylistAutoplayNext : handleAutoplayNext}
+              onAutoplayChange={playlist ? handlePlaylistAutoplayChange : handleAutoplayChange}
+              onNearEnd={
+                (playlist ? playlistAutoplayEnabled : autoplayEnabled)
+                  ? (playlist ? handlePlaylistNearEnd : handleNearEnd)
+                  : undefined
+              }
               autoplayOnLoad={autoplayOnLoad}
               expanded={expanded && !isMobile}
               onToggleExpand={isMobile ? undefined : () => setExpanded((prev) => !prev)}
@@ -265,7 +337,12 @@ function VideoPage() {
             <VideoComments video={video} />
           </div>
           {playlist ? (
-            <PlaylistQueue playlist={playlist} currentVideoId={videoId} />
+            <PlaylistQueue
+              playlist={playlist}
+              currentVideoId={videoId}
+              autoplayEnabled={playlistAutoplayEnabled}
+              onAutoplayChange={handlePlaylistAutoplayChange}
+            />
           ) : (
             <VideoSuggested
               video={video}

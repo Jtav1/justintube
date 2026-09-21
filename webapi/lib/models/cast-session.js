@@ -41,6 +41,14 @@ export const CastSession = sequelize.define(
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    // Owner/admin-controlled (see lib/cast/queue-service.js
+    // setSessionAutoAdvance): whether advanceOnPlaybackEnd promotes the next
+    // queued item automatically, or holds there until someone skips.
+    autoAdvanceEnabled: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
     playbackStatus: constrainedString(["playing", "paused"], {
       allowNull: false,
       defaultValue: "paused",

@@ -38,6 +38,7 @@ function WatchPartyQueue() {
     endActiveSession,
     canManageSession,
     renameSession,
+    setAutoAdvance,
   } = useWatchParty()
   const { error: toastError, info: toastInfo } = useToast()
 
@@ -162,6 +163,14 @@ function WatchPartyQueue() {
       await moveInQueue(item.id, currentIndex + direction)
     } catch (err) {
       toastError(err.message || 'Failed to reorder the queue.')
+    }
+  }
+
+  async function handleToggleAutoAdvance(enabled) {
+    try {
+      await setAutoAdvance(enabled)
+    } catch (err) {
+      toastError(err.message || 'Failed to update autoplay.')
     }
   }
 
@@ -293,6 +302,14 @@ function WatchPartyQueue() {
           checked={hideJoinInfo}
           onChange={setHideJoinInfo}
         />
+        <ToggleSwitch
+          id="watch-party-auto-advance"
+          className="watch-party-queue-autoplay"
+          label="Autoplay"
+          checked={session?.autoAdvanceEnabled ?? true}
+          disabled={!canManageSession}
+          onChange={handleToggleAutoAdvance}
+        />
       </div>
 
       <div className="watch-party-queue-controls">
@@ -309,6 +326,7 @@ function WatchPartyQueue() {
           type="button"
           className="watch-party-queue-transport watch-party-queue-transport-primary"
           onClick={handleTogglePlayback}
+          disabled={!nowPlaying}
           aria-label={playback.status === 'playing' ? 'Pause' : 'Play'}
           title={playback.status === 'playing' ? 'Pause' : 'Play'}
         >
@@ -329,6 +347,12 @@ function WatchPartyQueue() {
         <div className="watch-party-queue-now-playing">
           <p className="watch-party-queue-section-label">Now playing</p>
           <VideoCard video={nowPlaying.video} orientation="horizontal" active hideMenu />
+        </div>
+      )}
+      {!nowPlaying && queue.length > 0 && (
+        <div className="watch-party-queue-now-playing">
+          <p className="watch-party-queue-section-label">Autoplay is off</p>
+          <p className="watch-party-queue-meta">Use Skip above to play the next video.</p>
         </div>
       )}
 

@@ -243,6 +243,7 @@ export async function loadSessionSnapshot(session) {
       title: session.title,
       ownerUserId: session.ownerUserId,
       sourcePlaylistId: session.sourcePlaylistId,
+      autoAdvanceEnabled: session.autoAdvanceEnabled,
       createdAt: session.createdAt,
     },
     playback: playbackSnapshot(session),
@@ -404,6 +405,12 @@ export async function promoteNextQueuedItemIfIdle(session) {
  * instead of double-advancing the queue. Omitted falls back to unconditional
  * behaviour for older clients.
  *
+ * The finished item still moves to `"played"` regardless of
+ * `session.autoAdvanceEnabled` - only the *promotion* of the next queued item
+ * is gated, so turning auto-advance off holds the queue with nothing
+ * `"playing"` (nowPlaying null, the remaining items still queued) until
+ * someone calls `skip`/`controlPlayback` or auto-advance is turned back on.
+ *
  * @param {object} params
  * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
  * @param {number} [params.queueItemId] CAST_QUEUE_ITEMS id the reporter finished; ignored when absent.
@@ -434,7 +441,9 @@ export async function advanceOnPlaybackEnd({ session, queueItemId }) {
   session.lastActivityAt = new Date();
   await session.save();
 
-  await promoteNextQueuedItemIfIdle(session);
+  if (session.autoAdvanceEnabled) {
+    await promoteNextQueuedItemIfIdle(session);
+  }
   return loadSessionSnapshot(session);
 }
 
@@ -1053,6 +1062,40 @@ export async function renameSession({ session, actingUser, actingRole, title }) 
   }
 
   session.title = title;
+  session.lastActivityAt = new Date();
+  await session.save();
+
+  return loadSessionSnapshot(session);
+}
+
+/**
+ * Sets whether a session auto-advances to the next queued item when the
+ * current one finishes (owner or admin) - see {@link advanceOnPlaybackEnd}
+ * for what happens while it's off.
+ *
+ * @param {object} params
+ * @param {import('sequelize').Model} params.session CAST_SESSIONS row.
+ * @param {import('sequelize').Model} params.actingUser The user requesting the change.
+ * @param {{ name?: string }} [params.actingRole] The caller's role, so admins can
+ *   change any session. Omitted callers are owner-only.
+ * @param {boolean} params.enabled New auto-advance setting.
+ * @returns {Promise<object>} The updated session's {@link loadSessionSnapshot} result.
+ * @throws {CastServiceError} 403 if the caller is neither owner nor admin, 409 if already ended.
+ */
+export async function setSessionAutoAdvance({ session, actingUser, actingRole, enabled }) {
+  assertSessionActive(session);
+
+  const isOwner = Number(actingUser.id) === Number(session.ownerUserId);
+  const isAdmin = actingRole?.name === "admin";
+  if (!isOwner && !isAdmin) {
+    throw new CastServiceError(
+      403,
+      "forbidden",
+      "Only the session owner or an admin can change auto-advance.",
+    );
+  }
+
+  session.autoAdvanceEnabled = Boolean(enabled);
   session.lastActivityAt = new Date();
   await session.save();
 

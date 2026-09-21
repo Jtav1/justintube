@@ -122,7 +122,8 @@
   color: var(--text-h);
 }
 
-.watch-party-queue-hide-join-info {
+.watch-party-queue-hide-join-info,
+.watch-party-queue-autoplay {
   margin-top: 6px;
 }
 
