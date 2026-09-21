@@ -3,11 +3,11 @@ import './ToggleSwitch.css'
 /**
  * A labeled iOS-style toggle switch backed by a native checkbox for
  * accessibility (keyboard focus, screen readers, form semantics).
- * @param {{ checked: boolean, onChange: (checked: boolean) => void, label?: string, id?: string, disabled?: boolean }} props
+ * @param {{ checked: boolean, onChange: (checked: boolean) => void, label?: string, id?: string, disabled?: boolean, className?: string }} props
  */
-function ToggleSwitch({ checked, onChange, label, id, disabled = false }) {
+function ToggleSwitch({ checked, onChange, label, id, disabled = false, className = '' }) {
   return (
-    <label className="toggle-switch-group" htmlFor={id}>
+    <label className={`toggle-switch-group ${className}`.trim()} htmlFor={id}>
       {label && <span className="toggle-switch-label">{label}</span>}
       <span className="toggle-switch">
         <input
