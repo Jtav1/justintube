@@ -297,6 +297,11 @@
   gap: 4px;
 }
 
+.watch-party-queue-item .video-card-horizontal {
+  flex: 1;
+  min-width: 0;
+}
+
 .watch-party-queue-item .video-card-horizontal .video-card-thumb {
   width: 100px;
 }
