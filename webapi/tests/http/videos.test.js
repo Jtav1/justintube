@@ -327,6 +327,25 @@ describe("Video discovery and metadata endpoints", () => {
       ]);
     });
 
+    test("omits the original rendition for an upload still downloading (no storagePath yet)", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "importing-owner-key-1");
+      const upload = await seedUpload({
+        status: "downloading",
+        storagePath: "",
+        originalFilename: "",
+        fileExtension: "",
+        userId: owner.id,
+      });
+      await seedMetadata(upload.id, { title: "Importing", visibility: "private" });
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}`)
+        .set("Authorization", "Bearer importing-owner-key-1");
+
+      expect(res.status).toBe(200);
+      expect(res.body.renditions).toEqual([]);
+    });
+
     test("includes this video's own tags", async () => {
       const upload = await seedUpload();
       await seedMetadata(upload.id, { title: "Tagged", visibility: "public" });
@@ -533,6 +552,25 @@ describe("Video discovery and metadata endpoints", () => {
       const res = await client.get(`/api/v1/videos/${upload.id}/stream`);
 
       expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for quality=original on an upload still downloading, instead of crashing", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "stream-downloading-owner-key");
+      const upload = await seedUpload({
+        userId: owner.id,
+        status: "downloading",
+        storagePath: "",
+        originalFilename: "",
+        fileExtension: "",
+      });
+      await seedMetadata(upload.id, { visibility: "private" });
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/stream?quality=original`)
+        .set("Authorization", "Bearer stream-downloading-owner-key");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("not_found");
     });
   });
 

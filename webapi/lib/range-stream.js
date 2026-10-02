@@ -81,6 +81,14 @@ export async function streamFileWithRangeSupport(
     return;
   }
 
+  if (!stats.isFile()) {
+    res.status(404).json({
+      error: "not_found",
+      message: "Media file not found on disk.",
+    });
+    return;
+  }
+
   const fileSize = stats.size;
   const range = parseRange(req.headers.range, fileSize);
 
@@ -98,7 +106,7 @@ export async function streamFileWithRangeSupport(
   if (range === null) {
     res.status(200);
     res.setHeader("Content-Length", String(fileSize));
-    createReadStream(absolutePath).pipe(res);
+    pipeWithErrorHandling(createReadStream(absolutePath), res);
     return;
   }
 
@@ -106,5 +114,30 @@ export async function streamFileWithRangeSupport(
   res.status(206);
   res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
   res.setHeader("Content-Length", String(end - start + 1));
-  createReadStream(absolutePath, { start, end }).pipe(res);
+  pipeWithErrorHandling(createReadStream(absolutePath, { start, end }), res);
+}
+
+/**
+ * Pipes a file read stream to the response, guarding against an unhandled
+ * `'error'` event (e.g. the file disappearing or being replaced by a
+ * directory between the `stat` check and the read) crashing the process.
+ *
+ * @param {import('node:fs').ReadStream} readStream Source file stream.
+ * @param {import('express').Response} res Express response to pipe into.
+ * @returns {void}
+ */
+function pipeWithErrorHandling(readStream, res) {
+  readStream.on("error", (err) => {
+    console.error("streamFileWithRangeSupport failed:", err);
+    if (!res.headersSent) {
+      res.status(404).json({
+        error: "not_found",
+        message: "Media file not found on disk.",
+      });
+    } else {
+      res.destroy();
+    }
+    readStream.destroy();
+  });
+  readStream.pipe(res);
 }

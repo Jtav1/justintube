@@ -439,6 +439,18 @@ function VideoPlayer({
       ? `${apiClient.defaults.baseURL}${selectedRendition.streamUrl}`
       : null
 
+  // No rendition and no embed video means the server has no playable file for
+  // this upload at all (e.g. an import that never finished downloading) -
+  // the <video>/<audio> element below would otherwise just sit there with no
+  // src and no native error event, silently showing nothing. Toast once per
+  // video rather than leaving the viewer staring at a blank player.
+  useEffect(() => {
+    if (!streamUrl) {
+      toastError('This video has no playable file. It may still be processing, or the upload failed.')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video.id, streamUrl])
+
   const canEdit =
     video.viewerPermission === 'owner' || video.viewerPermission === 'edit'
   const isModerator = Boolean(user) && (user.role === 'moderator' || user.role === 'admin')
@@ -778,6 +790,7 @@ function VideoPlayer({
     }
 
     setPlaybackError(true)
+    toastError('Playback failed. The video file may be missing or corrupted.')
     onVideoError?.()
   }
 
@@ -1362,7 +1375,13 @@ function VideoPlayer({
             </button>
           </div>
         )}
-        {playbackError && (
+        {!streamUrl && (
+          <div className="video-player-error-overlay">
+            <VideoOff size={32} />
+            <p>This video has no playable file. It may still be processing, or the upload failed.</p>
+          </div>
+        )}
+        {streamUrl && playbackError && (
           <div className="video-player-error-overlay">
             <TriangleAlert size={32} />
             <p>Playback failed. This is usually temporary.</p>

@@ -1098,16 +1098,17 @@ async function importVideo(req, res) {
  * created) and unlinks any file it had written, so a failed
  * `POST /videos/import` attempt never leaves a persisted record or an
  * orphaned file behind. Logs `statusMessage` server-side since it's no
- * longer stored anywhere the client can read it.
+ * longer stored anywhere the client can read it. Exported so the stale-import
+ * reconcile cron ({@link module:lib/import-reconcile}) can reuse it for
+ * imports abandoned by a mid-download process restart/crash.
  *
- * @private
  * @param {import('sequelize').Model} upload Placeholder upload row to roll back.
  * @param {string} statusMessage Human-readable failure reason, logged only.
  * @param {string[]} [extraFiles] Extra absolute paths to unlink (e.g. a
  *   downloaded source file that never got renamed to `upload.storagePath`).
  * @returns {Promise<void>} Resolves once the row and files are gone.
  */
-async function rollbackFailedImport(upload, statusMessage, extraFiles = []) {
+export async function rollbackFailedImport(upload, statusMessage, extraFiles = []) {
   logger.error({ statusMessage }, `[import] rolled back failed import for ${upload.videoId}`);
 
   const versions = await FileVersion.findAll({ where: { originalUploadId: upload.id } });

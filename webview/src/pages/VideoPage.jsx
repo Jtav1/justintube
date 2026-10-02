@@ -99,13 +99,16 @@ function VideoPage() {
         }
       } catch (err) {
         if (!cancelled) {
-          if (err?.response?.data?.error === 'hidden_by_viewer') {
+          const code = err?.response?.data?.error
+          if (code === 'hidden_by_viewer') {
             setHiddenByViewer(true)
+          } else if (code === 'not_found') {
+            setError("This video doesn't exist or may have been removed.")
+            toastError("This video doesn't exist or may have been removed.")
           } else {
-            toastError('Failed to load video. Does this video exist?')
             setError('This video is unavailable right now.')
+            toastError('Failed to load video. Please try again later.')
           }
-          toastError('This video is unavailable right now.')
         }
       } finally {
         if (!cancelled) {
