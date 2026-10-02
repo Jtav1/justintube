@@ -679,7 +679,12 @@ export async function loadRenditions(upload) {
   const renditions = completeVersions.map((version) =>
     serializeFileVersion(upload.id, version),
   );
-  renditions.push(serializeOriginalRendition(upload));
+  // An in-progress (or never-finished) import leaves storagePath empty until
+  // continueImport writes the real file — don't advertise an "original"
+  // rendition that points at a file that doesn't exist yet (or never will).
+  if (upload.storagePath) {
+    renditions.push(serializeOriginalRendition(upload));
+  }
   return renditions;
 }
 
@@ -2533,6 +2538,10 @@ export function createVideosRouter() {
         typeof req.query.quality === "string" ? req.query.quality.trim() : "";
 
       if (requestedQuality === "original") {
+        if (!upload.storagePath) {
+          sendNotFound(res);
+          return;
+        }
         const absolutePath = resolveMediaPath(upload.storagePath);
         await streamFileWithRangeSupport(
           req,
