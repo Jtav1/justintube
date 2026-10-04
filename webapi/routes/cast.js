@@ -17,6 +17,7 @@ import {
   removeQueueItem,
   renameSession,
   reorderQueueItem,
+  setSessionAutoAdvance,
 } from "../lib/cast/queue-service.js";
 import {
   disconnectMember,
@@ -995,6 +996,86 @@ export function createCastRouter() {
       if (handleServiceError(res, err)) return;
       logger.error({ err }, "renameCastSession failed");
       res.status(500).json({ error: "internal_error", message: "Failed to rename CAST session." });
+    }
+  });
+
+  /**
+   * Sets whether a session auto-advances to the next queued item once the
+   * current one finishes. Owner or admin.
+   * PATCH /api/v1/cast/:id/auto-advance
+   * Auth: required, session owner or admin.
+   *
+   * @openapi
+   * /api/v1/cast/{id}/auto-advance:
+   *   patch:
+   *     tags: [Cast]
+   *     summary: Set a CAST session's auto-advance setting
+   *     operationId: setCastSessionAutoAdvance
+   *     security:
+   *       - cookieAuth: []
+   *       - bearerApiKey: []
+   *     parameters:
+   *       - $ref: "#/components/parameters/CsrfTokenHeader"
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [enabled]
+   *             properties:
+   *               enabled:
+   *                 type: boolean
+   *     responses:
+   *       "200":
+   *         description: Updated session snapshot
+   *       "400":
+   *         description: Invalid id or enabled
+   *       "403":
+   *         description: Caller is neither the session owner nor an admin
+   *       "404":
+   *         description: Session not found
+   *       "409":
+   *         description: The session has ended
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the updated session snapshot or an error response.
+   */
+  router.patch("/cast/:id/auto-advance", requireAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        sendInvalidId(res);
+        return;
+      }
+      if (typeof req.body?.enabled !== "boolean") {
+        res.status(400).json({ error: "invalid_body", message: "enabled must be a boolean." });
+        return;
+      }
+
+      const session = await loadSessionById(id);
+      const snapshot = await setSessionAutoAdvance({
+        session,
+        actingUser: req.user,
+        actingRole: req.authRole,
+        enabled: req.body.enabled,
+      });
+      await notifySessionChanged(session.id);
+      notifyActivity(session.id, {
+        type: "auto_advance_changed",
+        actorName: displayNameFor(req.user),
+        text: `${displayNameFor(req.user)} turned autoplay ${req.body.enabled ? "on" : "off"}.`,
+      });
+      res.status(200).json(snapshot);
+    } catch (err) {
+      if (handleServiceError(res, err)) return;
+      logger.error({ err }, "setCastSessionAutoAdvance failed");
+      res.status(500).json({ error: "internal_error", message: "Failed to update auto-advance." });
     }
   });
 

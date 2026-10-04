@@ -28,6 +28,7 @@ function WatchPartyDisplayPage() {
   const {
     session,
     nowPlaying,
+    queue,
     playback,
     members,
     joinError,
@@ -176,6 +177,8 @@ function WatchPartyDisplayPage() {
           onPlaybackIntent={onPlaybackIntent}
           onSeekIntent={onSeekIntent}
         />
+      ) : queue.length > 0 ? (
+        <p className="watch-party-display-empty">Autoplay is off - waiting for someone to skip ahead.</p>
       ) : (
         <p className="watch-party-display-empty">Waiting for a video…</p>
       )}

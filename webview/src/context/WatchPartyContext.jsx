@@ -473,6 +473,18 @@ export function WatchPartyProvider({ children }) {
   }
 
   /**
+   * Sets whether the active session auto-advances to the next queued item
+   * once the current one finishes (owner or admin). The server broadcasts
+   * `state:sync` afterwards, so local state updates through the socket.
+   * @param {boolean} enabled
+   * @returns {Promise<void>}
+   */
+  async function setAutoAdvance(enabled) {
+    if (!session) return
+    await watchPartyApi.setWatchPartyAutoAdvance(session.id, enabled)
+  }
+
+  /**
    * The server's current clock, in epoch ms, per the latest `time:sync`
    * estimate. Every CAST playback calculation goes through this rather than
    * `Date.now()` - a client whose wall clock is off by a few seconds would
@@ -651,6 +663,7 @@ export function WatchPartyProvider({ children }) {
         leaveActiveSession,
         leaveSession,
         renameSession,
+        setAutoAdvance,
         addToQueue,
         addPlaylistToQueue,
         removeFromQueue,

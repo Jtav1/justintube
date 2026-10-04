@@ -129,6 +129,18 @@ export async function renameWatchParty(id, title) {
 }
 
 /**
+ * Sets whether a Watch Party auto-advances to the next queued item once the
+ * current one finishes. Owner or admin.
+ * @param {string|number} id
+ * @param {boolean} enabled
+ * @returns {Promise<object>} Updated session snapshot.
+ */
+export async function setWatchPartyAutoAdvance(id, enabled) {
+  const res = await apiClient.patch(`/api/v1/cast/${id}/auto-advance`, { enabled })
+  return res.data
+}
+
+/**
  * Leaves a Watch Party, dropping the caller's own membership. The party keeps
  * running for everyone else.
  * @param {string|number} id
