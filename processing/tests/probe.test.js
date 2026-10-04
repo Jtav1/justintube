@@ -2,6 +2,7 @@ import { describe, expect, test } from "@jest/globals";
 import {
   heightToResolution,
   mimeTypeForContainer,
+  shouldSkipHlsForSource,
   shouldSkipProfileForOrientation,
   shouldSkipProfileForSource,
 } from "../lib/probe.js";
@@ -127,5 +128,29 @@ describe("shouldSkipProfileForOrientation", () => {
         { videoWidth: 1920, videoHeight: 1080 },
       ),
     ).toBe(false);
+  });
+});
+
+describe("shouldSkipHlsForSource", () => {
+  test("skips when both axes fall below 1080", () => {
+    expect(shouldSkipHlsForSource({ videoWidth: 854, videoHeight: 480 })).toBe(true);
+    expect(shouldSkipHlsForSource({ videoWidth: 480, videoHeight: 854 })).toBe(true);
+  });
+
+  test("keeps a source whose width reaches 1080 even if height doesn't (e.g. 720p or ultrawide)", () => {
+    expect(shouldSkipHlsForSource({ videoWidth: 1280, videoHeight: 720 })).toBe(false);
+    expect(shouldSkipHlsForSource({ videoWidth: 1080, videoHeight: 600 })).toBe(false);
+  });
+
+  test("keeps a source whose height reaches 1080 even if width doesn't (e.g. portrait)", () => {
+    expect(shouldSkipHlsForSource({ videoWidth: 600, videoHeight: 1080 })).toBe(false);
+  });
+
+  test("keeps a source at or above 1080 on both axes", () => {
+    expect(shouldSkipHlsForSource({ videoWidth: 1920, videoHeight: 1080 })).toBe(false);
+  });
+
+  test("does not skip when source dimensions are unknown", () => {
+    expect(shouldSkipHlsForSource({ videoWidth: null, videoHeight: null })).toBe(false);
   });
 });

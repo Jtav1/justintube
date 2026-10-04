@@ -15,6 +15,7 @@ import {
   probeHasVideoStream,
   probeVideoDimensions,
   probeVideoDuration,
+  shouldSkipHlsForSource,
   shouldSkipProfileForOrientation,
   shouldSkipProfileForSource,
 } from "../lib/probe.js";
@@ -65,7 +66,10 @@ export function createTranscodeRouter({
    * usable on this deployment or this profile's codec isn't in the
    * configured encoder allowlist. Finally, profiles whose orientation
    * (horizontal/vertical) doesn't match the source's orientation are
-   * skipped; remaining jobs are enqueued normally.
+   * skipped. An `"hls"` ("Best" quality) job is skipped when the source's
+   * probed dimensions fall below `HLS_MINIMUM_DIMENSION_PX` on both axes -
+   * not worth a second packaged copy of an already-small source (see
+   * `shouldSkipHlsForSource`). Remaining jobs are enqueued normally.
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -182,6 +186,14 @@ export function createTranscodeRouter({
             jobId: job.jobId,
             profileId: job.profile.id,
             reason: "profile_orientation_mismatch",
+          });
+          continue;
+        }
+        if (job.kind === "hls" && shouldSkipHlsForSource(source)) {
+          skipped.push({
+            jobId: job.jobId,
+            profileId: null,
+            reason: "source_below_minimum_hls_resolution",
           });
           continue;
         }

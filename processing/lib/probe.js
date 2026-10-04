@@ -374,6 +374,43 @@ export function shouldSkipProfileForOrientation(profile, source) {
 }
 
 /**
+ * Minimum width or height, in pixels, a source must reach for `"hls"`
+ * ("Best" quality) packaging to be worthwhile - below this, the original MP4
+ * download/progressive-stream is already close enough to instant that the
+ * adaptive-seeking benefit isn't worth a second packaged copy.
+ *
+ * @type {number}
+ */
+export const HLS_MINIMUM_DIMENSION_PX = 1080;
+
+/**
+ * Returns true when a source's probed dimensions are both below
+ * {@link HLS_MINIMUM_DIMENSION_PX} - neither its width nor its height reaches
+ * 1080px - so an `"hls"` job for it should be skipped. Unknown dimensions
+ * (audio-only source, or a failed probe) never cause a skip here - there's
+ * nothing to compare, so this fails open same as `shouldSkipProfileForSource`.
+ *
+ * @param {{ videoWidth: number|null, videoHeight: number|null }} source
+ *   Probed source stream dimensions.
+ * @returns {boolean} `true` when the `"hls"` job should be skipped.
+ */
+export function shouldSkipHlsForSource(source) {
+  const sourceWidth = source?.videoWidth;
+  const sourceHeight = source?.videoHeight;
+  if (
+    !Number.isInteger(sourceWidth) ||
+    sourceWidth <= 0 ||
+    !Number.isInteger(sourceHeight) ||
+    sourceHeight <= 0
+  ) {
+    // Cannot compare — do not skip (fail open).
+    return false;
+  }
+
+  return sourceWidth < HLS_MINIMUM_DIMENSION_PX && sourceHeight < HLS_MINIMUM_DIMENSION_PX;
+}
+
+/**
  * Probes a media file with ffprobe and returns its duration in whole seconds.
  *
  * @param {string} filePath Absolute path to the media file.
