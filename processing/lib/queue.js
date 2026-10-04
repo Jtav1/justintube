@@ -1,5 +1,4 @@
-import { stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { stat } from "node:fs/promises";
 import { DelayedError, Queue, Worker } from "bullmq";
 import {
   notifyContentHashComplete,
@@ -10,8 +9,6 @@ import {
   notifyFileVersionFailed,
   notifyHlsComplete,
   notifyHlsFailed,
-  notifyHlsMasterComplete,
-  notifyHlsMasterFailed,
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
   notifySubtitleComplete,
@@ -26,7 +23,6 @@ import {
   resolveSubtitleOutputPath,
   resolveThumbnailInputPath,
   resolveThumbnailOutputPath,
-  resolveTranscodedInputPath,
   resolveTranscodedOutputPath,
 } from "./media-paths.js";
 import {
@@ -43,11 +39,9 @@ import {
   buildEmbeddedThumbnailFfmpegArgs,
   buildFfmpegArgs,
   buildHlsFfmpegArgs,
-  buildHlsMasterPlaylist,
   buildNormalizeFfmpegArgs,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
-  HLS_MASTER_PLAYLIST_FILENAME,
   HLS_OUTPUT_FILENAMES,
   runFfmpeg,
 } from "./transcode.js";
@@ -83,16 +77,12 @@ export const MAX_HASH_JOB_RUNS = 7;
  * second-to-lowest priority — cheap, but not urgent, and never something a
  * user is actively waiting on the way they are a thumbnail/rendition — and
  * duplicate-upload hash probes always sort dead last. `hls` packaging is tied
- * with `subtitle` - it never blocks anything user-facing, since the flat MP4
- * rendition it derives from is already complete and playable by the time an
- * `hls` job is even enqueued. `hls-master` sorts just after `hls` - a caller
- * only enqueues it once every sibling `hls` job it references has already
- * completed, so by construction it's never actually waiting behind them, but
- * it still shouldn't jump ahead of a fresh rendition/thumbnail from another
- * upload. Priority only affects ordering among jobs already waiting - it
+ * with `subtitle` - it never blocks anything user-facing, since it's a cheap
+ * remux of the already-uploaded original and nothing else depends on it
+ * finishing. Priority only affects ordering among jobs already waiting - it
  * does not preempt a job a worker has already started.
  *
- * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, "hls-master": number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
@@ -101,7 +91,6 @@ export const JOB_PRIORITY_BY_KIND = {
   embed: 3,
   subtitle: 4,
   hls: 4,
-  "hls-master": 5,
   hash: 5,
 };
 
@@ -594,23 +583,23 @@ async function processNormalizeJob(job) {
 }
 
 /**
- * Processes a single HLS-packaging job: remux an already-completed rendition
- * (under `/media/transcoded`, not `/media/original` - see
- * `resolveTranscodedInputPath`) into single-file byte-range fMP4 HLS. Unlike
- * every other job kind, this one's input is a *derived* artifact (another
- * job's output), not the original upload's source file - `inputFilename`
- * here is the rendition's own relative storage path, threaded through as
- * this (single-job) batch's shared `filename` by the caller.
+ * Processes a single HLS-packaging job: remux the original upload (under
+ * `/media/original`, not a transcoded rendition - see
+ * `resolveOriginalInputPath`) into single-file byte-range fMP4 HLS, so a
+ * video player gets adaptive seeking/partial-download playback without any
+ * quality loss - the original is always the highest-quality copy available,
+ * so it's the only source this job ever packages (renditions stay plain MP4
+ * downloads, served progressively).
  *
  * A bitrate probe failure is non-fatal - the job still completes and reports
- * `bitRateBps: null`, letting the API fall back to an estimate for the master
- * playlist's `BANDWIDTH` value rather than failing HLS packaging entirely
- * over a missing metric.
+ * `bitRateBps: null` rather than failing HLS packaging entirely over a
+ * missing metric the API only uses for display purposes.
  *
  * @private
  * @param {import('bullmq').Job} job BullMQ job whose data includes
- *   `inputFilename` (a rendition's relative path) and `outputFilename` (the
- *   job's output directory, not a file - see `resolveHlsOutputDir`).
+ *   `inputFilename` (the original upload's relative path) and
+ *   `outputFilename` (the job's output directory, not a file - see
+ *   `resolveHlsOutputDir`).
  * @returns {Promise<{ playlistPath: string, bitRateBps: number|null }>}
  *   Result payload stored on the completed job.
  * @throws {Error} When the input is missing or ffmpeg fails.
@@ -625,7 +614,7 @@ async function processHlsJob(job) {
 
   await job.updateProgress(10);
 
-  const inputPath = resolveTranscodedInputPath(inputFilename);
+  const inputPath = resolveOriginalInputPath(inputFilename);
   const outputDir = resolveHlsOutputDir(outputFilename);
   const args = buildHlsFfmpegArgs({ inputPath, outputDir });
 
@@ -643,7 +632,7 @@ async function processHlsJob(job) {
     );
   }
 
-  const playlistPath = `${outputFilename}/${HLS_OUTPUT_FILENAMES.playlist}`;
+  const playlistPath = `transcoded/${outputFilename}/${HLS_OUTPUT_FILENAMES.playlist}`;
 
   const notify = await notifyHlsComplete(jobId, { playlistPath, bitRateBps });
   if (!notify.ok) {
@@ -658,55 +647,6 @@ async function processHlsJob(job) {
   logger.info(`[hls ${jobId}] processing completed: ${playlistPath}`);
 
   return { playlistPath, bitRateBps };
-}
-
-/**
- * Processes a single master-playlist job: write the top-level `.m3u8` that
- * ties every rendition's already-packaged `"hls"` variant playlist together
- * for adaptive bitrate switching. No ffmpeg involved and no filesystem
- * input to read — `renditions` already carries everything the playlist
- * needs (see `validateHlsMasterRenditions`) — so this is just a text-file
- * write, unlike every other job kind in this file.
- *
- * @private
- * @param {import('bullmq').Job} job BullMQ job whose data includes
- *   `outputFilename` (the directory to write into - see
- *   `resolveHlsOutputDir`) and `renditions`.
- * @returns {Promise<{ playlistPath: string }>} Result payload stored on the
- *   completed job.
- * @throws {Error} When the output directory can't be written to.
- */
-async function processHlsMasterJob(job) {
-  const { outputFilename, renditions } = job.data;
-  const jobId = String(job.id);
-
-  logger.info(
-    `[hls-master ${jobId}] processing started: ${renditions.length} rendition(s) -> ${outputFilename}`,
-  );
-
-  await job.updateProgress(30);
-
-  const outputDir = resolveHlsOutputDir(outputFilename);
-  const content = buildHlsMasterPlaylist(renditions);
-  await writeFile(join(outputDir, HLS_MASTER_PLAYLIST_FILENAME), content, "utf8");
-
-  await job.updateProgress(80);
-
-  const playlistPath = `${outputFilename}/${HLS_MASTER_PLAYLIST_FILENAME}`;
-
-  const notify = await notifyHlsMasterComplete(jobId, { playlistPath });
-  if (!notify.ok) {
-    logger.error(
-      { error: notify.error },
-      `failed to notify API of completed hls-master playlist ${jobId}`,
-    );
-  }
-
-  await job.updateProgress(100);
-
-  logger.info(`[hls-master ${jobId}] processing completed: ${playlistPath}`);
-
-  return { playlistPath };
 }
 
 /**
@@ -878,9 +818,6 @@ export async function processTranscodeJob(job, token) {
   if (kind === "hls") {
     return processHlsJob(job);
   }
-  if (kind === "hls-master") {
-    return processHlsMasterJob(job);
-  }
   return processRenditionJob(job);
 }
 
@@ -968,9 +905,7 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
                   ? "ffmpeg-embed"
                   : job.kind === "hls"
                     ? "ffmpeg-hls"
-                    : job.kind === "hls-master"
-                      ? "ffmpeg-hls-master"
-                      : "ffmpeg-transcode",
+                    : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -979,7 +914,6 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
         timestampSeconds: job.timestampSeconds,
         thumbnailFilename: job.thumbnailFilename,
         isDefault: job.isDefault,
-        renditions: job.renditions,
       },
       opts: {
         jobId: job.jobId,
@@ -1348,18 +1282,6 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed hls job ${jobId}`,
-      );
-    }
-    return;
-  }
-
-  if (job?.data?.kind === "hls-master") {
-    logger.error({ message }, `[hls-master ${jobId}] processing failed`);
-    const notify = await notifyHlsMasterFailed(jobId, message);
-    if (!notify.ok) {
-      logger.error(
-        { error: notify.error },
-        `failed to notify API of failed hls-master job ${jobId}`,
       );
     }
     return;

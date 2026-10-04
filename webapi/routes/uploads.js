@@ -436,25 +436,34 @@ export async function finalizeUploadTranscodes(
       }
     : null;
 
+  // Packages the original upload itself (always the highest-quality copy
+  // available - renditions never are) into single-file byte-range fMP4 HLS,
+  // offered to the client as the "Best" quality option - adaptive
+  // seeking/partial-download playback with no quality loss. Enqueued
+  // unconditionally alongside thumbnail/subtitle, for both media types, same
+  // rationale as those two.
+  const hlsJob = {
+    jobId: `hls-${upload.videoId}-${randomUUID()}`,
+    outputFilename: `${segment}/${randomUUID()}.hls`,
+    kind: "hls",
+  };
+
   const jobs = [
     ...(thumbnailJob ? [thumbnailJob] : []),
     ...(subtitleJob ? [subtitleJob] : []),
+    hlsJob,
     ...renditionJobs,
   ];
 
-  if (jobs.length === 0) {
-    // Nothing to transcode (audio upload with no matching audio profiles) -
-    // skip the processing round-trip entirely rather than enqueueing an
-    // empty batch.
+  if (versions.length === 0) {
+    // No FILE_VERSIONS rows (e.g. an audio upload with no matching audio
+    // profiles) means `rollupOriginalUploadStatus` - triggered only by a
+    // version's own completion/failure - will never run for this upload, so
+    // it would otherwise stay stuck mid-processing forever even once the
+    // thumbnail/subtitle/hls jobs below finish. Set it directly instead;
+    // `jobs` always has at least the hls job, so the batch is still enqueued
+    // normally below.
     await upload.update({ status: "uploaded" });
-    await upload.reload();
-    return {
-      status: 201,
-      body: {
-        ...uploadResponseBody(upload),
-        fileVersions: [],
-      },
-    };
   }
 
   const enqueue = await requestTranscodeBatch({

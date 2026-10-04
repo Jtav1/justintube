@@ -178,6 +178,19 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    /**
+     * Storage path (under `transcoded/`) of the "Best" quality HLS variant
+     * playlist - a single-file byte-range fMP4 remux of this upload's own
+     * original file (always the highest-quality copy available), for
+     * adaptive seeking/partial-download playback. Null until an `"hls"`
+     * processing job completes (or if it fails - see
+     * `routes/internal-hls.js`); the "Best" option simply doesn't appear in
+     * the quality list until then.
+     */
+    hlsPlaylistStoragePath: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+    },
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

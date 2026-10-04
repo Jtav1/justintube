@@ -25,6 +25,7 @@ import { startImportReconcileCron } from "./lib/import-reconcile.js";
 import { startNotificationEmailDigestCron } from "./lib/notification-email-digest.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
+import { createInternalHlsRouter } from "./routes/internal-hls.js";
 import { createInternalLivestreamsRouter } from "./routes/internal-livestreams.js";
 import { createInternalOriginalUploadsRouter } from "./routes/internal-original-uploads.js";
 import { createInternalSubtitlesRouter } from "./routes/internal-subtitles.js";
@@ -228,6 +229,7 @@ export function createApp() {
   app.use("/internal", createInternalThumbnailsRouter());
   app.use("/internal", createInternalSubtitlesRouter());
   app.use("/internal", createInternalOriginalUploadsRouter());
+  app.use("/internal", createInternalHlsRouter());
   app.use("/api/v1", createApiRouter());
 
   /**

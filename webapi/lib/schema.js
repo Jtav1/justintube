@@ -343,6 +343,11 @@ async function ensureSqliteMissingColumns() {
       column: "last_activity_at",
       ddl: "`last_activity_at` DATETIME NULL",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "hls_playlist_storage_path",
+      ddl: "`hls_playlist_storage_path` VARCHAR(512) NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

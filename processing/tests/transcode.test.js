@@ -6,7 +6,6 @@ import {
   buildEmbedFfmpegArgs,
   buildFfmpegArgs,
   buildHlsFfmpegArgs,
-  buildHlsMasterPlaylist,
   buildNormalizeFfmpegArgs,
   buildOutputFilename,
   buildSubtitleFfmpegArgs,
@@ -297,79 +296,6 @@ describe("thumbnail job validation and ffmpeg args", () => {
     } finally {
       process.env.ENABLE_TRANSCODING = previous;
     }
-  });
-
-  test("validateTranscodeJob accepts an hls-master job with jobId + outputFilename + renditions", () => {
-    const jobId = "hls-master-abc123";
-    const renditions = [
-      { playlistPath: "42/abc123/720p/variant.m3u8", bandwidthBps: 2_500_000, width: 1280, height: 720 },
-      { playlistPath: "42/abc123/360p/variant.m3u8", bandwidthBps: 800_000, width: 640, height: 360 },
-    ];
-    expect(
-      validateTranscodeJob({ jobId, outputFilename: "42/abc123", kind: "hls-master", renditions }, 0),
-    ).toEqual({
-      jobId,
-      outputFilename: "42/abc123",
-      kind: "hls-master",
-      renditions,
-    });
-  });
-
-  test("validateTranscodeJob skips profile/transcode-mode validation for hls-master jobs even when transcoding is disabled", () => {
-    const previous = process.env.ENABLE_TRANSCODING;
-    process.env.ENABLE_TRANSCODING = "false";
-    try {
-      expect(() =>
-        validateTranscodeJob(
-          {
-            jobId: "hls-master-abc123",
-            outputFilename: "abc123",
-            kind: "hls-master",
-            renditions: [{ playlistPath: "abc123/720p/variant.m3u8", bandwidthBps: 1, width: 1, height: 1 }],
-          },
-          0,
-        ),
-      ).not.toThrow();
-    } finally {
-      process.env.ENABLE_TRANSCODING = previous;
-    }
-  });
-
-  test("validateTranscodeJob rejects an hls-master job with an empty renditions array", () => {
-    expect(() =>
-      validateTranscodeJob(
-        { jobId: "hls-master-abc123", outputFilename: "abc123", kind: "hls-master", renditions: [] },
-        0,
-      ),
-    ).toThrow(TranscodeValidationError);
-  });
-
-  test("validateTranscodeJob rejects an hls-master rendition with a traversal playlistPath", () => {
-    expect(() =>
-      validateTranscodeJob(
-        {
-          jobId: "hls-master-abc123",
-          outputFilename: "abc123",
-          kind: "hls-master",
-          renditions: [{ playlistPath: "../../etc/passwd", bandwidthBps: 1, width: 1, height: 1 }],
-        },
-        0,
-      ),
-    ).toThrow(TranscodeValidationError);
-  });
-
-  test("validateTranscodeJob rejects an hls-master rendition missing bandwidthBps", () => {
-    expect(() =>
-      validateTranscodeJob(
-        {
-          jobId: "hls-master-abc123",
-          outputFilename: "abc123",
-          kind: "hls-master",
-          renditions: [{ playlistPath: "abc123/720p/variant.m3u8", width: 1, height: 1 }],
-        },
-        0,
-      ),
-    ).toThrow(TranscodeValidationError);
   });
 
   test("validateTranscodeBatchRequest accepts a batch with a normalize job", () => {
@@ -1064,55 +990,5 @@ describe("buildHlsFfmpegArgs", () => {
 
     expect(args).toContain("copy");
     expect(args).not.toContain("libx264");
-  });
-});
-
-describe("buildHlsMasterPlaylist", () => {
-  test("lists every rendition's BANDWIDTH/RESOLUTION and playlist path", () => {
-    const content = buildHlsMasterPlaylist([
-      { playlistPath: "42/abc/720p/variant.m3u8", bandwidthBps: 2_500_000, width: 1280, height: 720 },
-      { playlistPath: "42/abc/360p/variant.m3u8", bandwidthBps: 800_000, width: 640, height: 360 },
-    ]);
-
-    expect(content).toBe(
-      [
-        "#EXTM3U",
-        "#EXT-X-VERSION:7",
-        "#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360",
-        "42/abc/360p/variant.m3u8",
-        "#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720",
-        "42/abc/720p/variant.m3u8",
-        "",
-      ].join("\n"),
-    );
-  });
-
-  test("orders renditions by ascending bandwidth regardless of input order", () => {
-    const content = buildHlsMasterPlaylist([
-      { playlistPath: "low.m3u8", bandwidthBps: 100, width: 1, height: 1 },
-      { playlistPath: "high.m3u8", bandwidthBps: 900, width: 2, height: 2 },
-      { playlistPath: "mid.m3u8", bandwidthBps: 500, width: 3, height: 3 },
-    ]);
-
-    const order = content
-      .split("\n")
-      .filter((line) => line.endsWith(".m3u8"));
-    expect(order).toEqual(["low.m3u8", "mid.m3u8", "high.m3u8"]);
-  });
-
-  test("handles a single rendition", () => {
-    const content = buildHlsMasterPlaylist([
-      { playlistPath: "only.m3u8", bandwidthBps: 1_000_000, width: 1920, height: 1080 },
-    ]);
-
-    expect(content).toBe(
-      [
-        "#EXTM3U",
-        "#EXT-X-VERSION:7",
-        "#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1920x1080",
-        "only.m3u8",
-        "",
-      ].join("\n"),
-    );
   });
 });

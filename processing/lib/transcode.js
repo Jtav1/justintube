@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 import { execFile } from "node:child_process";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { TranscodeValidationError, validateRelativeMediaPath } from "./media-paths.js";
@@ -77,7 +77,7 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} jobId Stable BullMQ job id.
  * @property {string} [outputFilename] Basename under the job kind's output
  *   directory. Absent when `kind === "hash"` (no output file is written).
- * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"|"hls"|"hls-master"} kind Job kind.
+ * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"|"hls"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  * @property {string} [thumbnailFilename] Present when `kind === "embed"` — relative
@@ -87,7 +87,6 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  *   exists for this upload yet) rather than genuine cover art. Echoed back
  *   through the completion callback so the API can refuse to let a slower
  *   placeholder-sourced completion overwrite a real one that already landed.
- * @property {HlsMasterRendition[]} [renditions] Present when `kind === "hls-master"`.
  */
 
 /**
@@ -348,79 +347,6 @@ function validateOptionalTimestampSeconds(value, fieldName) {
 }
 
 /**
- * One already-packaged rendition variant playlist, as referenced from a
- * `"hls-master"` job's `renditions` array.
- *
- * @typedef {object} HlsMasterRendition
- * @property {string} playlistPath URI to embed verbatim in the master
- *   playlist's `EXT-X-STREAM-INF` entry (the caller's job - not this file -
- *   is responsible for making it resolve correctly relative to wherever the
- *   master playlist itself is served from).
- * @property {number} bandwidthBps Peak bitrate, for `BANDWIDTH`.
- * @property {number} width Frame width in pixels, for `RESOLUTION`.
- * @property {number} height Frame height in pixels, for `RESOLUTION`.
- */
-
-/**
- * Validates a single entry of a `"hls-master"` job's `renditions` array.
- * `playlistPath` is checked only for path-traversal/absoluteness - unlike
- * `outputFilename` elsewhere in this file, it's never resolved to a
- * filesystem path (the master-playlist job only ever writes it into a text
- * file as a reference), so {@link validateRelativeMediaPath}'s stricter
- * `<userId|_unowned>/<basename>` shape doesn't apply here.
- *
- * @param {unknown} value Raw rendition entry.
- * @param {string} fieldLabel Field label for error messages.
- * @returns {HlsMasterRendition} Validated rendition entry.
- * @throws {TranscodeValidationError} When any field is missing or invalid.
- */
-function validateHlsMasterRendition(value, fieldLabel) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TranscodeValidationError(`${fieldLabel} is required and must be an object`);
-  }
-
-  const entry = /** @type {Record<string, unknown>} */ (value);
-  const playlistPath =
-    typeof entry.playlistPath === "string" ? entry.playlistPath.trim() : "";
-  if (
-    !playlistPath ||
-    playlistPath.includes("..") ||
-    playlistPath.includes("\\") ||
-    isAbsolute(playlistPath)
-  ) {
-    throw new TranscodeValidationError(
-      `${fieldLabel}.playlistPath is required and must be a safe relative path`,
-    );
-  }
-
-  return {
-    playlistPath,
-    bandwidthBps: requirePositiveInteger(entry.bandwidthBps, `${fieldLabel}.bandwidthBps`),
-    width: requirePositiveInteger(entry.width, `${fieldLabel}.width`),
-    height: requirePositiveInteger(entry.height, `${fieldLabel}.height`),
-  };
-}
-
-/**
- * Validates the `renditions` array of a `"hls-master"` job.
- *
- * @param {unknown} value Raw `renditions` field.
- * @param {string} fieldLabel Field label for error messages.
- * @returns {HlsMasterRendition[]} Validated rendition entries.
- * @throws {TranscodeValidationError} When missing, empty, or any entry is invalid.
- */
-function validateHlsMasterRenditions(value, fieldLabel) {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new TranscodeValidationError(
-      `${fieldLabel} is required and must be a non-empty array`,
-    );
-  }
-  return value.map((entry, index) =>
-    validateHlsMasterRendition(entry, `${fieldLabel}[${index}]`),
-  );
-}
-
-/**
  * Validates a single entry in a batch `jobs` array. Dispatches on `job.kind`:
  * `"rendition"` (the default, for back-compat with jobs that omit `kind`)
  * requires a `profile` and goes through the full transcode-mode/hardware
@@ -434,16 +360,12 @@ function validateHlsMasterRenditions(value, fieldLabel) {
  * hardware/mode gating (it always runs in software). `"embed"` (mux an
  * audio-only upload with its thumbnail image into a playable MP4, for link
  * unfurlers that only render `og:video`) needs `jobId` + `outputFilename` +
- * `thumbnailFilename` - no profile, no gating. `"hls"` (remux an already-
- * completed rendition into single-file byte-range fMP4 HLS) needs only
- * `jobId` + `outputFilename` (a directory, not a file - see
+ * `thumbnailFilename` - no profile, no gating. `"hls"` (remux the original
+ * upload - always the highest-quality copy available - into single-file
+ * byte-range fMP4 HLS, for adaptive seeking/partial-download playback) needs
+ * only `jobId` + `outputFilename` (a directory, not a file - see
  * `resolveHlsOutputDir`) - like `"normalize"`, no profile, no gating, always
- * software (`-c copy`, a remux). `"hls-master"` (write the top-level master
- * playlist tying every rendition's already-packaged `"hls"` variant playlist
- * together for adaptive bitrate switching) needs `jobId` + `outputFilename`
- * (the directory the master playlist is written into) + `renditions` (see
- * {@link validateHlsMasterRenditions}) - no profile, no gating, no ffmpeg
- * invocation at all (it's a plain text file write).
+ * software (`-c copy`, a remux).
  *
  * `outputFilename` (and `thumbnailFilename`) are validated with
  * {@link validateRelativeMediaPath} rather than {@link requireSafeToken} -
@@ -485,14 +407,6 @@ export function validateTranscodeJob(job, index) {
 
   if (body.kind === "hls") {
     return { jobId, outputFilename, kind: "hls" };
-  }
-
-  if (body.kind === "hls-master") {
-    const renditions = validateHlsMasterRenditions(
-      body.renditions,
-      `jobs[${index}].renditions`,
-    );
-    return { jobId, outputFilename, kind: "hls-master", renditions };
   }
 
   if (body.kind === "embed") {
@@ -775,7 +689,7 @@ const HLS_SEGMENT_DURATION_SECONDS = 6;
 /**
  * Fixed basenames written into an `"hls"` job's output directory (see
  * `resolveHlsOutputDir`) — always the same three names regardless of input,
- * since each rendition gets its own directory.
+ * since each upload gets its own directory.
  *
  * @type {{ init: string, media: string, playlist: string }}
  */
@@ -786,27 +700,19 @@ export const HLS_OUTPUT_FILENAMES = {
 };
 
 /**
- * Basename written for a `"hls-master"` job's output - the single top-level
- * playlist a player loads first, which then picks a variant (one of the
- * sibling `"hls"` jobs' `HLS_OUTPUT_FILENAMES.playlist`) based on bandwidth.
- *
- * @type {string}
- */
-export const HLS_MASTER_PLAYLIST_FILENAME = "master.m3u8";
-
-/**
- * Builds the ffmpeg argument list for packaging an already-transcoded
- * rendition into single-file byte-range fMP4 HLS (`"hls"` job kind). Always a
- * remux (`-c copy`) — the input is a rendition ffmpeg already encoded once;
- * re-encoding it again would just lose quality for no benefit. `single_file`
- * flag keeps the whole rendition's media in one `stream.m4s`, referenced via
- * `EXT-X-BYTERANGE` in the variant playlist, instead of many small segment
- * files — deliberately traded off against per-segment CDN cacheability, since
- * this is a single self-hosted volume, not a CDN-fronted deployment, and file/
- * inode count matters more here.
+ * Builds the ffmpeg argument list for packaging the original upload into
+ * single-file byte-range fMP4 HLS (`"hls"` job kind). Always a remux
+ * (`-c copy`) — the original is kept exactly as uploaded, at its full
+ * quality; this only repackages its container for seekable, partial-download
+ * playback, never re-encodes it. `single_file` flag keeps the whole thing in
+ * one `stream.m4s`, referenced via `EXT-X-BYTERANGE` in the variant
+ * playlist, instead of many small segment files — deliberately traded off
+ * against per-segment CDN cacheability, since this is a single self-hosted
+ * volume, not a CDN-fronted deployment, and file/inode count matters more
+ * here.
  *
  * @param {object} options HLS packaging execution options.
- * @param {string} options.inputPath Absolute path to the source rendition file.
+ * @param {string} options.inputPath Absolute path to the original upload.
  * @param {string} options.outputDir Absolute path to the job's output
  *   directory (see `resolveHlsOutputDir`) — must already exist.
  * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
@@ -834,30 +740,6 @@ export function buildHlsFfmpegArgs({ inputPath, outputDir }) {
     join(outputDir, HLS_OUTPUT_FILENAMES.media),
     join(outputDir, HLS_OUTPUT_FILENAMES.playlist),
   ];
-}
-
-/**
- * Builds the contents of an adaptive-bitrate master playlist referencing
- * every rendition's already-packaged `"hls"` variant playlist - no ffmpeg
- * involved, this is the `"hls-master"` job kind's entire job (a text file).
- * Renditions are emitted in ascending bandwidth order (lowest quality
- * first), the conventional ordering for `EXT-X-STREAM-INF` lists, though
- * HLS players don't depend on it.
- *
- * @param {HlsMasterRendition[]} renditions Validated rendition entries (see
- *   {@link validateHlsMasterRenditions}) - at least one.
- * @returns {string} Master playlist file contents, newline-terminated.
- */
-export function buildHlsMasterPlaylist(renditions) {
-  const lines = ["#EXTM3U", "#EXT-X-VERSION:7"];
-  const sorted = [...renditions].sort((a, b) => a.bandwidthBps - b.bandwidthBps);
-  for (const rendition of sorted) {
-    lines.push(
-      `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bandwidthBps},RESOLUTION=${rendition.width}x${rendition.height}`,
-      rendition.playlistPath,
-    );
-  }
-  return `${lines.join("\n")}\n`;
 }
 
 /**

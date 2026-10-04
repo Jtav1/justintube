@@ -215,9 +215,10 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    // A thumbnail job and a subtitle-extraction job are always enqueued
-    // alongside any renditions (or, as here, on their own).
-    expect(payload.jobs).toHaveLength(2);
+    // A thumbnail job, a subtitle-extraction job, and an hls ("Best" quality)
+    // job are always enqueued alongside any renditions (or, as here, on
+    // their own).
+    expect(payload.jobs).toHaveLength(3);
     const thumbnailJob = payload.jobs.find((j) => j.kind === "thumbnail");
     const subtitleJob = payload.jobs.find((j) => j.kind === "subtitle");
     // jobId/outputFilename each embed a random UUID (see
@@ -265,10 +266,10 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const batchPayload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    // A thumbnail job and a subtitle-extraction job - audio sources can
-    // carry a text subtitle track too, so it's attempted regardless of
-    // media type, same as the thumbnail job.
-    expect(batchPayload.jobs).toHaveLength(2);
+    // A thumbnail job, a subtitle-extraction job, and an hls job - audio
+    // sources can carry a text subtitle track (and get HLS-packaged) too, so
+    // both are attempted regardless of media type, same as the thumbnail job.
+    expect(batchPayload.jobs).toHaveLength(3);
     const thumbnailJob = batchPayload.jobs.find((j) => j.kind === "thumbnail");
     const subtitleJob = batchPayload.jobs.find((j) => j.kind === "subtitle");
     expect(thumbnailJob.jobId).toMatch(new RegExp(`^thumbnail-${res.body.videoId}-`));
@@ -338,12 +339,13 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-    // The rendition job for the audio-flagged profile, plus the thumbnail
-    // and subtitle jobs every upload gets regardless of transcode profiles
-    // (embedded-art extraction / subtitle-stream extraction for audio - see
-    // finalizeUploadTranscodes).
-    expect(payload.jobs).toHaveLength(3);
+    // The rendition job for the audio-flagged profile, plus the thumbnail,
+    // subtitle, and hls jobs every upload gets regardless of transcode
+    // profiles (embedded-art extraction / subtitle-stream extraction / "Best"
+    // quality packaging for audio - see finalizeUploadTranscodes).
+    expect(payload.jobs).toHaveLength(4);
     expect(payload.jobs.map((job) => job.kind).sort()).toEqual([
+      "hls",
       "rendition",
       "subtitle",
       "thumbnail",
@@ -405,10 +407,10 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
     expect(res.status).toBe(201);
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
-    // skipThumbnail only omits the thumbnail job - the subtitle job (no
-    // equivalent skip flag was sent) and the rendition job both remain.
-    expect(payload.jobs).toHaveLength(2);
-    expect(payload.jobs.map((job) => job.kind).sort()).toEqual(["rendition", "subtitle"]);
+    // skipThumbnail only omits the thumbnail job - the subtitle, hls, and
+    // rendition jobs (no equivalent skip flag was sent for any of them) all remain.
+    expect(payload.jobs).toHaveLength(3);
+    expect(payload.jobs.map((job) => job.kind).sort()).toEqual(["hls", "rendition", "subtitle"]);
   });
 
   test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
@@ -446,10 +448,11 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       /^\d+\/[0-9a-f-]{36}\.mp4$/,
     );
     expect(payload.filename).toContain(`${uploaderUser.id}/`);
-    // One thumbnail job + one subtitle job + one job per rendition profile.
-    expect(payload.jobs).toHaveLength(4);
+    // One thumbnail job + one subtitle job + one hls job + one job per rendition profile.
+    expect(payload.jobs).toHaveLength(5);
     expect(payload.jobs.filter((j) => j.kind === "thumbnail")).toHaveLength(1);
     expect(payload.jobs.filter((j) => j.kind === "subtitle")).toHaveLength(1);
+    expect(payload.jobs.filter((j) => j.kind === "hls")).toHaveLength(1);
     const renditionJobs = payload.jobs.filter((j) => j.kind === "rendition");
     expect(renditionJobs.map((j) => j.profile.id).sort()).toEqual(
       [profileA.id, profileB.id].sort(),
@@ -494,7 +497,10 @@ describe("POST /videos/upload (ORIGINAL_UPLOADS)", () => {
       const body = JSON.parse(String(options.body));
       const accepted = body.jobs.filter(
         (job) =>
-          job.kind === "thumbnail" || job.kind === "subtitle" || job.profile.id === profileA.id,
+          job.kind === "thumbnail" ||
+          job.kind === "subtitle" ||
+          job.kind === "hls" ||
+          job.profile.id === profileA.id,
       );
       const skipped = body.jobs
         .filter((job) => job.kind === "rendition" && job.profile.id === profileB.id)

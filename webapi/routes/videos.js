@@ -613,6 +613,7 @@ export async function loadReactionCountsByUploadId(originalUploadIds) {
  *   height: number|null,
  *   mimeType: string|null,
  *   fileSizeBytes: number|null,
+ *   format: "mp4",
  *   streamUrl: string
  * }} Rendition reference.
  */
@@ -628,6 +629,7 @@ function serializeFileVersion(originalUploadId, version) {
     mimeType: version.mimeType ?? null,
     fileSizeBytes:
       version.fileSizeBytes != null ? Number(version.fileSizeBytes) : null,
+    format: "mp4",
     streamUrl,
   };
 }
@@ -646,6 +648,7 @@ function serializeFileVersion(originalUploadId, version) {
  *   height: number|null,
  *   mimeType: string|null,
  *   fileSizeBytes: number|null,
+ *   format: "mp4",
  *   streamUrl: string
  * }} Rendition reference for the original file.
  */
@@ -658,18 +661,57 @@ function serializeOriginalRendition(upload) {
     mimeType: upload.mimeType ?? null,
     fileSizeBytes:
       upload.fileSizeBytes != null ? Number(upload.fileSizeBytes) : null,
+    format: "mp4",
     streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+  };
+}
+
+/**
+ * Serializes an upload's "Best" HLS stream (a single-file byte-range fMP4
+ * remux of the original upload - see processing's `"hls"` job) into a
+ * rendition reference, so a video player can offer adaptive
+ * seeking/partial-download playback at the original's own quality. Only
+ * meaningful once `upload.hlsPlaylistStoragePath` is set - callers check
+ * that before calling this.
+ *
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance with a
+ *   non-null `hlsPlaylistStoragePath`.
+ * @returns {{
+ *   id: number,
+ *   resolution: "best",
+ *   width: number|null,
+ *   height: number|null,
+ *   mimeType: string,
+ *   fileSizeBytes: null,
+ *   format: "hls",
+ *   streamUrl: string
+ * }} Rendition reference for the "Best" HLS stream.
+ */
+function serializeHlsRendition(upload) {
+  return {
+    id: upload.id,
+    resolution: "best",
+    width: upload.videoWidth,
+    height: upload.videoHeight,
+    mimeType: "application/vnd.apple.mpegurl",
+    // The HLS output is a directory of several files (playlist + segment),
+    // not a single file with one meaningful size - unlike every other
+    // rendition reference, this is always null rather than an estimate.
+    fileSizeBytes: null,
+    format: "hls",
+    streamUrl: `/api/v1/videos/${upload.id}/hls/variant.m3u8`,
   };
 }
 
 /**
  * Loads every complete FILE_VERSIONS row for an upload, ordered lowest to
  * highest resolution, and serializes each into a rendition reference,
- * appending the original upload itself as a final `"original"` entry.
+ * appending the "Best" HLS stream (when ready) and the original upload
+ * itself as final entries.
  *
  * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance.
  * @returns {Promise<object[]>} Serialized renditions, lowest resolution
- *   first, with the original upload last.
+ *   first, with "Best" and the original upload last.
  */
 export async function loadRenditions(upload) {
   const completeVersions = await FileVersion.findAll({
@@ -679,6 +721,9 @@ export async function loadRenditions(upload) {
   const renditions = completeVersions.map((version) =>
     serializeFileVersion(upload.id, version),
   );
+  if (upload.hlsPlaylistStoragePath) {
+    renditions.push(serializeHlsRendition(upload));
+  }
   // An in-progress (or never-finished) import leaves storagePath empty until
   // continueImport writes the real file — don't advertise an "original"
   // rendition that points at a file that doesn't exist yet (or never will).
@@ -2586,6 +2631,107 @@ export function createVideosRouter() {
         res.status(500).json({
           error: "internal_error",
           message: "Failed to stream video.",
+        });
+      }
+    }
+  });
+
+  /**
+   * Content type for each fixed basename an `"hls"` processing job writes
+   * (see `HLS_OUTPUT_FILENAMES`, processing) - a closed set, not arbitrary
+   * user input, so this doubles as the allowlist `getVideoHlsFile` validates
+   * `:filename` against.
+   *
+   * @type {Record<string, string>}
+   */
+  const HLS_FILENAME_CONTENT_TYPES = {
+    "variant.m3u8": "application/vnd.apple.mpegurl",
+    "init.mp4": "video/mp4",
+    "stream.m4s": "video/iso.segment",
+  };
+
+  /**
+   * GET /videos/:id/hls/:filename — getVideoHlsFile
+   * Auth: optional. Private requires owner, grant, or admin. Serves one file
+   * from the "Best" quality HLS output directory (the variant playlist, its
+   * fMP4 init segment, or its single byte-range media segment - see
+   * `buildHlsFfmpegArgs`, processing) with HTTP Range support, so a player
+   * that loaded `variant.m3u8` can resolve the relative URIs inside it
+   * (`init.mp4`, `stream.m4s`) against this same route.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/hls/{filename}:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Stream one file of the "Best" quality HLS output (supports HTTP Range requests)
+   *     operationId: getVideoHlsFile
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *       - in: path
+   *         name: filename
+   *         required: true
+   *         schema: { type: string, enum: [variant.m3u8, init.mp4, stream.m4s] }
+   *     responses:
+   *       "200":
+   *         description: Full file (no Range header sent)
+   *       "206":
+   *         description: Partial content (Range header honored)
+   *       "404":
+   *         description: Not found, inaccessible, or "Best" quality not ready
+   *       "416":
+   *         description: Requested Range is out of bounds
+   */
+  router.get("/videos/:id/hls/:filename", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const contentType = HLS_FILENAME_CONTENT_TYPES[req.params.filename];
+      if (!contentType) {
+        sendNotFound(res);
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.hlsPlaylistStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      // hlsPlaylistStoragePath points at the variant playlist itself
+      // (".../variant.m3u8") - its sibling files live in that same directory.
+      const absolutePath = join(
+        dirname(resolveMediaPath(upload.hlsPlaylistStoragePath)),
+        req.params.filename,
+      );
+      await streamFileWithRangeSupport(req, res, absolutePath, contentType);
+    } catch (err) {
+      logger.error({ err }, "getVideoHlsFile failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to stream HLS file.",
         });
       }
     }

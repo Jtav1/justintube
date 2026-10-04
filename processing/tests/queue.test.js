@@ -1,5 +1,4 @@
 import { jest } from "@jest/globals";
-import { join } from "node:path";
 import { DelayedError } from "bullmq";
 
 const computeContentHash = jest.fn();
@@ -28,12 +27,8 @@ const stat = jest.fn();
 const probeFormatBitRate = jest.fn();
 const notifyHlsComplete = jest.fn();
 const notifyHlsFailed = jest.fn();
-const notifyHlsMasterComplete = jest.fn();
-const notifyHlsMasterFailed = jest.fn();
-const resolveTranscodedInputPath = jest.fn();
+const resolveOriginalInputPath = jest.fn((filename) => `/media/original/${filename}`);
 const resolveHlsOutputDir = jest.fn();
-const buildHlsMasterPlaylist = jest.fn();
-const writeFile = jest.fn();
 
 // Must run before any import of lib/queue.js (which imports these modules at
 // load time) - mock registration has to precede the dynamic import below
@@ -62,17 +57,14 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyEmbedVideoFailed: jest.fn(),
   notifyHlsComplete,
   notifyHlsFailed,
-  notifyHlsMasterComplete,
-  notifyHlsMasterFailed,
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
-  resolveOriginalInputPath: jest.fn((filename) => `/media/original/${filename}`),
+  resolveOriginalInputPath,
   resolveThumbnailOutputPath,
   resolveThumbnailInputPath,
   resolveTranscodedOutputPath,
   resolveNormalizedOutputPath: jest.fn(),
   resolveSubtitleOutputPath,
-  resolveTranscodedInputPath,
   resolveHlsOutputDir,
 }));
 jest.unstable_mockModule("../lib/transcode.js", () => ({
@@ -83,14 +75,11 @@ jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildNormalizeFfmpegArgs: jest.fn(),
   buildSubtitleFfmpegArgs,
   buildHlsFfmpegArgs,
-  buildHlsMasterPlaylist,
   HLS_OUTPUT_FILENAMES: { init: "init.mp4", media: "stream.m4s", playlist: "variant.m3u8" },
-  HLS_MASTER_PLAYLIST_FILENAME: "master.m3u8",
   runFfmpeg,
 }));
 jest.unstable_mockModule("node:fs/promises", () => ({
   stat,
-  writeFile,
 }));
 
 const {
@@ -417,8 +406,8 @@ function makeHlsJob(dataOverrides = {}) {
     id: "hls-abc123",
     data: {
       kind: "hls",
-      inputFilename: "42/rendition-uuid.mp4",
-      outputFilename: "42/rendition-uuid.hls",
+      inputFilename: "42/video-uuid.mp4",
+      outputFilename: "42/video-uuid.hls",
       ...dataOverrides,
     },
     updateProgress: jest.fn().mockResolvedValue(undefined),
@@ -427,7 +416,7 @@ function makeHlsJob(dataOverrides = {}) {
 
 describe("processTranscodeJob (kind: hls)", () => {
   beforeEach(() => {
-    resolveTranscodedInputPath.mockReset().mockImplementation((f) => `/media/transcoded/${f}`);
+    resolveOriginalInputPath.mockReset().mockImplementation((f) => `/media/original/${f}`);
     resolveHlsOutputDir.mockReset().mockImplementation((f) => `/media/transcoded/${f}`);
     buildHlsFfmpegArgs.mockReset().mockReturnValue(["hls-args"]);
     runFfmpeg.mockReset().mockResolvedValue(undefined);
@@ -435,25 +424,25 @@ describe("processTranscodeJob (kind: hls)", () => {
     notifyHlsComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
   });
 
-  test("remuxes the rendition input into HLS and reports the result", async () => {
+  test("remuxes the original upload into HLS and reports the result", async () => {
     const job = makeHlsJob();
 
     const result = await processTranscodeJob(job);
 
-    expect(resolveTranscodedInputPath).toHaveBeenCalledWith("42/rendition-uuid.mp4");
-    expect(resolveHlsOutputDir).toHaveBeenCalledWith("42/rendition-uuid.hls");
+    expect(resolveOriginalInputPath).toHaveBeenCalledWith("42/video-uuid.mp4");
+    expect(resolveHlsOutputDir).toHaveBeenCalledWith("42/video-uuid.hls");
     expect(buildHlsFfmpegArgs).toHaveBeenCalledWith({
-      inputPath: "/media/transcoded/42/rendition-uuid.mp4",
-      outputDir: "/media/transcoded/42/rendition-uuid.hls",
+      inputPath: "/media/original/42/video-uuid.mp4",
+      outputDir: "/media/transcoded/42/video-uuid.hls",
     });
     expect(runFfmpeg).toHaveBeenCalledWith(["hls-args"]);
-    expect(probeFormatBitRate).toHaveBeenCalledWith("/media/transcoded/42/rendition-uuid.mp4");
+    expect(probeFormatBitRate).toHaveBeenCalledWith("/media/original/42/video-uuid.mp4");
     expect(notifyHlsComplete).toHaveBeenCalledWith("hls-abc123", {
-      playlistPath: "42/rendition-uuid.hls/variant.m3u8",
+      playlistPath: "transcoded/42/video-uuid.hls/variant.m3u8",
       bitRateBps: 2_500_000,
     });
     expect(result).toEqual({
-      playlistPath: "42/rendition-uuid.hls/variant.m3u8",
+      playlistPath: "transcoded/42/video-uuid.hls/variant.m3u8",
       bitRateBps: 2_500_000,
     });
   });
@@ -465,7 +454,7 @@ describe("processTranscodeJob (kind: hls)", () => {
     const result = await processTranscodeJob(job);
 
     expect(notifyHlsComplete).toHaveBeenCalledWith("hls-abc123", {
-      playlistPath: "42/rendition-uuid.hls/variant.m3u8",
+      playlistPath: "transcoded/42/video-uuid.hls/variant.m3u8",
       bitRateBps: null,
     });
     expect(result.bitRateBps).toBeNull();
@@ -485,86 +474,12 @@ describe("notifyTranscodeJobFailed (kind: hls)", () => {
     notifyHlsFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
   });
 
-  test("calls back to the API so the FILE_VERSION_HLS row can be marked failed", async () => {
+  test("calls back to the API so the upload's hlsPlaylistStoragePath can stay unset", async () => {
     const job = { id: "hls-abc123", data: { kind: "hls" } };
 
     await notifyTranscodeJobFailed(job, new Error("ffmpeg exited with code 1"));
 
     expect(notifyHlsFailed).toHaveBeenCalledWith("hls-abc123", "ffmpeg exited with code 1");
-  });
-});
-
-/**
- * Builds a fake BullMQ job for an "hls-master" kind job.
- *
- * @param {object} [dataOverrides] Overrides merged into `job.data`.
- * @returns {object} Fake job.
- */
-function makeHlsMasterJob(dataOverrides = {}) {
-  return {
-    id: "hls-master-abc123",
-    data: {
-      kind: "hls-master",
-      outputFilename: "42/video-uuid",
-      renditions: [
-        { playlistPath: "42/video-uuid/720p/variant.m3u8", bandwidthBps: 2_500_000, width: 1280, height: 720 },
-        { playlistPath: "42/video-uuid/360p/variant.m3u8", bandwidthBps: 800_000, width: 640, height: 360 },
-      ],
-      ...dataOverrides,
-    },
-    updateProgress: jest.fn().mockResolvedValue(undefined),
-  };
-}
-
-describe("processTranscodeJob (kind: hls-master)", () => {
-  beforeEach(() => {
-    resolveHlsOutputDir.mockReset().mockImplementation((f) => `/media/transcoded/${f}`);
-    buildHlsMasterPlaylist.mockReset().mockReturnValue("#EXTM3U\n");
-    writeFile.mockReset().mockResolvedValue(undefined);
-    notifyHlsMasterComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
-  });
-
-  test("writes the master playlist from the given renditions and reports the result", async () => {
-    const job = makeHlsMasterJob();
-
-    const result = await processTranscodeJob(job);
-
-    expect(resolveHlsOutputDir).toHaveBeenCalledWith("42/video-uuid");
-    expect(buildHlsMasterPlaylist).toHaveBeenCalledWith(job.data.renditions);
-    expect(writeFile).toHaveBeenCalledWith(
-      join("/media/transcoded/42/video-uuid", "master.m3u8"),
-      "#EXTM3U\n",
-      "utf8",
-    );
-    expect(notifyHlsMasterComplete).toHaveBeenCalledWith("hls-master-abc123", {
-      playlistPath: "42/video-uuid/master.m3u8",
-    });
-    expect(result).toEqual({ playlistPath: "42/video-uuid/master.m3u8" });
-  });
-
-  test("propagates a write failure instead of notifying completion", async () => {
-    writeFile.mockReset().mockRejectedValue(new Error("ENOSPC"));
-    const job = makeHlsMasterJob();
-
-    await expect(processTranscodeJob(job)).rejects.toThrow("ENOSPC");
-    expect(notifyHlsMasterComplete).not.toHaveBeenCalled();
-  });
-});
-
-describe("notifyTranscodeJobFailed (kind: hls-master)", () => {
-  beforeEach(() => {
-    notifyHlsMasterFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
-  });
-
-  test("calls back to the API so the master playlist can be marked failed", async () => {
-    const job = { id: "hls-master-abc123", data: { kind: "hls-master" } };
-
-    await notifyTranscodeJobFailed(job, new Error("ffmpeg exited with code 1"));
-
-    expect(notifyHlsMasterFailed).toHaveBeenCalledWith(
-      "hls-master-abc123",
-      "ffmpeg exited with code 1",
-    );
   });
 });
 
