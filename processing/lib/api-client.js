@@ -335,3 +335,38 @@ export async function notifyHlsFailed(jobId, error) {
     error,
   });
 }
+
+/**
+ * Notifies the API that a video's master HLS playlist (tying together every
+ * rendition's variant playlist for adaptive bitrate switching) was written
+ * successfully.
+ *
+ * @param {string} jobId BullMQ job id (`hls-master-<videoId>-<uuid>`, one per
+ *   master-playlist regeneration — a video's rendition set can change, e.g. a
+ *   new rendition profile added later, so unlike normalize/hash this may
+ *   legitimately re-run more than once for the same upload).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.playlistPath Relative path (under `transcoded/`) to
+ *   the written master `.m3u8` playlist.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyHlsMasterComplete(jobId, metadata) {
+  return postInternal(`/internal/hls-master/${encodeURIComponent(jobId)}/complete`, {
+    playlistPath: metadata.playlistPath,
+  });
+}
+
+/**
+ * Notifies the API that a video's master HLS playlist job failed.
+ *
+ * @param {string} jobId BullMQ job id (`hls-master-<videoId>-<uuid>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyHlsMasterFailed(jobId, error) {
+  return postInternal(`/internal/hls-master/${encodeURIComponent(jobId)}/fail`, {
+    error,
+  });
+}

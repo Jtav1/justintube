@@ -55,25 +55,61 @@ describe("POST /download", () => {
   });
 
   test("passes through hasVideo: true for a video download", async () => {
-    mockDownloadUrl.mockResolvedValue({ filename: "123.mp4", hasVideo: true });
+    mockDownloadUrl.mockResolvedValue({ filename: "123.mp4", hasVideo: true, subtitles: [] });
 
     const res = await request(createTestApp())
       .post("/download")
       .send({ url: "https://example.com/watch?v=abc" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true, filename: "123.mp4", hasVideo: true });
+    expect(res.body).toEqual({
+      success: true,
+      filename: "123.mp4",
+      hasVideo: true,
+      subtitles: [],
+    });
   });
 
   test("passes through hasVideo: false for an audio-only download", async () => {
-    mockDownloadUrl.mockResolvedValue({ filename: "123.m4a", hasVideo: false });
+    mockDownloadUrl.mockResolvedValue({ filename: "123.m4a", hasVideo: false, subtitles: [] });
 
     const res = await request(createTestApp())
       .post("/download")
       .send({ url: "https://example.com/track/abc" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true, filename: "123.m4a", hasVideo: false });
+    expect(res.body).toEqual({
+      success: true,
+      filename: "123.m4a",
+      hasVideo: false,
+      subtitles: [],
+    });
+  });
+
+  test("passes through fetched subtitle/caption tracks", async () => {
+    mockDownloadUrl.mockResolvedValue({
+      filename: "123.mp4",
+      hasVideo: true,
+      subtitles: [
+        { filename: "123.en.vtt", language: "en" },
+        { filename: "123.fr.vtt", language: "fr" },
+      ],
+    });
+
+    const res = await request(createTestApp())
+      .post("/download")
+      .send({ url: "https://example.com/watch?v=abc" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      filename: "123.mp4",
+      hasVideo: true,
+      subtitles: [
+        { filename: "123.en.vtt", language: "en" },
+        { filename: "123.fr.vtt", language: "fr" },
+      ],
+    });
   });
 
   test("returns 400 on a validation error", async () => {

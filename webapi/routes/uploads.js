@@ -24,7 +24,7 @@ import {
   transcodingEnabled,
   videoImportsEnabled,
 } from "../lib/processing-features-config.js";
-import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, sequelize } from "../lib/models/index.js";
+import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, VideoSubtitle, sequelize } from "../lib/models/index.js";
 import { generateUniqueVideoId } from "../lib/video-id.js";
 import {
   getProcessingHealth,
@@ -55,8 +55,19 @@ export const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
  */
 export const originalDir = join(mediaDir, "original");
 
-// Ensure the original-uploads directory exists before any upload is attempted.
+/**
+ * Absolute path to the directory where subtitle/caption tracks are stored
+ * (`MEDIA_STORAGE_DIRECTORY/subtitles`). Shared with the processing service
+ * and with `routes/videos.js` (which defines the same path independently,
+ * matching that file's own `originalDir`/`subtitlesDir` precedent).
+ *
+ * @type {string}
+ */
+export const subtitlesDir = join(mediaDir, "subtitles");
+
+// Ensure the original-uploads/subtitles directories exist before any upload is attempted.
 mkdirSync(originalDir, { recursive: true });
+mkdirSync(subtitlesDir, { recursive: true });
 
 /**
  * Set of allowed lowercase file extensions (without a leading dot), parsed from
@@ -1127,6 +1138,63 @@ export async function rollbackFailedImport(upload, statusMessage, extraFiles = [
 }
 
 /**
+ * Moves sidecar subtitle/caption files yt-dlp fetched during a URL import
+ * (`downloadUrl`'s `--write-subs --write-auto-subs`, processing) from
+ * `originalDir` into `subtitlesDir`, recording one VIDEO_SUBTITLE row
+ * (`source: "auto"`) per track - mirrors the video file's own
+ * download-then-rename-into-storage step in `continueImport`, just for
+ * subtitles instead. A single track failing to move is logged and skipped
+ * rather than aborting the rest.
+ *
+ * @param {import('sequelize').Model} upload Original upload the subtitles belong to.
+ * @param {string} segment Per-user storage segment (userId or `"_unowned"`).
+ * @param {Array<{ filename?: unknown, language?: unknown }>} subtitles Raw
+ *   `subtitles` entries from processing's download response.
+ * @returns {Promise<number>} Number of subtitle rows successfully created.
+ */
+async function importDownloadedSubtitles(upload, segment, subtitles) {
+  if (!Array.isArray(subtitles) || subtitles.length === 0) {
+    return 0;
+  }
+
+  mkdirSync(join(subtitlesDir, segment), { recursive: true });
+
+  let created = 0;
+  for (const entry of subtitles) {
+    const downloadedFilename =
+      entry && typeof entry.filename === "string" ? entry.filename.trim() : "";
+    if (!downloadedFilename) {
+      continue;
+    }
+    const language =
+      entry && typeof entry.language === "string" && entry.language.trim()
+        ? entry.language.trim()
+        : null;
+    const relativeFilename = `${segment}/${randomUUID()}.vtt`;
+
+    try {
+      await rename(join(originalDir, downloadedFilename), join(subtitlesDir, relativeFilename));
+    } catch (err) {
+      logger.error(
+        { err },
+        `[import] failed to store downloaded subtitle ${downloadedFilename}`,
+      );
+      continue;
+    }
+
+    await VideoSubtitle.create({
+      originalUploadId: upload.id,
+      subtitleFilename: relativeFilename,
+      source: "auto",
+      label: language || "Subtitle",
+    });
+    created++;
+  }
+
+  return created;
+}
+
+/**
  * Finishes an in-progress URL import that `importVideo` started: downloads
  * the source via the processing service, renames it into `original/` under
  * the upload's videoId, fills in the real file metadata on the placeholder
@@ -1217,7 +1285,31 @@ export async function continueImport(
 
     enqueueDuplicateHashCheck(upload, storedFilename);
 
-    await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail, skipAutoSubtitles });
+    // A caller-supplied subtitle file always wins (skipAutoSubtitles) - don't
+    // also import yt-dlp's captions on top of it. Otherwise, store whatever
+    // the source offered and, if anything was actually stored, suppress the
+    // embedded-subtitle-stream extraction job below: that job unconditionally
+    // replaces every `source: "auto"` row on completion (see
+    // `/internal/subtitles/:jobId/complete`), which would otherwise wipe out
+    // the tracks just imported here the moment it (almost always) finds no
+    // embedded stream in a yt-dlp download.
+    let effectiveSkipAutoSubtitles = skipAutoSubtitles;
+    if (!skipAutoSubtitles) {
+      const importedCount = await importDownloadedSubtitles(
+        upload,
+        segment,
+        download.body?.subtitles,
+      );
+      if (importedCount > 0) {
+        effectiveSkipAutoSubtitles = true;
+        await upload.update({ skipAutoSubtitles: true });
+      }
+    }
+
+    await finalizeUploadTranscodes(upload, storedFilename, {
+      skipThumbnail,
+      skipAutoSubtitles: effectiveSkipAutoSubtitles,
+    });
   } catch (err) {
     logger.error({ err }, "[import] continueImport failed unexpectedly");
     await rollbackFailedImport(

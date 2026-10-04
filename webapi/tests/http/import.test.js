@@ -11,8 +11,8 @@ import {
   seedUserApiKey,
   setupSchema,
 } from "../helpers/db.js";
-import { continueImport, originalDir } from "../../routes/uploads.js";
-import { OriginalUpload } from "../../lib/models/index.js";
+import { continueImport, originalDir, subtitlesDir } from "../../routes/uploads.js";
+import { OriginalUpload, VideoSubtitle } from "../../lib/models/index.js";
 import { userStorageSegment } from "../../lib/media-meta.js";
 
 /**
@@ -531,6 +531,114 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
 
       expect(upload.storagePath).toBe(`original/_unowned/${upload.uuid}.mp4`);
       expect(existsSync(join(originalDir, "_unowned", `${upload.uuid}.mp4`))).toBe(true);
+    });
+
+    test("imports subtitle/caption tracks yt-dlp fetched and skips the embedded-extraction job", async () => {
+      writeDownloadedFixture("1737900022.mp4");
+      writeDownloadedFixture("1737900022.en.vtt");
+      writeDownloadedFixture("1737900022.fr.vtt");
+      const fetchMock = jest.fn(async (url, options) => {
+        if (url === "http://processing.test:3001/download") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              filename: "1737900022.mp4",
+              hasVideo: true,
+              subtitles: [
+                { filename: "1737900022.en.vtt", language: "en" },
+                { filename: "1737900022.fr.vtt", language: "fr" },
+              ],
+            }),
+          };
+        }
+        const body = JSON.parse(String(options.body));
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            success: true,
+            jobs: body.jobs.map((job) => ({
+              jobId: job.jobId,
+              outputFilename: job.outputFilename,
+              profileId: job.profile?.id ?? null,
+            })),
+          }),
+        };
+      });
+      globalThis.fetch = fetchMock;
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {});
+      await upload.reload();
+
+      expect(upload.skipAutoSubtitles).toBe(true);
+
+      const subtitles = await VideoSubtitle.findAll({ where: { originalUploadId: upload.id } });
+      expect(subtitles).toHaveLength(2);
+      expect(subtitles.map((s) => s.source)).toEqual(["auto", "auto"]);
+      expect(subtitles.map((s) => s.label).sort()).toEqual(["en", "fr"]);
+      for (const subtitle of subtitles) {
+        expect(existsSync(join(subtitlesDir, subtitle.subtitleFilename))).toBe(true);
+      }
+      // Downloaded sidecar files moved out of original/, not left behind.
+      expect(existsSync(join(originalDir, "1737900022.en.vtt"))).toBe(false);
+      expect(existsSync(join(originalDir, "1737900022.fr.vtt"))).toBe(false);
+
+      // The embedded-subtitle-stream extraction job must be suppressed, or
+      // its completion callback would wipe out these imported rows (it
+      // replaces every source: "auto" row with whatever it found - usually
+      // nothing, for a yt-dlp download).
+      const transcodeCall = fetchMock.mock.calls.find(
+        (call) => call[0] === "http://processing.test:3001/transcode",
+      );
+      const payload = JSON.parse(String(transcodeCall[1].body));
+      expect(payload.jobs.map((j) => j.kind)).not.toContain("subtitle");
+    });
+
+    test("does not import yt-dlp subtitles when skipAutoSubtitles is already set", async () => {
+      writeDownloadedFixture("1737900023.mp4");
+      writeDownloadedFixture("1737900023.en.vtt");
+      globalThis.fetch = jest.fn(async (url, options) => {
+        if (url === "http://processing.test:3001/download") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              filename: "1737900023.mp4",
+              hasVideo: true,
+              subtitles: [{ filename: "1737900023.en.vtt", language: "en" }],
+            }),
+          };
+        }
+        const body = JSON.parse(String(options.body));
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            success: true,
+            jobs: body.jobs.map((job) => ({
+              jobId: job.jobId,
+              outputFilename: job.outputFilename,
+              profileId: job.profile?.id ?? null,
+            })),
+          }),
+        };
+      });
+
+      await seedUploaderCreds();
+      const upload = await seedDownloadingUpload();
+
+      await continueImport(upload, "https://example.com/watch?v=abc", {
+        skipAutoSubtitles: true,
+      });
+
+      const subtitles = await VideoSubtitle.findAll({ where: { originalUploadId: upload.id } });
+      expect(subtitles).toHaveLength(0);
     });
   });
 });

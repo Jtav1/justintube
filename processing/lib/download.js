@@ -361,6 +361,26 @@ function findStemFile(stem) {
 }
 
 /**
+ * Finds sidecar subtitle/caption files yt-dlp wrote alongside a downloaded
+ * video for a given stem (`--write-subs --write-auto-subs --sub-langs all
+ * --convert-subs vtt`): each lands in `originalDir` as `<stem>.<language>.vtt`,
+ * one per language/track (manual and auto-generated alike — yt-dlp's own
+ * filenames don't distinguish the two).
+ *
+ * @param {string} stem Filename stem used in the yt-dlp output template.
+ * @returns {{ filename: string, language: string | null }[]} Found subtitle tracks.
+ */
+function findStemSubtitleFiles(stem) {
+  const prefix = `${stem}.`;
+  return readdirSync(originalDir)
+    .filter((name) => name.startsWith(prefix) && name.toLowerCase().endsWith(".vtt"))
+    .map((name) => {
+      const language = name.slice(prefix.length, -".vtt".length);
+      return { filename: name, language: language || null };
+    });
+}
+
+/**
  * Downloads a single URL with yt-dlp (≤1080p) into `MEDIA_STORAGE_DIRECTORY/original`
  * (same directory `/transcode` reads its input from) using a unix-epoch
  * basename (with a–z suffix on collision) and `--js-runtimes node`. Also
@@ -369,14 +389,24 @@ function findStemFile(stem) {
  * (yt-dlp's `bestaudio` fallback can land in an ambiguous container like
  * `.webm`, which extension alone can't distinguish from a video webm).
  *
+ * Also fetches every subtitle/caption track the source offers — manual
+ * (`--write-subs`) and auto-generated (`--write-auto-subs`) alike, across
+ * every available language (`--sub-langs all`) — converting each to WebVTT
+ * (`--convert-subs vtt`) so the result matches the format the rest of the
+ * app already stores subtitles in. These land as sidecar files next to the
+ * video (same stem) and are reported back via `subtitles` for the caller to
+ * store (see {@link findStemSubtitleFiles}); a source with no captions at
+ * all simply yields an empty array.
+ *
  * @param {string} url Absolute http(s) URL to download.
  * @param {object} [options] Optional yt-dlp options (see {@link parseYtDlpOptions}).
  * @param {string} [options.cookies] Netscape cookies.txt content, written to a
  *   short-lived temp file for this invocation only (see {@link withCookiesFile}).
  * @param {string} [options.rateLimit] `--limit-rate` value, e.g. `"2M"`.
  * @param {number} [options.retries] `--retries` value.
- * @returns {Promise<{ filename: string, hasVideo: boolean }>} Saved basename
- *   (name + extension) and whether a video stream was found.
+ * @returns {Promise<{ filename: string, hasVideo: boolean, subtitles: { filename: string, language: string | null }[] }>}
+ *   Saved basename (name + extension), whether a video stream was found, and
+ *   any subtitle/caption tracks fetched alongside it.
  * @throws {DownloadValidationError} When `url` is invalid.
  * @throws {Error} When yt-dlp fails or the output file is missing.
  */
@@ -397,6 +427,12 @@ export async function downloadUrl(url, options = {}) {
     FORMAT_SELECTOR,
     "--merge-output-format",
     "mp4",
+    "--write-subs",
+    "--write-auto-subs",
+    "--sub-langs",
+    "all",
+    "--convert-subs",
+    "vtt",
     ...buildOptionalYtDlpArgs({ rateLimit, retries }),
     "-o",
     outputTemplate,
@@ -430,10 +466,13 @@ export async function downloadUrl(url, options = {}) {
     join(originalDir, filename),
   );
   const hasVideo = videoWidth != null && videoHeight != null;
+  const subtitles = findStemSubtitleFiles(stem);
 
-  logger.info(`[import ${stem}] completed: ${filename} (hasVideo=${hasVideo})`);
+  logger.info(
+    `[import ${stem}] completed: ${filename} (hasVideo=${hasVideo}, subtitles=${subtitles.length})`,
+  );
 
-  return { filename, hasVideo };
+  return { filename, hasVideo, subtitles };
 }
 
 /**

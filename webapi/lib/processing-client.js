@@ -89,7 +89,9 @@ const DOWNLOAD_REQUEST_TIMEOUT_MS =
  * @typedef {object} DownloadRequestResult
  * @property {boolean} ok Whether the response status was in the 2xx range.
  * @property {number} status HTTP status code (0 when the request failed before a response).
- * @property {object|null} body Parsed JSON body (`{ success, filename, hasVideo }` on success).
+ * @property {object|null} body Parsed JSON body on success: `{ success,
+ *   filename, hasVideo, subtitles: { filename, language }[] }` — `subtitles`
+ *   lists any caption/subtitle tracks yt-dlp fetched alongside the video.
  * @property {string|null} error Human-readable error message when `ok` is false.
  */
 

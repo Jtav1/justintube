@@ -44,7 +44,8 @@ export function createDownloadRouter() {
   const router = Router();
 
   /**
-   * Downloads a remote video via yt-dlp and returns the saved basename.
+   * Downloads a remote video via yt-dlp and returns the saved basename,
+   * along with any subtitle/caption tracks fetched alongside it.
    *
    * @param {import('express').Request} req Incoming request with `{ url, cookies?, rateLimit?, retries? }`.
    * @param {import('express').Response} res Express response.
@@ -54,9 +55,11 @@ export function createDownloadRouter() {
     logger.info(`[download] request received: ${req.body?.url}`);
     try {
       const options = parseYtDlpOptions(req.body);
-      const { filename, hasVideo } = await downloadUrl(req.body?.url, options);
-      logger.info(`[download] request succeeded: ${filename} (hasVideo=${hasVideo})`);
-      res.status(200).json({ success: true, filename, hasVideo });
+      const { filename, hasVideo, subtitles = [] } = await downloadUrl(req.body?.url, options);
+      logger.info(
+        `[download] request succeeded: ${filename} (hasVideo=${hasVideo}, subtitles=${subtitles.length})`,
+      );
+      res.status(200).json({ success: true, filename, hasVideo, subtitles });
     } catch (err) {
       sendDownloadError(res, "[download]", err);
     }

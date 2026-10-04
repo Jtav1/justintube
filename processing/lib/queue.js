@@ -1,4 +1,5 @@
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { DelayedError, Queue, Worker } from "bullmq";
 import {
   notifyContentHashComplete,
@@ -9,6 +10,8 @@ import {
   notifyFileVersionFailed,
   notifyHlsComplete,
   notifyHlsFailed,
+  notifyHlsMasterComplete,
+  notifyHlsMasterFailed,
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
   notifySubtitleComplete,
@@ -40,9 +43,11 @@ import {
   buildEmbeddedThumbnailFfmpegArgs,
   buildFfmpegArgs,
   buildHlsFfmpegArgs,
+  buildHlsMasterPlaylist,
   buildNormalizeFfmpegArgs,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  HLS_MASTER_PLAYLIST_FILENAME,
   HLS_OUTPUT_FILENAMES,
   runFfmpeg,
 } from "./transcode.js";
@@ -80,10 +85,14 @@ export const MAX_HASH_JOB_RUNS = 7;
  * duplicate-upload hash probes always sort dead last. `hls` packaging is tied
  * with `subtitle` - it never blocks anything user-facing, since the flat MP4
  * rendition it derives from is already complete and playable by the time an
- * `hls` job is even enqueued. Priority only affects ordering among jobs
- * already waiting - it does not preempt a job a worker has already started.
+ * `hls` job is even enqueued. `hls-master` sorts just after `hls` - a caller
+ * only enqueues it once every sibling `hls` job it references has already
+ * completed, so by construction it's never actually waiting behind them, but
+ * it still shouldn't jump ahead of a fresh rendition/thumbnail from another
+ * upload. Priority only affects ordering among jobs already waiting - it
+ * does not preempt a job a worker has already started.
  *
- * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, "hls-master": number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
@@ -92,6 +101,7 @@ export const JOB_PRIORITY_BY_KIND = {
   embed: 3,
   subtitle: 4,
   hls: 4,
+  "hls-master": 5,
   hash: 5,
 };
 
@@ -651,6 +661,55 @@ async function processHlsJob(job) {
 }
 
 /**
+ * Processes a single master-playlist job: write the top-level `.m3u8` that
+ * ties every rendition's already-packaged `"hls"` variant playlist together
+ * for adaptive bitrate switching. No ffmpeg involved and no filesystem
+ * input to read — `renditions` already carries everything the playlist
+ * needs (see `validateHlsMasterRenditions`) — so this is just a text-file
+ * write, unlike every other job kind in this file.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `outputFilename` (the directory to write into - see
+ *   `resolveHlsOutputDir`) and `renditions`.
+ * @returns {Promise<{ playlistPath: string }>} Result payload stored on the
+ *   completed job.
+ * @throws {Error} When the output directory can't be written to.
+ */
+async function processHlsMasterJob(job) {
+  const { outputFilename, renditions } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[hls-master ${jobId}] processing started: ${renditions.length} rendition(s) -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(30);
+
+  const outputDir = resolveHlsOutputDir(outputFilename);
+  const content = buildHlsMasterPlaylist(renditions);
+  await writeFile(join(outputDir, HLS_MASTER_PLAYLIST_FILENAME), content, "utf8");
+
+  await job.updateProgress(80);
+
+  const playlistPath = `${outputFilename}/${HLS_MASTER_PLAYLIST_FILENAME}`;
+
+  const notify = await notifyHlsMasterComplete(jobId, { playlistPath });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed hls-master playlist ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[hls-master ${jobId}] processing completed: ${playlistPath}`);
+
+  return { playlistPath };
+}
+
+/**
  * Processes a single embed job: mux an audio-only upload with its thumbnail
  * image into a real MP4, for link-unfurl bots (Discord in particular) that
  * only render `og:video`. Unlike rendition/normalize jobs there's no
@@ -819,6 +878,9 @@ export async function processTranscodeJob(job, token) {
   if (kind === "hls") {
     return processHlsJob(job);
   }
+  if (kind === "hls-master") {
+    return processHlsMasterJob(job);
+  }
   return processRenditionJob(job);
 }
 
@@ -906,7 +968,9 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
                   ? "ffmpeg-embed"
                   : job.kind === "hls"
                     ? "ffmpeg-hls"
-                    : "ffmpeg-transcode",
+                    : job.kind === "hls-master"
+                      ? "ffmpeg-hls-master"
+                      : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -915,6 +979,7 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
         timestampSeconds: job.timestampSeconds,
         thumbnailFilename: job.thumbnailFilename,
         isDefault: job.isDefault,
+        renditions: job.renditions,
       },
       opts: {
         jobId: job.jobId,
@@ -1283,6 +1348,18 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed hls job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "hls-master") {
+    logger.error({ message }, `[hls-master ${jobId}] processing failed`);
+    const notify = await notifyHlsMasterFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed hls-master job ${jobId}`,
       );
     }
     return;
