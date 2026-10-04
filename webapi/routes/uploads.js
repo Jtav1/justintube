@@ -299,6 +299,26 @@ function fileVersionResponseBody(version) {
 }
 
 /**
+ * Builds the batch-job descriptor for an upload's "Best" quality HLS
+ * packaging job (`kind: "hls"`) — a single-file byte-range fMP4 remux of the
+ * original upload. Exported so `scripts/backfill-hls.js` can enqueue the
+ * exact same job shape for an upload that predates this feature, without
+ * duplicating the jobId/outputFilename convention here.
+ *
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} segment Per-user storage segment (userId or `"_unowned"`,
+ *   see `userStorageSegment`).
+ * @returns {{ jobId: string, outputFilename: string, kind: "hls" }} Job descriptor.
+ */
+export function buildHlsJob(upload, segment) {
+  return {
+    jobId: `hls-${upload.videoId}-${randomUUID()}`,
+    outputFilename: `${segment}/${randomUUID()}.hls`,
+    kind: "hls",
+  };
+}
+
+/**
  * Creates pending FILE_VERSIONS for each transcode profile and batch-enqueues
  * processing jobs against an already-persisted ORIGINAL_UPLOADS row. Shared
  * by both `uploadVideo` (multipart) and `importVideo` (URL download) once
@@ -441,12 +461,10 @@ export async function finalizeUploadTranscodes(
   // offered to the client as the "Best" quality option - adaptive
   // seeking/partial-download playback with no quality loss. Enqueued
   // unconditionally alongside thumbnail/subtitle, for both media types, same
-  // rationale as those two.
-  const hlsJob = {
-    jobId: `hls-${upload.videoId}-${randomUUID()}`,
-    outputFilename: `${segment}/${randomUUID()}.hls`,
-    kind: "hls",
-  };
+  // rationale as those two - processing itself skips the job when the
+  // source's probed dimensions fall below its own minimum (see
+  // `shouldSkipHlsForSource`), so this never needs to pre-check resolution.
+  const hlsJob = buildHlsJob(upload, segment);
 
   const jobs = [
     ...(thumbnailJob ? [thumbnailJob] : []),
