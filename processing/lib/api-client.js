@@ -340,3 +340,20 @@ export async function notifyHlsFailed(jobId, error) {
     error,
   });
 }
+
+/**
+ * Notifies the API that a queued job has been picked up by a worker and is
+ * now actually running - the API's PROCESSING_JOB_RUNS ledger's middle
+ * lifecycle state, between "enqueued" and "complete"/"failed". Generic
+ * across every job kind (unlike every other `notify*` function here, which
+ * posts to a kind-specific path) since the ledger only needs the bare jobId
+ * to flip a row's status - best-effort, like every other notify call: a
+ * failure here never blocks or fails the job itself.
+ *
+ * @param {string} jobId BullMQ job id.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyJobStarted(jobId) {
+  return postInternal(`/internal/job-runs/${encodeURIComponent(jobId)}/start`, {});
+}

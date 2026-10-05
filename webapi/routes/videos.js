@@ -61,6 +61,10 @@ import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { srtToVtt } from "../lib/subtitle-convert.js";
 import { getQueueJobs, removeTranscodeJob, requestTranscodeBatch } from "../lib/processing-client.js";
+import {
+  markJobRunCancelled,
+  upsertPendingJobRun,
+} from "../lib/processing-job-runs.js";
 import { rollupOriginalUploadStatus, toTranscodeProfilePayload } from "../lib/file-versions.js";
 import { transcodingEnabled } from "../lib/processing-features-config.js";
 import {
@@ -3678,11 +3682,12 @@ export function createVideosRouter() {
 
         const storedFilename = upload.storagePath.replace(/^original\//, "");
         const segment = userStorageSegment(upload.userId);
+        const jobId = `subtitle-${upload.videoId}-${randomUUID()}`;
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
             {
-              jobId: `subtitle-${upload.videoId}-${randomUUID()}`,
+              jobId,
               // A prefix, not a final filename - processing may extract more
               // than one text stream and writes each to `${outputFilename}-${i}.vtt`.
               outputFilename: `${segment}/${randomUUID()}`,
@@ -3700,6 +3705,7 @@ export function createVideosRouter() {
           return;
         }
 
+        await upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "subtitle", jobId });
         await upload.update({ skipAutoSubtitles: false });
 
         res.status(202).json({ success: true });
@@ -3861,6 +3867,8 @@ export function createVideosRouter() {
         // subfolder, not the videoId itself — matches transcode-reconcile.js's pattern.
         const storedFilename = upload.storagePath.replace(/^original\//, "");
         const segment = userStorageSegment(upload.userId);
+        const jobId = `thumbnail-${upload.videoId}-${randomUUID()}`;
+        const thumbnailTimestampTenths = isRandomRegeneration ? null : parsedTimestamp.tenths;
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
@@ -3871,10 +3879,10 @@ export function createVideosRouter() {
               // dedup (a completed job with that id already exists) and
               // silently no-op every regeneration after the first; see
               // `enqueueAudioEmbedVideo` (uploads.js) for the same rationale.
-              jobId: `thumbnail-${upload.videoId}-${randomUUID()}`,
+              jobId,
               outputFilename: `${segment}/${randomUUID()}.${THUMBNAIL_OUTPUT_EXT}`,
               kind: "thumbnail",
-              timestampSeconds: isRandomRegeneration ? null : parsedTimestamp.tenths / 10,
+              timestampSeconds: thumbnailTimestampTenths != null ? thumbnailTimestampTenths / 10 : null,
             },
           ],
         });
@@ -3887,6 +3895,13 @@ export function createVideosRouter() {
           });
           return;
         }
+
+        await upsertPendingJobRun({
+          originalUploadId: upload.id,
+          jobKind: "thumbnail",
+          jobId,
+          thumbnailTimestampTenths,
+        });
 
         // Delete the existing thumbnail (row + file) now that regeneration
         // is actually queued, rather than waiting for the completion
@@ -4019,6 +4034,7 @@ export function createVideosRouter() {
         const previousVersions = await FileVersion.findAll({ where: { originalUploadId: upload.id } });
         for (const version of previousVersions) {
           await removeTranscodeJob(version.uuidName).catch(() => {});
+          await markJobRunCancelled(version.uuidName);
           await version.destroy();
           await unlink(resolveMediaPath(version.storagePath)).catch(() => {});
         }
@@ -4086,6 +4102,12 @@ export function createVideosRouter() {
             await version.destroy();
           } else {
             await version.update({ status: "processing" });
+            await upsertPendingJobRun({
+              originalUploadId: upload.id,
+              jobKind: "rendition",
+              jobId: version.uuidName,
+              transcodeProfileId: version.transcodeProfileId,
+            });
           }
         }
 
@@ -4200,16 +4222,18 @@ export function createVideosRouter() {
           : DEFAULT_AUDIO_THUMBNAIL_FILENAME;
         const storedFilename = upload.storagePath.replace(/^original\//, "");
         const segment = userStorageSegment(upload.userId);
+        const jobId = `embed-${upload.videoId}-${randomUUID()}`;
+        const isDefault = !existingThumbnail;
 
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
             {
-              jobId: `embed-${upload.videoId}-${randomUUID()}`,
+              jobId,
               outputFilename: `${segment}/${randomUUID()}-embed.mp4`,
               kind: "embed",
               thumbnailFilename,
-              isDefault: !existingThumbnail,
+              isDefault,
             },
           ],
         });
@@ -4222,6 +4246,13 @@ export function createVideosRouter() {
           });
           return;
         }
+
+        await upsertPendingJobRun({
+          originalUploadId: upload.id,
+          jobKind: "embed",
+          jobId,
+          isDefaultThumbnail: isDefault,
+        });
 
         const previousPath = upload.embedVideoStoragePath;
         await upload.update({
@@ -4339,9 +4370,10 @@ export function createVideosRouter() {
         }
 
         const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const jobId = `hash-${upload.videoId}`;
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
-          jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
+          jobs: [{ jobId, kind: "hash" }],
         });
 
         if (!enqueue.ok) {
@@ -4352,6 +4384,8 @@ export function createVideosRouter() {
           });
           return;
         }
+
+        await upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "hash", jobId });
 
         const hasVideoStream = enqueue.body?.source?.hasVideoStream;
         if (typeof hasVideoStream !== "boolean") {

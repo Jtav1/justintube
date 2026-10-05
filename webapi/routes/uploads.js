@@ -24,6 +24,10 @@ import {
   transcodingEnabled,
   videoImportsEnabled,
 } from "../lib/processing-features-config.js";
+import {
+  markJobRunCancelled,
+  upsertPendingJobRun,
+} from "../lib/processing-job-runs.js";
 import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, VideoSubtitle, sequelize } from "../lib/models/index.js";
 import { generateUniqueVideoId } from "../lib/video-id.js";
 import {
@@ -553,6 +557,23 @@ export async function finalizeUploadTranscodes(
       : [],
   );
 
+  // Records a PROCESSING_JOB_RUNS row for every job processing actually
+  // accepted (skipping the ones it reported back as skipped - those never
+  // got enqueued at all, so there's nothing to track yet).
+  for (const job of jobs) {
+    if (skippedJobIds.has(job.jobId)) {
+      continue;
+    }
+    await upsertPendingJobRun({
+      originalUploadId: upload.id,
+      jobKind: job.kind,
+      jobId: job.jobId,
+      transcodeProfileId: job.kind === "rendition" ? job.profile?.id ?? null : null,
+      thumbnailTimestampTenths:
+        job.kind === "thumbnail" ? upload.thumbnailTimestampTenths ?? null : null,
+    });
+  }
+
   /** @type {import('sequelize').Model[]} */
   const activeVersions = [];
   /** @type {Array<{ profileId: number|null, jobId: string, reason: string }>} */
@@ -625,9 +646,10 @@ export function enqueueDuplicateHashCheck(upload, storedFilename) {
     return;
   }
 
+  const jobId = `hash-${upload.videoId}`;
   requestTranscodeBatch({
     filename: storedFilename,
-    jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
+    jobs: [{ jobId, kind: "hash" }],
   })
     .then((enqueue) => {
       if (!enqueue.ok) {
@@ -635,7 +657,9 @@ export function enqueueDuplicateHashCheck(upload, storedFilename) {
           { error: enqueue.error },
           `[upload] duplicate-check enqueue failed for ${upload.videoId}`,
         );
+        return;
       }
+      return upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "hash", jobId });
     })
     .catch((err) => {
       logger.warn({ err }, `[upload] duplicate-check enqueue threw for ${upload.videoId}`);
@@ -697,12 +721,13 @@ export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename
 
   const segment = userStorageSegment(upload.userId);
   const outputFilename = `${segment}/${randomUUID()}-embed.mp4`;
+  const jobId = `embed-${upload.videoId}-${randomUUID()}`;
 
   requestTranscodeBatch({
     filename: storedFilename,
     jobs: [
       {
-        jobId: `embed-${upload.videoId}-${randomUUID()}`,
+        jobId,
         outputFilename,
         kind: "embed",
         thumbnailFilename,
@@ -716,7 +741,14 @@ export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename
           { error: enqueue.error },
           `[upload] audio-embed enqueue failed for ${upload.videoId}`,
         );
+        return;
       }
+      return upsertPendingJobRun({
+        originalUploadId: upload.id,
+        jobKind: "embed",
+        jobId,
+        isDefaultThumbnail: isDefault,
+      });
     })
     .catch((err) => {
       logger.warn({ err }, `[upload] audio-embed enqueue threw for ${upload.videoId}`);
@@ -747,11 +779,12 @@ async function startUploadConversion(upload, storedFilename) {
   // fresh uuid rather than reusing videoId as a filename stem.
   const newUuid = randomUUID();
   const segment = userStorageSegment(upload.userId);
+  const jobId = `normalize-${upload.videoId}`;
   const enqueue = await requestTranscodeBatch({
     filename: storedFilename,
     jobs: [
       {
-        jobId: `normalize-${upload.videoId}`,
+        jobId,
         outputFilename: `${segment}/${newUuid}.${outputExtension}`,
         kind: "normalize",
       },
@@ -783,6 +816,7 @@ async function startUploadConversion(upload, storedFilename) {
     };
   }
 
+  await upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "normalize", jobId });
   await upload.update({ status: "converting" });
   await upload.reload();
   return {

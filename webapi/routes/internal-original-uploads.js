@@ -12,6 +12,7 @@ import {
   User,
 } from "../lib/models/index.js";
 import { createNotification } from "../lib/notifications.js";
+import { markJobRunComplete, markJobRunFailed } from "../lib/processing-job-runs.js";
 import { logger } from "../lib/logger.js";
 import { VIDEO_ID_LENGTH } from "../lib/video-id.js";
 import { enqueueDuplicateHashCheck, finalizeUploadTranscodes } from "./uploads.js";
@@ -182,7 +183,8 @@ export function createInternalOriginalUploadsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/original-uploads/:jobId/hash-complete", async (req, res) => {
-    const videoId = videoIdFromHashJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromHashJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         error: "invalid_job_id",
@@ -211,6 +213,7 @@ export function createInternalOriginalUploadsRouter() {
     }
 
     await upload.update({ contentHash });
+    await markJobRunComplete(jobId);
 
     const existing = await OriginalUpload.findOne({
       where: {
@@ -276,7 +279,8 @@ export function createInternalOriginalUploadsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/original-uploads/:jobId/hash-failed", async (req, res) => {
-    const videoId = videoIdFromHashJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromHashJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         error: "invalid_job_id",
@@ -297,6 +301,7 @@ export function createInternalOriginalUploadsRouter() {
     const message =
       req.body && typeof req.body.error === "string" ? req.body.error : "content hash job failed";
     logger.error({ message }, `[original-uploads] hash job failed for upload ${upload.videoId}`);
+    await markJobRunFailed(jobId, message);
 
     res.status(200).json({ success: true });
   });
@@ -353,7 +358,8 @@ export function createInternalOriginalUploadsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/original-uploads/:jobId/normalize-complete", async (req, res) => {
-    const videoId = videoIdFromNormalizeJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromNormalizeJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         error: "invalid_job_id",
@@ -409,6 +415,7 @@ export function createInternalOriginalUploadsRouter() {
       await unlink(resolveMediaPath(previousStoragePath)).catch(() => {});
     }
 
+    await markJobRunComplete(jobId);
     await finalizeUploadTranscodes(upload, newStoredFilename, {
       skipThumbnail: upload.skipThumbnail,
       skipAutoSubtitles: upload.skipAutoSubtitles,
@@ -460,7 +467,8 @@ export function createInternalOriginalUploadsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/original-uploads/:jobId/normalize-failed", async (req, res) => {
-    const videoId = videoIdFromNormalizeJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromNormalizeJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         error: "invalid_job_id",
@@ -491,6 +499,7 @@ export function createInternalOriginalUploadsRouter() {
       status: "failed",
       statusMessage: message.slice(0, 255),
     });
+    await markJobRunFailed(jobId, message);
 
     res.status(200).json({ success: true, videoId, status: "failed" });
   });
@@ -553,7 +562,8 @@ export function createInternalOriginalUploadsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/original-uploads/:jobId/embed-complete", async (req, res) => {
-    const videoId = videoIdFromEmbedJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromEmbedJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         error: "invalid_job_id",
@@ -589,6 +599,7 @@ export function createInternalOriginalUploadsRouter() {
         `[original-uploads] discarding stale placeholder-sourced embed video for upload ${upload.videoId} ` +
           `- a real one already landed`,
       );
+      await markJobRunComplete(jobId);
       res.status(200).json({ success: true, videoId, status: "skipped_stale_default" });
       return;
     }
@@ -605,6 +616,7 @@ export function createInternalOriginalUploadsRouter() {
     if (previousStoragePath && previousStoragePath !== storagePath) {
       await unlink(resolveMediaPath(previousStoragePath)).catch(() => {});
     }
+    await markJobRunComplete(jobId);
 
     res.status(200).json({ success: true, videoId, status: "complete" });
   });
@@ -650,7 +662,8 @@ export function createInternalOriginalUploadsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/original-uploads/:jobId/embed-failed", async (req, res) => {
-    const videoId = videoIdFromEmbedJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromEmbedJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         error: "invalid_job_id",
@@ -671,6 +684,7 @@ export function createInternalOriginalUploadsRouter() {
     const message =
       req.body && typeof req.body.error === "string" ? req.body.error : "embed video job failed";
     logger.error({ message }, `[original-uploads] embed video job failed for upload ${upload.videoId}`);
+    await markJobRunFailed(jobId, message);
 
     res.status(200).json({ success: true });
   });

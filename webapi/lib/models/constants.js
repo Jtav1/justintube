@@ -63,3 +63,29 @@ export const SEARCH_INDEX_STATUS_VALUES = ["pending", "indexed"];
  * @type {string[]}
  */
 export const REPORT_TYPE_VALUES = ["video", "user", "playlist", "website", "system"];
+
+/**
+ * Allowed PROCESSING_JOB_RUNS.job_kind values - one per processing job kind
+ * (see `processing/lib/queue.js`'s own `kind` dispatch).
+ *
+ * @type {string[]}
+ */
+export const JOB_KIND_VALUES = [
+  "rendition",
+  "thumbnail",
+  "subtitle",
+  "hls",
+  "embed",
+  "normalize",
+  "hash",
+];
+
+/**
+ * Allowed PROCESSING_JOB_RUNS.status values - mirrors FILE_VERSIONS/
+ * ORIGINAL_UPLOADS' own pending/processing/complete/failed lifecycle, plus
+ * "cancelled" for a row whose BullMQ job was explicitly removed from the
+ * queue (see `cancelQueuedTranscodeJobs`) before it ran to completion.
+ *
+ * @type {string[]}
+ */
+export const JOB_RUN_STATUS_VALUES = ["pending", "processing", "complete", "failed", "cancelled"];

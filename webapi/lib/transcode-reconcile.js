@@ -11,6 +11,11 @@ import {
   requestTranscodeBatch,
 } from "./processing-client.js";
 import { transcodingEnabled } from "./processing-features-config.js";
+import {
+  markJobRunComplete,
+  markJobRunFailed,
+  upsertPendingJobRun,
+} from "./processing-job-runs.js";
 import { logger } from "./logger.js";
 
 /**
@@ -77,15 +82,18 @@ export async function reconcileFileVersion(version) {
             : version.storagePath,
         mimeType: rv.mimeType ?? undefined,
       });
+      await markJobRunComplete(uuidName);
       return { action: "healed_complete", uuidName };
     }
 
     if (state === "failed") {
+      const reason = statusResult.body.failedReason || "unknown failure";
       logger.error(
-        { reason: statusResult.body.failedReason || "unknown failure" },
+        { reason },
         `[reconcile] transcode job failed for file version ${uuidName} (upload ${version.originalUploadId})`,
       );
       await applyFileVersionFailed(version);
+      await markJobRunFailed(uuidName, reason);
       const removed = await removeTranscodeJob(uuidName);
       if (!removed.ok && removed.status !== 404) {
         logger.error({ error: removed.error }, `[reconcile] failed to remove job ${uuidName} from queue`);
@@ -100,6 +108,7 @@ export async function reconcileFileVersion(version) {
     if (!version.transcodeProfileId) {
       logger.error(`[reconcile] cannot re-enqueue ${uuidName}: missing transcodeProfileId`);
       await applyFileVersionFailed(version);
+      await markJobRunFailed(uuidName, "missing transcodeProfileId");
       return { action: "marked_failed_no_profile", uuidName };
     }
 
@@ -107,6 +116,7 @@ export async function reconcileFileVersion(version) {
     if (!profile) {
       logger.error(`[reconcile] cannot re-enqueue ${uuidName}: profile ${version.transcodeProfileId} not found`);
       await applyFileVersionFailed(version);
+      await markJobRunFailed(uuidName, `profile ${version.transcodeProfileId} not found`);
       return { action: "marked_failed_no_profile", uuidName };
     }
 
@@ -114,6 +124,7 @@ export async function reconcileFileVersion(version) {
     if (!parent?.storagePath) {
       logger.error(`[reconcile] cannot re-enqueue ${uuidName}: original upload missing`);
       await applyFileVersionFailed(version);
+      await markJobRunFailed(uuidName, "original upload missing");
       return { action: "marked_failed_no_upload", uuidName };
     }
 
@@ -136,6 +147,7 @@ export async function reconcileFileVersion(version) {
     if (!enqueue.ok) {
       logger.error({ error: enqueue.error }, `[reconcile] re-enqueue failed for ${uuidName}`);
       await applyFileVersionFailed(version);
+      await markJobRunFailed(uuidName, enqueue.error || "re-enqueue failed");
       const removed = await removeTranscodeJob(uuidName);
       if (!removed.ok && removed.status !== 404) {
         logger.error(
@@ -149,6 +161,12 @@ export async function reconcileFileVersion(version) {
     if (version.status === "pending") {
       await version.update({ status: "processing" });
     }
+    await upsertPendingJobRun({
+      originalUploadId: version.originalUploadId,
+      jobKind: "rendition",
+      jobId: uuidName,
+      transcodeProfileId: version.transcodeProfileId,
+    });
     return { action: "reenqueued", uuidName };
   }
 

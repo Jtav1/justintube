@@ -5,6 +5,7 @@ import { hashResetToken } from "../../lib/auth/password-reset.js";
 import { hashStreamKey } from "../../lib/auth/stream-key.js";
 import { query } from "../../lib/db.js";
 import { userStorageSegment } from "../../lib/media-meta.js";
+import { buildParamsKey } from "../../lib/processing-job-runs.js";
 import { generateVideoId } from "../../lib/video-id.js";
 import {
   AccessPermission,
@@ -26,6 +27,7 @@ import {
   PasswordResetToken,
   PlaylistAccess,
   PlaylistItem,
+  ProcessingJobRun,
   Report,
   Role,
   SsoProvider,
@@ -72,6 +74,7 @@ const RESET_MODELS = [
   PlaylistItem,
   PlaylistAccess,
   FileVersion,
+  ProcessingJobRun,
   VideoMetadata,
   VideoThumbnail,
   VideoSubtitle,
@@ -385,6 +388,55 @@ export async function seedFileVersion(originalUploadId, overrides = {}) {
   };
 
   const row = await FileVersion.create(record);
+  return asSeedResult(row, record);
+}
+
+/**
+ * Inserts a PROCESSING_JOB_RUNS row for an existing upload, applying
+ * defaults for any omitted field. `paramsKey` is always computed from
+ * `jobKind` + whichever per-kind parameter fields are passed (not an
+ * overridable field itself), matching how the real upsert helpers in
+ * `lib/processing-job-runs.js` always derive it rather than accepting it
+ * directly.
+ *
+ * @param {number} originalUploadId Id of the parent ORIGINAL_UPLOADS row.
+ * @param {object} [overrides] Partial column values to override the defaults.
+ * @param {string} [overrides.jobKind] One of `JOB_KIND_VALUES` (default `"hash"`).
+ * @param {string} [overrides.jobId] BullMQ job id (defaults to a fresh UUID).
+ * @param {string} [overrides.status] Lifecycle status label (default `"pending"`).
+ * @param {number|null} [overrides.transcodeProfileId] `"rendition"` only.
+ * @param {string|null} [overrides.language] `"subtitle"` only.
+ * @param {number|null} [overrides.thumbnailTimestampTenths] `"thumbnail"` only.
+ * @param {boolean|null} [overrides.isDefaultThumbnail] `"embed"` only.
+ * @returns {Promise<{id: number} & Record<string, unknown>>} The seeded row's id and values.
+ */
+export async function seedProcessingJobRun(originalUploadId, overrides = {}) {
+  const jobKind = overrides.jobKind ?? "hash";
+  const transcodeProfileId = overrides.transcodeProfileId ?? null;
+  const language = overrides.language ?? null;
+  const thumbnailTimestampTenths = overrides.thumbnailTimestampTenths ?? null;
+  const isDefaultThumbnail = overrides.isDefaultThumbnail ?? null;
+
+  const record = {
+    originalUploadId,
+    jobKind,
+    jobId: randomUUID(),
+    status: "pending",
+    transcodeProfileId,
+    language,
+    thumbnailTimestampTenths,
+    isDefaultThumbnail,
+    errorMessage: null,
+    ...overrides,
+    paramsKey: buildParamsKey(jobKind, {
+      transcodeProfileId,
+      language,
+      thumbnailTimestampTenths,
+      isDefaultThumbnail,
+    }),
+  };
+
+  const row = await ProcessingJobRun.create(record);
   return asSeedResult(row, record);
 }
 

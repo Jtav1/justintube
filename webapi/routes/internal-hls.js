@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { OriginalUpload } from "../lib/models/index.js";
+import { markJobRunComplete, markJobRunFailed } from "../lib/processing-job-runs.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
 import { logger } from "../lib/logger.js";
 import { VIDEO_ID_LENGTH } from "../lib/video-id.js";
@@ -110,7 +111,8 @@ export function createInternalHlsRouter() {
    * @returns {Promise<void>} Sends 200 `{ success, videoId, status }`, 400, 404, or error.
    */
   router.post("/hls/:jobId/complete", async (req, res) => {
-    const videoId = videoIdFromHlsJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromHlsJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         success: false,
@@ -142,6 +144,7 @@ export function createInternalHlsRouter() {
     }
 
     await upload.update({ hlsPlaylistStoragePath: playlistPath });
+    await markJobRunComplete(jobId);
 
     res.status(200).json({
       success: true,
@@ -193,7 +196,8 @@ export function createInternalHlsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/hls/:jobId/fail", async (req, res) => {
-    const videoId = videoIdFromHlsJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromHlsJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         success: false,
@@ -216,6 +220,7 @@ export function createInternalHlsRouter() {
     const message =
       req.body && typeof req.body.error === "string" ? req.body.error : "hls packaging failed";
     logger.error({ message }, `[hls] packaging failed for upload ${upload.videoId}`);
+    await markJobRunFailed(jobId, message);
 
     res.status(200).json({ success: true, videoId: upload.videoId });
   });

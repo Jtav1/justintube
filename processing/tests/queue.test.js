@@ -27,6 +27,7 @@ const stat = jest.fn();
 const probeFormatBitRate = jest.fn();
 const notifyHlsComplete = jest.fn();
 const notifyHlsFailed = jest.fn();
+const notifyJobStarted = jest.fn().mockResolvedValue({ ok: true, status: 200, error: null });
 const resolveOriginalInputPath = jest.fn((filename) => `/media/original/${filename}`);
 const resolveHlsOutputDir = jest.fn();
 
@@ -57,6 +58,7 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyEmbedVideoFailed: jest.fn(),
   notifyHlsComplete,
   notifyHlsFailed,
+  notifyJobStarted,
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveOriginalInputPath,
@@ -111,6 +113,34 @@ function makeThumbnailJob(dataOverrides = {}) {
     updateProgress: jest.fn().mockResolvedValue(undefined),
   };
 }
+
+describe("processTranscodeJob notifies the API when a job starts", () => {
+  beforeEach(() => {
+    notifyJobStarted.mockClear();
+    probeEmbeddedThumbnailStream.mockReset().mockResolvedValue(null);
+    probeHasVideoStream.mockReset().mockResolvedValue(true);
+    resolveThumbnailOutputPath.mockReset().mockImplementation((f) => `/media/thumbnails/${f}`);
+    buildThumbnailFfmpegArgs.mockReset().mockReturnValue(["frame-grab-args"]);
+    runFfmpeg.mockReset().mockResolvedValue(undefined);
+    stat.mockReset().mockResolvedValue({ size: 1234 });
+    notifyThumbnailComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("notifies with the job's own id before dispatching to the kind-specific handler", async () => {
+    const job = makeThumbnailJob();
+
+    await processTranscodeJob(job);
+
+    expect(notifyJobStarted).toHaveBeenCalledWith("thumb-abc123");
+  });
+
+  test("logs (but doesn't throw) when the start notification itself fails", async () => {
+    notifyJobStarted.mockResolvedValueOnce({ ok: false, status: 0, error: "network down" });
+    const job = makeThumbnailJob();
+
+    await expect(processTranscodeJob(job)).resolves.toBeDefined();
+  });
+});
 
 describe("processTranscodeJob (kind: thumbnail) embedded art priority", () => {
   beforeEach(() => {

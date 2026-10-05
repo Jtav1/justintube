@@ -9,6 +9,7 @@ import {
   notifyFileVersionFailed,
   notifyHlsComplete,
   notifyHlsFailed,
+  notifyJobStarted,
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
   notifySubtitleComplete,
@@ -798,7 +799,16 @@ async function processRenditionJob(job) {
  */
 export async function processTranscodeJob(job, token) {
   const kind = job.data?.kind || "rendition";
+  const jobId = String(job.id);
   logger.info(`[worker] dequeued job ${job.id} (${kind})`);
+
+  const started = await notifyJobStarted(jobId);
+  if (!started.ok) {
+    logger.error(
+      { error: started.error },
+      `failed to notify API that job ${jobId} started`,
+    );
+  }
 
   if (kind === "thumbnail") {
     return processThumbnailJob(job);

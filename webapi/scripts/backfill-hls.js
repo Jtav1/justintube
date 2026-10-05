@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { userStorageSegment } from "../lib/media-meta.js";
 import { OriginalUpload } from "../lib/models/index.js";
 import { requestTranscodeBatch } from "../lib/processing-client.js";
+import { upsertPendingJobRun } from "../lib/processing-job-runs.js";
 import { buildHlsJob } from "../routes/uploads.js";
 
 /**
@@ -65,6 +66,7 @@ export async function enqueueHlsBackfillJob(upload) {
   if (!enqueue.ok) {
     return { videoId: upload.videoId, action: "failed", error: enqueue.error || "enqueue failed" };
   }
+  await upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "hls", jobId: hlsJob.jobId });
   return { videoId: upload.videoId, action: "enqueued" };
 }
 
