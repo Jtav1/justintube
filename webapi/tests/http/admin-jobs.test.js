@@ -112,6 +112,7 @@ describe("GET /api/v1/admin/jobs/queue", () => {
         subtitle: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
         hls: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
         storyboard: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
+        preview: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
       },
       total: 4,
       healthy: true,

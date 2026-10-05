@@ -1,15 +1,28 @@
 .video-card {
+  position: relative;
   display: flex;
   gap: 4px;
   text-align: left;
   padding: 8px;
   margin: -8px;
   border-radius: 12px;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .video-card:hover {
   background: var(--accent-bg);
+  /* "Pops" the card slightly toward the viewer on hover, so the hover-preview
+     clip (video-card-preview-video below) reads as the focal point rather
+     than just one more static thumbnail in the grid. */
+  transform: scale(1.04);
+  z-index: 2;
+  box-shadow: var(--shadow), 0 10px 24px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video-card:hover {
+    transform: none;
+  }
 }
 
 .video-card-vertical {
@@ -54,6 +67,20 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.video-card-preview-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.video-card-preview-video-playing {
+  opacity: 1;
 }
 
 .video-card-thumb-placeholder {

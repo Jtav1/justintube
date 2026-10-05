@@ -483,6 +483,7 @@ export function parsePositiveInt(raw) {
  *   thumbnailUrl: string|null,
  *   embedVideoUrl: string|null,
  *   storyboardUrl: string|null,
+ *   previewClipUrl: string|null,
  *   subtitlesUrl: string|null,
  *   likeCount: number,
  *   dislikeCount: number,
@@ -531,6 +532,14 @@ export function serializeVideo(upload, metadata, options = {}) {
     // needs its own separate URL for it.
     storyboardUrl: upload.storyboardVttStoragePath
       ? `/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`
+      : null,
+    // Short, muted, looping hover-preview clip for a video grid card (see
+    // processing's `"preview"` job) - null until that job completes, same
+    // "feature simply isn't available yet" convention as storyboardUrl
+    // above. VideoCard (webview) only renders the preview `<video>` once
+    // this is non-null.
+    previewClipUrl: upload.previewClipStoragePath
+      ? `/api/v1/videos/${upload.id}/preview-clip`
       : null,
     // Always points at the subtitle list endpoint now (a video may have zero,
     // one, or many subtitles) - the client fetches it to populate the
@@ -2915,6 +2924,79 @@ export function createVideosRouter() {
         res.status(500).json({
           error: "internal_error",
           message: "Failed to stream embed video.",
+        });
+      }
+    }
+  });
+
+  /**
+   * GET /videos/:id/preview-clip — getVideoPreviewClip
+   * Auth: optional. Private requires owner, grant, or admin. Streams this
+   * upload's short, muted, looping hover-preview clip (see `"preview"`
+   * processing job) with HTTP Range support - the clip `VideoCard` (webview)
+   * plays on mouseover in a video grid.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/preview-clip:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Stream a video's hover-preview clip (supports HTTP Range requests)
+   *     operationId: getVideoPreviewClip
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Full file (no Range header sent)
+   *       "206":
+   *         description: Partial content (Range header honored)
+   *       "404":
+   *         description: Not found, inaccessible, or no preview clip generated yet
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the streamed file or a 404/500 error.
+   */
+  router.get("/videos/:id/preview-clip", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.previewClipStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      const absolutePath = resolveMediaPath(upload.previewClipStoragePath);
+      await streamFileWithRangeSupport(req, res, absolutePath, "video/mp4");
+    } catch (err) {
+      logger.error({ err }, "getVideoPreviewClip failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to stream preview clip.",
         });
       }
     }

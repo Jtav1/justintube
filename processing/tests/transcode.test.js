@@ -8,10 +8,12 @@ import {
   buildHlsFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildOutputFilename,
+  buildPreviewClipFfmpegArgs,
   buildStoryboardFfmpegArgs,
   buildStoryboardVtt,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  computePreviewClipWindow,
   computeStoryboardLayout,
   HLS_OUTPUT_FILENAMES,
   STORYBOARD_OUTPUT_FILENAMES,
@@ -321,6 +323,32 @@ describe("thumbnail job validation and ffmpeg args", () => {
       expect(() =>
         validateTranscodeJob(
           { jobId: "storyboard-abc123", outputFilename: "abc123.storyboard", kind: "storyboard" },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("validateTranscodeJob accepts a preview job with only jobId + outputFilename, no profile", () => {
+    const jobId = "preview-abc123";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "42/abc123-preview.mp4", kind: "preview" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/abc123-preview.mp4",
+      kind: "preview",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for preview jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          { jobId: "preview-abc123", outputFilename: "abc123-preview.mp4", kind: "preview" },
           0,
         ),
       ).not.toThrow();
@@ -1107,5 +1135,63 @@ describe("buildStoryboardVtt", () => {
         "",
       ].join("\n") + "\n",
     );
+  });
+});
+
+describe("computePreviewClipWindow", () => {
+  test("starts 25% of the way into a video long enough for the full clip duration", () => {
+    expect(computePreviewClipWindow(95)).toEqual({
+      startSeconds: 23.75,
+      durationSeconds: 3,
+    });
+  });
+
+  test("falls back to the entire video starting at 0 when shorter than the clip duration", () => {
+    expect(computePreviewClipWindow(2)).toEqual({
+      startSeconds: 0,
+      durationSeconds: 2,
+    });
+  });
+
+  test("clamps the start so the clip never runs past the end of the video", () => {
+    // 25% of 10s is 2.5s in, but a 3s clip starting there would run to 5.5s -
+    // well within 10s, so this just exercises the non-degenerate case.
+    const window = computePreviewClipWindow(10);
+    expect(window.startSeconds + window.durationSeconds).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("buildPreviewClipFfmpegArgs", () => {
+  test("seeks before the input, cuts a fixed duration, scales/pads to a bounded box, and drops audio", () => {
+    const args = buildPreviewClipFfmpegArgs({
+      inputPath: "/media/original/42/abc.mp4",
+      outputPath: "/media/transcoded/42/abc-preview.mp4",
+      startSeconds: 23.75,
+      durationSeconds: 3,
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-ss",
+      "23.75",
+      "-i",
+      "/media/original/42/abc.mp4",
+      "-t",
+      "3",
+      "-vf",
+      "scale='min(480,iw)':'min(270,ih)':force_original_aspect_ratio=decrease,pad='ceil(iw/2)*2':'ceil(ih/2)*2'",
+      "-an",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      "-f",
+      "mp4",
+      "/media/transcoded/42/abc-preview.mp4",
+    ]);
   });
 });

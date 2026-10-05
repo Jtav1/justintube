@@ -12,6 +12,7 @@ export const JOB_KINDS = [
   'subtitle',
   'hls',
   'storyboard',
+  'preview',
 ]
 
 /**
@@ -36,6 +37,7 @@ const JOB_KIND_LABELS = {
   subtitle: 'Subtitle extraction',
   hls: 'Best quality (HLS)',
   storyboard: 'Scrub preview',
+  preview: 'Hover preview',
 }
 
 /**
@@ -57,6 +59,7 @@ const JOB_KIND_COLORS = {
   subtitle: '#7b61ff',
   hls: '#2e9e9e',
   storyboard: '#8e6b2e',
+  preview: '#4a8fd6',
 }
 
 /**

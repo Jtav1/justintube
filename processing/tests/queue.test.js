@@ -30,6 +30,8 @@ const notifyHlsComplete = jest.fn();
 const notifyHlsFailed = jest.fn();
 const notifyStoryboardComplete = jest.fn();
 const notifyStoryboardFailed = jest.fn();
+const notifyPreviewClipComplete = jest.fn();
+const notifyPreviewClipFailed = jest.fn();
 const notifyJobStarted = jest.fn().mockResolvedValue({ ok: true, status: 200, error: null });
 const resolveOriginalInputPath = jest.fn((filename) => `/media/original/${filename}`);
 const resolveHlsOutputDir = jest.fn();
@@ -37,6 +39,8 @@ const resolveStoryboardOutputDir = jest.fn();
 const buildStoryboardFfmpegArgs = jest.fn();
 const buildStoryboardVtt = jest.fn();
 const computeStoryboardLayout = jest.fn();
+const buildPreviewClipFfmpegArgs = jest.fn();
+const computePreviewClipWindow = jest.fn();
 const probeVideoDuration = jest.fn();
 const writeFile = jest.fn();
 
@@ -70,6 +74,8 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyHlsFailed,
   notifyStoryboardComplete,
   notifyStoryboardFailed,
+  notifyPreviewClipComplete,
+  notifyPreviewClipFailed,
   notifyJobStarted,
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
@@ -93,6 +99,8 @@ jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildStoryboardFfmpegArgs,
   buildStoryboardVtt,
   computeStoryboardLayout,
+  buildPreviewClipFfmpegArgs,
+  computePreviewClipWindow,
   HLS_OUTPUT_FILENAMES: { init: "init.mp4", media: "stream.m4s", playlist: "variant.m3u8" },
   STORYBOARD_OUTPUT_FILENAMES: { sprite: "sprite.jpg", vtt: "storyboard.vtt" },
   runFfmpeg,
@@ -634,6 +642,108 @@ describe("notifyTranscodeJobFailed (kind: storyboard)", () => {
 
     expect(notifyStoryboardFailed).toHaveBeenCalledWith(
       "storyboard-abc123",
+      "ffmpeg exited with code 1",
+    );
+  });
+});
+
+/**
+ * Builds a fake BullMQ job for a "preview" kind job.
+ *
+ * @param {object} [dataOverrides] Overrides merged into `job.data`.
+ * @returns {object} Fake job.
+ */
+function makePreviewJob(dataOverrides = {}) {
+  return {
+    id: "preview-abc123",
+    data: {
+      kind: "preview",
+      inputFilename: "42/video-uuid.mp4",
+      outputFilename: "42/video-uuid-preview.mp4",
+      ...dataOverrides,
+    },
+    updateProgress: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe("processTranscodeJob (kind: preview)", () => {
+  beforeEach(() => {
+    resolveOriginalInputPath.mockReset().mockImplementation((f) => `/media/original/${f}`);
+    resolveTranscodedOutputPath.mockReset().mockImplementation((f) => `/media/transcoded/${f}`);
+    probeVideoDuration.mockReset().mockResolvedValue(95);
+    computePreviewClipWindow.mockReset().mockReturnValue({ startSeconds: 23.75, durationSeconds: 3 });
+    buildPreviewClipFfmpegArgs.mockReset().mockReturnValue(["preview-args"]);
+    runFfmpeg.mockReset().mockResolvedValue(undefined);
+    collectOutputMetadata.mockReset().mockResolvedValue({
+      fileSizeBytes: 1234,
+      videoWidth: 480,
+      videoHeight: 270,
+      resolution: "270p",
+      storagePath: "transcoded/42/video-uuid-preview.mp4",
+      mimeType: "video/mp4",
+    });
+    notifyPreviewClipComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("probes duration, cuts the clip, and reports the result", async () => {
+    const job = makePreviewJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(resolveOriginalInputPath).toHaveBeenCalledWith("42/video-uuid.mp4");
+    expect(probeVideoDuration).toHaveBeenCalledWith("/media/original/42/video-uuid.mp4");
+    expect(computePreviewClipWindow).toHaveBeenCalledWith(95);
+    expect(resolveTranscodedOutputPath).toHaveBeenCalledWith("42/video-uuid-preview.mp4");
+    expect(buildPreviewClipFfmpegArgs).toHaveBeenCalledWith({
+      inputPath: "/media/original/42/video-uuid.mp4",
+      outputPath: "/media/transcoded/42/video-uuid-preview.mp4",
+      startSeconds: 23.75,
+      durationSeconds: 3,
+    });
+    expect(runFfmpeg).toHaveBeenCalledWith(["preview-args"]);
+    expect(notifyPreviewClipComplete).toHaveBeenCalledWith("preview-abc123", expect.objectContaining({
+      storagePath: "transcoded/42/video-uuid-preview.mp4",
+      videoWidth: 480,
+      videoHeight: 270,
+    }));
+    expect(result).toEqual({
+      outputFilename: "42/video-uuid-preview.mp4",
+      fileSizeBytes: 1234,
+      videoWidth: 480,
+      videoHeight: 270,
+      storagePath: "transcoded/42/video-uuid-preview.mp4",
+    });
+  });
+
+  test("throws when the duration can't be probed, without attempting ffmpeg", async () => {
+    probeVideoDuration.mockReset().mockResolvedValue(null);
+    const job = makePreviewJob();
+
+    await expect(processTranscodeJob(job)).rejects.toThrow("could not determine source duration");
+    expect(runFfmpeg).not.toHaveBeenCalled();
+  });
+
+  test("propagates an ffmpeg failure instead of notifying completion", async () => {
+    runFfmpeg.mockReset().mockRejectedValue(new Error("ffmpeg exited with code 1"));
+    const job = makePreviewJob();
+
+    await expect(processTranscodeJob(job)).rejects.toThrow("ffmpeg exited with code 1");
+    expect(notifyPreviewClipComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe("notifyTranscodeJobFailed (kind: preview)", () => {
+  beforeEach(() => {
+    notifyPreviewClipFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("calls back to the API so the upload's previewClipStoragePath can stay unset", async () => {
+    const job = { id: "preview-abc123", data: { kind: "preview" } };
+
+    await notifyTranscodeJobFailed(job, new Error("ffmpeg exited with code 1"));
+
+    expect(notifyPreviewClipFailed).toHaveBeenCalledWith(
+      "preview-abc123",
       "ffmpeg exited with code 1",
     );
   });

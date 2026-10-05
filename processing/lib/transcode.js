@@ -77,7 +77,7 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} jobId Stable BullMQ job id.
  * @property {string} [outputFilename] Basename under the job kind's output
  *   directory. Absent when `kind === "hash"` (no output file is written).
- * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"|"hls"|"storyboard"} kind Job kind.
+ * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"|"hls"|"storyboard"|"preview"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  * @property {string} [thumbnailFilename] Present when `kind === "embed"` — relative
@@ -370,6 +370,10 @@ function validateOptionalTimestampSeconds(value, fieldName) {
  * WebVTT sidecar mapping time ranges to each tile - the seek-bar hover-
  * scrub preview) needs only `jobId` + `outputFilename` (a directory, not a
  * file - see `resolveStoryboardOutputDir`) - no profile, no gating.
+ * `"preview"` (a short muted, looping clip cut from the original upload,
+ * shown on hover in a video grid - see `buildPreviewClipFfmpegArgs`) needs
+ * only `jobId` + `outputFilename` (a single file, like `"embed"`) - no
+ * profile, no gating.
  *
  * `outputFilename` (and `thumbnailFilename`) are validated with
  * {@link validateRelativeMediaPath} rather than {@link requireSafeToken} -
@@ -415,6 +419,10 @@ export function validateTranscodeJob(job, index) {
 
   if (body.kind === "storyboard") {
     return { jobId, outputFilename, kind: "storyboard" };
+  }
+
+  if (body.kind === "preview") {
+    return { jobId, outputFilename, kind: "preview" };
   }
 
   if (body.kind === "embed") {
@@ -1124,6 +1132,114 @@ export function buildStoryboardVtt({
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Target length, in seconds, of the hover-preview clip generated for a
+ * `"preview"` job - long enough to show real motion, short enough to stay a
+ * cheap, tiny file suitable for autoplaying on every video grid card a user
+ * hovers.
+ *
+ * @type {number}
+ */
+const PREVIEW_CLIP_DURATION_SECONDS = 3;
+
+/**
+ * Where to start the preview clip, as a fraction of the source's total
+ * duration - 25% in rather than 0 skips opening titles/black frames and
+ * tends to land somewhere more representative of the video's actual content.
+ *
+ * @type {number}
+ */
+const PREVIEW_CLIP_START_FRACTION = 0.25;
+
+/**
+ * Maximum frame dimensions for a preview clip (a bounding box, not a hard
+ * target) - these are tiny hover-preview thumbnails, not a real rendition,
+ * so a small cap keeps encode time and file size negligible.
+ *
+ * @type {number}
+ */
+const PREVIEW_CLIP_MAX_WIDTH = 480;
+
+/**
+ * @type {number}
+ */
+const PREVIEW_CLIP_MAX_HEIGHT = 270;
+
+/**
+ * Computes the `-ss`/`-t` window to cut a preview clip from, given the
+ * source's probed duration. Starts {@link PREVIEW_CLIP_START_FRACTION} of
+ * the way in, then clamps so the clip never runs past the end of a short
+ * video - at the extreme (a video shorter than
+ * {@link PREVIEW_CLIP_DURATION_SECONDS}), this falls back to the entire
+ * video starting at 0.
+ *
+ * @param {number} durationSeconds Probed source duration, in seconds.
+ * @returns {{ startSeconds: number, durationSeconds: number }} The ffmpeg
+ *   `-ss`/`-t` window to cut.
+ */
+export function computePreviewClipWindow(durationSeconds) {
+  const safeDuration = Math.max(durationSeconds, 0.1);
+  const clipDuration = Math.min(PREVIEW_CLIP_DURATION_SECONDS, safeDuration);
+  const idealStart = safeDuration * PREVIEW_CLIP_START_FRACTION;
+  const startSeconds = Math.max(0, Math.min(idealStart, safeDuration - clipDuration));
+  return { startSeconds, durationSeconds: clipDuration };
+}
+
+/**
+ * Builds the ffmpeg argument list for a `"preview"` job: cut a short, muted,
+ * silent clip from the original upload for hover-preview on a video grid
+ * card. Same technique as `buildEmbedFfmpegArgs` (a tiny, always-playable
+ * MP4) but sourced from a real video segment instead of a looped still
+ * image - the webview player simply sets `loop` on the resulting `<video>`
+ * element rather than ffmpeg looping it server-side, since the clip is
+ * already short.
+ *
+ * `-ss` before `-i` (input seeking) trades keyframe-accurate seeking for
+ * speed, which is the right call here - a hover preview doesn't need to
+ * start at an exact frame, and this is cheap to run on every upload. `-an`
+ * drops audio entirely (the clip is always muted on autoplay, and dropping
+ * the stream outright is simpler and smaller than muxing silence). The
+ * scale+pad filter mirrors `buildEmbedFfmpegArgs`'s bounding-box fit and
+ * even-dimension rounding, required for H.264.
+ *
+ * @param {object} options Preview clip execution options.
+ * @param {string} options.inputPath Absolute path to the source video file.
+ * @param {string} options.outputPath Absolute path for the output `.mp4` file.
+ * @param {number} options.startSeconds Clip start offset, in seconds.
+ * @param {number} options.durationSeconds Clip length, in seconds.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildPreviewClipFfmpegArgs({
+  inputPath,
+  outputPath,
+  startSeconds,
+  durationSeconds,
+}) {
+  return [
+    "-y",
+    "-ss",
+    String(startSeconds),
+    "-i",
+    inputPath,
+    "-t",
+    String(durationSeconds),
+    "-vf",
+    `scale='min(${PREVIEW_CLIP_MAX_WIDTH},iw)':'min(${PREVIEW_CLIP_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease,pad='ceil(iw/2)*2':'ceil(ih/2)*2'`,
+    "-an",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    "-f",
+    "mp4",
+    outputPath,
+  ];
 }
 
 /**

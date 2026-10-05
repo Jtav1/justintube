@@ -150,6 +150,28 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.storyboardUrl).toBe(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`);
     });
 
+    test("returns previewClipUrl: null when no preview clip has been generated", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.previewClipUrl).toBeNull();
+    });
+
+    test("returns previewClipUrl pointing at GET /videos/:id/preview-clip once one exists", async () => {
+      const upload = await seedUpload({
+        previewClipStoragePath: `transcoded/${randomUUID()}-preview.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.previewClipUrl).toBe(`/api/v1/videos/${upload.id}/preview-clip`);
+    });
+
     test("includes featured only for admin callers", async () => {
       await seedUserWithRoleAndKey("admin", "admin-getvideo-featured-key");
       const upload = await seedUpload();
@@ -928,6 +950,78 @@ describe("Video discovery and metadata endpoints", () => {
       writeMediaFixture(upload.embedVideoStoragePath, Buffer.from("data"));
 
       const res = await client.get(`/api/v1/videos/${upload.id}/embed-video`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /videos/{id}/preview-clip (getVideoPreviewClip)", () => {
+    test("streams the hover-preview clip with HTTP Range support", async () => {
+      const upload = await seedUpload({
+        previewClipStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-preview.mp4`,
+        previewClipWidth: 480,
+        previewClipHeight: 270,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      const contents = Buffer.from("fake-mp4-bytes");
+      writeMediaFixture(upload.previewClipStoragePath, contents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/preview-clip`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("video/mp4");
+      expect(res.headers["accept-ranges"]).toBe("bytes");
+      expect(Buffer.compare(res.body, contents)).toBe(0);
+    });
+
+    test("honors a Range header with 206 partial content", async () => {
+      const upload = await seedUpload({
+        previewClipStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-preview.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(upload.previewClipStoragePath, Buffer.from("0123456789"));
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/preview-clip`)
+        .set("Range", "bytes=2-4")
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-range"]).toBe("bytes 2-4/10");
+      expect(res.body.toString()).toBe("234");
+    });
+
+    test("returns 404 when no preview clip has been generated yet", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/preview-clip`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "preview-clip-owner-key");
+      const upload = await seedUpload({
+        userId: owner.id,
+        previewClipStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-preview.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "private" });
+      writeMediaFixture(upload.previewClipStoragePath, Buffer.from("data"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/preview-clip`);
 
       expect(res.status).toBe(404);
     });

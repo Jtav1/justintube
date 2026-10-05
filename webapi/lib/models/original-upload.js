@@ -204,6 +204,26 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.STRING(512),
       allowNull: true,
     },
+    /**
+     * Storage path (under `transcoded/`) of a short, muted, looping clip cut
+     * from this upload for hover-preview on a video grid card (the "pop" a
+     * card gives when a user hovers it in `VideoCard`, webview). Null until
+     * a `"preview"` processing job completes (or if it fails - see
+     * `routes/internal-preview.js`); the card simply has no hover-preview
+     * clip until then.
+     */
+    previewClipStoragePath: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+    },
+    previewClipWidth: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+    previewClipHeight: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

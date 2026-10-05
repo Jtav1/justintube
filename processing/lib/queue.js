@@ -13,6 +13,8 @@ import {
   notifyJobStarted,
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
+  notifyPreviewClipComplete,
+  notifyPreviewClipFailed,
   notifyStoryboardComplete,
   notifyStoryboardFailed,
   notifySubtitleComplete,
@@ -46,10 +48,12 @@ import {
   buildFfmpegArgs,
   buildHlsFfmpegArgs,
   buildNormalizeFfmpegArgs,
+  buildPreviewClipFfmpegArgs,
   buildStoryboardFfmpegArgs,
   buildStoryboardVtt,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  computePreviewClipWindow,
   computeStoryboardLayout,
   HLS_OUTPUT_FILENAMES,
   runFfmpeg,
@@ -86,14 +90,14 @@ export const MAX_HASH_JOB_RUNS = 7;
  * transcodes come next. Subtitle extraction is deliberately the
  * second-to-lowest priority — cheap, but not urgent, and never something a
  * user is actively waiting on the way they are a thumbnail/rendition — and
- * duplicate-upload hash probes always sort dead last. `hls` packaging and
- * `storyboard` generation are tied with `subtitle` - neither blocks anything
- * user-facing, since both are cheap derivatives of the already-uploaded
- * original and nothing else depends on either finishing. Priority only
- * affects ordering among jobs already waiting - it does not preempt a job a
- * worker has already started.
+ * duplicate-upload hash probes always sort dead last. `hls` packaging,
+ * `storyboard` generation, and `preview` clip extraction are all tied with
+ * `subtitle` - none of them block anything user-facing, since all are cheap
+ * derivatives of the already-uploaded original and nothing else depends on
+ * any of them finishing. Priority only affects ordering among jobs already
+ * waiting - it does not preempt a job a worker has already started.
  *
- * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, storyboard: number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, storyboard: number, preview: number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
@@ -103,6 +107,7 @@ export const JOB_PRIORITY_BY_KIND = {
   subtitle: 4,
   hls: 4,
   storyboard: 4,
+  preview: 4,
   hash: 5,
 };
 
@@ -741,6 +746,83 @@ async function processStoryboardJob(job) {
 }
 
 /**
+ * Processes a single preview job: cut a short, muted clip from the original
+ * upload for hover-preview on a video grid card. Same technique as
+ * `processEmbedJob` (a tiny, always-playable MP4 written under
+ * `transcoded/`) but sourced from a real video segment rather than a looped
+ * still image.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` and `outputFilename`.
+ * @returns {Promise<{
+ *   outputFilename: string,
+ *   fileSizeBytes: number,
+ *   videoWidth: number|null,
+ *   videoHeight: number|null,
+ *   storagePath: string
+ * }>} Result payload stored on the completed job.
+ * @throws {Error} When the source duration can't be determined or ffmpeg fails.
+ */
+async function processPreviewClipJob(job) {
+  const { inputFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[preview ${jobId}] processing started: ${inputFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const durationSeconds = await probeVideoDuration(inputPath);
+  if (durationSeconds == null) {
+    throw new Error("could not determine source duration");
+  }
+
+  const window = computePreviewClipWindow(durationSeconds);
+  const outputPath = resolveTranscodedOutputPath(outputFilename);
+
+  await job.updateProgress(30);
+
+  const args = buildPreviewClipFfmpegArgs({
+    inputPath,
+    outputPath,
+    startSeconds: window.startSeconds,
+    durationSeconds: window.durationSeconds,
+  });
+  await runFfmpeg(args);
+
+  await job.updateProgress(80);
+
+  const metadata = await collectOutputMetadata({
+    outputPath,
+    outputFilename,
+    outputContainer: "mp4",
+  });
+
+  const notify = await notifyPreviewClipComplete(jobId, metadata);
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed preview clip ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[preview ${jobId}] processing completed: ${outputFilename}`);
+
+  return {
+    outputFilename,
+    fileSizeBytes: metadata.fileSizeBytes,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+    storagePath: metadata.storagePath,
+  };
+}
+
+/**
  * Processes a single embed job: mux an audio-only upload with its thumbnail
  * image into a real MP4, for link-unfurl bots (Discord in particular) that
  * only render `og:video`. Unlike rendition/normalize jobs there's no
@@ -921,6 +1003,9 @@ export async function processTranscodeJob(job, token) {
   if (kind === "storyboard") {
     return processStoryboardJob(job);
   }
+  if (kind === "preview") {
+    return processPreviewClipJob(job);
+  }
   return processRenditionJob(job);
 }
 
@@ -1010,7 +1095,9 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
                     ? "ffmpeg-hls"
                     : job.kind === "storyboard"
                       ? "ffmpeg-storyboard"
-                      : "ffmpeg-transcode",
+                      : job.kind === "preview"
+                        ? "ffmpeg-preview"
+                        : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -1399,6 +1486,18 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed storyboard job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "preview") {
+    logger.error({ message }, `[preview ${jobId}] processing failed`);
+    const notify = await notifyPreviewClipFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed preview clip job ${jobId}`,
       );
     }
     return;

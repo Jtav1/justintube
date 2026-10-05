@@ -70,9 +70,10 @@ export function createTranscodeRouter({
    * probed dimensions fall below `HLS_MINIMUM_DIMENSION_PX` on both axes -
    * not worth a second packaged copy of an already-small source (see
    * `shouldSkipHlsForSource`). A `"storyboard"` (seek-bar hover-scrub sprite
-   * sheet) job is skipped under the same no-video-stream condition as
-   * rendition jobs - there's nothing to tile thumbnails from. Remaining jobs
-   * are enqueued normally.
+   * sheet) or `"preview"` (video grid hover-preview clip) job is skipped
+   * under the same no-video-stream condition as rendition jobs - there's
+   * nothing to tile thumbnails from or cut a clip from. Remaining jobs are
+   * enqueued normally.
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -201,6 +202,14 @@ export function createTranscodeRouter({
           continue;
         }
         if (job.kind === "storyboard" && sourceHasNoVideoStream) {
+          skipped.push({
+            jobId: job.jobId,
+            profileId: null,
+            reason: "source_has_no_video_stream",
+          });
+          continue;
+        }
+        if (job.kind === "preview" && sourceHasNoVideoStream) {
           skipped.push({
             jobId: job.jobId,
             profileId: null,

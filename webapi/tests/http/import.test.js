@@ -329,9 +329,10 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       // would fall back to the placeholder embed video.
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const payload = JSON.parse(String(fetchMock.mock.calls[1][1].body));
-      expect(payload.jobs).toHaveLength(4);
+      expect(payload.jobs).toHaveLength(5);
       expect(payload.jobs.map((j) => j.kind).sort()).toEqual([
         "hls",
+        "preview",
         "storyboard",
         "subtitle",
         "thumbnail",
@@ -404,11 +405,12 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       const payload = JSON.parse(String(transcodeCall[1].body));
       expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
       // skipThumbnail only omits the thumbnail job - the subtitle, hls,
-      // storyboard, and rendition jobs (no equivalent skip flag was sent for
-      // any of them) all remain.
-      expect(payload.jobs).toHaveLength(4);
+      // storyboard, preview, and rendition jobs (no equivalent skip flag was
+      // sent for any of them) all remain.
+      expect(payload.jobs).toHaveLength(5);
       expect(payload.jobs.map((job) => job.kind).sort()).toEqual([
         "hls",
+        "preview",
         "rendition",
         "storyboard",
         "subtitle",
@@ -443,8 +445,8 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       const payload = JSON.parse(String(transcodeCall[1].body));
       expect(payload.filename).toBe(`${userStorageSegment(upload.userId)}/${upload.uuid}.mp4`);
       // One thumbnail job + one subtitle job + one hls job + one storyboard
-      // job + one job for the rendition profile.
-      expect(payload.jobs).toHaveLength(5);
+      // job + one preview job + one job for the rendition profile.
+      expect(payload.jobs).toHaveLength(6);
       const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
       expect(renditionJob.profile.id).toBe(profile.id);
 

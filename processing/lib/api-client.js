@@ -374,6 +374,42 @@ export async function notifyStoryboardFailed(jobId, error) {
 }
 
 /**
+ * Notifies the API that an upload's hover-preview clip (a short, muted,
+ * looping video grid preview) job completed successfully.
+ *
+ * @param {string} jobId BullMQ job id (`preview-<videoId>-<uuid>`, one per
+ *   ORIGINAL_UPLOADS row — the trailing uuid mirrors `hls`/`storyboard`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.storagePath Relative path (under `transcoded/`)
+ *   to the generated `.mp4` clip.
+ * @param {number|null} metadata.videoWidth Probed clip width.
+ * @param {number|null} metadata.videoHeight Probed clip height.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyPreviewClipComplete(jobId, metadata) {
+  return postInternal(`/internal/preview/${encodeURIComponent(jobId)}/complete`, {
+    storagePath: metadata.storagePath,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+  });
+}
+
+/**
+ * Notifies the API that an upload's hover-preview clip job failed.
+ *
+ * @param {string} jobId BullMQ job id (`preview-<videoId>-<uuid>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyPreviewClipFailed(jobId, error) {
+  return postInternal(`/internal/preview/${encodeURIComponent(jobId)}/fail`, {
+    error,
+  });
+}
+
+/**
  * Notifies the API that a queued job has been picked up by a worker and is
  * now actually running - the API's PROCESSING_JOB_RUNS ledger's middle
  * lifecycle state, between "enqueued" and "complete"/"failed". Generic
