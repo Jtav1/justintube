@@ -29,6 +29,34 @@ const RECIPIENT_SEARCH_DEBOUNCE_MS = 300
 const JOB_QUEUE_POLL_MS = 10000
 const JOB_HISTORY_PAGE_SIZE = 5
 
+/**
+ * Formats a job history item's `jobParams` (from PROCESSING_JOB_RUNS, via
+ * GET /admin/jobs/history) into a short human-readable detail string - the
+ * one field relevant to this item's own kind, since only one of
+ * resolution/language/timestampSeconds/isDefault is ever populated at a
+ * time. Returns null when there's nothing to show: `jobParams` itself is
+ * null (this jobId predates the ledger, or was never tracked), or this
+ * kind's own relevant field is - a rendition job missing its profile, say.
+ * @param {{kind: string, jobParams: object|null}} item
+ * @returns {string|null}
+ */
+function formatJobParams(item) {
+  const params = item.jobParams
+  if (!params) return null
+  switch (item.kind) {
+    case 'rendition':
+      return params.resolution ?? null
+    case 'subtitle':
+      return params.language ? `Language: ${params.language}` : null
+    case 'thumbnail':
+      return params.timestampSeconds != null ? `Timestamp: ${params.timestampSeconds}s` : null
+    case 'embed':
+      return params.isDefault != null ? (params.isDefault ? 'Placeholder art' : 'Real art') : null
+    default:
+      return null
+  }
+}
+
 function recipientLabel(user) {
   return user.displayName ? `${user.displayName} (${user.username})` : user.username
 }
@@ -708,6 +736,9 @@ function AdminPanel() {
                     <span className="admin-jobs-kind-badge" style={{ color: colorForJobKind(item.kind) }}>
                       {labelForJobKind(item.kind)}
                     </span>
+                    {formatJobParams(item) && (
+                      <span className="admin-jobs-history-params">{formatJobParams(item)}</span>
+                    )}
                     <span
                       className={
                         item.state === 'failed'

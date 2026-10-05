@@ -3,6 +3,8 @@ import { createTestClient } from "../helpers/app.js";
 import {
   resetTables,
   seedFileVersion,
+  seedProcessingJobRun,
+  seedTranscodeProfile,
   seedUpload,
   seedUser,
   seedUserApiKey,
@@ -108,6 +110,7 @@ describe("GET /api/v1/admin/jobs/queue", () => {
         embed: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
         hash: { waiting: 0, prioritized: 0, active: 0, delayed: 1 },
         subtitle: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
+        hls: { waiting: 0, prioritized: 0, active: 0, delayed: 0 },
       },
       total: 4,
       healthy: true,
@@ -262,7 +265,7 @@ describe("GET /api/v1/admin/jobs/history", () => {
     // upload can't be resolved - see the dedicated resolution tests below
     // for the cases where it can.
     expect(res.body).toEqual({
-      items: [{ ...items[0], uploadId: null, videoId: null }],
+      items: [{ ...items[0], uploadId: null, videoId: null, jobParams: null }],
       total: 12,
       page: 2,
       limit: 3,
@@ -375,6 +378,144 @@ describe("GET /api/v1/admin/jobs/history", () => {
     expect(res.status).toBe(200);
     expect(res.body.items[0]).toMatchObject({ uploadId: upload.id, videoId: upload.videoId });
     expect(res.body.items[1]).toMatchObject({ uploadId: null, videoId: null });
+  });
+
+  test("resolves uploadId/videoId for an hls job the same way as thumbnail/subtitle/embed", async () => {
+    const rawKey = "jt_test_admin_jobs_history_hls";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const upload = await seedUpload();
+    const items = [
+      {
+        jobId: `hls-${upload.videoId}-33333333-3333-3333-3333-333333333333`,
+        kind: "hls",
+        name: "ffmpeg-hls",
+        state: "completed",
+        finishedOn: 1000,
+        processedOn: 900,
+        failedReason: null,
+      },
+    ];
+    globalThis.fetch = fetchMockFor(() => ({
+      status: 200,
+      body: { success: true, items, total: items.length, page: 1, limit: 5 },
+    }));
+
+    const res = await client
+      .get("/api/v1/admin/jobs/history")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0]).toMatchObject({ uploadId: upload.id, videoId: upload.videoId });
+  });
+
+  test("attaches jobParams from PROCESSING_JOB_RUNS, resolving a rendition's profile to its resolution label", async () => {
+    const rawKey = "jt_test_admin_jobs_history_params_rendition";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const upload = await seedUpload();
+    const profile = await seedTranscodeProfile({ resolutionName: "720p" });
+    await seedProcessingJobRun(upload.id, {
+      jobKind: "rendition",
+      jobId: "job-rendition-1",
+      transcodeProfileId: profile.id,
+      status: "complete",
+    });
+    const items = [
+      {
+        jobId: "job-rendition-1",
+        kind: "rendition",
+        name: "ffmpeg-transcode",
+        state: "completed",
+        finishedOn: 1000,
+        processedOn: 900,
+        failedReason: null,
+      },
+    ];
+    globalThis.fetch = fetchMockFor(() => ({
+      status: 200,
+      body: { success: true, items, total: items.length, page: 1, limit: 5 },
+    }));
+
+    const res = await client
+      .get("/api/v1/admin/jobs/history")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].jobParams).toEqual({
+      resolution: "720p",
+      language: null,
+      timestampSeconds: null,
+      isDefault: null,
+    });
+  });
+
+  test("attaches jobParams for subtitle (language), thumbnail (timestamp), and embed (isDefault) jobs", async () => {
+    const rawKey = "jt_test_admin_jobs_history_params_mixed";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const upload = await seedUpload();
+    await seedProcessingJobRun(upload.id, {
+      jobKind: "subtitle",
+      jobId: "job-subtitle-1",
+      language: "en",
+      status: "complete",
+    });
+    await seedProcessingJobRun(upload.id, {
+      jobKind: "thumbnail",
+      jobId: "job-thumbnail-1",
+      thumbnailTimestampTenths: 123,
+      status: "complete",
+    });
+    await seedProcessingJobRun(upload.id, {
+      jobKind: "embed",
+      jobId: "job-embed-1",
+      isDefaultThumbnail: true,
+      status: "complete",
+    });
+    const items = [
+      { jobId: "job-subtitle-1", kind: "subtitle", name: "ffmpeg-subtitle", state: "completed", finishedOn: 1000, processedOn: 900, failedReason: null },
+      { jobId: "job-thumbnail-1", kind: "thumbnail", name: "ffmpeg-thumbnail", state: "completed", finishedOn: 2000, processedOn: 1900, failedReason: null },
+      { jobId: "job-embed-1", kind: "embed", name: "ffmpeg-embed", state: "completed", finishedOn: 3000, processedOn: 2900, failedReason: null },
+    ];
+    globalThis.fetch = fetchMockFor(() => ({
+      status: 200,
+      body: { success: true, items, total: items.length, page: 1, limit: 5 },
+    }));
+
+    const res = await client
+      .get("/api/v1/admin/jobs/history")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    const byKind = Object.fromEntries(res.body.items.map((item) => [item.kind, item.jobParams]));
+    expect(byKind.subtitle).toEqual({ resolution: null, language: "en", timestampSeconds: null, isDefault: null });
+    expect(byKind.thumbnail).toEqual({ resolution: null, language: null, timestampSeconds: 12.3, isDefault: null });
+    expect(byKind.embed).toEqual({ resolution: null, language: null, timestampSeconds: null, isDefault: true });
+  });
+
+  test("jobParams is null for a job with no matching PROCESSING_JOB_RUNS row", async () => {
+    const rawKey = "jt_test_admin_jobs_history_params_missing";
+    await seedUserWithRoleAndKey("admin", rawKey);
+    const items = [
+      {
+        jobId: "untracked-job",
+        kind: "hash",
+        name: "ffmpeg-hash",
+        state: "completed",
+        finishedOn: 1000,
+        processedOn: 900,
+        failedReason: null,
+      },
+    ];
+    globalThis.fetch = fetchMockFor(() => ({
+      status: 200,
+      body: { success: true, items, total: items.length, page: 1, limit: 5 },
+    }));
+
+    const res = await client
+      .get("/api/v1/admin/jobs/history")
+      .set("Authorization", `Bearer ${rawKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].jobParams).toBeNull();
   });
 
   test("returns 400 invalid_query for a non-positive page", async () => {

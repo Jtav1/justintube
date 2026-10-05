@@ -3,7 +3,7 @@ import { csrfProtection } from "../lib/auth/csrf.js";
 import { requireAdmin } from "../lib/auth/require-admin.js";
 import { requireApiKeyScope } from "../lib/auth/require-api-key-scope.js";
 import { requireAuth } from "../lib/auth/require-auth.js";
-import { FileVersion, OriginalUpload } from "../lib/models/index.js";
+import { FileVersion, OriginalUpload, ProcessingJobRun, TranscodeProfile } from "../lib/models/index.js";
 import { parsePagination } from "../lib/pagination.js";
 import { getProcessingHealth, getQueueHistory, getQueueJobs } from "../lib/processing-client.js";
 import { VIDEO_ID_LENGTH } from "../lib/video-id.js";
@@ -15,7 +15,7 @@ import { logger } from "../lib/logger.js";
  *
  * @type {string[]}
  */
-const JOB_KINDS = ["thumbnail", "normalize", "rendition", "embed", "hash", "subtitle"];
+const JOB_KINDS = ["thumbnail", "normalize", "rendition", "embed", "hash", "subtitle", "hls"];
 
 /**
  * Default page size for `GET /admin/jobs/history` when `limit` is omitted.
@@ -88,13 +88,14 @@ function videoIdFromJobId(jobId, kind) {
     return "";
   }
   const rest = jobId.slice(prefix.length);
-  // thumbnail/subtitle/embed jobIds append a random uuid after the videoId
-  // (so a job can be re-enqueued for the same upload without colliding with
-  // BullMQ's own dedup on a prior, already-completed job with the same id -
-  // see enqueueAudioEmbedVideo's rationale, routes/uploads.js) - take
-  // exactly VIDEO_ID_LENGTH characters for those. normalize/hash jobIds
-  // have no such suffix; the videoId is the entire remainder.
-  return kind === "thumbnail" || kind === "subtitle" || kind === "embed"
+  // thumbnail/subtitle/embed/hls jobIds append a random uuid after the
+  // videoId (so a job can be re-enqueued for the same upload without
+  // colliding with BullMQ's own dedup on a prior, already-completed job
+  // with the same id - see enqueueAudioEmbedVideo's rationale,
+  // routes/uploads.js) - take exactly VIDEO_ID_LENGTH characters for those.
+  // normalize/hash jobIds have no such suffix; the videoId is the entire
+  // remainder.
+  return kind === "thumbnail" || kind === "subtitle" || kind === "embed" || kind === "hls"
     ? rest.slice(0, VIDEO_ID_LENGTH)
     : rest;
 }
@@ -174,6 +175,63 @@ async function resolveUploadRefs(items) {
       ...item,
       uploadId: upload ? upload.id : null,
       videoId: upload ? upload.videoId : null,
+    };
+  });
+}
+
+/**
+ * Enriches each history item with whatever PROCESSING_JOB_RUNS row matches
+ * its jobId, if any - that run's actual parameters (rendition resolution,
+ * subtitle language, thumbnail timestamp, embed default-ness). Unlike
+ * `resolveUploadRefs` (which must reconstruct the upload reference from the
+ * jobId's shape alone, since that's all BullMQ's own history knows), the
+ * ledger already stores every one of these directly - no per-kind parsing
+ * needed. `jobParams` is `null` for a job the ledger never has a row for
+ * (e.g. it predates this feature and hasn't been backfilled) - not an error;
+ * every item's `uploadId`/`videoId` still comes from `resolveUploadRefs`
+ * regardless, so this never affects whether a video link renders.
+ *
+ * @private
+ * @param {Array<object>} items Job history entries, already enriched by
+ *   `resolveUploadRefs`.
+ * @returns {Promise<Array<object>>} The same items, each with `jobParams` added.
+ */
+async function attachJobParams(items) {
+  const jobIds = items.map((item) => item.jobId);
+  const runs =
+    jobIds.length > 0 ? await ProcessingJobRun.findAll({ where: { jobId: jobIds } }) : [];
+
+  const profileIds = [
+    ...new Set(runs.map((run) => run.transcodeProfileId).filter((id) => id != null)),
+  ];
+  const profiles =
+    profileIds.length > 0
+      ? await TranscodeProfile.findAll({
+          where: { id: profileIds },
+          attributes: ["id", "resolutionName"],
+        })
+      : [];
+  const resolutionByProfileId = new Map(profiles.map((p) => [p.id, p.resolutionName]));
+
+  const runByJobId = new Map(runs.map((run) => [run.jobId, run]));
+
+  return items.map((item) => {
+    const run = runByJobId.get(item.jobId);
+    if (!run) {
+      return { ...item, jobParams: null };
+    }
+    return {
+      ...item,
+      jobParams: {
+        resolution:
+          run.transcodeProfileId != null
+            ? resolutionByProfileId.get(run.transcodeProfileId) ?? null
+            : null,
+        language: run.language ?? null,
+        timestampSeconds:
+          run.thumbnailTimestampTenths != null ? run.thumbnailTimestampTenths / 10 : null,
+        isDefault: run.isDefaultThumbnail ?? null,
+      },
     };
   });
 }
@@ -275,7 +333,11 @@ export function createAdminJobsRouter() {
    * traceable back to an ORIGINAL_UPLOADS row (i.e. its jobId still matches
    * a known shape and that upload hasn't since been deleted) is enriched
    * with that upload's numeric `uploadId` and public `videoId`; otherwise
-   * both are `null` — see `resolveUploadRefs`.
+   * both are `null` — see `resolveUploadRefs`. Each item also carries
+   * `jobParams` — that run's actual parameters (rendition resolution,
+   * subtitle language, thumbnail timestamp, embed default-ness) sourced from
+   * PROCESSING_JOB_RUNS, or `null` when the ledger has no row for this jobId
+   * — see `attachJobParams`.
    * GET /api/v1/admin/jobs/history?page=&limit=
    * Auth: session cookie or Bearer API key; admin role required.
    *
@@ -338,7 +400,8 @@ export function createAdminJobsRouter() {
           return;
         }
 
-        const items = await resolveUploadRefs(result.body?.items ?? []);
+        const itemsWithUploadRefs = await resolveUploadRefs(result.body?.items ?? []);
+        const items = await attachJobParams(itemsWithUploadRefs);
 
         res.status(200).json({
           items,
