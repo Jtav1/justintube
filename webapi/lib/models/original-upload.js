@@ -191,6 +191,19 @@ export const OriginalUpload = sequelize.define(
       type: DataTypes.STRING(512),
       allowNull: true,
     },
+    /**
+     * Storage path (under `storyboards/`) of the generated WebVTT sidecar
+     * mapping seek-bar hover-scrub time ranges to tiles of this upload's
+     * sprite sheet (the sprite image itself is a fixed-basename sibling in
+     * the same directory - see `STORYBOARD_OUTPUT_FILENAMES`, processing).
+     * Null until a `"storyboard"` processing job completes (or if it fails -
+     * see `routes/internal-storyboard.js`); the player simply has no
+     * scrub-preview data until then.
+     */
+    storyboardVttStoragePath: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+    },
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

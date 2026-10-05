@@ -342,6 +342,38 @@ export async function notifyHlsFailed(jobId, error) {
 }
 
 /**
+ * Notifies the API that an upload's storyboard (seek-bar hover-scrub sprite
+ * sheet + WebVTT sidecar) job completed successfully.
+ *
+ * @param {string} jobId BullMQ job id (`storyboard-<videoId>-<uuid>`, one
+ *   per ORIGINAL_UPLOADS row — the trailing uuid mirrors `hls`/`subtitle`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.vttPath Relative path (under `storyboards/`) to
+ *   the generated `.vtt` sidecar.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyStoryboardComplete(jobId, metadata) {
+  return postInternal(`/internal/storyboard/${encodeURIComponent(jobId)}/complete`, {
+    vttPath: metadata.vttPath,
+  });
+}
+
+/**
+ * Notifies the API that an upload's storyboard job failed.
+ *
+ * @param {string} jobId BullMQ job id (`storyboard-<videoId>-<uuid>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyStoryboardFailed(jobId, error) {
+  return postInternal(`/internal/storyboard/${encodeURIComponent(jobId)}/fail`, {
+    error,
+  });
+}
+
+/**
  * Notifies the API that a queued job has been picked up by a worker and is
  * now actually running - the API's PROCESSING_JOB_RUNS ledger's middle
  * lifecycle state, between "enqueued" and "complete"/"failed". Generic

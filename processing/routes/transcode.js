@@ -69,7 +69,10 @@ export function createTranscodeRouter({
    * skipped. An `"hls"` ("Best" quality) job is skipped when the source's
    * probed dimensions fall below `HLS_MINIMUM_DIMENSION_PX` on both axes -
    * not worth a second packaged copy of an already-small source (see
-   * `shouldSkipHlsForSource`). Remaining jobs are enqueued normally.
+   * `shouldSkipHlsForSource`). A `"storyboard"` (seek-bar hover-scrub sprite
+   * sheet) job is skipped under the same no-video-stream condition as
+   * rendition jobs - there's nothing to tile thumbnails from. Remaining jobs
+   * are enqueued normally.
    *
    * @param {import('express').Request} req Incoming request.
    * @param {import('express').Response} res Express response.
@@ -194,6 +197,14 @@ export function createTranscodeRouter({
             jobId: job.jobId,
             profileId: null,
             reason: "source_below_minimum_hls_resolution",
+          });
+          continue;
+        }
+        if (job.kind === "storyboard" && sourceHasNoVideoStream) {
+          skipped.push({
+            jobId: job.jobId,
+            profileId: null,
+            reason: "source_has_no_video_stream",
           });
           continue;
         }

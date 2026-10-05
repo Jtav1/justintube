@@ -15,7 +15,16 @@ import { logger } from "../lib/logger.js";
  *
  * @type {string[]}
  */
-const JOB_KINDS = ["thumbnail", "normalize", "rendition", "embed", "hash", "subtitle", "hls"];
+const JOB_KINDS = [
+  "thumbnail",
+  "normalize",
+  "rendition",
+  "embed",
+  "hash",
+  "subtitle",
+  "hls",
+  "storyboard",
+];
 
 /**
  * Default page size for `GET /admin/jobs/history` when `limit` is omitted.
@@ -88,14 +97,18 @@ function videoIdFromJobId(jobId, kind) {
     return "";
   }
   const rest = jobId.slice(prefix.length);
-  // thumbnail/subtitle/embed/hls jobIds append a random uuid after the
-  // videoId (so a job can be re-enqueued for the same upload without
-  // colliding with BullMQ's own dedup on a prior, already-completed job
-  // with the same id - see enqueueAudioEmbedVideo's rationale,
+  // thumbnail/subtitle/embed/hls/storyboard jobIds append a random uuid
+  // after the videoId (so a job can be re-enqueued for the same upload
+  // without colliding with BullMQ's own dedup on a prior, already-completed
+  // job with the same id - see enqueueAudioEmbedVideo's rationale,
   // routes/uploads.js) - take exactly VIDEO_ID_LENGTH characters for those.
   // normalize/hash jobIds have no such suffix; the videoId is the entire
   // remainder.
-  return kind === "thumbnail" || kind === "subtitle" || kind === "embed" || kind === "hls"
+  return kind === "thumbnail" ||
+    kind === "subtitle" ||
+    kind === "embed" ||
+    kind === "hls" ||
+    kind === "storyboard"
     ? rest.slice(0, VIDEO_ID_LENGTH)
     : rest;
 }

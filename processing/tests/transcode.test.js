@@ -8,9 +8,14 @@ import {
   buildHlsFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildOutputFilename,
+  buildStoryboardFfmpegArgs,
+  buildStoryboardVtt,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  computeStoryboardLayout,
   HLS_OUTPUT_FILENAMES,
+  STORYBOARD_OUTPUT_FILENAMES,
+  STORYBOARD_TILE_SIZE,
   getTranscodeConfig,
   parseHardwareEncoders,
   resolveAudioEncoder,
@@ -290,6 +295,32 @@ describe("thumbnail job validation and ffmpeg args", () => {
       expect(() =>
         validateTranscodeJob(
           { jobId: "hls-abc123", outputFilename: "abc123.hls", kind: "hls" },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("validateTranscodeJob accepts a storyboard job with only jobId + outputFilename, no profile", () => {
+    const jobId = "storyboard-abc123";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "42/abc123.storyboard", kind: "storyboard" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/abc123.storyboard",
+      kind: "storyboard",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for storyboard jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          { jobId: "storyboard-abc123", outputFilename: "abc123.storyboard", kind: "storyboard" },
           0,
         ),
       ).not.toThrow();
@@ -990,5 +1021,91 @@ describe("buildHlsFfmpegArgs", () => {
 
     expect(args).toContain("copy");
     expect(args).not.toContain("libx264");
+  });
+});
+
+describe("computeStoryboardLayout", () => {
+  test("uses the default 10s interval for a short video, in a square-ish grid", () => {
+    expect(computeStoryboardLayout(95)).toEqual({
+      intervalSeconds: 10,
+      tileCount: 10,
+      columns: 4,
+      rows: 3,
+    });
+  });
+
+  test("widens the interval instead of exceeding the max tile count for a long video", () => {
+    // 100,000s at the default 10s interval would be 10,000 tiles - widen
+    // instead, landing back at exactly the 100-tile cap.
+    const layout = computeStoryboardLayout(100_000);
+    expect(layout.tileCount).toBeLessThanOrEqual(100);
+    expect(layout.intervalSeconds).toBeGreaterThan(10);
+    expect(layout.columns * layout.rows).toBeGreaterThanOrEqual(layout.tileCount);
+  });
+
+  test("always yields at least one tile, even for a source shorter than one interval", () => {
+    expect(computeStoryboardLayout(3)).toEqual({
+      intervalSeconds: 10,
+      tileCount: 1,
+      columns: 1,
+      rows: 1,
+    });
+  });
+});
+
+describe("buildStoryboardFfmpegArgs", () => {
+  test("samples by wall-clock time (fps filter), scales/pads to a uniform cell, and tiles in one pass", () => {
+    const args = buildStoryboardFfmpegArgs({
+      inputPath: "/media/original/42/abc.mp4",
+      outputPath: "/media/storyboards/42/abc/sprite.jpg",
+      intervalSeconds: 10,
+      columns: 4,
+      rows: 3,
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/42/abc.mp4",
+      "-vf",
+      `fps=1/10,scale=${STORYBOARD_TILE_SIZE.width}:${STORYBOARD_TILE_SIZE.height}:force_original_aspect_ratio=decrease,` +
+        `pad=${STORYBOARD_TILE_SIZE.width}:${STORYBOARD_TILE_SIZE.height}:(ow-iw)/2:(oh-ih)/2,tile=4x3`,
+      "-frames:v",
+      "1",
+      "-update",
+      "1",
+      "-an",
+      "/media/storyboards/42/abc/sprite.jpg",
+    ]);
+  });
+});
+
+describe("buildStoryboardVtt", () => {
+  test("maps each tile's time range to its xywh region, in row-major order", () => {
+    const content = buildStoryboardVtt({
+      durationSeconds: 25,
+      intervalSeconds: 10,
+      tileCount: 3,
+      columns: 2,
+      spriteFilename: STORYBOARD_OUTPUT_FILENAMES.sprite,
+    });
+
+    expect(content).toBe(
+      [
+        "WEBVTT",
+        "",
+        "00:00:00.000 --> 00:00:10.000",
+        "sprite.jpg#xywh=0,0,160,90",
+        "",
+        "00:00:10.000 --> 00:00:20.000",
+        "sprite.jpg#xywh=160,0,160,90",
+        "",
+        // Third tile starts the second row (col 0) and is clamped to the
+        // real 25s duration rather than running a full interval to 30s.
+        "00:00:20.000 --> 00:00:25.000",
+        "sprite.jpg#xywh=0,90,160,90",
+        "",
+      ].join("\n") + "\n",
+    );
   });
 });

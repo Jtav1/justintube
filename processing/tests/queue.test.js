@@ -1,4 +1,5 @@
 import { jest } from "@jest/globals";
+import { join } from "node:path";
 import { DelayedError } from "bullmq";
 
 const computeContentHash = jest.fn();
@@ -27,9 +28,17 @@ const stat = jest.fn();
 const probeFormatBitRate = jest.fn();
 const notifyHlsComplete = jest.fn();
 const notifyHlsFailed = jest.fn();
+const notifyStoryboardComplete = jest.fn();
+const notifyStoryboardFailed = jest.fn();
 const notifyJobStarted = jest.fn().mockResolvedValue({ ok: true, status: 200, error: null });
 const resolveOriginalInputPath = jest.fn((filename) => `/media/original/${filename}`);
 const resolveHlsOutputDir = jest.fn();
+const resolveStoryboardOutputDir = jest.fn();
+const buildStoryboardFfmpegArgs = jest.fn();
+const buildStoryboardVtt = jest.fn();
+const computeStoryboardLayout = jest.fn();
+const probeVideoDuration = jest.fn();
+const writeFile = jest.fn();
 
 // Must run before any import of lib/queue.js (which imports these modules at
 // load time) - mock registration has to precede the dynamic import below
@@ -42,6 +51,7 @@ jest.unstable_mockModule("../lib/probe.js", () => ({
   probeHasVideoStream,
   probeAllSubtitleStreams,
   probeFormatBitRate,
+  probeVideoDuration,
 }));
 jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyContentHashComplete,
@@ -58,6 +68,8 @@ jest.unstable_mockModule("../lib/api-client.js", () => ({
   notifyEmbedVideoFailed: jest.fn(),
   notifyHlsComplete,
   notifyHlsFailed,
+  notifyStoryboardComplete,
+  notifyStoryboardFailed,
   notifyJobStarted,
 }));
 jest.unstable_mockModule("../lib/media-paths.js", () => ({
@@ -68,6 +80,7 @@ jest.unstable_mockModule("../lib/media-paths.js", () => ({
   resolveNormalizedOutputPath: jest.fn(),
   resolveSubtitleOutputPath,
   resolveHlsOutputDir,
+  resolveStoryboardOutputDir,
 }));
 jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildFfmpegArgs: jest.fn(),
@@ -77,11 +90,16 @@ jest.unstable_mockModule("../lib/transcode.js", () => ({
   buildNormalizeFfmpegArgs: jest.fn(),
   buildSubtitleFfmpegArgs,
   buildHlsFfmpegArgs,
+  buildStoryboardFfmpegArgs,
+  buildStoryboardVtt,
+  computeStoryboardLayout,
   HLS_OUTPUT_FILENAMES: { init: "init.mp4", media: "stream.m4s", playlist: "variant.m3u8" },
+  STORYBOARD_OUTPUT_FILENAMES: { sprite: "sprite.jpg", vtt: "storyboard.vtt" },
   runFfmpeg,
 }));
 jest.unstable_mockModule("node:fs/promises", () => ({
   stat,
+  writeFile,
 }));
 
 const {
@@ -510,6 +528,114 @@ describe("notifyTranscodeJobFailed (kind: hls)", () => {
     await notifyTranscodeJobFailed(job, new Error("ffmpeg exited with code 1"));
 
     expect(notifyHlsFailed).toHaveBeenCalledWith("hls-abc123", "ffmpeg exited with code 1");
+  });
+});
+
+/**
+ * Builds a fake BullMQ job for a "storyboard" kind job.
+ *
+ * @param {object} [dataOverrides] Overrides merged into `job.data`.
+ * @returns {object} Fake job.
+ */
+function makeStoryboardJob(dataOverrides = {}) {
+  return {
+    id: "storyboard-abc123",
+    data: {
+      kind: "storyboard",
+      inputFilename: "42/video-uuid.mp4",
+      outputFilename: "42/video-uuid.storyboard",
+      ...dataOverrides,
+    },
+    updateProgress: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe("processTranscodeJob (kind: storyboard)", () => {
+  beforeEach(() => {
+    resolveOriginalInputPath.mockReset().mockImplementation((f) => `/media/original/${f}`);
+    resolveStoryboardOutputDir.mockReset().mockImplementation((f) => `/media/storyboards/${f}`);
+    probeVideoDuration.mockReset().mockResolvedValue(95);
+    computeStoryboardLayout.mockReset().mockReturnValue({
+      intervalSeconds: 10,
+      tileCount: 10,
+      columns: 4,
+      rows: 3,
+    });
+    buildStoryboardFfmpegArgs.mockReset().mockReturnValue(["storyboard-args"]);
+    runFfmpeg.mockReset().mockResolvedValue(undefined);
+    buildStoryboardVtt.mockReset().mockReturnValue("WEBVTT\n");
+    writeFile.mockReset().mockResolvedValue(undefined);
+    notifyStoryboardComplete.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("probes duration, builds the sprite + vtt, and reports the result", async () => {
+    const job = makeStoryboardJob();
+
+    const result = await processTranscodeJob(job);
+
+    expect(resolveOriginalInputPath).toHaveBeenCalledWith("42/video-uuid.mp4");
+    expect(probeVideoDuration).toHaveBeenCalledWith("/media/original/42/video-uuid.mp4");
+    expect(resolveStoryboardOutputDir).toHaveBeenCalledWith("42/video-uuid.storyboard");
+    expect(computeStoryboardLayout).toHaveBeenCalledWith(95);
+    expect(buildStoryboardFfmpegArgs).toHaveBeenCalledWith({
+      inputPath: "/media/original/42/video-uuid.mp4",
+      outputPath: join("/media/storyboards/42/video-uuid.storyboard", "sprite.jpg"),
+      intervalSeconds: 10,
+      columns: 4,
+      rows: 3,
+    });
+    expect(runFfmpeg).toHaveBeenCalledWith(["storyboard-args"]);
+    expect(buildStoryboardVtt).toHaveBeenCalledWith({
+      durationSeconds: 95,
+      intervalSeconds: 10,
+      tileCount: 10,
+      columns: 4,
+      spriteFilename: "sprite.jpg",
+    });
+    expect(writeFile).toHaveBeenCalledWith(
+      join("/media/storyboards/42/video-uuid.storyboard", "storyboard.vtt"),
+      "WEBVTT\n",
+      "utf8",
+    );
+    expect(notifyStoryboardComplete).toHaveBeenCalledWith("storyboard-abc123", {
+      vttPath: "storyboards/42/video-uuid.storyboard/storyboard.vtt",
+    });
+    expect(result).toEqual({
+      vttPath: "storyboards/42/video-uuid.storyboard/storyboard.vtt",
+    });
+  });
+
+  test("throws when the duration can't be probed, without attempting ffmpeg", async () => {
+    probeVideoDuration.mockReset().mockResolvedValue(null);
+    const job = makeStoryboardJob();
+
+    await expect(processTranscodeJob(job)).rejects.toThrow("could not determine source duration");
+    expect(runFfmpeg).not.toHaveBeenCalled();
+  });
+
+  test("propagates an ffmpeg failure instead of notifying completion", async () => {
+    runFfmpeg.mockReset().mockRejectedValue(new Error("ffmpeg exited with code 1"));
+    const job = makeStoryboardJob();
+
+    await expect(processTranscodeJob(job)).rejects.toThrow("ffmpeg exited with code 1");
+    expect(notifyStoryboardComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe("notifyTranscodeJobFailed (kind: storyboard)", () => {
+  beforeEach(() => {
+    notifyStoryboardFailed.mockReset().mockResolvedValue({ ok: true, status: 200, error: null });
+  });
+
+  test("calls back to the API so the upload's storyboardVttStoragePath can stay unset", async () => {
+    const job = { id: "storyboard-abc123", data: { kind: "storyboard" } };
+
+    await notifyTranscodeJobFailed(job, new Error("ffmpeg exited with code 1"));
+
+    expect(notifyStoryboardFailed).toHaveBeenCalledWith(
+      "storyboard-abc123",
+      "ffmpeg exited with code 1",
+    );
   });
 });
 

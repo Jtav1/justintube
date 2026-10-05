@@ -323,6 +323,25 @@ export function buildHlsJob(upload, segment) {
 }
 
 /**
+ * Builds the batch-job descriptor for an upload's storyboard job
+ * (`kind: "storyboard"`) — a tiled sprite sheet of evenly time-spaced
+ * thumbnails plus a WebVTT sidecar, for the seek-bar hover-scrub preview.
+ * Mirrors `buildHlsJob`'s rationale for being its own exported function.
+ *
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} segment Per-user storage segment (userId or `"_unowned"`,
+ *   see `userStorageSegment`).
+ * @returns {{ jobId: string, outputFilename: string, kind: "storyboard" }} Job descriptor.
+ */
+export function buildStoryboardJob(upload, segment) {
+  return {
+    jobId: `storyboard-${upload.videoId}-${randomUUID()}`,
+    outputFilename: `${segment}/${randomUUID()}.storyboard`,
+    kind: "storyboard",
+  };
+}
+
+/**
  * Creates pending FILE_VERSIONS for each transcode profile and batch-enqueues
  * processing jobs against an already-persisted ORIGINAL_UPLOADS row. Shared
  * by both `uploadVideo` (multipart) and `importVideo` (URL download) once
@@ -470,10 +489,17 @@ export async function finalizeUploadTranscodes(
   // `shouldSkipHlsForSource`), so this never needs to pre-check resolution.
   const hlsJob = buildHlsJob(upload, segment);
 
+  // Tiled sprite sheet + WebVTT sidecar for the seek-bar hover-scrub
+  // preview. Enqueued unconditionally, same rationale as hlsJob - processing
+  // itself skips it when the source has no video stream at all (see
+  // routes/transcode.js).
+  const storyboardJob = buildStoryboardJob(upload, segment);
+
   const jobs = [
     ...(thumbnailJob ? [thumbnailJob] : []),
     ...(subtitleJob ? [subtitleJob] : []),
     hlsJob,
+    storyboardJob,
     ...renditionJobs,
   ];
 
@@ -482,9 +508,9 @@ export async function finalizeUploadTranscodes(
     // profiles) means `rollupOriginalUploadStatus` - triggered only by a
     // version's own completion/failure - will never run for this upload, so
     // it would otherwise stay stuck mid-processing forever even once the
-    // thumbnail/subtitle/hls jobs below finish. Set it directly instead;
-    // `jobs` always has at least the hls job, so the batch is still enqueued
-    // normally below.
+    // thumbnail/subtitle/hls/storyboard jobs below finish. Set it directly
+    // instead; `jobs` always has at least the hls/storyboard jobs, so the
+    // batch is still enqueued normally below.
     await upload.update({ status: "uploaded" });
   }
 

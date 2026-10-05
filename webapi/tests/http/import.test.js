@@ -329,8 +329,13 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       // would fall back to the placeholder embed video.
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const payload = JSON.parse(String(fetchMock.mock.calls[1][1].body));
-      expect(payload.jobs).toHaveLength(3);
-      expect(payload.jobs.map((j) => j.kind).sort()).toEqual(["hls", "subtitle", "thumbnail"]);
+      expect(payload.jobs).toHaveLength(4);
+      expect(payload.jobs.map((j) => j.kind).sort()).toEqual([
+        "hls",
+        "storyboard",
+        "subtitle",
+        "thumbnail",
+      ]);
     });
 
     test("trusts hasVideo: true over an ambiguous container extension", async () => {
@@ -398,10 +403,16 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       );
       const payload = JSON.parse(String(transcodeCall[1].body));
       expect(payload.jobs.every((job) => job.kind !== "thumbnail")).toBe(true);
-      // skipThumbnail only omits the thumbnail job - the subtitle, hls, and
-      // rendition jobs (no equivalent skip flag was sent for any of them) all remain.
-      expect(payload.jobs).toHaveLength(3);
-      expect(payload.jobs.map((job) => job.kind).sort()).toEqual(["hls", "rendition", "subtitle"]);
+      // skipThumbnail only omits the thumbnail job - the subtitle, hls,
+      // storyboard, and rendition jobs (no equivalent skip flag was sent for
+      // any of them) all remain.
+      expect(payload.jobs).toHaveLength(4);
+      expect(payload.jobs.map((job) => job.kind).sort()).toEqual([
+        "hls",
+        "rendition",
+        "storyboard",
+        "subtitle",
+      ]);
     });
 
     test("batch-enqueues jobs and creates pending FILE_VERSIONS", async () => {
@@ -431,8 +442,9 @@ describe("POST /videos/import (ORIGINAL_UPLOADS via URL download)", () => {
       );
       const payload = JSON.parse(String(transcodeCall[1].body));
       expect(payload.filename).toBe(`${userStorageSegment(upload.userId)}/${upload.uuid}.mp4`);
-      // One thumbnail job + one subtitle job + one hls job + one job for the rendition profile.
-      expect(payload.jobs).toHaveLength(4);
+      // One thumbnail job + one subtitle job + one hls job + one storyboard
+      // job + one job for the rendition profile.
+      expect(payload.jobs).toHaveLength(5);
       const renditionJob = payload.jobs.find((j) => j.kind === "rendition");
       expect(renditionJob.profile.id).toBe(profile.id);
 

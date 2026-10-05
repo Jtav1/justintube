@@ -1,4 +1,5 @@
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { DelayedError, Queue, Worker } from "bullmq";
 import {
   notifyContentHashComplete,
@@ -12,6 +13,8 @@ import {
   notifyJobStarted,
   notifyOriginalUploadNormalizeComplete,
   notifyOriginalUploadNormalizeFailed,
+  notifyStoryboardComplete,
+  notifyStoryboardFailed,
   notifySubtitleComplete,
   notifySubtitleFailed,
   notifyThumbnailComplete,
@@ -21,6 +24,7 @@ import {
   resolveHlsOutputDir,
   resolveNormalizedOutputPath,
   resolveOriginalInputPath,
+  resolveStoryboardOutputDir,
   resolveSubtitleOutputPath,
   resolveThumbnailInputPath,
   resolveThumbnailOutputPath,
@@ -34,6 +38,7 @@ import {
   probeFormatBitRate,
   probeHasVideoStream,
   probeStreamCodecs,
+  probeVideoDuration,
 } from "./probe.js";
 import {
   buildEmbedFfmpegArgs,
@@ -41,10 +46,14 @@ import {
   buildFfmpegArgs,
   buildHlsFfmpegArgs,
   buildNormalizeFfmpegArgs,
+  buildStoryboardFfmpegArgs,
+  buildStoryboardVtt,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  computeStoryboardLayout,
   HLS_OUTPUT_FILENAMES,
   runFfmpeg,
+  STORYBOARD_OUTPUT_FILENAMES,
 } from "./transcode.js";
 import { logger } from "./logger.js";
 
@@ -77,13 +86,14 @@ export const MAX_HASH_JOB_RUNS = 7;
  * transcodes come next. Subtitle extraction is deliberately the
  * second-to-lowest priority — cheap, but not urgent, and never something a
  * user is actively waiting on the way they are a thumbnail/rendition — and
- * duplicate-upload hash probes always sort dead last. `hls` packaging is tied
- * with `subtitle` - it never blocks anything user-facing, since it's a cheap
- * remux of the already-uploaded original and nothing else depends on it
- * finishing. Priority only affects ordering among jobs already waiting - it
- * does not preempt a job a worker has already started.
+ * duplicate-upload hash probes always sort dead last. `hls` packaging and
+ * `storyboard` generation are tied with `subtitle` - neither blocks anything
+ * user-facing, since both are cheap derivatives of the already-uploaded
+ * original and nothing else depends on either finishing. Priority only
+ * affects ordering among jobs already waiting - it does not preempt a job a
+ * worker has already started.
  *
- * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, hash: number }}
+ * @type {{ thumbnail: number, normalize: number, rendition: number, embed: number, subtitle: number, hls: number, storyboard: number, hash: number }}
  */
 export const JOB_PRIORITY_BY_KIND = {
   thumbnail: 1,
@@ -92,6 +102,7 @@ export const JOB_PRIORITY_BY_KIND = {
   embed: 3,
   subtitle: 4,
   hls: 4,
+  storyboard: 4,
   hash: 5,
 };
 
@@ -651,6 +662,85 @@ async function processHlsJob(job) {
 }
 
 /**
+ * Processes a single storyboard job: probes the original upload's duration,
+ * computes a tile layout for it (see `computeStoryboardLayout`), samples
+ * evenly time-spaced frames into one tiled sprite image, and writes a
+ * WebVTT sidecar mapping each time range to its tile - the seek-bar
+ * hover-scrub preview. Always reads the original upload (never a
+ * rendition), same rationale as the `"hls"` job: it's the only copy
+ * guaranteed to exist regardless of which rendition profiles are
+ * configured, and a tiny 160x90 tile loses nothing by sourcing from it.
+ *
+ * @private
+ * @param {import('bullmq').Job} job BullMQ job whose data includes
+ *   `inputFilename` (the original upload's relative path) and
+ *   `outputFilename` (the job's output directory, not a file - see
+ *   `resolveStoryboardOutputDir`).
+ * @returns {Promise<{ vttPath: string }>} Result payload stored on the
+ *   completed job.
+ * @throws {Error} When the input is missing, its duration can't be probed,
+ *   or ffmpeg fails.
+ */
+async function processStoryboardJob(job) {
+  const { inputFilename, outputFilename } = job.data;
+  const jobId = String(job.id);
+
+  logger.info(
+    `[storyboard ${jobId}] processing started: ${inputFilename} -> ${outputFilename}`,
+  );
+
+  await job.updateProgress(10);
+
+  const inputPath = resolveOriginalInputPath(inputFilename);
+  const durationSeconds = await probeVideoDuration(inputPath);
+  if (durationSeconds == null) {
+    throw new Error("could not determine source duration");
+  }
+
+  const layout = computeStoryboardLayout(durationSeconds);
+  const outputDir = resolveStoryboardOutputDir(outputFilename);
+  const spritePath = join(outputDir, STORYBOARD_OUTPUT_FILENAMES.sprite);
+
+  await job.updateProgress(30);
+
+  const args = buildStoryboardFfmpegArgs({
+    inputPath,
+    outputPath: spritePath,
+    intervalSeconds: layout.intervalSeconds,
+    columns: layout.columns,
+    rows: layout.rows,
+  });
+  await runFfmpeg(args);
+
+  await job.updateProgress(80);
+
+  const vttContent = buildStoryboardVtt({
+    durationSeconds,
+    intervalSeconds: layout.intervalSeconds,
+    tileCount: layout.tileCount,
+    columns: layout.columns,
+    spriteFilename: STORYBOARD_OUTPUT_FILENAMES.sprite,
+  });
+  await writeFile(join(outputDir, STORYBOARD_OUTPUT_FILENAMES.vtt), vttContent, "utf8");
+
+  const vttPath = `storyboards/${outputFilename}/${STORYBOARD_OUTPUT_FILENAMES.vtt}`;
+
+  const notify = await notifyStoryboardComplete(jobId, { vttPath });
+  if (!notify.ok) {
+    logger.error(
+      { error: notify.error },
+      `failed to notify API of completed storyboard ${jobId}`,
+    );
+  }
+
+  await job.updateProgress(100);
+
+  logger.info(`[storyboard ${jobId}] processing completed: ${vttPath}`);
+
+  return { vttPath };
+}
+
+/**
  * Processes a single embed job: mux an audio-only upload with its thumbnail
  * image into a real MP4, for link-unfurl bots (Discord in particular) that
  * only render `og:video`. Unlike rendition/normalize jobs there's no
@@ -828,6 +918,9 @@ export async function processTranscodeJob(job, token) {
   if (kind === "hls") {
     return processHlsJob(job);
   }
+  if (kind === "storyboard") {
+    return processStoryboardJob(job);
+  }
   return processRenditionJob(job);
 }
 
@@ -915,7 +1008,9 @@ export async function enqueueTranscodeJobs(queue, inputFilename, jobs) {
                   ? "ffmpeg-embed"
                   : job.kind === "hls"
                     ? "ffmpeg-hls"
-                    : "ffmpeg-transcode",
+                    : job.kind === "storyboard"
+                      ? "ffmpeg-storyboard"
+                      : "ffmpeg-transcode",
       data: {
         inputFilename,
         outputFilename: job.outputFilename,
@@ -1292,6 +1387,18 @@ export async function notifyTranscodeJobFailed(job, err) {
       logger.error(
         { error: notify.error },
         `failed to notify API of failed hls job ${jobId}`,
+      );
+    }
+    return;
+  }
+
+  if (job?.data?.kind === "storyboard") {
+    logger.error({ message }, `[storyboard ${jobId}] processing failed`);
+    const notify = await notifyStoryboardFailed(jobId, message);
+    if (!notify.ok) {
+      logger.error(
+        { error: notify.error },
+        `failed to notify API of failed storyboard job ${jobId}`,
       );
     }
     return;

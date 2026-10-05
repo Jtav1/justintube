@@ -482,6 +482,7 @@ export function parsePositiveInt(raw) {
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
  *   embedVideoUrl: string|null,
+ *   storyboardUrl: string|null,
  *   subtitlesUrl: string|null,
  *   likeCount: number,
  *   dislikeCount: number,
@@ -521,6 +522,15 @@ export function serializeVideo(upload, metadata, options = {}) {
     // (webview) uses this in place of the original stream when present.
     embedVideoUrl: upload.embedVideoStoragePath
       ? `/api/v1/videos/${upload.id}/embed-video`
+      : null,
+    // The seek-bar hover-scrub sprite sheet's WebVTT sidecar (see
+    // processing's `"storyboard"` job) - null until that job completes, same
+    // "feature simply isn't available yet" convention as embedVideoUrl/the
+    // "best" rendition above. The sprite image itself is referenced from
+    // inside this VTT (a sibling file, same directory), so the player never
+    // needs its own separate URL for it.
+    storyboardUrl: upload.storyboardVttStoragePath
+      ? `/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`
       : null,
     // Always points at the subtitle list endpoint now (a video may have zero,
     // one, or many subtitles) - the client fetches it to populate the
@@ -2736,6 +2746,101 @@ export function createVideosRouter() {
         res.status(500).json({
           error: "internal_error",
           message: "Failed to stream HLS file.",
+        });
+      }
+    }
+  });
+
+  /**
+   * Content type for each fixed basename a `"storyboard"` processing job
+   * writes (see `STORYBOARD_OUTPUT_FILENAMES`, processing) - a closed set,
+   * not arbitrary user input, so this doubles as the allowlist
+   * `getVideoStoryboardFile` validates `:filename` against.
+   *
+   * @type {Record<string, string>}
+   */
+  const STORYBOARD_FILENAME_CONTENT_TYPES = {
+    "storyboard.vtt": "text/vtt",
+    "sprite.jpg": "image/jpeg",
+  };
+
+  /**
+   * GET /videos/:id/storyboard/:filename — getVideoStoryboardFile
+   * Auth: optional. Private requires owner, grant, or admin. Serves one file
+   * from the storyboard output directory (the WebVTT sidecar, or the sprite
+   * image it references by relative URL) - the seek-bar hover-scrub preview.
+   * No Range support needed (unlike `getVideoHlsFile`'s media segment) -
+   * both files here are small and always fetched whole.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/storyboard/{filename}:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Fetch one file of the seek-bar hover-scrub storyboard
+   *     operationId: getVideoStoryboardFile
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *       - in: path
+   *         name: filename
+   *         required: true
+   *         schema: { type: string, enum: [storyboard.vtt, sprite.jpg] }
+   *     responses:
+   *       "200":
+   *         description: File contents
+   *       "404":
+   *         description: Not found, inaccessible, or the storyboard isn't ready
+   */
+  router.get("/videos/:id/storyboard/:filename", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const contentType = STORYBOARD_FILENAME_CONTENT_TYPES[req.params.filename];
+      if (!contentType) {
+        sendNotFound(res);
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.storyboardVttStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      // storyboardVttStoragePath points at the vtt itself - its sibling
+      // sprite image lives in that same directory.
+      const absolutePath = join(
+        dirname(resolveMediaPath(upload.storyboardVttStoragePath)),
+        req.params.filename,
+      );
+      await streamFileWithRangeSupport(req, res, absolutePath, contentType);
+    } catch (err) {
+      logger.error({ err }, "getVideoStoryboardFile failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to fetch storyboard file.",
         });
       }
     }

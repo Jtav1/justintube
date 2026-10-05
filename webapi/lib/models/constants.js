@@ -75,6 +75,7 @@ export const JOB_KIND_VALUES = [
   "thumbnail",
   "subtitle",
   "hls",
+  "storyboard",
   "embed",
   "normalize",
   "hash",

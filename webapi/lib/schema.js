@@ -348,6 +348,11 @@ async function ensureSqliteMissingColumns() {
       column: "hls_playlist_storage_path",
       ddl: "`hls_playlist_storage_path` VARCHAR(512) NULL",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "storyboard_vtt_storage_path",
+      ddl: "`storyboard_vtt_storage_path` VARCHAR(512) NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

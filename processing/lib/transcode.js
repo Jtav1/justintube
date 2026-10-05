@@ -77,7 +77,7 @@ const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
  * @property {string} jobId Stable BullMQ job id.
  * @property {string} [outputFilename] Basename under the job kind's output
  *   directory. Absent when `kind === "hash"` (no output file is written).
- * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"|"hls"} kind Job kind.
+ * @property {"rendition"|"thumbnail"|"hash"|"normalize"|"embed"|"subtitle"|"hls"|"storyboard"} kind Job kind.
  * @property {TranscodeProfilePayload} [profile] Present when `kind === "rendition"`.
  * @property {number|null} [timestampSeconds] Present when `kind === "thumbnail"`.
  * @property {string} [thumbnailFilename] Present when `kind === "embed"` — relative
@@ -365,7 +365,11 @@ function validateOptionalTimestampSeconds(value, fieldName) {
  * byte-range fMP4 HLS, for adaptive seeking/partial-download playback) needs
  * only `jobId` + `outputFilename` (a directory, not a file - see
  * `resolveHlsOutputDir`) - like `"normalize"`, no profile, no gating, always
- * software (`-c copy`, a remux).
+ * software (`-c copy`, a remux). `"storyboard"` (tile evenly time-spaced
+ * thumbnails from the original upload into a single sprite image, plus a
+ * WebVTT sidecar mapping time ranges to each tile - the seek-bar hover-
+ * scrub preview) needs only `jobId` + `outputFilename` (a directory, not a
+ * file - see `resolveStoryboardOutputDir`) - no profile, no gating.
  *
  * `outputFilename` (and `thumbnailFilename`) are validated with
  * {@link validateRelativeMediaPath} rather than {@link requireSafeToken} -
@@ -407,6 +411,10 @@ export function validateTranscodeJob(job, index) {
 
   if (body.kind === "hls") {
     return { jobId, outputFilename, kind: "hls" };
+  }
+
+  if (body.kind === "storyboard") {
+    return { jobId, outputFilename, kind: "storyboard" };
   }
 
   if (body.kind === "embed") {
@@ -937,6 +945,185 @@ export function buildEmbeddedThumbnailFfmpegArgs({
  */
 export function buildSubtitleFfmpegArgs({ inputPath, outputPath, streamIndex }) {
   return ["-y", "-i", inputPath, "-map", `0:${streamIndex}`, "-c:s", "webvtt", outputPath];
+}
+
+/**
+ * Target time gap, in seconds, between consecutive storyboard tiles for a
+ * video short enough that {@link STORYBOARD_MAX_TILES} wouldn't otherwise be
+ * reached - the seek-bar hover-scrub preview everyone recognizes from
+ * YouTube samples roughly this often. Longer videos get a wider gap instead
+ * (see {@link computeStoryboardLayout}), so the sprite sheet never grows
+ * past the tile cap regardless of how long the source runs.
+ *
+ * @type {number}
+ */
+const STORYBOARD_DEFAULT_INTERVAL_SECONDS = 10;
+
+/**
+ * Hard cap on how many tiles a single storyboard sprite sheet may contain,
+ * regardless of source duration - without this, a multi-hour recording
+ * would produce an enormous sprite image. {@link computeStoryboardLayout}
+ * widens the sampling interval instead of exceeding this.
+ *
+ * @type {number}
+ */
+const STORYBOARD_MAX_TILES = 100;
+
+/**
+ * Pixel dimensions of a single storyboard tile. Deliberately small - this
+ * is a seek-bar hover preview, not a real thumbnail.
+ *
+ * @type {{ width: number, height: number }}
+ */
+export const STORYBOARD_TILE_SIZE = { width: 160, height: 90 };
+
+/**
+ * Fixed basenames written into a `"storyboard"` job's output directory (see
+ * `resolveStoryboardOutputDir`) — always the same two names regardless of
+ * input, since each upload gets its own directory. The sprite's own
+ * basename is also what the VTT sidecar references (`sprite.jpg#xywh=...`),
+ * since both files live side by side in that same directory.
+ *
+ * @type {{ sprite: string, vtt: string }}
+ */
+export const STORYBOARD_OUTPUT_FILENAMES = {
+  sprite: "sprite.jpg",
+  vtt: "storyboard.vtt",
+};
+
+/**
+ * Computes a storyboard sprite sheet's layout for a source of the given
+ * duration: how far apart (in seconds) consecutive tiles are sampled, how
+ * many tiles that yields, and a roughly-square grid to arrange them in.
+ * Starts from {@link STORYBOARD_DEFAULT_INTERVAL_SECONDS} and widens the
+ * interval as needed to keep the tile count at or below
+ * {@link STORYBOARD_MAX_TILES} - so a 5-minute video still gets a tile every
+ * 10 seconds, while a 5-hour one gets a wider gap instead of a 1800-tile
+ * image. Always yields at least one tile, even for a source shorter than
+ * one interval.
+ *
+ * @param {number} durationSeconds Probed source duration in whole seconds.
+ * @returns {{ intervalSeconds: number, tileCount: number, columns: number, rows: number }}
+ *   The computed layout.
+ */
+export function computeStoryboardLayout(durationSeconds) {
+  const safeDuration = Math.max(durationSeconds, 1);
+  const intervalSeconds = Math.max(
+    STORYBOARD_DEFAULT_INTERVAL_SECONDS,
+    Math.ceil(safeDuration / STORYBOARD_MAX_TILES),
+  );
+  const tileCount = Math.min(
+    STORYBOARD_MAX_TILES,
+    Math.max(1, Math.ceil(safeDuration / intervalSeconds)),
+  );
+  const columns = Math.ceil(Math.sqrt(tileCount));
+  const rows = Math.ceil(tileCount / columns);
+  return { intervalSeconds, tileCount, columns, rows };
+}
+
+/**
+ * Builds the ffmpeg argument list for a `"storyboard"` job: samples one
+ * frame every `intervalSeconds` from the original upload (via the `fps`
+ * filter, which resamples by wall-clock time rather than frame count - no
+ * need to know the source's own frame rate, unlike a `select='not(mod(n,N))'`
+ * frame-skip approach), scales/letterboxes each to a uniform
+ * {@link STORYBOARD_TILE_SIZE} cell, and tiles them into one sprite image in
+ * a single pass. `-frames:v 1` stops ffmpeg after writing exactly one tiled
+ * page — without it, `tile` would keep buffering further pages for any
+ * sampled frames beyond `columns*rows`, which never happens given how
+ * `computeStoryboardLayout` sizes the grid, but pinning it removes any doubt.
+ *
+ * @param {object} options Storyboard execution options.
+ * @param {string} options.inputPath Absolute path to the original upload.
+ * @param {string} options.outputPath Absolute path for the output sprite image.
+ * @param {number} options.intervalSeconds Seconds between sampled frames.
+ * @param {number} options.columns Grid columns.
+ * @param {number} options.rows Grid rows.
+ * @returns {string[]} Argument vector suitable for `execFile("ffmpeg", args)`.
+ */
+export function buildStoryboardFfmpegArgs({ inputPath, outputPath, intervalSeconds, columns, rows }) {
+  const { width, height } = STORYBOARD_TILE_SIZE;
+  return [
+    "-y",
+    "-i",
+    inputPath,
+    "-vf",
+    `fps=1/${intervalSeconds},` +
+      `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,` +
+      `tile=${columns}x${rows}`,
+    "-frames:v",
+    "1",
+    // Without this, ffmpeg's image2 muxer warns that a single-file output
+    // path isn't a sequence pattern (e.g. "%03d") and only writes anyway
+    // because -frames:v happens to cap it at one - -update says outright
+    // "yes, a single still image, intentionally."
+    "-update",
+    "1",
+    "-an",
+    outputPath,
+  ];
+}
+
+/**
+ * Formats a non-negative second count as a WebVTT timestamp
+ * (`HH:MM:SS.mmm`).
+ *
+ * @param {number} totalSeconds Seconds, may be fractional.
+ * @returns {string} WebVTT-formatted timestamp.
+ */
+function formatVttTimestamp(totalSeconds) {
+  const wholeMs = Math.round(totalSeconds * 1000);
+  const hours = Math.floor(wholeMs / 3_600_000);
+  const minutes = Math.floor((wholeMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((wholeMs % 60_000) / 1000);
+  const milliseconds = wholeMs % 1000;
+  const pad = (n, len = 2) => String(n).padStart(len, "0");
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}.${pad(milliseconds, 3)}`;
+}
+
+/**
+ * Builds the WebVTT sidecar mapping each time range to its tile's region of
+ * the sprite image, via the `#xywh=x,y,w,h` media-fragment syntax every
+ * seek-bar hover-preview implementation (and this app's own player) expects.
+ * Tiles are addressed in the same row-major order ffmpeg's `tile` filter
+ * fills them in. The final cue's end time is clamped to the real source
+ * duration rather than running a full interval past it, since
+ * `computeStoryboardLayout` rounds the tile count up (the last tile may
+ * cover a shorter-than-usual span).
+ *
+ * @param {object} options Layout + metadata.
+ * @param {number} options.durationSeconds Probed source duration.
+ * @param {number} options.intervalSeconds Seconds between sampled frames.
+ * @param {number} options.tileCount Total tiles actually laid out.
+ * @param {number} options.columns Grid columns.
+ * @param {string} options.spriteFilename Sprite image's own basename (sits
+ *   alongside this VTT in the same output directory).
+ * @returns {string} WebVTT file contents, newline-terminated.
+ */
+export function buildStoryboardVtt({
+  durationSeconds,
+  intervalSeconds,
+  tileCount,
+  columns,
+  spriteFilename,
+}) {
+  const { width, height } = STORYBOARD_TILE_SIZE;
+  const lines = ["WEBVTT", ""];
+
+  for (let index = 0; index < tileCount; index++) {
+    const start = index * intervalSeconds;
+    const end = Math.min(start + intervalSeconds, durationSeconds);
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    lines.push(
+      `${formatVttTimestamp(start)} --> ${formatVttTimestamp(end)}`,
+      `${spriteFilename}#xywh=${col * width},${row * height},${width},${height}`,
+      "",
+    );
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 /**

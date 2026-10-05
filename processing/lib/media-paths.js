@@ -42,10 +42,19 @@ export const thumbnailsDir = join(mediaDir, "thumbnails");
  */
 export const subtitlesDir = join(mediaDir, "subtitles");
 
+/**
+ * Absolute path where storyboard sprite sheets + their WebVTT sidecars are
+ * written (`media/storyboards`) - the seek-bar hover-scrub preview.
+ *
+ * @type {string}
+ */
+export const storyboardsDir = join(mediaDir, "storyboards");
+
 mkdirSync(originalDir, { recursive: true });
 mkdirSync(transcodedDir, { recursive: true });
 mkdirSync(thumbnailsDir, { recursive: true });
 mkdirSync(subtitlesDir, { recursive: true });
+mkdirSync(storyboardsDir, { recursive: true });
 
 /**
  * Error thrown for invalid client input (maps to HTTP 400).
@@ -280,6 +289,23 @@ export function resolveSubtitleOutputPath(outputFilename) {
 export function resolveHlsOutputDir(outputFilename) {
   const safeName = validateRelativeMediaPath(outputFilename, "outputFilename");
   const absolutePath = join(transcodedDir, safeName);
+  mkdirSync(absolutePath, { recursive: true });
+  return absolutePath;
+}
+
+/**
+ * Validates `outputFilename` and resolves it to an absolute directory path
+ * under `storyboardsDir`, creating the directory itself (not just its
+ * parent) - a `"storyboard"` job's `outputFilename` names a directory it
+ * writes two files into (the sprite image + its WebVTT sidecar), not a
+ * single output file, same rationale as `resolveHlsOutputDir`.
+ *
+ * @param {string} outputFilename Relative directory path under `/media/storyboards`.
+ * @returns {string} Absolute directory path, already created.
+ */
+export function resolveStoryboardOutputDir(outputFilename) {
+  const safeName = validateRelativeMediaPath(outputFilename, "outputFilename");
+  const absolutePath = join(storyboardsDir, safeName);
   mkdirSync(absolutePath, { recursive: true });
   return absolutePath;
 }

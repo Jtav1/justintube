@@ -128,6 +128,28 @@ describe("Video discovery and metadata endpoints", () => {
       expect(res.body.embedVideoUrl).toBe(`/api/v1/videos/${upload.id}/embed-video`);
     });
 
+    test("returns storyboardUrl: null when no storyboard has been generated", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.storyboardUrl).toBeNull();
+    });
+
+    test("returns storyboardUrl pointing at GET /videos/:id/storyboard/storyboard.vtt once one exists", async () => {
+      const upload = await seedUpload({
+        storyboardVttStoragePath: `storyboards/${randomUUID()}.storyboard/storyboard.vtt`,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.storyboardUrl).toBe(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`);
+    });
+
     test("includes featured only for admin callers", async () => {
       await seedUserWithRoleAndKey("admin", "admin-getvideo-featured-key");
       const upload = await seedUpload();
@@ -719,6 +741,118 @@ describe("Video discovery and metadata endpoints", () => {
       writeMediaFixture(`${hlsDir}/variant.m3u8`, Buffer.from("#EXTM3U\n"));
 
       const res = await client.get(`/api/v1/videos/${upload.id}/hls/variant.m3u8`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /videos/{id}/storyboard/{filename} (getVideoStoryboardFile)", () => {
+    /**
+     * Seeds an upload with a fully-formed `storyboardVttStoragePath` (chosen
+     * before creation, so the matching output directory is known up front).
+     *
+     * @param {object} [overrides] Extra `seedUpload` overrides.
+     * @returns {Promise<{ upload: object, storyboardDir: string }>} The
+     *   seeded upload plus its storyboard output directory (relative to
+     *   `mediaDir`).
+     */
+    async function seedUploadWithStoryboard(overrides = {}) {
+      const uuid = randomUUID();
+      const storyboardDir = `storyboards/${uuid}.storyboard`;
+      const upload = await seedUpload({
+        uuid,
+        storyboardVttStoragePath: `${storyboardDir}/storyboard.vtt`,
+        ...overrides,
+      });
+      return { upload, storyboardDir };
+    }
+
+    test("streams the VTT sidecar with 200 when no Range header is sent", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const vttContents = Buffer.from("WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nsprite.jpg#xywh=0,0,160,90\n\n");
+      writeMediaFixture(`${storyboardDir}/storyboard.vtt`, vttContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("text/vtt");
+      expect(Buffer.compare(res.body, vttContents)).toBe(0);
+    });
+
+    test("serves the sibling sprite image resolved relative to the VTT's own directory", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const spriteContents = Buffer.from("fake-jpeg-bytes");
+      writeMediaFixture(`${storyboardDir}/sprite.jpg`, spriteContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/storyboard/sprite.jpg`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("image/jpeg");
+      expect(Buffer.compare(res.body, spriteContents)).toBe(0);
+    });
+
+    test("honors a Range header with 206 partial content", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(`${storyboardDir}/sprite.jpg`, Buffer.from("0123456789"));
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/storyboard/sprite.jpg`)
+        .set("Range", "bytes=2-4")
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-range"]).toBe("bytes 2-4/10");
+      expect(res.body.toString()).toBe("234");
+    });
+
+    test("returns 404 for an unrecognized filename", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(`${storyboardDir}/storyboard.vtt`, Buffer.from("WEBVTT\n"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/storyboard/evil.txt`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 when storyboardVttStoragePath isn't set yet", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "storyboard-owner-key");
+      const { upload, storyboardDir } = await seedUploadWithStoryboard({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      writeMediaFixture(`${storyboardDir}/storyboard.vtt`, Buffer.from("WEBVTT\n"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`);
 
       expect(res.status).toBe(404);
     });
