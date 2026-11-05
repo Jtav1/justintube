@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -125,6 +126,50 @@ describe("Video discovery and metadata endpoints", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.embedVideoUrl).toBe(`/api/v1/videos/${upload.id}/embed-video`);
+    });
+
+    test("returns storyboardUrl: null when no storyboard has been generated", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.storyboardUrl).toBeNull();
+    });
+
+    test("returns storyboardUrl pointing at GET /videos/:id/storyboard/storyboard.vtt once one exists", async () => {
+      const upload = await seedUpload({
+        storyboardVttStoragePath: `storyboards/${randomUUID()}.storyboard/storyboard.vtt`,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.storyboardUrl).toBe(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`);
+    });
+
+    test("returns previewClipUrl: null when no preview clip has been generated", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.previewClipUrl).toBeNull();
+    });
+
+    test("returns previewClipUrl pointing at GET /videos/:id/preview-clip once one exists", async () => {
+      const upload = await seedUpload({
+        previewClipStoragePath: `transcoded/${randomUUID()}-preview.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.previewClipUrl).toBe(`/api/v1/videos/${upload.id}/preview-clip`);
     });
 
     test("includes featured only for admin callers", async () => {
@@ -292,6 +337,7 @@ describe("Video discovery and metadata endpoints", () => {
           height: 480,
           mimeType: "video/mp4",
           fileSizeBytes: 1024,
+          format: "mp4",
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
         },
         {
@@ -301,6 +347,7 @@ describe("Video discovery and metadata endpoints", () => {
           height: null,
           mimeType: "video/mp4",
           fileSizeBytes: 2048,
+          format: "mp4",
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
         },
       ]);
@@ -322,6 +369,42 @@ describe("Video discovery and metadata endpoints", () => {
           height: null,
           mimeType: "video/mp4",
           fileSizeBytes: 2048,
+          format: "mp4",
+          streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+        },
+      ]);
+    });
+
+    test("includes a best HLS rendition once hlsPlaylistStoragePath is set", async () => {
+      const upload = await seedUpload({
+        videoWidth: 1920,
+        videoHeight: 1080,
+        hlsPlaylistStoragePath: `transcoded/${randomUUID()}.hls/variant.m3u8`,
+      });
+      await seedMetadata(upload.id, { title: "With HLS", visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.renditions).toEqual([
+        {
+          id: upload.id,
+          resolution: "best",
+          width: 1920,
+          height: 1080,
+          mimeType: "application/vnd.apple.mpegurl",
+          fileSizeBytes: null,
+          format: "hls",
+          streamUrl: `/api/v1/videos/${upload.id}/hls/variant.m3u8`,
+        },
+        {
+          id: upload.id,
+          resolution: "original",
+          width: 1920,
+          height: 1080,
+          mimeType: "video/mp4",
+          fileSizeBytes: 2048,
+          format: "mp4",
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
         },
       ]);
@@ -574,6 +657,229 @@ describe("Video discovery and metadata endpoints", () => {
     });
   });
 
+  describe("GET /videos/{id}/hls/{filename} (getVideoHlsFile)", () => {
+    /**
+     * Seeds an upload with a fully-formed `hlsPlaylistStoragePath` (chosen
+     * before creation, so the matching output directory is known up front).
+     *
+     * @param {object} [overrides] Extra `seedUpload` overrides.
+     * @returns {Promise<{ upload: object, hlsDir: string }>} The seeded
+     *   upload plus its HLS output directory (relative to `mediaDir`).
+     */
+    async function seedUploadWithHls(overrides = {}) {
+      const uuid = randomUUID();
+      const hlsDir = `transcoded/${uuid}.hls`;
+      const upload = await seedUpload({
+        uuid,
+        hlsPlaylistStoragePath: `${hlsDir}/variant.m3u8`,
+        ...overrides,
+      });
+      return { upload, hlsDir };
+    }
+
+    test("streams the variant playlist with 200 when no Range header is sent", async () => {
+      const { upload, hlsDir } = await seedUploadWithHls();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const playlistContents = Buffer.from("#EXTM3U\n#EXT-X-VERSION:7\n");
+      writeMediaFixture(`${hlsDir}/variant.m3u8`, playlistContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/hls/variant.m3u8`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("application/vnd.apple.mpegurl");
+      expect(Buffer.compare(res.body, playlistContents)).toBe(0);
+    });
+
+    test("serves a sibling segment file resolved relative to the playlist's own directory", async () => {
+      const { upload, hlsDir } = await seedUploadWithHls();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const segmentContents = Buffer.from("fake-fmp4-bytes");
+      writeMediaFixture(`${hlsDir}/stream.m4s`, segmentContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/hls/stream.m4s`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("video/iso.segment");
+      expect(Buffer.compare(res.body, segmentContents)).toBe(0);
+    });
+
+    test("honors a Range header with 206 partial content", async () => {
+      const { upload, hlsDir } = await seedUploadWithHls();
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(`${hlsDir}/stream.m4s`, Buffer.from("0123456789"));
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/hls/stream.m4s`)
+        .set("Range", "bytes=2-4")
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-range"]).toBe("bytes 2-4/10");
+      expect(res.body.toString()).toBe("234");
+    });
+
+    test("returns 404 for an unrecognized filename", async () => {
+      const { upload, hlsDir } = await seedUploadWithHls();
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(`${hlsDir}/variant.m3u8`, Buffer.from("#EXTM3U\n"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/hls/evil.txt`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 when hlsPlaylistStoragePath isn't set yet", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/hls/variant.m3u8`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "hls-owner-key");
+      const { upload, hlsDir } = await seedUploadWithHls({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      writeMediaFixture(`${hlsDir}/variant.m3u8`, Buffer.from("#EXTM3U\n"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/hls/variant.m3u8`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /videos/{id}/storyboard/{filename} (getVideoStoryboardFile)", () => {
+    /**
+     * Seeds an upload with a fully-formed `storyboardVttStoragePath` (chosen
+     * before creation, so the matching output directory is known up front).
+     *
+     * @param {object} [overrides] Extra `seedUpload` overrides.
+     * @returns {Promise<{ upload: object, storyboardDir: string }>} The
+     *   seeded upload plus its storyboard output directory (relative to
+     *   `mediaDir`).
+     */
+    async function seedUploadWithStoryboard(overrides = {}) {
+      const uuid = randomUUID();
+      const storyboardDir = `storyboards/${uuid}.storyboard`;
+      const upload = await seedUpload({
+        uuid,
+        storyboardVttStoragePath: `${storyboardDir}/storyboard.vtt`,
+        ...overrides,
+      });
+      return { upload, storyboardDir };
+    }
+
+    test("streams the VTT sidecar with 200 when no Range header is sent", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const vttContents = Buffer.from("WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nsprite.jpg#xywh=0,0,160,90\n\n");
+      writeMediaFixture(`${storyboardDir}/storyboard.vtt`, vttContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("text/vtt");
+      expect(Buffer.compare(res.body, vttContents)).toBe(0);
+    });
+
+    test("serves the sibling sprite image resolved relative to the VTT's own directory", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      const spriteContents = Buffer.from("fake-jpeg-bytes");
+      writeMediaFixture(`${storyboardDir}/sprite.jpg`, spriteContents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/storyboard/sprite.jpg`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("image/jpeg");
+      expect(Buffer.compare(res.body, spriteContents)).toBe(0);
+    });
+
+    test("honors a Range header with 206 partial content", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(`${storyboardDir}/sprite.jpg`, Buffer.from("0123456789"));
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/storyboard/sprite.jpg`)
+        .set("Range", "bytes=2-4")
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-range"]).toBe("bytes 2-4/10");
+      expect(res.body.toString()).toBe("234");
+    });
+
+    test("returns 404 for an unrecognized filename", async () => {
+      const { upload, storyboardDir } = await seedUploadWithStoryboard();
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(`${storyboardDir}/storyboard.vtt`, Buffer.from("WEBVTT\n"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/storyboard/evil.txt`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 when storyboardVttStoragePath isn't set yet", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "storyboard-owner-key");
+      const { upload, storyboardDir } = await seedUploadWithStoryboard({ userId: owner.id });
+      await seedMetadata(upload.id, { visibility: "private" });
+      writeMediaFixture(`${storyboardDir}/storyboard.vtt`, Buffer.from("WEBVTT\n"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe("GET /videos/{id}/embed-video (getVideoEmbedVideo)", () => {
     test("streams the audio upload's muxed embed video with HTTP Range support", async () => {
       const upload = await seedUpload({
@@ -644,6 +950,78 @@ describe("Video discovery and metadata endpoints", () => {
       writeMediaFixture(upload.embedVideoStoragePath, Buffer.from("data"));
 
       const res = await client.get(`/api/v1/videos/${upload.id}/embed-video`);
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /videos/{id}/preview-clip (getVideoPreviewClip)", () => {
+    test("streams the hover-preview clip with HTTP Range support", async () => {
+      const upload = await seedUpload({
+        previewClipStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-preview.mp4`,
+        previewClipWidth: 480,
+        previewClipHeight: 270,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      const contents = Buffer.from("fake-mp4-bytes");
+      writeMediaFixture(upload.previewClipStoragePath, contents);
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/preview-clip`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("video/mp4");
+      expect(res.headers["accept-ranges"]).toBe("bytes");
+      expect(Buffer.compare(res.body, contents)).toBe(0);
+    });
+
+    test("honors a Range header with 206 partial content", async () => {
+      const upload = await seedUpload({
+        previewClipStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-preview.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "public" });
+      writeMediaFixture(upload.previewClipStoragePath, Buffer.from("0123456789"));
+
+      const res = await client
+        .get(`/api/v1/videos/${upload.id}/preview-clip`)
+        .set("Range", "bytes=2-4")
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-range"]).toBe("bytes 2-4/10");
+      expect(res.body.toString()).toBe("234");
+    });
+
+    test("returns 404 when no preview clip has been generated yet", async () => {
+      const upload = await seedUpload();
+      await seedMetadata(upload.id, { visibility: "public" });
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/preview-clip`);
+
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 404 for a private video without access", async () => {
+      const owner = await seedUserWithRoleAndKey("viewer", "preview-clip-owner-key");
+      const upload = await seedUpload({
+        userId: owner.id,
+        previewClipStoragePath: `transcoded/${Math.random().toString(36).slice(2)}-preview.mp4`,
+      });
+      await seedMetadata(upload.id, { visibility: "private" });
+      writeMediaFixture(upload.previewClipStoragePath, Buffer.from("data"));
+
+      const res = await client.get(`/api/v1/videos/${upload.id}/preview-clip`);
 
       expect(res.status).toBe(404);
     });
@@ -1391,6 +1769,7 @@ describe("Video discovery and metadata endpoints", () => {
           height: 480,
           mimeType: "video/mp4",
           fileSizeBytes: 1024,
+          format: "mp4",
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
         },
         {
@@ -1400,6 +1779,7 @@ describe("Video discovery and metadata endpoints", () => {
           height: null,
           mimeType: "video/mp4",
           fileSizeBytes: 2048,
+          format: "mp4",
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
         },
       ]);
@@ -2256,6 +2636,7 @@ describe("Video discovery and metadata endpoints", () => {
           height: 480,
           mimeType: "video/mp4",
           fileSizeBytes: 1024,
+          format: "mp4",
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=480p`,
         },
         {
@@ -2265,6 +2646,7 @@ describe("Video discovery and metadata endpoints", () => {
           height: null,
           mimeType: "video/mp4",
           fileSizeBytes: 2048,
+          format: "mp4",
           streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
         },
       ]);

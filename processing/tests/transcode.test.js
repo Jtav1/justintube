@@ -5,10 +5,19 @@ import {
 import {
   buildEmbedFfmpegArgs,
   buildFfmpegArgs,
+  buildHlsFfmpegArgs,
   buildNormalizeFfmpegArgs,
   buildOutputFilename,
+  buildPreviewClipFfmpegArgs,
+  buildStoryboardFfmpegArgs,
+  buildStoryboardVtt,
   buildSubtitleFfmpegArgs,
   buildThumbnailFfmpegArgs,
+  computePreviewClipWindow,
+  computeStoryboardLayout,
+  HLS_OUTPUT_FILENAMES,
+  STORYBOARD_OUTPUT_FILENAMES,
+  STORYBOARD_TILE_SIZE,
   getTranscodeConfig,
   parseHardwareEncoders,
   resolveAudioEncoder,
@@ -268,6 +277,84 @@ describe("thumbnail job validation and ffmpeg args", () => {
       outputFilename: "abc123",
       kind: "subtitle",
     });
+  });
+
+  test("validateTranscodeJob accepts an hls job with only jobId + outputFilename, no profile", () => {
+    const jobId = "hls-abc123";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "42/abc123.hls", kind: "hls" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/abc123.hls",
+      kind: "hls",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for hls jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          { jobId: "hls-abc123", outputFilename: "abc123.hls", kind: "hls" },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("validateTranscodeJob accepts a storyboard job with only jobId + outputFilename, no profile", () => {
+    const jobId = "storyboard-abc123";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "42/abc123.storyboard", kind: "storyboard" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/abc123.storyboard",
+      kind: "storyboard",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for storyboard jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          { jobId: "storyboard-abc123", outputFilename: "abc123.storyboard", kind: "storyboard" },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
+  });
+
+  test("validateTranscodeJob accepts a preview job with only jobId + outputFilename, no profile", () => {
+    const jobId = "preview-abc123";
+    expect(
+      validateTranscodeJob({ jobId, outputFilename: "42/abc123-preview.mp4", kind: "preview" }, 0),
+    ).toEqual({
+      jobId,
+      outputFilename: "42/abc123-preview.mp4",
+      kind: "preview",
+    });
+  });
+
+  test("validateTranscodeJob skips profile/transcode-mode validation for preview jobs even when transcoding is disabled", () => {
+    const previous = process.env.ENABLE_TRANSCODING;
+    process.env.ENABLE_TRANSCODING = "false";
+    try {
+      expect(() =>
+        validateTranscodeJob(
+          { jobId: "preview-abc123", outputFilename: "abc123-preview.mp4", kind: "preview" },
+          0,
+        ),
+      ).not.toThrow();
+    } finally {
+      process.env.ENABLE_TRANSCODING = previous;
+    }
   });
 
   test("validateTranscodeBatchRequest accepts a batch with a normalize job", () => {
@@ -920,5 +1007,191 @@ describe("buildEmbedFfmpegArgs", () => {
 
     expect(args).not.toContain("copy");
     expect(args).toContain("aac");
+  });
+});
+
+describe("buildHlsFfmpegArgs", () => {
+  test("remuxes (never re-encodes) into single-file fMP4 HLS", () => {
+    const args = buildHlsFfmpegArgs({
+      inputPath: "/media/transcoded/42/rendition-abc.mp4",
+      outputDir: "/media/transcoded/42/rendition-abc.hls",
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/transcoded/42/rendition-abc.mp4",
+      "-c",
+      "copy",
+      "-f",
+      "hls",
+      "-hls_time",
+      "6",
+      "-hls_playlist_type",
+      "vod",
+      "-hls_segment_type",
+      "fmp4",
+      "-hls_fmp4_init_filename",
+      HLS_OUTPUT_FILENAMES.init,
+      "-hls_flags",
+      "single_file+independent_segments",
+      "-hls_segment_filename",
+      expect.stringContaining(HLS_OUTPUT_FILENAMES.media),
+      expect.stringContaining(HLS_OUTPUT_FILENAMES.playlist),
+    ]);
+  });
+
+  test("never re-encodes - always a pure remux (-c copy)", () => {
+    const args = buildHlsFfmpegArgs({
+      inputPath: "/media/transcoded/in.mp4",
+      outputDir: "/media/transcoded/out.hls",
+    });
+
+    expect(args).toContain("copy");
+    expect(args).not.toContain("libx264");
+  });
+});
+
+describe("computeStoryboardLayout", () => {
+  test("uses the default 10s interval for a short video, in a square-ish grid", () => {
+    expect(computeStoryboardLayout(95)).toEqual({
+      intervalSeconds: 10,
+      tileCount: 10,
+      columns: 4,
+      rows: 3,
+    });
+  });
+
+  test("widens the interval instead of exceeding the max tile count for a long video", () => {
+    // 100,000s at the default 10s interval would be 10,000 tiles - widen
+    // instead, landing back at exactly the 100-tile cap.
+    const layout = computeStoryboardLayout(100_000);
+    expect(layout.tileCount).toBeLessThanOrEqual(100);
+    expect(layout.intervalSeconds).toBeGreaterThan(10);
+    expect(layout.columns * layout.rows).toBeGreaterThanOrEqual(layout.tileCount);
+  });
+
+  test("always yields at least one tile, even for a source shorter than one interval", () => {
+    expect(computeStoryboardLayout(3)).toEqual({
+      intervalSeconds: 10,
+      tileCount: 1,
+      columns: 1,
+      rows: 1,
+    });
+  });
+});
+
+describe("buildStoryboardFfmpegArgs", () => {
+  test("samples by wall-clock time (fps filter), scales/pads to a uniform cell, and tiles in one pass", () => {
+    const args = buildStoryboardFfmpegArgs({
+      inputPath: "/media/original/42/abc.mp4",
+      outputPath: "/media/storyboards/42/abc/sprite.jpg",
+      intervalSeconds: 10,
+      columns: 4,
+      rows: 3,
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/media/original/42/abc.mp4",
+      "-vf",
+      `fps=1/10,scale=${STORYBOARD_TILE_SIZE.width}:${STORYBOARD_TILE_SIZE.height}:force_original_aspect_ratio=decrease,` +
+        `pad=${STORYBOARD_TILE_SIZE.width}:${STORYBOARD_TILE_SIZE.height}:(ow-iw)/2:(oh-ih)/2,tile=4x3`,
+      "-frames:v",
+      "1",
+      "-update",
+      "1",
+      "-an",
+      "/media/storyboards/42/abc/sprite.jpg",
+    ]);
+  });
+});
+
+describe("buildStoryboardVtt", () => {
+  test("maps each tile's time range to its xywh region, in row-major order", () => {
+    const content = buildStoryboardVtt({
+      durationSeconds: 25,
+      intervalSeconds: 10,
+      tileCount: 3,
+      columns: 2,
+      spriteFilename: STORYBOARD_OUTPUT_FILENAMES.sprite,
+    });
+
+    expect(content).toBe(
+      [
+        "WEBVTT",
+        "",
+        "00:00:00.000 --> 00:00:10.000",
+        "sprite.jpg#xywh=0,0,160,90",
+        "",
+        "00:00:10.000 --> 00:00:20.000",
+        "sprite.jpg#xywh=160,0,160,90",
+        "",
+        // Third tile starts the second row (col 0) and is clamped to the
+        // real 25s duration rather than running a full interval to 30s.
+        "00:00:20.000 --> 00:00:25.000",
+        "sprite.jpg#xywh=0,90,160,90",
+        "",
+      ].join("\n") + "\n",
+    );
+  });
+});
+
+describe("computePreviewClipWindow", () => {
+  test("starts 25% of the way into a video long enough for the full clip duration", () => {
+    expect(computePreviewClipWindow(95)).toEqual({
+      startSeconds: 23.75,
+      durationSeconds: 3,
+    });
+  });
+
+  test("falls back to the entire video starting at 0 when shorter than the clip duration", () => {
+    expect(computePreviewClipWindow(2)).toEqual({
+      startSeconds: 0,
+      durationSeconds: 2,
+    });
+  });
+
+  test("clamps the start so the clip never runs past the end of the video", () => {
+    // 25% of 10s is 2.5s in, but a 3s clip starting there would run to 5.5s -
+    // well within 10s, so this just exercises the non-degenerate case.
+    const window = computePreviewClipWindow(10);
+    expect(window.startSeconds + window.durationSeconds).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("buildPreviewClipFfmpegArgs", () => {
+  test("seeks before the input, cuts a fixed duration, scales/pads to a bounded box, and drops audio", () => {
+    const args = buildPreviewClipFfmpegArgs({
+      inputPath: "/media/original/42/abc.mp4",
+      outputPath: "/media/transcoded/42/abc-preview.mp4",
+      startSeconds: 23.75,
+      durationSeconds: 3,
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-ss",
+      "23.75",
+      "-i",
+      "/media/original/42/abc.mp4",
+      "-t",
+      "3",
+      "-vf",
+      "scale='min(480,iw)':'min(270,ih)':force_original_aspect_ratio=decrease,pad='ceil(iw/2)*2':'ceil(ih/2)*2'",
+      "-an",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      "-f",
+      "mp4",
+      "/media/transcoded/42/abc-preview.mp4",
+    ]);
   });
 });

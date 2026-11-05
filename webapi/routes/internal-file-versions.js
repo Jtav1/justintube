@@ -4,6 +4,7 @@ import {
   applyFileVersionFailed,
   findFileVersionByUuid,
 } from "../lib/file-versions.js";
+import { markJobRunComplete, markJobRunFailed } from "../lib/processing-job-runs.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
 import { logger } from "../lib/logger.js";
 
@@ -132,6 +133,7 @@ export function createInternalFileVersionsRouter() {
           ? body.mimeType
           : undefined,
     });
+    await markJobRunComplete(uuid);
 
     res.status(200).json({
       success: true,
@@ -205,6 +207,7 @@ export function createInternalFileVersionsRouter() {
     );
 
     await applyFileVersionFailed(version);
+    await markJobRunFailed(uuid, message);
 
     res.status(200).json({
       success: true,

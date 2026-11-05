@@ -343,6 +343,31 @@ async function ensureSqliteMissingColumns() {
       column: "last_activity_at",
       ddl: "`last_activity_at` DATETIME NULL",
     },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "hls_playlist_storage_path",
+      ddl: "`hls_playlist_storage_path` VARCHAR(512) NULL",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "storyboard_vtt_storage_path",
+      ddl: "`storyboard_vtt_storage_path` VARCHAR(512) NULL",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "preview_clip_storage_path",
+      ddl: "`preview_clip_storage_path` VARCHAR(512) NULL",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "preview_clip_width",
+      ddl: "`preview_clip_width` INTEGER UNSIGNED NULL",
+    },
+    {
+      table: "ORIGINAL_UPLOADS",
+      column: "preview_clip_height",
+      ddl: "`preview_clip_height` INTEGER UNSIGNED NULL",
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

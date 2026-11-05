@@ -178,6 +178,52 @@ export const OriginalUpload = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    /**
+     * Storage path (under `transcoded/`) of the "Best" quality HLS variant
+     * playlist - a single-file byte-range fMP4 remux of this upload's own
+     * original file (always the highest-quality copy available), for
+     * adaptive seeking/partial-download playback. Null until an `"hls"`
+     * processing job completes (or if it fails - see
+     * `routes/internal-hls.js`); the "Best" option simply doesn't appear in
+     * the quality list until then.
+     */
+    hlsPlaylistStoragePath: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+    },
+    /**
+     * Storage path (under `storyboards/`) of the generated WebVTT sidecar
+     * mapping seek-bar hover-scrub time ranges to tiles of this upload's
+     * sprite sheet (the sprite image itself is a fixed-basename sibling in
+     * the same directory - see `STORYBOARD_OUTPUT_FILENAMES`, processing).
+     * Null until a `"storyboard"` processing job completes (or if it fails -
+     * see `routes/internal-storyboard.js`); the player simply has no
+     * scrub-preview data until then.
+     */
+    storyboardVttStoragePath: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+    },
+    /**
+     * Storage path (under `transcoded/`) of a short, muted, looping clip cut
+     * from this upload for hover-preview on a video grid card (the "pop" a
+     * card gives when a user hovers it in `VideoCard`, webview). Null until
+     * a `"preview"` processing job completes (or if it fails - see
+     * `routes/internal-preview.js`); the card simply has no hover-preview
+     * clip until then.
+     */
+    previewClipStoragePath: {
+      type: DataTypes.STRING(512),
+      allowNull: true,
+    },
+    previewClipWidth: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+    previewClipHeight: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
     uploadedAt: timestampColumn("uploaded_at"),
   },
   {

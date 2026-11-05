@@ -17,6 +17,7 @@ import { OriginalUpload } from "./original-upload.js";
 import { PasswordResetToken } from "./password-reset-token.js";
 import { PlaylistAccess } from "./playlist-access.js";
 import { PlaylistItem } from "./playlist-item.js";
+import { ProcessingJobRun } from "./processing-job-run.js";
 import { Report } from "./report.js";
 import { Role } from "./role.js";
 import { SsoProvider } from "./sso-provider.js";
@@ -209,6 +210,24 @@ function registerAssociations() {
     onDelete: "SET NULL",
   });
   FileVersion.belongsTo(TranscodeProfile, {
+    foreignKey: "transcodeProfileId",
+    onDelete: "SET NULL",
+  });
+
+  OriginalUpload.hasMany(ProcessingJobRun, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+  ProcessingJobRun.belongsTo(OriginalUpload, {
+    foreignKey: "originalUploadId",
+    onDelete: "CASCADE",
+  });
+
+  TranscodeProfile.hasMany(ProcessingJobRun, {
+    foreignKey: "transcodeProfileId",
+    onDelete: "SET NULL",
+  });
+  ProcessingJobRun.belongsTo(TranscodeProfile, {
     foreignKey: "transcodeProfileId",
     onDelete: "SET NULL",
   });
@@ -710,6 +729,7 @@ export {
   PasswordResetToken,
   PlaylistAccess,
   PlaylistItem,
+  ProcessingJobRun,
   Report,
   Role,
   SsoProvider,

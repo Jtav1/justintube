@@ -55,6 +55,10 @@ export async function getAdminJobQueue() {
  * (ORIGINAL_UPLOADS numeric pkid) and `videoId` (its public id) when the job
  * could still be traced back to an upload — both `null` for a job whose
  * upload has since been deleted, or whose jobId shape isn't recognized.
+ * Each item also carries `jobParams` (that run's actual parameters —
+ * rendition resolution, subtitle language, thumbnail timestamp, embed
+ * default-ness — from PROCESSING_JOB_RUNS), `null` when the ledger has no
+ * row for this jobId.
  * @param {{page?: number, limit?: number}} [options]
  * @returns {Promise<{items: object[], total: number, page: number, limit: number}>}
  */

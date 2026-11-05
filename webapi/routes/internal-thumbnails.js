@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { DEFAULT_AUDIO_THUMBNAIL_FILENAME } from "../lib/media-meta.js";
 import { OriginalUpload, VideoThumbnail } from "../lib/models/index.js";
+import { markJobRunComplete, markJobRunFailed } from "../lib/processing-job-runs.js";
 import { syncVideoIndex } from "../lib/search.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
 import { logger } from "../lib/logger.js";
@@ -124,7 +125,8 @@ export function createInternalThumbnailsRouter() {
    * @returns {Promise<void>} Sends 200 `{ success, videoId, status }`, 400, 404, or error.
    */
   router.post("/thumbnails/:uploadUuid/complete", async (req, res) => {
-    const videoId = videoIdFromThumbnailJobId(String(req.params.uploadUuid || "").trim());
+    const jobId = String(req.params.uploadUuid || "").trim();
+    const videoId = videoIdFromThumbnailJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         success: false,
@@ -158,6 +160,7 @@ export function createInternalThumbnailsRouter() {
     }
 
     if (upload.skipThumbnail) {
+      await markJobRunComplete(jobId);
       res.status(200).json({
         success: true,
         videoId: upload.videoId,
@@ -177,6 +180,7 @@ export function createInternalThumbnailsRouter() {
     syncVideoIndex(upload.id);
     const storedFilename = upload.storagePath.replace(/^original\//, "");
     enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename);
+    await markJobRunComplete(jobId);
 
     res.status(200).json({
       success: true,
@@ -239,7 +243,8 @@ export function createInternalThumbnailsRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/thumbnails/:uploadUuid/failed", async (req, res) => {
-    const videoId = videoIdFromThumbnailJobId(String(req.params.uploadUuid || "").trim());
+    const jobId = String(req.params.uploadUuid || "").trim();
+    const videoId = videoIdFromThumbnailJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         success: false,
@@ -273,6 +278,7 @@ export function createInternalThumbnailsRouter() {
         isDefault: true,
       });
     }
+    await markJobRunFailed(jobId, message);
 
     res.status(200).json({ success: true, videoId: upload.videoId });
   });

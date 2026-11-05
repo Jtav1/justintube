@@ -302,3 +302,126 @@ export async function notifyEmbedVideoFailed(jobId, error) {
     error,
   });
 }
+
+/**
+ * Notifies the API that an upload's "Best" HLS packaging job (remuxing the
+ * original file - always the highest-quality copy available) completed
+ * successfully.
+ *
+ * @param {string} jobId BullMQ job id (`hls-<videoId>-<uuid>`, one per
+ *   ORIGINAL_UPLOADS row — the trailing uuid exists purely so a hypothetical
+ *   future re-run gets a fresh jobId rather than silently no-opping against
+ *   the first, already-completed job with the same id, mirroring `subtitle`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.playlistPath Relative path (under `transcoded/`) to the
+ *   variant `.m3u8` playlist.
+ * @param {number|null} metadata.bitRateBps Probed source bitrate, for display
+ *   purposes (null when ffprobe couldn't determine one).
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyHlsComplete(jobId, metadata) {
+  return postInternal(`/internal/hls/${encodeURIComponent(jobId)}/complete`, {
+    playlistPath: metadata.playlistPath,
+    bitRateBps: metadata.bitRateBps,
+  });
+}
+
+/**
+ * Notifies the API that an upload's "Best" HLS packaging job failed.
+ *
+ * @param {string} jobId BullMQ job id (`hls-<videoId>-<uuid>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyHlsFailed(jobId, error) {
+  return postInternal(`/internal/hls/${encodeURIComponent(jobId)}/fail`, {
+    error,
+  });
+}
+
+/**
+ * Notifies the API that an upload's storyboard (seek-bar hover-scrub sprite
+ * sheet + WebVTT sidecar) job completed successfully.
+ *
+ * @param {string} jobId BullMQ job id (`storyboard-<videoId>-<uuid>`, one
+ *   per ORIGINAL_UPLOADS row — the trailing uuid mirrors `hls`/`subtitle`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.vttPath Relative path (under `storyboards/`) to
+ *   the generated `.vtt` sidecar.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyStoryboardComplete(jobId, metadata) {
+  return postInternal(`/internal/storyboard/${encodeURIComponent(jobId)}/complete`, {
+    vttPath: metadata.vttPath,
+  });
+}
+
+/**
+ * Notifies the API that an upload's storyboard job failed.
+ *
+ * @param {string} jobId BullMQ job id (`storyboard-<videoId>-<uuid>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyStoryboardFailed(jobId, error) {
+  return postInternal(`/internal/storyboard/${encodeURIComponent(jobId)}/fail`, {
+    error,
+  });
+}
+
+/**
+ * Notifies the API that an upload's hover-preview clip (a short, muted,
+ * looping video grid preview) job completed successfully.
+ *
+ * @param {string} jobId BullMQ job id (`preview-<videoId>-<uuid>`, one per
+ *   ORIGINAL_UPLOADS row — the trailing uuid mirrors `hls`/`storyboard`).
+ * @param {object} metadata Completion fields.
+ * @param {string} metadata.storagePath Relative path (under `transcoded/`)
+ *   to the generated `.mp4` clip.
+ * @param {number|null} metadata.videoWidth Probed clip width.
+ * @param {number|null} metadata.videoHeight Probed clip height.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyPreviewClipComplete(jobId, metadata) {
+  return postInternal(`/internal/preview/${encodeURIComponent(jobId)}/complete`, {
+    storagePath: metadata.storagePath,
+    videoWidth: metadata.videoWidth,
+    videoHeight: metadata.videoHeight,
+  });
+}
+
+/**
+ * Notifies the API that an upload's hover-preview clip job failed.
+ *
+ * @param {string} jobId BullMQ job id (`preview-<videoId>-<uuid>`).
+ * @param {string} error Human-readable failure message.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyPreviewClipFailed(jobId, error) {
+  return postInternal(`/internal/preview/${encodeURIComponent(jobId)}/fail`, {
+    error,
+  });
+}
+
+/**
+ * Notifies the API that a queued job has been picked up by a worker and is
+ * now actually running - the API's PROCESSING_JOB_RUNS ledger's middle
+ * lifecycle state, between "enqueued" and "complete"/"failed". Generic
+ * across every job kind (unlike every other `notify*` function here, which
+ * posts to a kind-specific path) since the ledger only needs the bare jobId
+ * to flip a row's status - best-effort, like every other notify call: a
+ * failure here never blocks or fails the job itself.
+ *
+ * @param {string} jobId BullMQ job id.
+ * @returns {Promise<{ ok: boolean, status: number, error: string|null }>}
+ *   Callback outcome.
+ */
+export async function notifyJobStarted(jobId) {
+  return postInternal(`/internal/job-runs/${encodeURIComponent(jobId)}/start`, {});
+}

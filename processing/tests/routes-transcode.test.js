@@ -352,6 +352,186 @@ describe("POST /transcode and GET /transcode/:jobId", () => {
     expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
   });
 
+  test("skips an hls job when the source falls below 1080 on both axes", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: 854,
+      videoHeight: 480,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const hlsJob = {
+      jobId: "hls-abc123-11111111-1111-1111-1111-111111111111",
+      outputFilename: "11111111-1111-1111-1111-111111111111.hls",
+      kind: "hls",
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [hlsJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.jobs).toEqual([]);
+    expect(res.body.skipped).toEqual([
+      {
+        jobId: hlsJob.jobId,
+        profileId: null,
+        reason: "source_below_minimum_hls_resolution",
+      },
+    ]);
+    expect(queue.addBulk).not.toHaveBeenCalled();
+  });
+
+  test("keeps an hls job when the source reaches 1080 on at least one axis", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: 1920,
+      videoHeight: 1080,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const hlsJob = {
+      jobId: "hls-abc123-11111111-1111-1111-1111-111111111111",
+      outputFilename: "11111111-1111-1111-1111-111111111111.hls",
+      kind: "hls",
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [hlsJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.skipped).toEqual([]);
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
+  test("skips a storyboard job when the source has no video stream", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: null,
+      videoHeight: null,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const storyboardJob = {
+      jobId: "storyboard-abc123-11111111-1111-1111-1111-111111111111",
+      outputFilename: "11111111-1111-1111-1111-111111111111.storyboard",
+      kind: "storyboard",
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [storyboardJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.jobs).toEqual([]);
+    expect(res.body.skipped).toEqual([
+      {
+        jobId: storyboardJob.jobId,
+        profileId: null,
+        reason: "source_has_no_video_stream",
+      },
+    ]);
+    expect(queue.addBulk).not.toHaveBeenCalled();
+  });
+
+  test("keeps a storyboard job when the source has a video stream", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: 1280,
+      videoHeight: 720,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const storyboardJob = {
+      jobId: "storyboard-abc123-11111111-1111-1111-1111-111111111111",
+      outputFilename: "11111111-1111-1111-1111-111111111111.storyboard",
+      kind: "storyboard",
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [storyboardJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.skipped).toEqual([]);
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
+  test("skips a preview job when the source has no video stream", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: null,
+      videoHeight: null,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const previewJob = {
+      jobId: "preview-abc123-11111111-1111-1111-1111-111111111111",
+      outputFilename: "11111111-1111-1111-1111-111111111111-preview.mp4",
+      kind: "preview",
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [previewJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.jobs).toEqual([]);
+    expect(res.body.skipped).toEqual([
+      {
+        jobId: previewJob.jobId,
+        profileId: null,
+        reason: "source_has_no_video_stream",
+      },
+    ]);
+    expect(queue.addBulk).not.toHaveBeenCalled();
+  });
+
+  test("keeps a preview job when the source has a video stream", async () => {
+    const queue = {
+      addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),
+      getJob: jest.fn(),
+    };
+    const probeInput = jest.fn(async () => ({
+      videoWidth: 1280,
+      videoHeight: 720,
+    }));
+    const app = createTestApp(queue, { probeInput });
+
+    const previewJob = {
+      jobId: "preview-abc123-11111111-1111-1111-1111-111111111111",
+      outputFilename: "11111111-1111-1111-1111-111111111111-preview.mp4",
+      kind: "preview",
+    };
+
+    const res = await request(app)
+      .post("/transcode")
+      .send({ filename: fixtureName, jobs: [previewJob] });
+
+    expect(res.status).toBe(202);
+    expect(res.body.skipped).toEqual([]);
+    expect(queue.addBulk).toHaveBeenCalledTimes(1);
+    expect(queue.addBulk.mock.calls[0][0]).toHaveLength(1);
+  });
+
   test("reports source.hasVideoStream: true when a genuine (non-attached-pic) video stream is found", async () => {
     const queue = {
       addBulk: jest.fn().mockResolvedValue([{ id: "a" }]),

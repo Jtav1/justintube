@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import Hls from 'hls.js'
 import { SITE_NAME } from '../lib/document-title.js'
 import {
   Airplay,
@@ -438,6 +439,17 @@ function VideoPlayer({
     : selectedRendition
       ? `${apiClient.defaults.baseURL}${selectedRendition.streamUrl}`
       : null
+  // The "Best" quality option (see webapi's serializeHlsRendition) - an HLS
+  // manifest rather than a direct MP4 file, so it needs hls.js (or Safari's
+  // native HLS support) instead of a plain <video src>. Never true for the
+  // embed video, which is always a fixed MP4 asset.
+  const isHlsRendition = !embedVideoUrl && selectedRendition?.format === 'hls'
+  // When hls.js will attach itself (the effect below), the element's own
+  // `src` must stay unset - setting it to the manifest URL would have the
+  // browser try (and fail) to play that URL as a raw media file directly,
+  // firing a spurious onError. Safari (no hls.js, native HLS support) is the
+  // one case that still wants `src` set to the manifest URL directly.
+  const hlsJsWillAttach = isHlsRendition && Hls.isSupported()
 
   // No rendition and no embed video means the server has no playable file for
   // this upload at all (e.g. an import that never finished downloading) -
@@ -895,6 +907,39 @@ function VideoPlayer({
     }
   }, [memoizedSrc])
 
+  // Attaches hls.js to the "Best" quality's HLS manifest - only Safari plays
+  // HLS natively (handled below by falling through to a plain src, same as
+  // every other rendition), so hls.js is required for Chrome/Firefox. Keyed
+  // on memoizedSrc/isHlsRendition because the media element remounts on every
+  // src/quality change (key={memoizedSrc}), so a prior attachment (on the
+  // outgoing element) must be torn down and a new one made on the new one.
+  // withCredentials is required here (unlike a plain <video src>, which sends
+  // cookies automatically) because hls.js fetches the manifest/segments
+  // itself via XHR - a script-initiated request, which needs the flag
+  // explicitly set to carry the session cookie for a private video.
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el || !isHlsRendition || !memoizedSrc) {
+      return undefined
+    }
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = true
+        },
+      })
+      hls.loadSource(memoizedSrc)
+      hls.attachMedia(el)
+      return () => hls.destroy()
+    }
+
+    if (el.canPlayType('application/vnd.apple.mpegurl')) {
+      el.src = memoizedSrc
+    }
+    return undefined
+  }, [memoizedSrc, isHlsRendition])
+
   // Loads the Cast SDK once (module-level singleton, see lib/cast-sdk.js) -
   // mount-only, unlike the AirPlay watcher above, since SDK availability
   // doesn't depend on which video is loaded.
@@ -1300,11 +1345,11 @@ function VideoPlayer({
             <audio
               ref={videoRef}
               key={memoizedSrc}
-              src={memoizedSrc}
+              src={hlsJsWillAttach ? undefined : memoizedSrc}
               controls
               title={video.title ?? undefined}
               loop={loop}
-              crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
+              crossOrigin={subtitles.length > 0 || isHlsRendition ? 'use-credentials' : undefined}
               x-webkit-airplay="allow"
               className="video-player-audio-element"
               onLoadedMetadata={handleLoadedMetadata}
@@ -1333,13 +1378,13 @@ function VideoPlayer({
           <video
             ref={videoRef}
             key={memoizedSrc}
-            src={memoizedSrc}
+            src={hlsJsWillAttach ? undefined : memoizedSrc}
             controls
             // Some AirPlay receivers read the element's own title rather than
             // the Media Session metadata, so both are set.
             title={video.title ?? undefined}
             loop={loop}
-            crossOrigin={subtitles.length > 0 ? 'use-credentials' : undefined}
+            crossOrigin={subtitles.length > 0 || isHlsRendition ? 'use-credentials' : undefined}
             x-webkit-airplay="allow"
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={handleFirstPlay}

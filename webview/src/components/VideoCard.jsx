@@ -22,6 +22,9 @@ const PROCESSING_POLL_MS = 5000
 // Spreads out the first poll across many owned cards on one page (e.g.
 // after a bulk import) so they don't all hit the API in the same tick.
 const PROCESSING_POLL_MAX_JITTER_MS = 2000
+// Delay before starting the hover-preview clip, so a quick mouse pass over
+// a grid of cards doesn't fire off a video load/decode for every one of them.
+const PREVIEW_HOVER_DELAY_MS = 300
 
 function VideoCard({
   video,
@@ -50,6 +53,10 @@ function VideoCard({
   const [hidden, setHidden] = useState(false)
   const [hideError, setHideError] = useState(false)
 
+  const [showPreview, setShowPreview] = useState(false)
+  const [previewPlaying, setPreviewPlaying] = useState(false)
+  const previewHoverTimeoutRef = useRef(null)
+
   // List-fetched videos don't carry viewerPermission (see webapi's
   // scope note on list endpoints), so fall back to the client-side
   // owner/admin check there; singular-fetch contexts get the accurate
@@ -66,6 +73,9 @@ function VideoCard({
   const uploaderName = video.uploader?.displayName || video.uploader?.username
   const thumbnailUrl = video.thumbnailUrl
     ? `${apiClient.defaults.baseURL}${video.thumbnailUrl}`
+    : null
+  const previewClipUrl = video.previewClipUrl
+    ? `${apiClient.defaults.baseURL}${video.previewClipUrl}`
     : null
 
   const isOwner = Boolean(user) && user.id === video.uploader?.userId
@@ -123,6 +133,23 @@ function VideoCard({
       clearInterval(interval)
     }
   }, [video.id, shouldTrackProcessing])
+
+  useEffect(() => {
+    return () => clearTimeout(previewHoverTimeoutRef.current)
+  }, [])
+
+  function handleThumbMouseEnter() {
+    if (!previewClipUrl) {
+      return
+    }
+    previewHoverTimeoutRef.current = setTimeout(() => setShowPreview(true), PREVIEW_HOVER_DELAY_MS)
+  }
+
+  function handleThumbMouseLeave() {
+    clearTimeout(previewHoverTimeoutRef.current)
+    setShowPreview(false)
+    setPreviewPlaying(false)
+  }
 
   async function handleCopyLink() {
     setMenuOpen(false)
@@ -224,13 +251,30 @@ function VideoCard({
     <article
       className={`video-card video-card-${orientation}${menuOpen ? ' video-card-menu-open' : ''}${active ? ' video-card-active' : ''}`}
     >
-      <Link to={videoPath} className="video-card-thumb">
+      <Link
+        to={videoPath}
+        className="video-card-thumb"
+        onMouseEnter={handleThumbMouseEnter}
+        onMouseLeave={handleThumbMouseLeave}
+      >
         {thumbnailUrl ? (
           <img src={thumbnailUrl} alt="" loading="lazy" width={320} height={180} />
         ) : (
           <div className="video-card-thumb-placeholder">
             {video.mediaType === 'audio' ? <VideoOff size={28} /> : <ImageOff size={28} />}
           </div>
+        )}
+        {showPreview && previewClipUrl && (
+          <video
+            className={`video-card-preview-video${previewPlaying ? ' video-card-preview-video-playing' : ''}`}
+            src={previewClipUrl}
+            muted
+            loop
+            autoPlay
+            playsInline
+            preload="none"
+            onPlaying={() => setPreviewPlaying(true)}
+          />
         )}
         {video.durationSeconds != null && (
           <span className="video-card-duration">{formatDuration(video.durationSeconds)}</span>

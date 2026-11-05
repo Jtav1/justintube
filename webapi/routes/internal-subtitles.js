@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { Router } from "express";
 import { subtitlesDir } from "./videos.js";
 import { OriginalUpload, VideoSubtitle } from "../lib/models/index.js";
+import {
+  markJobRunComplete,
+  markJobRunFailed,
+  upsertCompleteSubtitleLanguageRun,
+} from "../lib/processing-job-runs.js";
 import { timingSafeStringEqual } from "../lib/auth/timing-safe-equal.js";
 import { logger } from "../lib/logger.js";
 import { VIDEO_ID_LENGTH } from "../lib/video-id.js";
@@ -135,7 +140,8 @@ export function createInternalSubtitlesRouter() {
    * @returns {Promise<void>} Sends 200 `{ success, videoId, status }`, 400, 404, or error.
    */
   router.post("/subtitles/:jobId/complete", async (req, res) => {
-    const videoId = videoIdFromSubtitleJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromSubtitleJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         success: false,
@@ -180,6 +186,7 @@ export function createInternalSubtitlesRouter() {
     }
 
     if (upload.skipAutoSubtitles) {
+      await markJobRunComplete(jobId);
       res.status(200).json({
         success: true,
         videoId: upload.videoId,
@@ -205,6 +212,24 @@ export function createInternalSubtitlesRouter() {
           label: entry.title || entry.language || `Subtitle ${index + 1}`,
         })),
       );
+    }
+
+    // Resolves the enqueue-time pending row (keyed "lang:unknown" - the
+    // language, if any, isn't known until the job actually runs) by jobId,
+    // then records one additional "complete" row per language this run
+    // actually found, keyed by its real language this time. Sequential, not
+    // Promise.all - concurrent writes against SQLite's single-writer lock
+    // intermittently fail with SQLITE_BUSY.
+    await markJobRunComplete(jobId);
+    for (const entry of entries) {
+      if (!entry.language) {
+        continue;
+      }
+      await upsertCompleteSubtitleLanguageRun({
+        originalUploadId: upload.id,
+        jobId,
+        language: entry.language,
+      });
     }
 
     res.status(200).json({
@@ -260,7 +285,8 @@ export function createInternalSubtitlesRouter() {
    * @returns {Promise<void>} Sends 200, 400, or 404.
    */
   router.post("/subtitles/:jobId/failed", async (req, res) => {
-    const videoId = videoIdFromSubtitleJobId(String(req.params.jobId || "").trim());
+    const jobId = String(req.params.jobId || "").trim();
+    const videoId = videoIdFromSubtitleJobId(jobId);
     if (!videoId) {
       res.status(400).json({
         success: false,
@@ -283,6 +309,7 @@ export function createInternalSubtitlesRouter() {
     const message =
       req.body && typeof req.body.error === "string" ? req.body.error : "subtitle extraction failed";
     logger.error({ message }, `[subtitles] auto-extraction failed for upload ${upload.videoId}`);
+    await markJobRunFailed(jobId, message);
 
     res.status(200).json({ success: true, videoId: upload.videoId });
   });

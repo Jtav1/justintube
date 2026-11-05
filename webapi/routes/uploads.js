@@ -24,7 +24,11 @@ import {
   transcodingEnabled,
   videoImportsEnabled,
 } from "../lib/processing-features-config.js";
-import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, sequelize } from "../lib/models/index.js";
+import {
+  markJobRunCancelled,
+  upsertPendingJobRun,
+} from "../lib/processing-job-runs.js";
+import { FileVersion, OriginalUpload, TranscodeProfile, VideoMetadata, VideoSubtitle, sequelize } from "../lib/models/index.js";
 import { generateUniqueVideoId } from "../lib/video-id.js";
 import {
   getProcessingHealth,
@@ -55,8 +59,19 @@ export const mediaDir = isAbsolute(MEDIA_STORAGE_DIRECTORY)
  */
 export const originalDir = join(mediaDir, "original");
 
-// Ensure the original-uploads directory exists before any upload is attempted.
+/**
+ * Absolute path to the directory where subtitle/caption tracks are stored
+ * (`MEDIA_STORAGE_DIRECTORY/subtitles`). Shared with the processing service
+ * and with `routes/videos.js` (which defines the same path independently,
+ * matching that file's own `originalDir`/`subtitlesDir` precedent).
+ *
+ * @type {string}
+ */
+export const subtitlesDir = join(mediaDir, "subtitles");
+
+// Ensure the original-uploads/subtitles directories exist before any upload is attempted.
 mkdirSync(originalDir, { recursive: true });
+mkdirSync(subtitlesDir, { recursive: true });
 
 /**
  * Set of allowed lowercase file extensions (without a leading dot), parsed from
@@ -288,6 +303,66 @@ function fileVersionResponseBody(version) {
 }
 
 /**
+ * Builds the batch-job descriptor for an upload's "Best" quality HLS
+ * packaging job (`kind: "hls"`) — a single-file byte-range fMP4 remux of the
+ * original upload. Exported so `scripts/backfill-hls.js` can enqueue the
+ * exact same job shape for an upload that predates this feature, without
+ * duplicating the jobId/outputFilename convention here.
+ *
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} segment Per-user storage segment (userId or `"_unowned"`,
+ *   see `userStorageSegment`).
+ * @returns {{ jobId: string, outputFilename: string, kind: "hls" }} Job descriptor.
+ */
+export function buildHlsJob(upload, segment) {
+  return {
+    jobId: `hls-${upload.videoId}-${randomUUID()}`,
+    outputFilename: `${segment}/${randomUUID()}.hls`,
+    kind: "hls",
+  };
+}
+
+/**
+ * Builds the batch-job descriptor for an upload's storyboard job
+ * (`kind: "storyboard"`) — a tiled sprite sheet of evenly time-spaced
+ * thumbnails plus a WebVTT sidecar, for the seek-bar hover-scrub preview.
+ * Mirrors `buildHlsJob`'s rationale for being its own exported function.
+ *
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} segment Per-user storage segment (userId or `"_unowned"`,
+ *   see `userStorageSegment`).
+ * @returns {{ jobId: string, outputFilename: string, kind: "storyboard" }} Job descriptor.
+ */
+export function buildStoryboardJob(upload, segment) {
+  return {
+    jobId: `storyboard-${upload.videoId}-${randomUUID()}`,
+    outputFilename: `${segment}/${randomUUID()}.storyboard`,
+    kind: "storyboard",
+  };
+}
+
+/**
+ * Builds the batch-job descriptor for an upload's hover-preview clip job
+ * (`kind: "preview"`) — a short, muted, looping clip cut from the original
+ * upload for a video grid card's hover preview. A single output file, unlike
+ * `buildHlsJob`/`buildStoryboardJob` (both a directory) - mirrors the
+ * `buildEmbedJob`-style single-file naming instead. Mirrors `buildHlsJob`'s
+ * rationale for being its own exported function.
+ *
+ * @param {import('sequelize').Model} upload Persisted ORIGINAL_UPLOADS row.
+ * @param {string} segment Per-user storage segment (userId or `"_unowned"`,
+ *   see `userStorageSegment`).
+ * @returns {{ jobId: string, outputFilename: string, kind: "preview" }} Job descriptor.
+ */
+export function buildPreviewJob(upload, segment) {
+  return {
+    jobId: `preview-${upload.videoId}-${randomUUID()}`,
+    outputFilename: `${segment}/${randomUUID()}-preview.mp4`,
+    kind: "preview",
+  };
+}
+
+/**
  * Creates pending FILE_VERSIONS for each transcode profile and batch-enqueues
  * processing jobs against an already-persisted ORIGINAL_UPLOADS row. Shared
  * by both `uploadVideo` (multipart) and `importVideo` (URL download) once
@@ -425,25 +500,44 @@ export async function finalizeUploadTranscodes(
       }
     : null;
 
+  // Packages the original upload itself (always the highest-quality copy
+  // available - renditions never are) into single-file byte-range fMP4 HLS,
+  // offered to the client as the "Best" quality option - adaptive
+  // seeking/partial-download playback with no quality loss. Enqueued
+  // unconditionally alongside thumbnail/subtitle, for both media types, same
+  // rationale as those two - processing itself skips the job when the
+  // source's probed dimensions fall below its own minimum (see
+  // `shouldSkipHlsForSource`), so this never needs to pre-check resolution.
+  const hlsJob = buildHlsJob(upload, segment);
+
+  // Tiled sprite sheet + WebVTT sidecar for the seek-bar hover-scrub
+  // preview. Enqueued unconditionally, same rationale as hlsJob - processing
+  // itself skips it when the source has no video stream at all (see
+  // routes/transcode.js).
+  const storyboardJob = buildStoryboardJob(upload, segment);
+
+  // Short, muted, looping clip for a video grid card's hover preview. Same
+  // rationale/skip condition as storyboardJob above.
+  const previewJob = buildPreviewJob(upload, segment);
+
   const jobs = [
     ...(thumbnailJob ? [thumbnailJob] : []),
     ...(subtitleJob ? [subtitleJob] : []),
+    hlsJob,
+    storyboardJob,
+    previewJob,
     ...renditionJobs,
   ];
 
-  if (jobs.length === 0) {
-    // Nothing to transcode (audio upload with no matching audio profiles) -
-    // skip the processing round-trip entirely rather than enqueueing an
-    // empty batch.
+  if (versions.length === 0) {
+    // No FILE_VERSIONS rows (e.g. an audio upload with no matching audio
+    // profiles) means `rollupOriginalUploadStatus` - triggered only by a
+    // version's own completion/failure - will never run for this upload, so
+    // it would otherwise stay stuck mid-processing forever even once the
+    // thumbnail/subtitle/hls/storyboard/preview jobs below finish. Set it
+    // directly instead; `jobs` always has at least the hls/storyboard/preview
+    // jobs, so the batch is still enqueued normally below.
     await upload.update({ status: "uploaded" });
-    await upload.reload();
-    return {
-      status: 201,
-      body: {
-        ...uploadResponseBody(upload),
-        fileVersions: [],
-      },
-    };
   }
 
   const enqueue = await requestTranscodeBatch({
@@ -514,6 +608,23 @@ export async function finalizeUploadTranscodes(
           .filter(Boolean)
       : [],
   );
+
+  // Records a PROCESSING_JOB_RUNS row for every job processing actually
+  // accepted (skipping the ones it reported back as skipped - those never
+  // got enqueued at all, so there's nothing to track yet).
+  for (const job of jobs) {
+    if (skippedJobIds.has(job.jobId)) {
+      continue;
+    }
+    await upsertPendingJobRun({
+      originalUploadId: upload.id,
+      jobKind: job.kind,
+      jobId: job.jobId,
+      transcodeProfileId: job.kind === "rendition" ? job.profile?.id ?? null : null,
+      thumbnailTimestampTenths:
+        job.kind === "thumbnail" ? upload.thumbnailTimestampTenths ?? null : null,
+    });
+  }
 
   /** @type {import('sequelize').Model[]} */
   const activeVersions = [];
@@ -587,9 +698,10 @@ export function enqueueDuplicateHashCheck(upload, storedFilename) {
     return;
   }
 
+  const jobId = `hash-${upload.videoId}`;
   requestTranscodeBatch({
     filename: storedFilename,
-    jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
+    jobs: [{ jobId, kind: "hash" }],
   })
     .then((enqueue) => {
       if (!enqueue.ok) {
@@ -597,7 +709,9 @@ export function enqueueDuplicateHashCheck(upload, storedFilename) {
           { error: enqueue.error },
           `[upload] duplicate-check enqueue failed for ${upload.videoId}`,
         );
+        return;
       }
+      return upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "hash", jobId });
     })
     .catch((err) => {
       logger.warn({ err }, `[upload] duplicate-check enqueue threw for ${upload.videoId}`);
@@ -659,12 +773,13 @@ export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename
 
   const segment = userStorageSegment(upload.userId);
   const outputFilename = `${segment}/${randomUUID()}-embed.mp4`;
+  const jobId = `embed-${upload.videoId}-${randomUUID()}`;
 
   requestTranscodeBatch({
     filename: storedFilename,
     jobs: [
       {
-        jobId: `embed-${upload.videoId}-${randomUUID()}`,
+        jobId,
         outputFilename,
         kind: "embed",
         thumbnailFilename,
@@ -678,7 +793,14 @@ export function enqueueAudioEmbedVideo(upload, thumbnailFilename, storedFilename
           { error: enqueue.error },
           `[upload] audio-embed enqueue failed for ${upload.videoId}`,
         );
+        return;
       }
+      return upsertPendingJobRun({
+        originalUploadId: upload.id,
+        jobKind: "embed",
+        jobId,
+        isDefaultThumbnail: isDefault,
+      });
     })
     .catch((err) => {
       logger.warn({ err }, `[upload] audio-embed enqueue threw for ${upload.videoId}`);
@@ -709,11 +831,12 @@ async function startUploadConversion(upload, storedFilename) {
   // fresh uuid rather than reusing videoId as a filename stem.
   const newUuid = randomUUID();
   const segment = userStorageSegment(upload.userId);
+  const jobId = `normalize-${upload.videoId}`;
   const enqueue = await requestTranscodeBatch({
     filename: storedFilename,
     jobs: [
       {
-        jobId: `normalize-${upload.videoId}`,
+        jobId,
         outputFilename: `${segment}/${newUuid}.${outputExtension}`,
         kind: "normalize",
       },
@@ -745,6 +868,7 @@ async function startUploadConversion(upload, storedFilename) {
     };
   }
 
+  await upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "normalize", jobId });
   await upload.update({ status: "converting" });
   await upload.reload();
   return {
@@ -1127,6 +1251,63 @@ export async function rollbackFailedImport(upload, statusMessage, extraFiles = [
 }
 
 /**
+ * Moves sidecar subtitle/caption files yt-dlp fetched during a URL import
+ * (`downloadUrl`'s `--write-subs --write-auto-subs`, processing) from
+ * `originalDir` into `subtitlesDir`, recording one VIDEO_SUBTITLE row
+ * (`source: "auto"`) per track - mirrors the video file's own
+ * download-then-rename-into-storage step in `continueImport`, just for
+ * subtitles instead. A single track failing to move is logged and skipped
+ * rather than aborting the rest.
+ *
+ * @param {import('sequelize').Model} upload Original upload the subtitles belong to.
+ * @param {string} segment Per-user storage segment (userId or `"_unowned"`).
+ * @param {Array<{ filename?: unknown, language?: unknown }>} subtitles Raw
+ *   `subtitles` entries from processing's download response.
+ * @returns {Promise<number>} Number of subtitle rows successfully created.
+ */
+async function importDownloadedSubtitles(upload, segment, subtitles) {
+  if (!Array.isArray(subtitles) || subtitles.length === 0) {
+    return 0;
+  }
+
+  mkdirSync(join(subtitlesDir, segment), { recursive: true });
+
+  let created = 0;
+  for (const entry of subtitles) {
+    const downloadedFilename =
+      entry && typeof entry.filename === "string" ? entry.filename.trim() : "";
+    if (!downloadedFilename) {
+      continue;
+    }
+    const language =
+      entry && typeof entry.language === "string" && entry.language.trim()
+        ? entry.language.trim()
+        : null;
+    const relativeFilename = `${segment}/${randomUUID()}.vtt`;
+
+    try {
+      await rename(join(originalDir, downloadedFilename), join(subtitlesDir, relativeFilename));
+    } catch (err) {
+      logger.error(
+        { err },
+        `[import] failed to store downloaded subtitle ${downloadedFilename}`,
+      );
+      continue;
+    }
+
+    await VideoSubtitle.create({
+      originalUploadId: upload.id,
+      subtitleFilename: relativeFilename,
+      source: "auto",
+      label: language || "Subtitle",
+    });
+    created++;
+  }
+
+  return created;
+}
+
+/**
  * Finishes an in-progress URL import that `importVideo` started: downloads
  * the source via the processing service, renames it into `original/` under
  * the upload's videoId, fills in the real file metadata on the placeholder
@@ -1217,7 +1398,31 @@ export async function continueImport(
 
     enqueueDuplicateHashCheck(upload, storedFilename);
 
-    await finalizeUploadTranscodes(upload, storedFilename, { skipThumbnail, skipAutoSubtitles });
+    // A caller-supplied subtitle file always wins (skipAutoSubtitles) - don't
+    // also import yt-dlp's captions on top of it. Otherwise, store whatever
+    // the source offered and, if anything was actually stored, suppress the
+    // embedded-subtitle-stream extraction job below: that job unconditionally
+    // replaces every `source: "auto"` row on completion (see
+    // `/internal/subtitles/:jobId/complete`), which would otherwise wipe out
+    // the tracks just imported here the moment it (almost always) finds no
+    // embedded stream in a yt-dlp download.
+    let effectiveSkipAutoSubtitles = skipAutoSubtitles;
+    if (!skipAutoSubtitles) {
+      const importedCount = await importDownloadedSubtitles(
+        upload,
+        segment,
+        download.body?.subtitles,
+      );
+      if (importedCount > 0) {
+        effectiveSkipAutoSubtitles = true;
+        await upload.update({ skipAutoSubtitles: true });
+      }
+    }
+
+    await finalizeUploadTranscodes(upload, storedFilename, {
+      skipThumbnail,
+      skipAutoSubtitles: effectiveSkipAutoSubtitles,
+    });
   } catch (err) {
     logger.error({ err }, "[import] continueImport failed unexpectedly");
     await rollbackFailedImport(

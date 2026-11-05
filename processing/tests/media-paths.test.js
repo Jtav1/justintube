@@ -3,10 +3,12 @@ import { join } from "node:path";
 import {
   TranscodeValidationError,
   originalDir,
+  resolveHlsOutputDir,
   resolveNormalizedOutputPath,
   resolveOriginalInputPath,
   resolveThumbnailInputPath,
   resolveThumbnailOutputPath,
+  resolveTranscodedInputPath,
   resolveTranscodedOutputPath,
   thumbnailsDir,
   transcodedDir,
@@ -100,5 +102,42 @@ describe("resolveThumbnailInputPath", () => {
     writeFileSync(filePath, "not a real image, just bytes for the test");
 
     expect(resolveThumbnailInputPath("987654/cover.jpg")).toBe(filePath);
+  });
+});
+
+describe("resolveTranscodedInputPath", () => {
+  test("resolves a rendition file under transcoded/ without creating anything", () => {
+    expect(existsSync(join(transcodedDir, "987654"))).toBe(false);
+    expect(() => resolveTranscodedInputPath("987654/missing.mp4")).toThrow(
+      TranscodeValidationError,
+    );
+    expect(existsSync(join(transcodedDir, "987654"))).toBe(false);
+  });
+
+  test("resolves successfully once the rendition file actually exists", () => {
+    const dir = join(transcodedDir, "987654");
+    const filePath = join(dir, "rendition.mp4");
+    resolveTranscodedOutputPath("987654/placeholder.mp4"); // mkdirs the subfolder as a side effect
+    writeFileSync(filePath, "not a real video, just bytes for the test");
+
+    expect(resolveTranscodedInputPath("987654/rendition.mp4")).toBe(filePath);
+  });
+});
+
+describe("resolveHlsOutputDir", () => {
+  test("mkdirs the target directory itself, not just its parent", () => {
+    const outDir = join(transcodedDir, "987654", "rendition-uuid.hls");
+    expect(existsSync(outDir)).toBe(false);
+
+    const resolved = resolveHlsOutputDir("987654/rendition-uuid.hls");
+
+    expect(resolved).toBe(outDir);
+    expect(existsSync(outDir)).toBe(true);
+  });
+
+  test("rejects an invalid subfolder segment", () => {
+    expect(() => resolveHlsOutputDir("not-a-userid/abc.hls")).toThrow(
+      TranscodeValidationError,
+    );
   });
 });

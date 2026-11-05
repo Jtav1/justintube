@@ -61,6 +61,10 @@ import { removeVideoDocument, syncVideoIndex } from "../lib/search.js";
 import { serializeUserRef } from "../lib/serialize-user-ref.js";
 import { srtToVtt } from "../lib/subtitle-convert.js";
 import { getQueueJobs, removeTranscodeJob, requestTranscodeBatch } from "../lib/processing-client.js";
+import {
+  markJobRunCancelled,
+  upsertPendingJobRun,
+} from "../lib/processing-job-runs.js";
 import { rollupOriginalUploadStatus, toTranscodeProfilePayload } from "../lib/file-versions.js";
 import { transcodingEnabled } from "../lib/processing-features-config.js";
 import {
@@ -478,6 +482,8 @@ export function parsePositiveInt(raw) {
  *   durationSeconds: number|null,
  *   thumbnailUrl: string|null,
  *   embedVideoUrl: string|null,
+ *   storyboardUrl: string|null,
+ *   previewClipUrl: string|null,
  *   subtitlesUrl: string|null,
  *   likeCount: number,
  *   dislikeCount: number,
@@ -517,6 +523,23 @@ export function serializeVideo(upload, metadata, options = {}) {
     // (webview) uses this in place of the original stream when present.
     embedVideoUrl: upload.embedVideoStoragePath
       ? `/api/v1/videos/${upload.id}/embed-video`
+      : null,
+    // The seek-bar hover-scrub sprite sheet's WebVTT sidecar (see
+    // processing's `"storyboard"` job) - null until that job completes, same
+    // "feature simply isn't available yet" convention as embedVideoUrl/the
+    // "best" rendition above. The sprite image itself is referenced from
+    // inside this VTT (a sibling file, same directory), so the player never
+    // needs its own separate URL for it.
+    storyboardUrl: upload.storyboardVttStoragePath
+      ? `/api/v1/videos/${upload.id}/storyboard/storyboard.vtt`
+      : null,
+    // Short, muted, looping hover-preview clip for a video grid card (see
+    // processing's `"preview"` job) - null until that job completes, same
+    // "feature simply isn't available yet" convention as storyboardUrl
+    // above. VideoCard (webview) only renders the preview `<video>` once
+    // this is non-null.
+    previewClipUrl: upload.previewClipStoragePath
+      ? `/api/v1/videos/${upload.id}/preview-clip`
       : null,
     // Always points at the subtitle list endpoint now (a video may have zero,
     // one, or many subtitles) - the client fetches it to populate the
@@ -613,6 +636,7 @@ export async function loadReactionCountsByUploadId(originalUploadIds) {
  *   height: number|null,
  *   mimeType: string|null,
  *   fileSizeBytes: number|null,
+ *   format: "mp4",
  *   streamUrl: string
  * }} Rendition reference.
  */
@@ -628,6 +652,7 @@ function serializeFileVersion(originalUploadId, version) {
     mimeType: version.mimeType ?? null,
     fileSizeBytes:
       version.fileSizeBytes != null ? Number(version.fileSizeBytes) : null,
+    format: "mp4",
     streamUrl,
   };
 }
@@ -646,6 +671,7 @@ function serializeFileVersion(originalUploadId, version) {
  *   height: number|null,
  *   mimeType: string|null,
  *   fileSizeBytes: number|null,
+ *   format: "mp4",
  *   streamUrl: string
  * }} Rendition reference for the original file.
  */
@@ -658,18 +684,57 @@ function serializeOriginalRendition(upload) {
     mimeType: upload.mimeType ?? null,
     fileSizeBytes:
       upload.fileSizeBytes != null ? Number(upload.fileSizeBytes) : null,
+    format: "mp4",
     streamUrl: `/api/v1/videos/${upload.id}/stream?quality=original`,
+  };
+}
+
+/**
+ * Serializes an upload's "Best" HLS stream (a single-file byte-range fMP4
+ * remux of the original upload - see processing's `"hls"` job) into a
+ * rendition reference, so a video player can offer adaptive
+ * seeking/partial-download playback at the original's own quality. Only
+ * meaningful once `upload.hlsPlaylistStoragePath` is set - callers check
+ * that before calling this.
+ *
+ * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance with a
+ *   non-null `hlsPlaylistStoragePath`.
+ * @returns {{
+ *   id: number,
+ *   resolution: "best",
+ *   width: number|null,
+ *   height: number|null,
+ *   mimeType: string,
+ *   fileSizeBytes: null,
+ *   format: "hls",
+ *   streamUrl: string
+ * }} Rendition reference for the "Best" HLS stream.
+ */
+function serializeHlsRendition(upload) {
+  return {
+    id: upload.id,
+    resolution: "best",
+    width: upload.videoWidth,
+    height: upload.videoHeight,
+    mimeType: "application/vnd.apple.mpegurl",
+    // The HLS output is a directory of several files (playlist + segment),
+    // not a single file with one meaningful size - unlike every other
+    // rendition reference, this is always null rather than an estimate.
+    fileSizeBytes: null,
+    format: "hls",
+    streamUrl: `/api/v1/videos/${upload.id}/hls/variant.m3u8`,
   };
 }
 
 /**
  * Loads every complete FILE_VERSIONS row for an upload, ordered lowest to
  * highest resolution, and serializes each into a rendition reference,
- * appending the original upload itself as a final `"original"` entry.
+ * appending the "Best" HLS stream (when ready) and the original upload
+ * itself as final entries.
  *
  * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS instance.
  * @returns {Promise<object[]>} Serialized renditions, lowest resolution
- *   first, with the original upload last.
+ *   first, with "Best" and the original upload last.
  */
 export async function loadRenditions(upload) {
   const completeVersions = await FileVersion.findAll({
@@ -679,6 +744,9 @@ export async function loadRenditions(upload) {
   const renditions = completeVersions.map((version) =>
     serializeFileVersion(upload.id, version),
   );
+  if (upload.hlsPlaylistStoragePath) {
+    renditions.push(serializeHlsRendition(upload));
+  }
   // An in-progress (or never-finished) import leaves storagePath empty until
   // continueImport writes the real file — don't advertise an "original"
   // rendition that points at a file that doesn't exist yet (or never will).
@@ -2592,6 +2660,202 @@ export function createVideosRouter() {
   });
 
   /**
+   * Content type for each fixed basename an `"hls"` processing job writes
+   * (see `HLS_OUTPUT_FILENAMES`, processing) - a closed set, not arbitrary
+   * user input, so this doubles as the allowlist `getVideoHlsFile` validates
+   * `:filename` against.
+   *
+   * @type {Record<string, string>}
+   */
+  const HLS_FILENAME_CONTENT_TYPES = {
+    "variant.m3u8": "application/vnd.apple.mpegurl",
+    "init.mp4": "video/mp4",
+    "stream.m4s": "video/iso.segment",
+  };
+
+  /**
+   * GET /videos/:id/hls/:filename — getVideoHlsFile
+   * Auth: optional. Private requires owner, grant, or admin. Serves one file
+   * from the "Best" quality HLS output directory (the variant playlist, its
+   * fMP4 init segment, or its single byte-range media segment - see
+   * `buildHlsFfmpegArgs`, processing) with HTTP Range support, so a player
+   * that loaded `variant.m3u8` can resolve the relative URIs inside it
+   * (`init.mp4`, `stream.m4s`) against this same route.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/hls/{filename}:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Stream one file of the "Best" quality HLS output (supports HTTP Range requests)
+   *     operationId: getVideoHlsFile
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *       - in: path
+   *         name: filename
+   *         required: true
+   *         schema: { type: string, enum: [variant.m3u8, init.mp4, stream.m4s] }
+   *     responses:
+   *       "200":
+   *         description: Full file (no Range header sent)
+   *       "206":
+   *         description: Partial content (Range header honored)
+   *       "404":
+   *         description: Not found, inaccessible, or "Best" quality not ready
+   *       "416":
+   *         description: Requested Range is out of bounds
+   */
+  router.get("/videos/:id/hls/:filename", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const contentType = HLS_FILENAME_CONTENT_TYPES[req.params.filename];
+      if (!contentType) {
+        sendNotFound(res);
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.hlsPlaylistStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      // hlsPlaylistStoragePath points at the variant playlist itself
+      // (".../variant.m3u8") - its sibling files live in that same directory.
+      const absolutePath = join(
+        dirname(resolveMediaPath(upload.hlsPlaylistStoragePath)),
+        req.params.filename,
+      );
+      await streamFileWithRangeSupport(req, res, absolutePath, contentType);
+    } catch (err) {
+      logger.error({ err }, "getVideoHlsFile failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to stream HLS file.",
+        });
+      }
+    }
+  });
+
+  /**
+   * Content type for each fixed basename a `"storyboard"` processing job
+   * writes (see `STORYBOARD_OUTPUT_FILENAMES`, processing) - a closed set,
+   * not arbitrary user input, so this doubles as the allowlist
+   * `getVideoStoryboardFile` validates `:filename` against.
+   *
+   * @type {Record<string, string>}
+   */
+  const STORYBOARD_FILENAME_CONTENT_TYPES = {
+    "storyboard.vtt": "text/vtt",
+    "sprite.jpg": "image/jpeg",
+  };
+
+  /**
+   * GET /videos/:id/storyboard/:filename — getVideoStoryboardFile
+   * Auth: optional. Private requires owner, grant, or admin. Serves one file
+   * from the storyboard output directory (the WebVTT sidecar, or the sprite
+   * image it references by relative URL) - the seek-bar hover-scrub preview.
+   * No Range support needed (unlike `getVideoHlsFile`'s media segment) -
+   * both files here are small and always fetched whole.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/storyboard/{filename}:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Fetch one file of the seek-bar hover-scrub storyboard
+   *     operationId: getVideoStoryboardFile
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *       - in: path
+   *         name: filename
+   *         required: true
+   *         schema: { type: string, enum: [storyboard.vtt, sprite.jpg] }
+   *     responses:
+   *       "200":
+   *         description: File contents
+   *       "404":
+   *         description: Not found, inaccessible, or the storyboard isn't ready
+   */
+  router.get("/videos/:id/storyboard/:filename", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const contentType = STORYBOARD_FILENAME_CONTENT_TYPES[req.params.filename];
+      if (!contentType) {
+        sendNotFound(res);
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.storyboardVttStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      // storyboardVttStoragePath points at the vtt itself - its sibling
+      // sprite image lives in that same directory.
+      const absolutePath = join(
+        dirname(resolveMediaPath(upload.storyboardVttStoragePath)),
+        req.params.filename,
+      );
+      await streamFileWithRangeSupport(req, res, absolutePath, contentType);
+    } catch (err) {
+      logger.error({ err }, "getVideoStoryboardFile failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to fetch storyboard file.",
+        });
+      }
+    }
+  });
+
+  /**
    * GET /videos/:id/embed-video — getVideoEmbedVideo
    * Auth: optional. Private requires owner, grant, or admin. Streams an
    * audio upload's thumbnail+audio MP4 (see `enqueueAudioEmbedVideo` in
@@ -2660,6 +2924,79 @@ export function createVideosRouter() {
         res.status(500).json({
           error: "internal_error",
           message: "Failed to stream embed video.",
+        });
+      }
+    }
+  });
+
+  /**
+   * GET /videos/:id/preview-clip — getVideoPreviewClip
+   * Auth: optional. Private requires owner, grant, or admin. Streams this
+   * upload's short, muted, looping hover-preview clip (see `"preview"`
+   * processing job) with HTTP Range support - the clip `VideoCard` (webview)
+   * plays on mouseover in a video grid.
+   *
+   * @openapi
+   * /api/v1/videos/{id}/preview-clip:
+   *   get:
+   *     tags: [Videos]
+   *     summary: Stream a video's hover-preview clip (supports HTTP Range requests)
+   *     operationId: getVideoPreviewClip
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       "200":
+   *         description: Full file (no Range header sent)
+   *       "206":
+   *         description: Partial content (Range header honored)
+   *       "404":
+   *         description: Not found, inaccessible, or no preview clip generated yet
+   *
+   * @param {import('express').Request} req Incoming request.
+   * @param {import('express').Response} res Express response.
+   * @returns {Promise<void>} Sends the streamed file or a 404/500 error.
+   */
+  router.get("/videos/:id/preview-clip", optionalAuth, async (req, res) => {
+    try {
+      const id = parsePositiveInt(req.params.id);
+      if (id == null) {
+        res.status(400).json({
+          error: "invalid_id",
+          message: "id must be a positive integer.",
+        });
+        return;
+      }
+
+      const loaded = await loadUploadWithMetadata(id);
+      if (!loaded) {
+        sendNotFound(res);
+        return;
+      }
+
+      const { upload, metadata } = loaded;
+      const hasGrant = await userHasAccessGrant(upload.id, req.user?.id);
+      if (!canViewVideo(req.user, req.authRole, upload, metadata, hasGrant)) {
+        sendNotFound(res);
+        return;
+      }
+
+      if (!upload.previewClipStoragePath) {
+        sendNotFound(res);
+        return;
+      }
+
+      const absolutePath = resolveMediaPath(upload.previewClipStoragePath);
+      await streamFileWithRangeSupport(req, res, absolutePath, "video/mp4");
+    } catch (err) {
+      logger.error({ err }, "getVideoPreviewClip failed");
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: "internal_error",
+          message: "Failed to stream preview clip.",
         });
       }
     }
@@ -3532,11 +3869,12 @@ export function createVideosRouter() {
 
         const storedFilename = upload.storagePath.replace(/^original\//, "");
         const segment = userStorageSegment(upload.userId);
+        const jobId = `subtitle-${upload.videoId}-${randomUUID()}`;
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
             {
-              jobId: `subtitle-${upload.videoId}-${randomUUID()}`,
+              jobId,
               // A prefix, not a final filename - processing may extract more
               // than one text stream and writes each to `${outputFilename}-${i}.vtt`.
               outputFilename: `${segment}/${randomUUID()}`,
@@ -3554,6 +3892,7 @@ export function createVideosRouter() {
           return;
         }
 
+        await upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "subtitle", jobId });
         await upload.update({ skipAutoSubtitles: false });
 
         res.status(202).json({ success: true });
@@ -3715,6 +4054,8 @@ export function createVideosRouter() {
         // subfolder, not the videoId itself — matches transcode-reconcile.js's pattern.
         const storedFilename = upload.storagePath.replace(/^original\//, "");
         const segment = userStorageSegment(upload.userId);
+        const jobId = `thumbnail-${upload.videoId}-${randomUUID()}`;
+        const thumbnailTimestampTenths = isRandomRegeneration ? null : parsedTimestamp.tenths;
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
@@ -3725,10 +4066,10 @@ export function createVideosRouter() {
               // dedup (a completed job with that id already exists) and
               // silently no-op every regeneration after the first; see
               // `enqueueAudioEmbedVideo` (uploads.js) for the same rationale.
-              jobId: `thumbnail-${upload.videoId}-${randomUUID()}`,
+              jobId,
               outputFilename: `${segment}/${randomUUID()}.${THUMBNAIL_OUTPUT_EXT}`,
               kind: "thumbnail",
-              timestampSeconds: isRandomRegeneration ? null : parsedTimestamp.tenths / 10,
+              timestampSeconds: thumbnailTimestampTenths != null ? thumbnailTimestampTenths / 10 : null,
             },
           ],
         });
@@ -3741,6 +4082,13 @@ export function createVideosRouter() {
           });
           return;
         }
+
+        await upsertPendingJobRun({
+          originalUploadId: upload.id,
+          jobKind: "thumbnail",
+          jobId,
+          thumbnailTimestampTenths,
+        });
 
         // Delete the existing thumbnail (row + file) now that regeneration
         // is actually queued, rather than waiting for the completion
@@ -3873,6 +4221,7 @@ export function createVideosRouter() {
         const previousVersions = await FileVersion.findAll({ where: { originalUploadId: upload.id } });
         for (const version of previousVersions) {
           await removeTranscodeJob(version.uuidName).catch(() => {});
+          await markJobRunCancelled(version.uuidName);
           await version.destroy();
           await unlink(resolveMediaPath(version.storagePath)).catch(() => {});
         }
@@ -3940,6 +4289,12 @@ export function createVideosRouter() {
             await version.destroy();
           } else {
             await version.update({ status: "processing" });
+            await upsertPendingJobRun({
+              originalUploadId: upload.id,
+              jobKind: "rendition",
+              jobId: version.uuidName,
+              transcodeProfileId: version.transcodeProfileId,
+            });
           }
         }
 
@@ -4054,16 +4409,18 @@ export function createVideosRouter() {
           : DEFAULT_AUDIO_THUMBNAIL_FILENAME;
         const storedFilename = upload.storagePath.replace(/^original\//, "");
         const segment = userStorageSegment(upload.userId);
+        const jobId = `embed-${upload.videoId}-${randomUUID()}`;
+        const isDefault = !existingThumbnail;
 
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
           jobs: [
             {
-              jobId: `embed-${upload.videoId}-${randomUUID()}`,
+              jobId,
               outputFilename: `${segment}/${randomUUID()}-embed.mp4`,
               kind: "embed",
               thumbnailFilename,
-              isDefault: !existingThumbnail,
+              isDefault,
             },
           ],
         });
@@ -4076,6 +4433,13 @@ export function createVideosRouter() {
           });
           return;
         }
+
+        await upsertPendingJobRun({
+          originalUploadId: upload.id,
+          jobKind: "embed",
+          jobId,
+          isDefaultThumbnail: isDefault,
+        });
 
         const previousPath = upload.embedVideoStoragePath;
         await upload.update({
@@ -4193,9 +4557,10 @@ export function createVideosRouter() {
         }
 
         const storedFilename = upload.storagePath.replace(/^original\//, "");
+        const jobId = `hash-${upload.videoId}`;
         const enqueue = await requestTranscodeBatch({
           filename: storedFilename,
-          jobs: [{ jobId: `hash-${upload.videoId}`, kind: "hash" }],
+          jobs: [{ jobId, kind: "hash" }],
         });
 
         if (!enqueue.ok) {
@@ -4206,6 +4571,8 @@ export function createVideosRouter() {
           });
           return;
         }
+
+        await upsertPendingJobRun({ originalUploadId: upload.id, jobKind: "hash", jobId });
 
         const hasVideoStream = enqueue.body?.source?.hasVideoStream;
         if (typeof hasVideoStream !== "boolean") {
