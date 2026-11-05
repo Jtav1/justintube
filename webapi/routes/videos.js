@@ -961,6 +961,23 @@ const AUDIO_EMBED_HEIGHT = 80;
  * player page — otherwise falls back to `"summary_large_image"` (rich card,
  * no inline play).
  *
+ * Fluxer (fluxerapp/fluxer) support rides entirely on `og:video` +
+ * `og:type`, not `twitter:player`: its unfurl service's HTML parser never
+ * reads `og:video:width`/`:height`/`:type` or any Twitter Card tag except
+ * `twitter:card`, and it only trusts `twitter:player` as a playable iframe
+ * when the URL's host is one of a small hardcoded list of known providers
+ * (YouTube, Vimeo, Twitch, etc.) — a self-hosted `/videos/:id/player` URL
+ * never qualifies, so that tag is Twitter/X-only in practice. Instead Fluxer
+ * fetches `og:video` directly and probes its real Content-Type/dimensions
+ * itself, and only renders an inline player when `og:type` starts with
+ * `"video."` — which is why `ogType` below is `"video.other"` whenever
+ * `og:video` points at actual video bytes (a real video upload, or an
+ * audio upload with a muxed embed video), not just when `isVideo` is true.
+ * Getting an unfurl request to this route in the first place also depends
+ * on `webview/nginx.conf` recognizing the fetching bot's User-Agent
+ * (`Fluxerbot/1.0` for Fluxer) and proxying it here instead of serving the
+ * client-rendered SPA shell.
+ *
  * @param {import('sequelize').Model} upload ORIGINAL_UPLOADS row (with User, VideoThumbnail included).
  * @param {import('sequelize').Model} metadata VIDEO_METADATA row.
  * @param {object[]} renditions Result of `loadRenditions(upload)`.
@@ -987,9 +1004,19 @@ function renderUnfurlHtml(upload, metadata, renditions) {
   const smallest = pickSmallestRendition(renditions);
   const embedsMedia = Boolean(smallest?.streamUrl);
   const description = embedsMedia ? null : `Justintube - ${title}`;
+  // Whether `og:video` below actually points at the muxed thumbnail+audio
+  // MP4 (real playable video bytes) rather than the raw audio stream.
+  const hasEmbedVideo = hasNoVideoStream && Boolean(upload.embedVideoStoragePath);
 
   let ogType = "website";
-  if (isVideo) {
+  if (isVideo || hasEmbedVideo) {
+    // Fluxer's unfurl service (unlike Discord) only treats a page as video
+    // content when `og:type` starts with "video." - it ignores
+    // `twitter:player` from untrusted hosts entirely and reads no
+    // `og:video:type`/width/height tags, so this is the only signal it uses
+    // to classify the embed. Only set it here when `og:video` genuinely
+    // points at video bytes (real video, or the muxed embed video) - not for
+    // the raw-audio-stream fallback below, which isn't actually a video.
     ogType = "video.other";
   } else if (embedsMedia) {
     ogType = "music.song";
@@ -1030,7 +1057,6 @@ function renderUnfurlHtml(upload, metadata, renditions) {
 
   let twitterCard = "summary";
   if (embedsMedia) {
-    const hasEmbedVideo = hasNoVideoStream && Boolean(upload.embedVideoStoragePath);
     const mediaUrl = hasEmbedVideo
       ? `${apiOrigin}/api/v1/videos/${upload.id}/embed-video`
       : `${apiOrigin}${smallest.streamUrl}`;

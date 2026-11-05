@@ -278,12 +278,27 @@ transition over the first ~15-30 seconds per service.
   different host/orchestrator) breaks the proxy outright.
 - **Link-unfurl: User-Agent sniffing is best-effort.** The bot detection in
   `webview/nginx.conf` matches known, documented UA substrings (Slackbot,
-  Twitterbot, Discordbot, etc.). Apple's iMessage link-preview fetcher in
-  particular does not send a single stable, documented User-Agent, so
-  iMessage previews may not always be recognized.
+  Twitterbot, Discordbot, Fluxerbot, etc.). Apple's iMessage link-preview
+  fetcher in particular does not send a single stable, documented
+  User-Agent, so iMessage previews may not always be recognized.
 - **Link-unfurl: Twitter/X Player Cards are HTTPS-only** and historically
   require a one-time Card Validator run
   (https://cards-dev.twitter.com/validator) against a live URL before Player
   Cards render for a new domain — an operational step outside this repo's
   scope. Until `PUBLIC_API_URL` is set to a real `https://` host, the unfurl
   page falls back to a `summary_large_image` card (no inline playback).
+- **Link-unfurl: Fluxer (fluxerapp/fluxer) support rides on `og:video` +
+  `og:type`, not `twitter:player`.** Fluxer's unfurl service never reads
+  `og:video:width`/`:height`/`:type`, and only trusts `twitter:player` as a
+  playable iframe when the URL's host is one of a small hardcoded list of
+  known providers (YouTube, Vimeo, Twitch, etc.) — a self-hosted
+  `/videos/:id/player` URL never qualifies there, unlike Twitter/X. Instead
+  it fetches `og:video` directly, probes the real file's Content-Type and
+  dimensions itself, and only renders an inline player when `og:type` starts
+  with `"video."` (see `renderUnfurlHtml`, `webapi/routes/videos.js`). Its
+  HTTP client also follows **no redirects** at all, unlike Discord's — every
+  URL it's handed (the unfurl page itself, `og:image`, `og:video`) must
+  respond `200` directly, with no `3xx` hop anywhere in front, including any
+  reverse proxy or CDN in front of `webview`/`webapi`. No IP allowlisting is
+  needed on webapi's side: detection is purely by User-Agent
+  (`Fluxerbot/1.0`), matched in the `webview/nginx.conf` bot map above.
