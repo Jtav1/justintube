@@ -123,6 +123,8 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
         `property="og:audio" content="http://localhost:3000/api/v1/videos/${upload.id}/stream?quality=240p"`,
       );
       expect(res.text).toContain('property="og:audio:type" content="audio/mpeg"');
+      // og:video points at the raw audio stream here (no embed video yet),
+      // so this isn't actually video content - og:type stays music.song.
       expect(res.text).toContain('property="og:type" content="music.song"');
       // Embeds a player, so no description, matching the video case.
       expect(res.text).not.toContain('property="og:description"');
@@ -158,6 +160,10 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
         `property="og:audio" content="http://localhost:3000/api/v1/videos/${upload.id}/stream?quality=240p"`,
       );
       expect(res.text).toContain('property="og:audio:type" content="audio/mpeg"');
+      // og:video now points at real video bytes (the muxed embed video), so
+      // og:type reflects that - this is the only signal Fluxer's unfurl
+      // service uses to decide whether to render an inline player.
+      expect(res.text).toContain('property="og:type" content="video.other"');
     });
 
     test("falls back to the raw audio stream for og:video when no embed video has been generated yet", async () => {
@@ -177,6 +183,9 @@ describe("GET /videos/{id}/unfurl (getVideoUnfurl) and /videos/{id}/player (getV
       );
       expect(res.text).toContain('property="og:video:width" content="480"');
       expect(res.text).toContain('property="og:video:height" content="80"');
+      // Not real video bytes yet (raw audio stream, no embed video) - stays
+      // music.song, matching the no-embed-video case above.
+      expect(res.text).toContain('property="og:type" content="music.song"');
     });
 
     test("emits og:image (the speaker-icon placeholder) for an audio upload with no real thumbnail", async () => {
