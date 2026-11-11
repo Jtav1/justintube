@@ -23,6 +23,7 @@ import { startTranscodeReconcileCron } from "./lib/transcode-reconcile.js";
 import { startHashReconcileCron } from "./lib/hash-reconcile.js";
 import { startImportReconcileCron } from "./lib/import-reconcile.js";
 import { startNotificationEmailDigestCron } from "./lib/notification-email-digest.js";
+import { startPreviewClipBackfillCron } from "./lib/preview-clip-backfill.js";
 import { createApiRouter } from "./routes/stubs.js";
 import { createInternalFileVersionsRouter } from "./routes/internal-file-versions.js";
 import { createInternalHlsRouter } from "./routes/internal-hls.js";
@@ -332,6 +333,12 @@ async function start() {
     await startNotificationEmailDigestCron();
   } catch (err) {
     logger.error({ err }, "Failed to start notification email digest cron");
+  }
+
+  try {
+    await startPreviewClipBackfillCron();
+  } catch (err) {
+    logger.error({ err }, "Failed to start preview clip backfill cron");
   }
 
   try {
