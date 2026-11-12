@@ -120,7 +120,7 @@ services:
     volumes:
       - media-data:/media
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:${PROCESSING_PORT:-3001}/health"]
       interval: 10s
       timeout: 5s
       retries: 5
