@@ -1,6 +1,6 @@
 services:
   db:
-    image: justintube-db:latest
+    image: ghcr.io/jtav1/justintube-api:latest
     container_name: justintube-db
     restart: unless-stopped
     environment:
@@ -57,7 +57,7 @@ services:
   webapi:
     build:
       context: ./webapi
-    container_name: justintube-api
+    container_name: ghcr.io/jtav1/justintube-api:latest
     restart: unless-stopped
     depends_on:
       db:
@@ -98,7 +98,7 @@ services:
   processing:
     build:
       context: ./processing
-    container_name: justintube-processing
+    container_name: ghcr.io/jtav1/justintube-processing:latest
     restart: unless-stopped
     env_file:
       - /mnt/user/appdata/justintube/.env
@@ -153,7 +153,7 @@ services:
   webview:
     build:
       context: ./webview
-    container_name: justintube-webview
+    container_name: ghcr.io/jtav1/justintube-webview:latest
     restart: unless-stopped
     depends_on:
       webapi:
