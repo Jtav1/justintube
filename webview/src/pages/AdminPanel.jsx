@@ -663,7 +663,16 @@ function AdminPanel() {
             <div className="admin-file-tree">
               <div className="admin-file-tree-upload-meta">
                 <span><strong>ID:</strong> {fileTreeResult.upload.id}</span>
-                <span><strong>Video ID:</strong> {fileTreeResult.upload.videoId}</span>
+                <span>
+                  <strong>Video ID:</strong>{' '}
+                  {fileTreeResult.upload.videoId ? (
+                    <Link to={`/video?v=${encodeURIComponent(fileTreeResult.upload.videoId)}`}>
+                      {fileTreeResult.upload.videoId}
+                    </Link>
+                  ) : (
+                    fileTreeResult.upload.videoId
+                  )}
+                </span>
                 <span><strong>UUID:</strong> {fileTreeResult.upload.uuid}</span>
                 <span><strong>Type:</strong> {fileTreeResult.upload.mediaType}</span>
                 <span><strong>Status:</strong> {fileTreeResult.upload.status}</span>
