@@ -30,3 +30,5 @@ migration-tools/node_modules
 .claude/
 
 db/dump-justintube-pre-2.3.sql
+
+docker-compose.yml.prod
