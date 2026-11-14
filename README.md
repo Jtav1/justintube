@@ -18,8 +18,6 @@ This software is a collaborative effort between myself (Justin) and a few friend
 
 - This site isn't meant to compete with projects like [Peertube](https://github.com/chocobozzz/peertube) or [Tube Archivist](https://github.com/tubearchivist/tubearchivist) or [MediaCMS](https://github.com/mediacms-io/mediacms) and certainly not media library streaming platforms like [Jellyfin](https://github.com/jellyfin/jellyfin) - this isn't a youtube channel archiver, nor a community building platform, or a business-ready CMS. Just a simple self-hostable video/audio hosting and sharing system.
 
-See [webapi/openapi.yaml](webapi/openapi.yaml) for the OpenAPI base document and [docs/api-checklist.md](docs/api-checklist.md) for implementation progress.
-
 ## Getting started
 
 Requires **Node.js 20.6+** for `webapi/` and `webview/`, and `processing/` when running components in local dev mode via `npm run dev`. The Web API can use **SQLite** (local dev instance default) or **MySQL**.
